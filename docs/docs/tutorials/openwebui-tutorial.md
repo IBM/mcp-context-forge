@@ -168,14 +168,17 @@ LiteLLM provides an OpenAI-compatible API interface for Ollama models:
 # Create LiteLLM configuration
 cat > litellm_config.yaml <<EOF
 model_list:
+
   - model_name: granite
     litellm_params:
       model: ollama/granite3.3
       api_base: http://host.docker.internal:11434
+
   - model_name: llama
     litellm_params:
       model: ollama/llama3.2
       api_base: http://host.docker.internal:11434
+
   - model_name: mistral
     litellm_params:
       model: ollama/mistral
@@ -385,6 +388,7 @@ curl -X POST http://localhost:4000/v1/chat/completions \
 ### Test 2: MCP Tool Invocation
 
 In OpenWebUI chat:
+
 1. Enable the time tool by clicking the ➕ icon
 2. Ask: "What's the current time in New York?"
 3. The assistant should use the MCP time tool to respond
@@ -392,6 +396,7 @@ In OpenWebUI chat:
 ### Test 3: Multi-Tool Workflow
 
 Try complex queries that require multiple tools:
+
 - "Save a note about today's meeting at 3 PM EST"
 - "What files are in the /tmp directory?"
 
@@ -488,16 +493,19 @@ docker exec -i postgres psql -U openwebui openwebui < backup.sql
 ### Common Issues
 
 **1. Models not appearing in OpenWebUI**
+
 - Check Ollama is running: `curl http://localhost:11434/api/tags`
 - Verify LiteLLM can reach Ollama: `docker logs litellm`
 - Ensure model names match in litellm_config.yaml
 
 **2. MCP tools not working**
+
 - Verify MCPO is running: `curl http://localhost:8000/docs`
 - Check tool registration in OpenWebUI settings
 - Ensure tools are enabled for the model
 
 **3. Container connectivity issues**
+
 - Use `host.docker.internal` for host access from containers
 - Ensure all containers are on the same network
 - Check firewall rules
@@ -558,8 +566,10 @@ services:
       POSTGRES_USER: openwebui
       POSTGRES_PASSWORD: changeme
     volumes:
+
       - postgres_data:/var/lib/postgresql/data
     networks:
+
       - openwebui-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U openwebui"]
@@ -571,15 +581,19 @@ services:
     image: ghcr.io/berriai/litellm:main
     command: --config /app/config.yaml --detailed_debug
     volumes:
+
       - ./litellm_config.yaml:/app/config.yaml
     ports:
+
       - "4000:4000"
     networks:
+
       - openwebui-net
     depends_on:
       postgres:
         condition: service_healthy
     extra_hosts:
+
       - "host.docker.internal:host-gateway"
 
   mcpgateway:
@@ -594,26 +608,35 @@ services:
       BASIC_AUTH_PASSWORD: "changeme"
       AUTH_REQUIRED: "true"
     volumes:
+
       - mcpgateway_data:/data
     ports:
+
       - "4444:4444"
     networks:
+
       - openwebui-net
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:latest
     env_file:
+
       - openwebui.env
     ports:
+
       - "3000:8080"
     volumes:
+
       - openwebui_data:/app/backend/data
     networks:
+
       - openwebui-net
     depends_on:
+
       - postgres
       - litellm
     extra_hosts:
+
       - "host.docker.internal:host-gateway"
 
 volumes:
@@ -673,6 +696,7 @@ server {
 services:
   openwebui:
     networks:
+
       - frontend
       - backend
 

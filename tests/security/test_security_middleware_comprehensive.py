@@ -11,10 +11,10 @@ including all configuration combinations, edge cases, and integration scenarios.
 """
 
 # Standard
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 # Third-Party
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 import pytest
 
@@ -36,7 +36,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.object(settings, 'security_headers_enabled', enabled):
+        with patch.object(settings, "security_headers_enabled", enabled):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -61,9 +61,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_content_type_options_enabled=x_content_enabled):
+        with patch.multiple(settings, security_headers_enabled=True, x_content_type_options_enabled=x_content_enabled):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -82,9 +80,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_frame_options=frame_option):
+        with patch.multiple(settings, security_headers_enabled=True, x_frame_options=frame_option):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -103,9 +99,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_xss_protection_enabled=xss_enabled):
+        with patch.multiple(settings, security_headers_enabled=True, x_xss_protection_enabled=xss_enabled):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -124,9 +118,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_download_options_enabled=download_enabled):
+        with patch.multiple(settings, security_headers_enabled=True, x_download_options_enabled=download_enabled):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -144,7 +136,7 @@ class TestSecurityHeadersConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.object(settings, 'security_headers_enabled', True):
+        with patch.object(settings, "security_headers_enabled", True):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -165,9 +157,7 @@ class TestHSTSConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           hsts_enabled=hsts_enabled):
+        with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=hsts_enabled):
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -186,11 +176,7 @@ class TestHSTSConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           hsts_enabled=True,
-                           hsts_max_age=max_age,
-                           hsts_include_subdomains=False):
+        with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=True, hsts_max_age=max_age, hsts_include_subdomains=False):
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -209,11 +195,7 @@ class TestHSTSConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           hsts_enabled=True,
-                           hsts_max_age=31536000,
-                           hsts_include_subdomains=include_subdomains):
+        with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=True, hsts_max_age=31536000, hsts_include_subdomains=include_subdomains):
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -233,9 +215,7 @@ class TestHSTSConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           hsts_enabled=True):
+        with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=True):
             client = TestClient(app)
             headers = {}
             if proto_header:
@@ -266,9 +246,7 @@ class TestServerHeaderRemoval:
             response.headers["Server"] = "TestServer/1.0"
             return response
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           remove_server_headers=remove_headers):
+        with patch.multiple(settings, security_headers_enabled=True, remove_server_headers=remove_headers):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -294,7 +272,7 @@ class TestCSPConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.object(settings, 'security_headers_enabled', True):
+        with patch.object(settings, "security_headers_enabled", True):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -315,18 +293,14 @@ class TestCSPConfiguration:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.object(settings, 'security_headers_enabled', True):
+        with patch.object(settings, "security_headers_enabled", True):
             client = TestClient(app)
             response = client.get("/test")
 
             csp = response.headers["Content-Security-Policy"]
 
             # Check all required CDN domains are allowed
-            required_domains = [
-                "https://cdnjs.cloudflare.com",
-                "https://cdn.tailwindcss.com",
-                "https://cdn.jsdelivr.net"
-            ]
+            required_domains = ["https://cdnjs.cloudflare.com", "https://cdn.tailwindcss.com", "https://cdn.jsdelivr.net"]
 
             for domain in required_domains:
                 assert domain in csp, f"{domain} missing from CSP"
@@ -379,8 +353,6 @@ class TestMiddlewareIntegration:
 
         @app.get("/not-found")
         def not_found_endpoint():
-            # Third-Party
-            from fastapi import HTTPException
             raise HTTPException(status_code=404, detail="Not found")
 
         client = TestClient(app)
@@ -433,14 +405,16 @@ class TestAllConfigurationCombinations:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_content_type_options_enabled=False,
-                           x_frame_options="",  # Empty means disabled
-                           x_xss_protection_enabled=False,
-                           x_download_options_enabled=False,
-                           hsts_enabled=False,
-                           remove_server_headers=False):
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_content_type_options_enabled=False,
+            x_frame_options="",  # Empty means disabled
+            x_xss_protection_enabled=False,
+            x_download_options_enabled=False,
+            hsts_enabled=False,
+            remove_server_headers=False,
+        ):
             client = TestClient(app)
             response = client.get("/test")
 
@@ -464,16 +438,18 @@ class TestAllConfigurationCombinations:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_content_type_options_enabled=True,
-                           x_frame_options="DENY",
-                           x_xss_protection_enabled=True,
-                           x_download_options_enabled=True,
-                           hsts_enabled=True,
-                           hsts_max_age=63072000,  # 2 years
-                           hsts_include_subdomains=True,
-                           remove_server_headers=True):
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_content_type_options_enabled=True,
+            x_frame_options="DENY",
+            x_xss_protection_enabled=True,
+            x_download_options_enabled=True,
+            hsts_enabled=True,
+            hsts_max_age=63072000,  # 2 years
+            hsts_include_subdomains=True,
+            remove_server_headers=True,
+        ):
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -545,14 +521,17 @@ class TestMiddlewareErrorHandling:
 class TestProtocolDetection:
     """Test various protocol detection scenarios for HSTS."""
 
-    @pytest.mark.parametrize("request_scheme,forwarded_proto,expect_hsts", [
-        ("https", None, True),
-        ("http", "https", True),
-        ("https", "https", True),
-        ("http", "http", False),
-        ("http", None, False),
-        ("https", "http", True),  # Request scheme takes precedence
-    ])
+    @pytest.mark.parametrize(
+        "request_scheme,forwarded_proto,expect_hsts",
+        [
+            ("https", None, True),
+            ("http", "https", True),
+            ("https", "https", True),
+            ("http", "http", False),
+            ("http", None, False),
+            ("https", "http", True),  # Request scheme takes precedence
+        ],
+    )
     def test_hsts_protocol_detection_combinations(self, request_scheme: str, forwarded_proto: str, expect_hsts: bool):
         """Test HSTS activation under various protocol scenarios."""
         app = FastAPI()
@@ -562,9 +541,7 @@ class TestProtocolDetection:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           hsts_enabled=True):
+        with patch.multiple(settings, security_headers_enabled=True, hsts_enabled=True):
             client = TestClient(app)
 
             # Mock the request URL scheme
@@ -593,10 +570,12 @@ class TestConfigurationValidation:
         def test_endpoint():
             return {"message": "test"}
 
-        with patch.multiple(settings,
-                           security_headers_enabled=True,
-                           x_frame_options="",  # Empty string
-                           hsts_max_age=0):     # Zero value
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_frame_options="",  # Empty string
+            hsts_max_age=0,
+        ):  # Zero value
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
@@ -617,7 +596,7 @@ class TestConfigurationValidation:
             return {"message": "test"}
 
         # Create a mock settings object to verify access patterns
-        with patch('mcpgateway.middleware.security_headers.settings') as mock_settings:
+        with patch("mcpgateway.middleware.security_headers.settings") as mock_settings:
             mock_settings.security_headers_enabled = True
             mock_settings.x_content_type_options_enabled = True
             mock_settings.x_frame_options = "DENY"
@@ -632,3 +611,93 @@ class TestConfigurationValidation:
             # Verify settings were accessed
             assert mock_settings.security_headers_enabled
             assert response.headers["X-Content-Type-Options"] == "nosniff"
+
+
+class TestFrameAncestorsCSPConsistency:
+    """Test that CSP frame-ancestors directive matches X-Frame-Options setting."""
+
+    @pytest.mark.parametrize(
+        "x_frame_options,expected_frame_ancestors",
+        [
+            ("DENY", "'none'"),
+            ("SAMEORIGIN", "'self'"),
+            ("ALLOW-FROM https://example.com", "https://example.com"),
+            ("", "*"),  # Empty string should allow all
+            ("invalid-value", "'none'"),  # Unknown values default to none
+        ],
+    )
+    def test_csp_frame_ancestors_matches_x_frame_options(self, x_frame_options: str, expected_frame_ancestors: str):
+        """Test that CSP frame-ancestors directive is consistent with X-Frame-Options setting."""
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware)
+
+        @app.get("/test")
+        def test_endpoint():
+            return {"message": "test"}
+
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_frame_options=x_frame_options,
+            x_content_type_options_enabled=True,
+            x_xss_protection_enabled=True,
+            x_download_options_enabled=True,
+            hsts_enabled=False,  # Disable HSTS for simpler testing
+            remove_server_headers=False,
+            environment="development",
+            allowed_origins=set(),
+            cors_allow_credentials=False,
+        ):
+            client = TestClient(app)
+            response = client.get("/test")
+
+            # Check CSP header contains correct frame-ancestors directive
+            csp_header = response.headers.get("Content-Security-Policy", "")
+            expected_directive = f"frame-ancestors {expected_frame_ancestors}"
+            assert expected_directive in csp_header, f"Expected CSP to contain '{expected_directive}' but got: {csp_header}"
+
+            # Check X-Frame-Options header is set correctly (or omitted for empty string)
+            if x_frame_options:
+                assert response.headers.get("X-Frame-Options") == x_frame_options
+            else:
+                assert "X-Frame-Options" not in response.headers
+
+    def test_sameorigin_iframe_integration(self):
+        """Integration test for SAMEORIGIN iframe functionality.
+
+        Regression test to ensure X_FRAME_OPTIONS=SAMEORIGIN works correctly
+        with consistent CSP frame-ancestors directive.
+        """
+        app = FastAPI()
+        app.add_middleware(SecurityHeadersMiddleware)
+
+        @app.get("/")
+        def root():
+            return {"message": "OK"}
+
+        # Test SAMEORIGIN configuration scenario
+        with patch.multiple(
+            settings,
+            security_headers_enabled=True,
+            x_frame_options="SAMEORIGIN",  # User's desired setting
+            x_content_type_options_enabled=True,
+            x_xss_protection_enabled=True,
+            x_download_options_enabled=True,
+            hsts_enabled=False,
+            remove_server_headers=False,
+            environment="development",
+            allowed_origins={"*"},  # From user's ALLOWED_ORIGINS=["*"]
+            cors_allow_credentials=False,
+        ):
+            client = TestClient(app)
+            response = client.get("/")
+
+            # Verify both headers are consistent and allow same-origin framing
+            assert response.headers["X-Frame-Options"] == "SAMEORIGIN"
+
+            csp_header = response.headers["Content-Security-Policy"]
+            assert "frame-ancestors 'self'" in csp_header
+            assert "frame-ancestors 'none'" not in csp_header
+
+            # This should now work for iframe embedding from same origin
+            assert response.status_code == 200

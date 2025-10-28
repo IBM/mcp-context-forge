@@ -6,9 +6,10 @@ Authors: Mihai Criveti
 
 Property-based fuzz testing for JSONPath processing.
 """
+
 # Third-Party
 from fastapi import HTTPException
-from hypothesis import assume, given
+from hypothesis import given
 from hypothesis import strategies as st
 import pytest
 
@@ -38,7 +39,7 @@ class TestJSONPathFuzzing:
     def test_jsonpath_with_dollar_expressions(self, expression):
         """Test JSONPath expressions containing $ operators."""
         # Only test if expression contains $, otherwise skip
-        if '$' not in expression:
+        if "$" not in expression:
             return
         test_data = {"root": {"items": [{"id": 1}, {"id": 2}]}}
 
@@ -54,7 +55,7 @@ class TestJSONPathFuzzing:
     def test_jsonpath_with_brackets(self, expression):
         """Test JSONPath expressions with array notation."""
         # Only test if expression contains brackets, otherwise skip
-        if '[' not in expression and ']' not in expression:
+        if "[" not in expression and "]" not in expression:
             return
         test_data = {"items": [{"a": 1}, {"a": 2}, {"a": 3}]}
 
@@ -70,7 +71,7 @@ class TestJSONPathFuzzing:
     def test_jsonpath_with_dots(self, expression):
         """Test JSONPath expressions with property access."""
         # Only test if expression contains dots, otherwise skip
-        if '.' not in expression:
+        if "." not in expression:
             return
         test_data = {"a": {"b": {"c": "value"}}, "x": {"y": [1, 2, 3]}}
 
@@ -82,26 +83,22 @@ class TestJSONPathFuzzing:
         except Exception as e:
             pytest.fail(f"Unexpected exception: {type(e).__name__}: {e}")
 
-    @given(st.one_of(
-        st.dictionaries(
-            keys=st.text(min_size=1, max_size=20),
-            values=st.recursive(
-                st.one_of(st.integers(), st.text(max_size=50), st.booleans(), st.none()),
-                lambda children: st.lists(children) | st.dictionaries(st.text(max_size=10), children),
-                max_leaves=10
+    @given(
+        st.one_of(
+            st.dictionaries(
+                keys=st.text(min_size=1, max_size=20),
+                values=st.recursive(
+                    st.one_of(st.integers(), st.text(max_size=50), st.booleans(), st.none()), lambda children: st.lists(children) | st.dictionaries(st.text(max_size=10), children), max_leaves=10
+                ),
+                max_size=10,
             ),
-            max_size=10
-        ),
-        st.lists(st.dictionaries(
-            keys=st.text(min_size=1, max_size=10),
-            values=st.one_of(st.integers(), st.text(max_size=20)),
-            max_size=5
-        ), max_size=5),
-        st.integers(),
-        st.text(max_size=100),
-        st.booleans(),
-        st.none()
-    ))
+            st.lists(st.dictionaries(keys=st.text(min_size=1, max_size=10), values=st.one_of(st.integers(), st.text(max_size=20)), max_size=5), max_size=5),
+            st.integers(),
+            st.text(max_size=100),
+            st.booleans(),
+            st.none(),
+        )
+    )
     def test_jsonpath_with_arbitrary_data(self, data):
         """Test JSONPath processing with arbitrary data structures."""
         expressions = ["$", "$.*", "$[*]", "$..*", "$..name", "$[0]"]
@@ -116,12 +113,7 @@ class TestJSONPathFuzzing:
             except Exception as e:
                 pytest.fail(f"Unexpected exception with expr '{expr}' and data {type(data)}: {type(e).__name__}: {e}")
 
-    @given(st.dictionaries(
-        keys=st.text(min_size=1, max_size=20),
-        values=st.text(min_size=1, max_size=50),
-        min_size=1,
-        max_size=5
-    ))
+    @given(st.dictionaries(keys=st.text(min_size=1, max_size=20), values=st.text(min_size=1, max_size=50), min_size=1, max_size=5))
     def test_jsonpath_with_mappings(self, mappings):
         """Test JSONPath processing with arbitrary mappings."""
         test_data = {"items": [{"name": "test1", "value": 1}, {"name": "test2", "value": 2}]}
@@ -230,13 +222,7 @@ class TestJSONPathEdgeCases:
 
     def test_jsonpath_empty_data(self):
         """Test JSONPath with empty data structures."""
-        test_cases = [
-            {},
-            [],
-            "",
-            0,
-            False
-        ]
+        test_cases = [{}, [], "", 0, False]
 
         for data in test_cases:
             try:
@@ -274,11 +260,7 @@ class TestJSONPathEdgeCases:
     def test_jsonpath_unicode_expressions(self):
         """Test JSONPath with unicode characters."""
         test_data = {"ñamé": "tést", "数据": [1, 2, 3]}
-        expressions = [
-            "$.ñamé",
-            "$.数据[*]",
-            "$..tést"
-        ]
+        expressions = ["$.ñamé", "$.数据[*]", "$..tést"]
 
         for expr in expressions:
             try:

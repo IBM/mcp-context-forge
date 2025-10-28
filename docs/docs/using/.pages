@@ -5,6 +5,8 @@ nav:
   - reverse-proxy.md
   - multi-auth-headers.md
   - tool-annotations.md
+  - rest-passthrough.md
+  - "gRPC Services (Experimental)": grpc-services.md
   - Clients: clients
   - Agents: agents
   - Servers: servers

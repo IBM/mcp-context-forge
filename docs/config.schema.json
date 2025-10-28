@@ -1,135 +1,28 @@
 {
   "description": "MCP Gateway configuration settings.\n\nExamples:\n    >>> from mcpgateway.config import Settings\n    >>> s = Settings(basic_auth_user='admin', basic_auth_password='secret')\n    >>> s.api_key\n    'admin:secret'\n    >>> s2 = Settings(transport_type='http')\n    >>> s2.validate_transport()  # no error\n    >>> s3 = Settings(transport_type='invalid')\n    >>> try:\n    ...     s3.validate_transport()\n    ... except ValueError as e:\n    ...     print('error')\n    error\n    >>> s4 = Settings(database_url='sqlite:///./test.db')\n    >>> isinstance(s4.database_settings, dict)\n    True\n    >>> s5 = Settings()\n    >>> s5.app_name\n    'MCP_Gateway'\n    >>> s5.host in ('0.0.0.0', '127.0.0.1')  # Default can be either\n    True\n    >>> s5.port\n    4444\n    >>> s5.auth_required\n    True\n    >>> isinstance(s5.allowed_origins, set)\n    True",
   "properties": {
-    "account_lockout_duration_minutes": {
-      "default": 30,
-      "description": "Account lockout duration in minutes",
-      "title": "Account Lockout Duration Minutes",
-      "type": "integer"
-    },
-    "allowed_mime_types": {
-      "default": [
-        "image/jpeg",
-        "text/html",
-        "application/json",
-        "text/markdown",
-        "application/xml",
-        "image/gif",
-        "text/plain",
-        "image/png"
-      ],
-      "items": {
-        "type": "string"
-      },
-      "title": "Allowed Mime Types",
-      "type": "array",
-      "uniqueItems": true
-    },
-    "allowed_origins": {
-      "default": [
-        "http://localhost:4444",
-        "http://localhost"
-      ],
-      "items": {
-        "type": "string"
-      },
-      "title": "Allowed Origins",
-      "type": "array",
-      "uniqueItems": true
-    },
-    "app_domain": {
-      "env": "APP_DOMAIN",
-      "format": "uri",
-      "maxLength": 2083,
-      "minLength": 1,
-      "title": "App Domain",
-      "type": "string"
-    },
     "app_name": {
       "default": "MCP_Gateway",
       "title": "App Name",
       "type": "string"
     },
-    "app_root_path": {
-      "default": "",
-      "title": "App Root Path",
+    "host": {
+      "default": "127.0.0.1",
+      "title": "Host",
       "type": "string"
     },
-    "argon2id_memory_cost": {
-      "default": 65536,
-      "description": "Argon2id memory cost in KiB",
-      "title": "Argon2Id Memory Cost",
+    "port": {
+      "default": 4444,
+      "env": "PORT",
+      "exclusiveMinimum": 0,
+      "maximum": 65535,
+      "minimum": 1,
+      "title": "Port",
       "type": "integer"
     },
-    "argon2id_parallelism": {
-      "default": 1,
-      "description": "Argon2id parallelism (number of threads)",
-      "title": "Argon2Id Parallelism",
-      "type": "integer"
-    },
-    "argon2id_time_cost": {
-      "default": 3,
-      "description": "Argon2id time cost (number of iterations)",
-      "title": "Argon2Id Time Cost",
-      "type": "integer"
-    },
-    "auth_encryption_secret": {
-      "default": "my-test-salt",
-      "title": "Auth Encryption Secret",
-      "type": "string"
-    },
-    "auth_required": {
-      "default": true,
-      "title": "Auth Required",
-      "type": "boolean"
-    },
-    "auto_create_personal_teams": {
-      "default": true,
-      "description": "Enable automatic personal team creation for new users",
-      "title": "Auto Create Personal Teams",
-      "type": "boolean"
-    },
-    "basic_auth_password": {
-      "default": "changeme",
-      "title": "Basic Auth Password",
-      "type": "string"
-    },
-    "basic_auth_user": {
-      "default": "admin",
-      "title": "Basic Auth User",
-      "type": "string"
-    },
-    "cache_prefix": {
-      "default": "mcpgw:",
-      "title": "Cache Prefix",
-      "type": "string"
-    },
-    "cache_type": {
-      "default": "database",
-      "enum": [
-        "redis",
-        "memory",
-        "none",
-        "database"
-      ],
-      "title": "Cache Type",
-      "type": "string"
-    },
-    "cookie_samesite": {
-      "default": "lax",
-      "env": "COOKIE_SAMESITE",
-      "title": "Cookie Samesite",
-      "type": "string"
-    },
-    "cors_allow_credentials": {
-      "default": true,
-      "env": "CORS_ALLOW_CREDENTIALS",
-      "title": "Cors Allow Credentials",
-      "type": "boolean"
-    },
-    "cors_enabled": {
-      "default": true,
-      "title": "Cors Enabled",
+    "docs_allow_basic_auth": {
+      "default": false,
+      "title": "Docs Allow Basic Auth",
       "type": "boolean"
     },
     "database_url": {
@@ -137,200 +30,54 @@
       "title": "Database Url",
       "type": "string"
     },
-    "db_max_overflow": {
-      "default": 10,
-      "title": "Db Max Overflow",
-      "type": "integer"
-    },
-    "db_max_retries": {
-      "default": 3,
-      "title": "Db Max Retries",
-      "type": "integer"
-    },
-    "db_pool_recycle": {
-      "default": 3600,
-      "title": "Db Pool Recycle",
-      "type": "integer"
-    },
-    "db_pool_size": {
-      "default": 200,
-      "title": "Db Pool Size",
-      "type": "integer"
-    },
-    "db_pool_timeout": {
-      "default": 30,
-      "title": "Db Pool Timeout",
-      "type": "integer"
-    },
-    "db_retry_interval_ms": {
-      "default": 2000,
-      "title": "Db Retry Interval Ms",
-      "type": "integer"
-    },
-    "debug": {
-      "default": false,
-      "title": "Debug",
-      "type": "boolean"
-    },
-    "default_passthrough_headers": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Default Passthrough Headers",
-      "type": "array"
-    },
-    "default_roots": {
-      "default": [],
-      "items": {
-        "type": "string"
-      },
-      "title": "Default Roots",
-      "type": "array"
-    },
-    "dev_mode": {
-      "default": false,
-      "title": "Dev Mode",
-      "type": "boolean"
-    },
-    "docs_allow_basic_auth": {
-      "default": false,
-      "title": "Docs Allow Basic Auth",
-      "type": "boolean"
-    },
-    "email_auth_enabled": {
-      "default": true,
-      "description": "Enable email-based authentication",
-      "title": "Email Auth Enabled",
-      "type": "boolean"
-    },
-    "enable_header_passthrough": {
-      "default": false,
-      "description": "Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)",
-      "title": "Enable Header Passthrough",
-      "type": "boolean"
-    },
-    "environment": {
-      "default": "development",
-      "env": "ENVIRONMENT",
-      "title": "Environment",
+    "templates_dir": {
+      "default": "/home/cmihai/github/mcp-context-forge/mcpgateway/templates",
+      "format": "path",
+      "title": "Templates Dir",
       "type": "string"
     },
-    "federation_discovery": {
-      "default": false,
-      "title": "Federation Discovery",
-      "type": "boolean"
-    },
-    "federation_enabled": {
-      "default": true,
-      "title": "Federation Enabled",
-      "type": "boolean"
-    },
-    "federation_peers": {
-      "anyOf": [
-        {
-          "items": {
-            "format": "uri",
-            "maxLength": 2083,
-            "minLength": 1,
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "env": "FEDERATION_PEERS",
-      "title": "Federation Peers"
-    },
-    "federation_sync_interval": {
-      "default": 300,
-      "title": "Federation Sync Interval",
-      "type": "integer"
-    },
-    "federation_timeout": {
-      "default": 120,
-      "title": "Federation Timeout",
-      "type": "integer"
-    },
-    "filelock_name": {
-      "default": "gateway_service_leader.lock",
-      "title": "Filelock Name",
+    "static_dir": {
+      "default": "/home/cmihai/github/mcp-context-forge/mcpgateway/static",
+      "format": "path",
+      "title": "Static Dir",
       "type": "string"
     },
-    "gateway_tool_name_separator": {
-      "default": "-",
-      "title": "Gateway Tool Name Separator",
+    "app_root_path": {
+      "default": "",
+      "title": "App Root Path",
       "type": "string"
     },
-    "gateway_validation_timeout": {
-      "default": 5,
-      "title": "Gateway Validation Timeout",
-      "type": "integer"
-    },
-    "health_check_interval": {
-      "default": 60,
-      "title": "Health Check Interval",
-      "type": "integer"
-    },
-    "health_check_timeout": {
-      "default": 10,
-      "title": "Health Check Timeout",
-      "type": "integer"
-    },
-    "host": {
-      "default": "127.0.0.1",
-      "title": "Host",
+    "protocol_version": {
+      "default": "2025-03-26",
+      "title": "Protocol Version",
       "type": "string"
     },
-    "hsts_enabled": {
-      "default": true,
-      "env": "HSTS_ENABLED",
-      "title": "Hsts Enabled",
-      "type": "boolean"
+    "basic_auth_user": {
+      "default": "admin",
+      "title": "Basic Auth User",
+      "type": "string"
     },
-    "hsts_include_subdomains": {
-      "default": true,
-      "env": "HSTS_INCLUDE_SUBDOMAINS",
-      "title": "Hsts Include Subdomains",
-      "type": "boolean"
-    },
-    "hsts_max_age": {
-      "default": 31536000,
-      "env": "HSTS_MAX_AGE",
-      "title": "Hsts Max Age",
-      "type": "integer"
-    },
-    "invitation_expiry_days": {
-      "default": 7,
-      "description": "Number of days before team invitations expire",
-      "title": "Invitation Expiry Days",
-      "type": "integer"
-    },
-    "json_response_enabled": {
-      "default": true,
-      "title": "Json Response Enabled",
-      "type": "boolean"
+    "basic_auth_password": {
+      "default": "changeme",
+      "title": "Basic Auth Password",
+      "type": "string"
     },
     "jwt_algorithm": {
       "default": "HS256",
       "title": "Jwt Algorithm",
       "type": "string"
     },
-    "jwt_audience": {
-      "default": "mcpgateway-api",
-      "title": "Jwt Audience",
-      "type": "string"
+    "jwt_secret_key": {
+      "default": "my-test-key",
+      "env": "JWT_SECRET_KEY",
+      "format": "password",
+      "title": "Jwt Secret Key",
+      "type": "string",
+      "writeOnly": true
     },
-    "jwt_audience_verification": {
-      "default": true,
-      "title": "Jwt Audience Verification",
-      "type": "boolean"
-    },
-    "jwt_issuer": {
-      "default": "mcpgateway",
-      "title": "Jwt Issuer",
+    "jwt_public_key_path": {
+      "default": "",
+      "title": "Jwt Public Key Path",
       "type": "string"
     },
     "jwt_private_key_path": {
@@ -338,575 +85,35 @@
       "title": "Jwt Private Key Path",
       "type": "string"
     },
-    "jwt_public_key_path": {
-      "default": "",
-      "title": "Jwt Public Key Path",
+    "jwt_audience": {
+      "default": "mcpgateway-api",
+      "title": "Jwt Audience",
       "type": "string"
     },
-    "jwt_secret_key": {
-      "env": "JWT_SECRET_KEY",
-      "format": "password",
-      "title": "Jwt Secret Key",
-      "type": "string",
-      "writeOnly": true
-    },
-    "log_backup_count": {
-      "default": 5,
-      "title": "Log Backup Count",
-      "type": "integer"
-    },
-    "log_buffer_size_mb": {
-      "default": 1.0,
-      "title": "Log Buffer Size Mb",
-      "type": "number"
-    },
-    "log_file": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Log File"
-    },
-    "log_filemode": {
-      "default": "a+",
-      "title": "Log Filemode",
+    "jwt_issuer": {
+      "default": "mcpgateway",
+      "title": "Jwt Issuer",
       "type": "string"
     },
-    "log_folder": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Log Folder"
-    },
-    "log_format": {
-      "default": "json",
-      "enum": [
-        "json",
-        "text"
-      ],
-      "title": "Log Format",
-      "type": "string"
-    },
-    "log_level": {
-      "default": "INFO",
-      "enum": [
-        "DEBUG",
-        "INFO",
-        "WARNING",
-        "ERROR",
-        "CRITICAL"
-      ],
-      "title": "Log Level",
-      "type": "string"
-    },
-    "log_max_size_mb": {
-      "default": 1,
-      "title": "Log Max Size Mb",
-      "type": "integer"
-    },
-    "log_rotation_enabled": {
-      "default": false,
-      "title": "Log Rotation Enabled",
-      "type": "boolean"
-    },
-    "log_to_file": {
-      "default": false,
-      "title": "Log To File",
-      "type": "boolean"
-    },
-    "masked_auth_value": {
-      "default": "*****",
-      "title": "Masked Auth Value",
-      "type": "string"
-    },
-    "max_failed_login_attempts": {
-      "default": 5,
-      "description": "Maximum failed login attempts before account lockout",
-      "title": "Max Failed Login Attempts",
-      "type": "integer"
-    },
-    "max_members_per_team": {
-      "default": 100,
-      "description": "Maximum number of members per team",
-      "title": "Max Members Per Team",
-      "type": "integer"
-    },
-    "max_prompt_size": {
-      "default": 102400,
-      "title": "Max Prompt Size",
-      "type": "integer"
-    },
-    "max_resource_size": {
-      "default": 10485760,
-      "title": "Max Resource Size",
-      "type": "integer"
-    },
-    "max_teams_per_user": {
-      "default": 50,
-      "description": "Maximum number of teams a user can belong to",
-      "title": "Max Teams Per User",
-      "type": "integer"
-    },
-    "max_tool_retries": {
-      "default": 3,
-      "title": "Max Tool Retries",
-      "type": "integer"
-    },
-    "mcp_client_auth_enabled": {
+    "jwt_audience_verification": {
       "default": true,
-      "description": "Enable JWT authentication for MCP client operations",
-      "title": "Mcp Client Auth Enabled",
+      "title": "Jwt Audience Verification",
       "type": "boolean"
     },
-    "mcpgateway_a2a_default_timeout": {
-      "default": 30,
-      "title": "Mcpgateway A2A Default Timeout",
-      "type": "integer"
-    },
-    "mcpgateway_a2a_enabled": {
+    "auth_required": {
       "default": true,
-      "title": "Mcpgateway A2A Enabled",
+      "title": "Auth Required",
       "type": "boolean"
     },
-    "mcpgateway_a2a_max_agents": {
-      "default": 100,
-      "title": "Mcpgateway A2A Max Agents",
+    "token_expiry": {
+      "default": 10080,
+      "title": "Token Expiry",
       "type": "integer"
-    },
-    "mcpgateway_a2a_max_retries": {
-      "default": 3,
-      "title": "Mcpgateway A2A Max Retries",
-      "type": "integer"
-    },
-    "mcpgateway_a2a_metrics_enabled": {
-      "default": true,
-      "title": "Mcpgateway A2A Metrics Enabled",
-      "type": "boolean"
-    },
-    "mcpgateway_admin_api_enabled": {
-      "default": false,
-      "title": "Mcpgateway Admin Api Enabled",
-      "type": "boolean"
-    },
-    "mcpgateway_bulk_import_enabled": {
-      "default": true,
-      "title": "Mcpgateway Bulk Import Enabled",
-      "type": "boolean"
-    },
-    "mcpgateway_bulk_import_max_tools": {
-      "default": 200,
-      "title": "Mcpgateway Bulk Import Max Tools",
-      "type": "integer"
-    },
-    "mcpgateway_bulk_import_rate_limit": {
-      "default": 10,
-      "title": "Mcpgateway Bulk Import Rate Limit",
-      "type": "integer"
-    },
-    "mcpgateway_ui_enabled": {
-      "default": false,
-      "title": "Mcpgateway Ui Enabled",
-      "type": "boolean"
-    },
-    "mcpgateway_ui_tool_test_timeout": {
-      "default": 60000,
-      "description": "Tool test timeout in milliseconds for the admin UI",
-      "title": "Mcpgateway Ui Tool Test Timeout",
-      "type": "integer"
-    },
-    "message_ttl": {
-      "default": 600,
-      "title": "Message Ttl",
-      "type": "integer"
-    },
-    "min_password_length": {
-      "default": 12,
-      "title": "Min Password Length",
-      "type": "integer"
-    },
-    "min_secret_length": {
-      "default": 32,
-      "title": "Min Secret Length",
-      "type": "integer"
-    },
-    "oauth_max_retries": {
-      "default": 3,
-      "description": "Maximum retries for OAuth token requests",
-      "title": "Oauth Max Retries",
-      "type": "integer"
-    },
-    "oauth_request_timeout": {
-      "default": 30,
-      "description": "OAuth request timeout in seconds",
-      "title": "Oauth Request Timeout",
-      "type": "integer"
-    },
-    "otel_bsp_max_export_batch_size": {
-      "default": 512,
-      "description": "Max export batch size",
-      "title": "Otel Bsp Max Export Batch Size",
-      "type": "integer"
-    },
-    "otel_bsp_max_queue_size": {
-      "default": 2048,
-      "description": "Max queue size for batch span processor",
-      "title": "Otel Bsp Max Queue Size",
-      "type": "integer"
-    },
-    "otel_bsp_schedule_delay": {
-      "default": 5000,
-      "description": "Schedule delay in milliseconds",
-      "title": "Otel Bsp Schedule Delay",
-      "type": "integer"
-    },
-    "otel_enable_observability": {
-      "default": true,
-      "description": "Enable OpenTelemetry observability",
-      "title": "Otel Enable Observability",
-      "type": "boolean"
-    },
-    "otel_exporter_jaeger_endpoint": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Jaeger endpoint",
-      "title": "Otel Exporter Jaeger Endpoint"
-    },
-    "otel_exporter_otlp_endpoint": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "OTLP endpoint (e.g., http://localhost:4317)",
-      "title": "Otel Exporter Otlp Endpoint"
-    },
-    "otel_exporter_otlp_headers": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "OTLP headers (comma-separated key=value)",
-      "title": "Otel Exporter Otlp Headers"
-    },
-    "otel_exporter_otlp_insecure": {
-      "default": true,
-      "description": "Use insecure connection for OTLP",
-      "title": "Otel Exporter Otlp Insecure",
-      "type": "boolean"
-    },
-    "otel_exporter_otlp_protocol": {
-      "default": "grpc",
-      "description": "OTLP protocol: grpc or http",
-      "title": "Otel Exporter Otlp Protocol",
-      "type": "string"
-    },
-    "otel_exporter_zipkin_endpoint": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Zipkin endpoint",
-      "title": "Otel Exporter Zipkin Endpoint"
-    },
-    "otel_resource_attributes": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Resource attributes (comma-separated key=value)",
-      "title": "Otel Resource Attributes"
-    },
-    "otel_service_name": {
-      "default": "mcp-gateway",
-      "description": "Service name for traces",
-      "title": "Otel Service Name",
-      "type": "string"
-    },
-    "otel_traces_exporter": {
-      "default": "otlp",
-      "description": "Traces exporter: otlp, jaeger, zipkin, console, none",
-      "title": "Otel Traces Exporter",
-      "type": "string"
-    },
-    "password_min_length": {
-      "default": 8,
-      "description": "Minimum password length",
-      "title": "Password Min Length",
-      "type": "integer"
-    },
-    "password_require_lowercase": {
-      "default": false,
-      "description": "Require lowercase letters in passwords",
-      "title": "Password Require Lowercase",
-      "type": "boolean"
-    },
-    "password_require_numbers": {
-      "default": false,
-      "description": "Require numbers in passwords",
-      "title": "Password Require Numbers",
-      "type": "boolean"
-    },
-    "password_require_special": {
-      "default": false,
-      "description": "Require special characters in passwords",
-      "title": "Password Require Special",
-      "type": "boolean"
-    },
-    "password_require_uppercase": {
-      "default": false,
-      "description": "Require uppercase letters in passwords",
-      "title": "Password Require Uppercase",
-      "type": "boolean"
-    },
-    "personal_team_prefix": {
-      "default": "personal",
-      "description": "Personal team naming prefix",
-      "title": "Personal Team Prefix",
-      "type": "string"
-    },
-    "platform_admin_email": {
-      "default": "admin@example.com",
-      "description": "Platform administrator email address",
-      "title": "Platform Admin Email",
-      "type": "string"
-    },
-    "platform_admin_full_name": {
-      "default": "Platform Administrator",
-      "description": "Platform administrator full name",
-      "title": "Platform Admin Full Name",
-      "type": "string"
-    },
-    "platform_admin_password": {
-      "default": "changeme",
-      "description": "Platform administrator password",
-      "title": "Platform Admin Password",
-      "type": "string"
-    },
-    "plugin_config_file": {
-      "default": "plugins/config.yaml",
-      "description": "Path to main plugin configuration file",
-      "title": "Plugin Config File",
-      "type": "string"
-    },
-    "plugins_cli_completion": {
-      "default": false,
-      "description": "Enable auto-completion for plugins CLI",
-      "title": "Plugins Cli Completion",
-      "type": "boolean"
-    },
-    "plugins_cli_markup_mode": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Set markup mode for plugins CLI",
-      "title": "Plugins Cli Markup Mode"
-    },
-    "plugins_enabled": {
-      "default": false,
-      "description": "Enable the plugin framework",
-      "title": "Plugins Enabled",
-      "type": "boolean"
-    },
-    "port": {
-      "default": 4444,
-      "env": "PORT",
-      "exclusiveMinimum": 0,
-      "title": "Port",
-      "type": "integer"
-    },
-    "prompt_cache_size": {
-      "default": 100,
-      "title": "Prompt Cache Size",
-      "type": "integer"
-    },
-    "prompt_render_timeout": {
-      "default": 10,
-      "title": "Prompt Render Timeout",
-      "type": "integer"
-    },
-    "protocol_version": {
-      "default": "2025-03-26",
-      "title": "Protocol Version",
-      "type": "string"
-    },
-    "proxy_user_header": {
-      "default": "X-Authenticated-User",
-      "description": "Header containing authenticated username from proxy",
-      "title": "Proxy User Header",
-      "type": "string"
-    },
-    "redis_max_retries": {
-      "default": 3,
-      "title": "Redis Max Retries",
-      "type": "integer"
-    },
-    "redis_retry_interval_ms": {
-      "default": 2000,
-      "title": "Redis Retry Interval Ms",
-      "type": "integer"
-    },
-    "redis_url": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": "redis://localhost:6379/0",
-      "title": "Redis Url"
-    },
-    "reload": {
-      "default": false,
-      "title": "Reload",
-      "type": "boolean"
-    },
-    "remove_server_headers": {
-      "default": true,
-      "env": "REMOVE_SERVER_HEADERS",
-      "title": "Remove Server Headers",
-      "type": "boolean"
-    },
-    "require_email_verification_for_invites": {
-      "default": true,
-      "description": "Require email verification for team invitations",
-      "title": "Require Email Verification For Invites",
-      "type": "boolean"
-    },
-    "require_strong_secrets": {
-      "default": false,
-      "title": "Require Strong Secrets",
-      "type": "boolean"
     },
     "require_token_expiration": {
       "default": false,
       "description": "Require all JWT tokens to have expiration claims",
       "title": "Require Token Expiration",
-      "type": "boolean"
-    },
-    "resource_cache_size": {
-      "default": 1000,
-      "title": "Resource Cache Size",
-      "type": "integer"
-    },
-    "resource_cache_ttl": {
-      "default": 3600,
-      "title": "Resource Cache Ttl",
-      "type": "integer"
-    },
-    "retry_base_delay": {
-      "default": 1.0,
-      "title": "Retry Base Delay",
-      "type": "number"
-    },
-    "retry_jitter_max": {
-      "default": 0.5,
-      "title": "Retry Jitter Max",
-      "type": "number"
-    },
-    "retry_max_attempts": {
-      "default": 3,
-      "title": "Retry Max Attempts",
-      "type": "integer"
-    },
-    "retry_max_delay": {
-      "default": 60,
-      "title": "Retry Max Delay",
-      "type": "integer"
-    },
-    "secure_cookies": {
-      "default": true,
-      "env": "SECURE_COOKIES",
-      "title": "Secure Cookies",
-      "type": "boolean"
-    },
-    "security_headers_enabled": {
-      "default": true,
-      "env": "SECURITY_HEADERS_ENABLED",
-      "title": "Security Headers Enabled",
-      "type": "boolean"
-    },
-    "session_ttl": {
-      "default": 3600,
-      "title": "Session Ttl",
-      "type": "integer"
-    },
-    "skip_ssl_verify": {
-      "default": false,
-      "title": "Skip Ssl Verify",
-      "type": "boolean"
-    },
-    "sse_keepalive_enabled": {
-      "default": true,
-      "title": "Sse Keepalive Enabled",
-      "type": "boolean"
-    },
-    "sse_keepalive_interval": {
-      "default": 30,
-      "title": "Sse Keepalive Interval",
-      "type": "integer"
-    },
-    "sse_retry_timeout": {
-      "default": 5000,
-      "title": "Sse Retry Timeout",
-      "type": "integer"
-    },
-    "sso_auto_admin_domains": {
-      "description": "Admin domains (CSV or JSON list)",
-      "items": {
-        "type": "string"
-      },
-      "title": "Sso Auto Admin Domains",
-      "type": "array"
-    },
-    "sso_auto_create_users": {
-      "default": true,
-      "description": "Automatically create users from SSO providers",
-      "title": "Sso Auto Create Users",
       "type": "boolean"
     },
     "sso_enabled": {
@@ -915,13 +122,11 @@
       "title": "Sso Enabled",
       "type": "boolean"
     },
-    "sso_github_admin_orgs": {
-      "description": "GitHub orgs granting admin (CSV/JSON)",
-      "items": {
-        "type": "string"
-      },
-      "title": "Sso Github Admin Orgs",
-      "type": "array"
+    "sso_github_enabled": {
+      "default": false,
+      "description": "Enable GitHub OAuth authentication",
+      "title": "Sso Github Enabled",
+      "type": "boolean"
     },
     "sso_github_client_id": {
       "anyOf": [
@@ -949,19 +154,11 @@
       "description": "GitHub OAuth client secret",
       "title": "Sso Github Client Secret"
     },
-    "sso_github_enabled": {
+    "sso_google_enabled": {
       "default": false,
-      "description": "Enable GitHub OAuth authentication",
-      "title": "Sso Github Enabled",
+      "description": "Enable Google OAuth authentication",
+      "title": "Sso Google Enabled",
       "type": "boolean"
-    },
-    "sso_google_admin_domains": {
-      "description": "Google admin domains (CSV/JSON)",
-      "items": {
-        "type": "string"
-      },
-      "title": "Sso Google Admin Domains",
-      "type": "array"
     },
     "sso_google_client_id": {
       "anyOf": [
@@ -989,10 +186,10 @@
       "description": "Google OAuth client secret",
       "title": "Sso Google Client Secret"
     },
-    "sso_google_enabled": {
+    "sso_ibm_verify_enabled": {
       "default": false,
-      "description": "Enable Google OAuth authentication",
-      "title": "Sso Google Enabled",
+      "description": "Enable IBM Security Verify OIDC authentication",
+      "title": "Sso Ibm Verify Enabled",
       "type": "boolean"
     },
     "sso_ibm_verify_client_id": {
@@ -1021,12 +218,6 @@
       "description": "IBM Security Verify client secret",
       "title": "Sso Ibm Verify Client Secret"
     },
-    "sso_ibm_verify_enabled": {
-      "default": false,
-      "description": "Enable IBM Security Verify OIDC authentication",
-      "title": "Sso Ibm Verify Enabled",
-      "type": "boolean"
-    },
     "sso_ibm_verify_issuer": {
       "anyOf": [
         {
@@ -1040,24 +231,11 @@
       "description": "IBM Security Verify OIDC issuer URL",
       "title": "Sso Ibm Verify Issuer"
     },
-    "sso_issuers": {
-      "anyOf": [
-        {
-          "items": {
-            "format": "uri",
-            "maxLength": 2083,
-            "minLength": 1,
-            "type": "string"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "env": "SSO_ISSUERS",
-      "title": "Sso Issuers"
+    "sso_okta_enabled": {
+      "default": false,
+      "description": "Enable Okta OIDC authentication",
+      "title": "Sso Okta Enabled",
+      "type": "boolean"
     },
     "sso_okta_client_id": {
       "anyOf": [
@@ -1085,12 +263,6 @@
       "description": "Okta client secret",
       "title": "Sso Okta Client Secret"
     },
-    "sso_okta_enabled": {
-      "default": false,
-      "description": "Enable Okta OIDC authentication",
-      "title": "Sso Okta Enabled",
-      "type": "boolean"
-    },
     "sso_okta_issuer": {
       "anyOf": [
         {
@@ -1104,16 +276,259 @@
       "description": "Okta issuer URL",
       "title": "Sso Okta Issuer"
     },
-    "sso_preserve_admin_auth": {
-      "default": true,
-      "description": "Preserve local admin authentication when SSO is enabled",
-      "title": "Sso Preserve Admin Auth",
+    "sso_keycloak_enabled": {
+      "default": false,
+      "description": "Enable Keycloak OIDC authentication",
+      "title": "Sso Keycloak Enabled",
       "type": "boolean"
     },
-    "sso_require_admin_approval": {
+    "sso_keycloak_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak base URL (e.g., https://keycloak.example.com)",
+      "title": "Sso Keycloak Base Url"
+    },
+    "sso_keycloak_realm": {
+      "default": "master",
+      "description": "Keycloak realm name",
+      "title": "Sso Keycloak Realm",
+      "type": "string"
+    },
+    "sso_keycloak_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client ID",
+      "title": "Sso Keycloak Client Id"
+    },
+    "sso_keycloak_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Keycloak client secret",
+      "title": "Sso Keycloak Client Secret"
+    },
+    "sso_keycloak_map_realm_roles": {
+      "default": true,
+      "description": "Map Keycloak realm roles to gateway teams",
+      "title": "Sso Keycloak Map Realm Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_map_client_roles": {
       "default": false,
-      "description": "Require admin approval for new SSO registrations",
-      "title": "Sso Require Admin Approval",
+      "description": "Map Keycloak client roles to gateway RBAC",
+      "title": "Sso Keycloak Map Client Roles",
+      "type": "boolean"
+    },
+    "sso_keycloak_username_claim": {
+      "default": "preferred_username",
+      "description": "JWT claim for username",
+      "title": "Sso Keycloak Username Claim",
+      "type": "string"
+    },
+    "sso_keycloak_email_claim": {
+      "default": "email",
+      "description": "JWT claim for email",
+      "title": "Sso Keycloak Email Claim",
+      "type": "string"
+    },
+    "sso_keycloak_groups_claim": {
+      "default": "groups",
+      "description": "JWT claim for groups/roles",
+      "title": "Sso Keycloak Groups Claim",
+      "type": "string"
+    },
+    "sso_entra_enabled": {
+      "default": false,
+      "description": "Enable Microsoft Entra ID OIDC authentication",
+      "title": "Sso Entra Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client ID",
+      "title": "Sso Entra Client Id"
+    },
+    "sso_entra_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID client secret",
+      "title": "Sso Entra Client Secret"
+    },
+    "sso_entra_tenant_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Microsoft Entra ID tenant ID",
+      "title": "Sso Entra Tenant Id"
+    },
+    "sso_generic_enabled": {
+      "default": false,
+      "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
+      "title": "Sso Generic Enabled",
+      "type": "boolean"
+    },
+    "sso_generic_provider_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Provider ID (e.g., 'keycloak', 'auth0', 'authentik')",
+      "title": "Sso Generic Provider Id"
+    },
+    "sso_generic_display_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Display name shown on login page",
+      "title": "Sso Generic Display Name"
+    },
+    "sso_generic_client_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client ID",
+      "title": "Sso Generic Client Id"
+    },
+    "sso_generic_client_secret": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Generic OIDC client secret",
+      "title": "Sso Generic Client Secret"
+    },
+    "sso_generic_authorization_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Authorization endpoint URL",
+      "title": "Sso Generic Authorization Url"
+    },
+    "sso_generic_token_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Token endpoint URL",
+      "title": "Sso Generic Token Url"
+    },
+    "sso_generic_userinfo_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Userinfo endpoint URL",
+      "title": "Sso Generic Userinfo Url"
+    },
+    "sso_generic_issuer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OIDC issuer URL",
+      "title": "Sso Generic Issuer"
+    },
+    "sso_generic_scope": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "openid profile email",
+      "description": "OAuth scopes (space-separated)",
+      "title": "Sso Generic Scope"
+    },
+    "sso_auto_create_users": {
+      "default": true,
+      "description": "Automatically create users from SSO providers",
+      "title": "Sso Auto Create Users",
       "type": "boolean"
     },
     "sso_trusted_domains": {
@@ -1124,42 +539,47 @@
       "title": "Sso Trusted Domains",
       "type": "array"
     },
-    "static_dir": {
-      "default": "/home/veeresh/ibm_mcp/mcp-context-forge/mcpgateway/static",
-      "format": "path",
-      "title": "Static Dir",
-      "type": "string"
+    "sso_preserve_admin_auth": {
+      "default": true,
+      "description": "Preserve local admin authentication when SSO is enabled",
+      "title": "Sso Preserve Admin Auth",
+      "type": "boolean"
     },
-    "templates_dir": {
-      "default": "/home/veeresh/ibm_mcp/mcp-context-forge/mcpgateway/templates",
-      "format": "path",
-      "title": "Templates Dir",
-      "type": "string"
+    "sso_auto_admin_domains": {
+      "description": "Admin domains (CSV or JSON list)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Auto Admin Domains",
+      "type": "array"
     },
-    "token_expiry": {
-      "default": 10080,
-      "title": "Token Expiry",
-      "type": "integer"
+    "sso_github_admin_orgs": {
+      "description": "GitHub orgs granting admin (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Github Admin Orgs",
+      "type": "array"
     },
-    "tool_concurrent_limit": {
-      "default": 10,
-      "title": "Tool Concurrent Limit",
-      "type": "integer"
+    "sso_google_admin_domains": {
+      "description": "Google admin domains (CSV/JSON)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Sso Google Admin Domains",
+      "type": "array"
     },
-    "tool_rate_limit": {
-      "default": 100,
-      "title": "Tool Rate Limit",
-      "type": "integer"
+    "sso_require_admin_approval": {
+      "default": false,
+      "description": "Require admin approval for new SSO registrations",
+      "title": "Sso Require Admin Approval",
+      "type": "boolean"
     },
-    "tool_timeout": {
-      "default": 60,
-      "title": "Tool Timeout",
-      "type": "integer"
-    },
-    "transport_type": {
-      "default": "all",
-      "title": "Transport Type",
-      "type": "string"
+    "mcp_client_auth_enabled": {
+      "default": true,
+      "description": "Enable JWT authentication for MCP client operations",
+      "title": "Mcp Client Auth Enabled",
+      "type": "boolean"
     },
     "trust_proxy_auth": {
       "default": false,
@@ -1167,15 +587,1086 @@
       "title": "Trust Proxy Auth",
       "type": "boolean"
     },
+    "proxy_user_header": {
+      "default": "X-Authenticated-User",
+      "description": "Header containing authenticated username from proxy",
+      "title": "Proxy User Header",
+      "type": "string"
+    },
+    "auth_encryption_secret": {
+      "default": "**********",
+      "env": "AUTH_ENCRYPTION_SECRET",
+      "format": "password",
+      "title": "Auth Encryption Secret",
+      "type": "string",
+      "writeOnly": true
+    },
+    "oauth_request_timeout": {
+      "default": 30,
+      "description": "OAuth request timeout in seconds",
+      "title": "Oauth Request Timeout",
+      "type": "integer"
+    },
+    "oauth_max_retries": {
+      "default": 3,
+      "description": "Maximum retries for OAuth token requests",
+      "title": "Oauth Max Retries",
+      "type": "integer"
+    },
+    "oauth_default_timeout": {
+      "default": 3600,
+      "description": "Default OAuth token timeout in seconds",
+      "title": "Oauth Default Timeout",
+      "type": "integer"
+    },
+    "dcr_enabled": {
+      "default": true,
+      "description": "Enable Dynamic Client Registration (RFC 7591) - gateway acts as DCR client",
+      "title": "Dcr Enabled",
+      "type": "boolean"
+    },
+    "dcr_auto_register_on_missing_credentials": {
+      "default": true,
+      "description": "Automatically register with AS when gateway has issuer but no client_id",
+      "title": "Dcr Auto Register On Missing Credentials",
+      "type": "boolean"
+    },
+    "dcr_default_scopes": {
+      "default": [
+        "mcp:read"
+      ],
+      "description": "Default MCP scopes to request during DCR",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Default Scopes",
+      "type": "array"
+    },
+    "dcr_allowed_issuers": {
+      "description": "Optional allowlist of issuer URLs for DCR (empty = allow any)",
+      "items": {
+        "type": "string"
+      },
+      "title": "Dcr Allowed Issuers",
+      "type": "array"
+    },
+    "dcr_token_endpoint_auth_method": {
+      "default": "client_secret_basic",
+      "description": "Token endpoint auth method for DCR (client_secret_basic or client_secret_post)",
+      "title": "Dcr Token Endpoint Auth Method",
+      "type": "string"
+    },
+    "dcr_metadata_cache_ttl": {
+      "default": 3600,
+      "description": "AS metadata cache TTL in seconds (RFC 8414 discovery)",
+      "title": "Dcr Metadata Cache Ttl",
+      "type": "integer"
+    },
+    "dcr_client_name_template": {
+      "default": "MCP Gateway ({gateway_name})",
+      "description": "Template for client_name in DCR requests",
+      "title": "Dcr Client Name Template",
+      "type": "string"
+    },
+    "oauth_discovery_enabled": {
+      "default": true,
+      "description": "Enable OAuth AS metadata discovery (RFC 8414)",
+      "title": "Oauth Discovery Enabled",
+      "type": "boolean"
+    },
+    "oauth_preferred_code_challenge_method": {
+      "default": "S256",
+      "description": "Preferred PKCE code challenge method (S256 or plain)",
+      "title": "Oauth Preferred Code Challenge Method",
+      "type": "string"
+    },
+    "email_auth_enabled": {
+      "default": true,
+      "description": "Enable email-based authentication",
+      "title": "Email Auth Enabled",
+      "type": "boolean"
+    },
+    "platform_admin_email": {
+      "default": "admin@example.com",
+      "description": "Platform administrator email address",
+      "title": "Platform Admin Email",
+      "type": "string"
+    },
+    "platform_admin_password": {
+      "default": "changeme",
+      "description": "Platform administrator password",
+      "title": "Platform Admin Password",
+      "type": "string"
+    },
+    "platform_admin_full_name": {
+      "default": "Platform Administrator",
+      "description": "Platform administrator full name",
+      "title": "Platform Admin Full Name",
+      "type": "string"
+    },
+    "argon2id_time_cost": {
+      "default": 3,
+      "description": "Argon2id time cost (number of iterations)",
+      "title": "Argon2Id Time Cost",
+      "type": "integer"
+    },
+    "argon2id_memory_cost": {
+      "default": 65536,
+      "description": "Argon2id memory cost in KiB",
+      "title": "Argon2Id Memory Cost",
+      "type": "integer"
+    },
+    "argon2id_parallelism": {
+      "default": 1,
+      "description": "Argon2id parallelism (number of threads)",
+      "title": "Argon2Id Parallelism",
+      "type": "integer"
+    },
+    "password_min_length": {
+      "default": 8,
+      "description": "Minimum password length",
+      "title": "Password Min Length",
+      "type": "integer"
+    },
+    "password_require_uppercase": {
+      "default": false,
+      "description": "Require uppercase letters in passwords",
+      "title": "Password Require Uppercase",
+      "type": "boolean"
+    },
+    "password_require_lowercase": {
+      "default": false,
+      "description": "Require lowercase letters in passwords",
+      "title": "Password Require Lowercase",
+      "type": "boolean"
+    },
+    "password_require_numbers": {
+      "default": false,
+      "description": "Require numbers in passwords",
+      "title": "Password Require Numbers",
+      "type": "boolean"
+    },
+    "password_require_special": {
+      "default": false,
+      "description": "Require special characters in passwords",
+      "title": "Password Require Special",
+      "type": "boolean"
+    },
+    "max_failed_login_attempts": {
+      "default": 5,
+      "description": "Maximum failed login attempts before account lockout",
+      "title": "Max Failed Login Attempts",
+      "type": "integer"
+    },
+    "account_lockout_duration_minutes": {
+      "default": 30,
+      "description": "Account lockout duration in minutes",
+      "title": "Account Lockout Duration Minutes",
+      "type": "integer"
+    },
+    "auto_create_personal_teams": {
+      "default": true,
+      "description": "Enable automatic personal team creation for new users",
+      "title": "Auto Create Personal Teams",
+      "type": "boolean"
+    },
+    "personal_team_prefix": {
+      "default": "personal",
+      "description": "Personal team naming prefix",
+      "title": "Personal Team Prefix",
+      "type": "string"
+    },
+    "max_teams_per_user": {
+      "default": 50,
+      "description": "Maximum number of teams a user can belong to",
+      "title": "Max Teams Per User",
+      "type": "integer"
+    },
+    "max_members_per_team": {
+      "default": 100,
+      "description": "Maximum number of members per team",
+      "title": "Max Members Per Team",
+      "type": "integer"
+    },
+    "invitation_expiry_days": {
+      "default": 7,
+      "description": "Number of days before team invitations expire",
+      "title": "Invitation Expiry Days",
+      "type": "integer"
+    },
+    "require_email_verification_for_invites": {
+      "default": true,
+      "description": "Require email verification for team invitations",
+      "title": "Require Email Verification For Invites",
+      "type": "boolean"
+    },
+    "mcpgateway_ui_enabled": {
+      "default": false,
+      "title": "Mcpgateway Ui Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_admin_api_enabled": {
+      "default": false,
+      "title": "Mcpgateway Admin Api Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_bulk_import_enabled": {
+      "default": true,
+      "title": "Mcpgateway Bulk Import Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_bulk_import_max_tools": {
+      "default": 200,
+      "title": "Mcpgateway Bulk Import Max Tools",
+      "type": "integer"
+    },
+    "mcpgateway_bulk_import_rate_limit": {
+      "default": 10,
+      "title": "Mcpgateway Bulk Import Rate Limit",
+      "type": "integer"
+    },
+    "mcpgateway_ui_tool_test_timeout": {
+      "default": 60000,
+      "description": "Tool test timeout in milliseconds for the admin UI",
+      "title": "Mcpgateway Ui Tool Test Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_enabled": {
+      "default": true,
+      "title": "Mcpgateway A2A Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_a2a_max_agents": {
+      "default": 100,
+      "title": "Mcpgateway A2A Max Agents",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_default_timeout": {
+      "default": 30,
+      "title": "Mcpgateway A2A Default Timeout",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_max_retries": {
+      "default": 3,
+      "title": "Mcpgateway A2A Max Retries",
+      "type": "integer"
+    },
+    "mcpgateway_a2a_metrics_enabled": {
+      "default": true,
+      "title": "Mcpgateway A2A Metrics Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_enabled": {
+      "default": true,
+      "description": "Enable MCP server catalog feature",
+      "title": "Mcpgateway Catalog Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_file": {
+      "default": "mcp-catalog.yml",
+      "description": "Path to catalog configuration file",
+      "title": "Mcpgateway Catalog File",
+      "type": "string"
+    },
+    "mcpgateway_catalog_auto_health_check": {
+      "default": true,
+      "description": "Automatically health check catalog servers",
+      "title": "Mcpgateway Catalog Auto Health Check",
+      "type": "boolean"
+    },
+    "mcpgateway_catalog_cache_ttl": {
+      "default": 3600,
+      "description": "Catalog cache TTL in seconds",
+      "title": "Mcpgateway Catalog Cache Ttl",
+      "type": "integer"
+    },
+    "mcpgateway_catalog_page_size": {
+      "default": 100,
+      "description": "Number of catalog servers per page",
+      "title": "Mcpgateway Catalog Page Size",
+      "type": "integer"
+    },
+    "skip_ssl_verify": {
+      "default": false,
+      "title": "Skip Ssl Verify",
+      "type": "boolean"
+    },
+    "cors_enabled": {
+      "default": true,
+      "title": "Cors Enabled",
+      "type": "boolean"
+    },
+    "environment": {
+      "default": "development",
+      "enum": [
+        "development",
+        "staging",
+        "production"
+      ],
+      "env": "ENVIRONMENT",
+      "title": "Environment",
+      "type": "string"
+    },
+    "app_domain": {
+      "default": "http://localhost:4444",
+      "env": "APP_DOMAIN",
+      "format": "uri",
+      "maxLength": 2083,
+      "minLength": 1,
+      "title": "App Domain",
+      "type": "string"
+    },
+    "secure_cookies": {
+      "default": true,
+      "env": "SECURE_COOKIES",
+      "title": "Secure Cookies",
+      "type": "boolean"
+    },
+    "cookie_samesite": {
+      "default": "lax",
+      "env": "COOKIE_SAMESITE",
+      "title": "Cookie Samesite",
+      "type": "string"
+    },
+    "cors_allow_credentials": {
+      "default": true,
+      "env": "CORS_ALLOW_CREDENTIALS",
+      "title": "Cors Allow Credentials",
+      "type": "boolean"
+    },
+    "security_headers_enabled": {
+      "default": true,
+      "env": "SECURITY_HEADERS_ENABLED",
+      "title": "Security Headers Enabled",
+      "type": "boolean"
+    },
+    "x_frame_options": {
+      "default": "DENY",
+      "env": "X_FRAME_OPTIONS",
+      "title": "X Frame Options",
+      "type": "string"
+    },
+    "x_content_type_options_enabled": {
+      "default": true,
+      "env": "X_CONTENT_TYPE_OPTIONS_ENABLED",
+      "title": "X Content Type Options Enabled",
+      "type": "boolean"
+    },
+    "x_xss_protection_enabled": {
+      "default": true,
+      "env": "X_XSS_PROTECTION_ENABLED",
+      "title": "X Xss Protection Enabled",
+      "type": "boolean"
+    },
+    "x_download_options_enabled": {
+      "default": true,
+      "env": "X_DOWNLOAD_OPTIONS_ENABLED",
+      "title": "X Download Options Enabled",
+      "type": "boolean"
+    },
+    "hsts_enabled": {
+      "default": true,
+      "env": "HSTS_ENABLED",
+      "title": "Hsts Enabled",
+      "type": "boolean"
+    },
+    "hsts_max_age": {
+      "default": 31536000,
+      "env": "HSTS_MAX_AGE",
+      "title": "Hsts Max Age",
+      "type": "integer"
+    },
+    "hsts_include_subdomains": {
+      "default": true,
+      "env": "HSTS_INCLUDE_SUBDOMAINS",
+      "title": "Hsts Include Subdomains",
+      "type": "boolean"
+    },
+    "remove_server_headers": {
+      "default": true,
+      "env": "REMOVE_SERVER_HEADERS",
+      "title": "Remove Server Headers",
+      "type": "boolean"
+    },
+    "allowed_origins": {
+      "default": [
+        "http://localhost",
+        "http://localhost:4444"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Origins",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "min_secret_length": {
+      "default": 32,
+      "title": "Min Secret Length",
+      "type": "integer"
+    },
+    "min_password_length": {
+      "default": 12,
+      "title": "Min Password Length",
+      "type": "integer"
+    },
+    "require_strong_secrets": {
+      "default": false,
+      "title": "Require Strong Secrets",
+      "type": "boolean"
+    },
+    "llmchat_enabled": {
+      "default": false,
+      "description": "Enable LLM Chat feature",
+      "title": "Llmchat Enabled",
+      "type": "boolean"
+    },
+    "retry_max_attempts": {
+      "default": 3,
+      "title": "Retry Max Attempts",
+      "type": "integer"
+    },
+    "retry_base_delay": {
+      "default": 1.0,
+      "title": "Retry Base Delay",
+      "type": "number"
+    },
+    "retry_max_delay": {
+      "default": 60,
+      "title": "Retry Max Delay",
+      "type": "integer"
+    },
+    "retry_jitter_max": {
+      "default": 0.5,
+      "title": "Retry Jitter Max",
+      "type": "number"
+    },
+    "log_level": {
+      "default": "ERROR",
+      "enum": [
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL"
+      ],
+      "env": "LOG_LEVEL",
+      "title": "Log Level",
+      "type": "string"
+    },
+    "log_format": {
+      "default": "json",
+      "enum": [
+        "json",
+        "text"
+      ],
+      "title": "Log Format",
+      "type": "string"
+    },
+    "log_to_file": {
+      "default": false,
+      "title": "Log To File",
+      "type": "boolean"
+    },
+    "log_filemode": {
+      "default": "a+",
+      "title": "Log Filemode",
+      "type": "string"
+    },
+    "log_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Log File"
+    },
+    "log_folder": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Log Folder"
+    },
+    "log_rotation_enabled": {
+      "default": false,
+      "title": "Log Rotation Enabled",
+      "type": "boolean"
+    },
+    "log_max_size_mb": {
+      "default": 1,
+      "title": "Log Max Size Mb",
+      "type": "integer"
+    },
+    "log_backup_count": {
+      "default": 5,
+      "title": "Log Backup Count",
+      "type": "integer"
+    },
+    "log_buffer_size_mb": {
+      "default": 1.0,
+      "title": "Log Buffer Size Mb",
+      "type": "number"
+    },
+    "transport_type": {
+      "default": "all",
+      "title": "Transport Type",
+      "type": "string"
+    },
+    "websocket_ping_interval": {
+      "default": 30,
+      "title": "Websocket Ping Interval",
+      "type": "integer"
+    },
+    "sse_retry_timeout": {
+      "default": 5000,
+      "title": "Sse Retry Timeout",
+      "type": "integer"
+    },
+    "sse_keepalive_enabled": {
+      "default": true,
+      "title": "Sse Keepalive Enabled",
+      "type": "boolean"
+    },
+    "sse_keepalive_interval": {
+      "default": 30,
+      "title": "Sse Keepalive Interval",
+      "type": "integer"
+    },
+    "federation_enabled": {
+      "default": true,
+      "title": "Federation Enabled",
+      "type": "boolean"
+    },
+    "federation_discovery": {
+      "default": false,
+      "title": "Federation Discovery",
+      "type": "boolean"
+    },
+    "federation_peers": {
+      "env": "FEDERATION_PEERS",
+      "items": {
+        "format": "uri",
+        "maxLength": 2083,
+        "minLength": 1,
+        "type": "string"
+      },
+      "title": "Federation Peers",
+      "type": "array"
+    },
+    "federation_timeout": {
+      "default": 120,
+      "title": "Federation Timeout",
+      "type": "integer"
+    },
+    "federation_sync_interval": {
+      "default": 300,
+      "title": "Federation Sync Interval",
+      "type": "integer"
+    },
+    "sso_issuers": {
+      "anyOf": [
+        {
+          "items": {
+            "format": "uri",
+            "maxLength": 2083,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "env": "SSO_ISSUERS",
+      "title": "Sso Issuers"
+    },
+    "resource_cache_size": {
+      "default": 1000,
+      "title": "Resource Cache Size",
+      "type": "integer"
+    },
+    "resource_cache_ttl": {
+      "default": 3600,
+      "title": "Resource Cache Ttl",
+      "type": "integer"
+    },
+    "max_resource_size": {
+      "default": 10485760,
+      "title": "Max Resource Size",
+      "type": "integer"
+    },
+    "allowed_mime_types": {
+      "default": [
+        "image/gif",
+        "application/xml",
+        "text/plain",
+        "text/html",
+        "application/json",
+        "text/markdown",
+        "image/jpeg",
+        "image/png"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Allowed Mime Types",
+      "type": "array",
+      "uniqueItems": true
+    },
+    "tool_timeout": {
+      "default": 60,
+      "title": "Tool Timeout",
+      "type": "integer"
+    },
+    "max_tool_retries": {
+      "default": 3,
+      "title": "Max Tool Retries",
+      "type": "integer"
+    },
+    "tool_rate_limit": {
+      "default": 100,
+      "title": "Tool Rate Limit",
+      "type": "integer"
+    },
+    "tool_concurrent_limit": {
+      "default": 10,
+      "title": "Tool Concurrent Limit",
+      "type": "integer"
+    },
+    "prompt_cache_size": {
+      "default": 100,
+      "title": "Prompt Cache Size",
+      "type": "integer"
+    },
+    "max_prompt_size": {
+      "default": 102400,
+      "title": "Max Prompt Size",
+      "type": "integer"
+    },
+    "prompt_render_timeout": {
+      "default": 10,
+      "title": "Prompt Render Timeout",
+      "type": "integer"
+    },
+    "health_check_interval": {
+      "default": 60,
+      "title": "Health Check Interval",
+      "type": "integer"
+    },
+    "health_check_timeout": {
+      "default": 10,
+      "title": "Health Check Timeout",
+      "type": "integer"
+    },
     "unhealthy_threshold": {
       "default": 5,
       "title": "Unhealthy Threshold",
+      "type": "integer"
+    },
+    "gateway_validation_timeout": {
+      "default": 5,
+      "title": "Gateway Validation Timeout",
+      "type": "integer"
+    },
+    "filelock_name": {
+      "default": "gateway_service_leader.lock",
+      "title": "Filelock Name",
+      "type": "string"
+    },
+    "default_roots": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Default Roots",
+      "type": "array"
+    },
+    "db_pool_size": {
+      "default": 200,
+      "title": "Db Pool Size",
+      "type": "integer"
+    },
+    "db_max_overflow": {
+      "default": 10,
+      "title": "Db Max Overflow",
+      "type": "integer"
+    },
+    "db_pool_timeout": {
+      "default": 30,
+      "title": "Db Pool Timeout",
+      "type": "integer"
+    },
+    "db_pool_recycle": {
+      "default": 3600,
+      "title": "Db Pool Recycle",
+      "type": "integer"
+    },
+    "db_max_retries": {
+      "default": 3,
+      "title": "Db Max Retries",
+      "type": "integer"
+    },
+    "db_retry_interval_ms": {
+      "default": 2000,
+      "title": "Db Retry Interval Ms",
+      "type": "integer"
+    },
+    "cache_type": {
+      "default": "database",
+      "enum": [
+        "redis",
+        "memory",
+        "none",
+        "database"
+      ],
+      "title": "Cache Type",
+      "type": "string"
+    },
+    "redis_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "redis://localhost:6379/0",
+      "title": "Redis Url"
+    },
+    "cache_prefix": {
+      "default": "mcpgw:",
+      "title": "Cache Prefix",
+      "type": "string"
+    },
+    "session_ttl": {
+      "default": 3600,
+      "title": "Session Ttl",
+      "type": "integer"
+    },
+    "message_ttl": {
+      "default": 600,
+      "title": "Message Ttl",
+      "type": "integer"
+    },
+    "redis_max_retries": {
+      "default": 3,
+      "title": "Redis Max Retries",
+      "type": "integer"
+    },
+    "redis_retry_interval_ms": {
+      "default": 2000,
+      "title": "Redis Retry Interval Ms",
       "type": "integer"
     },
     "use_stateful_sessions": {
       "default": false,
       "title": "Use Stateful Sessions",
       "type": "boolean"
+    },
+    "json_response_enabled": {
+      "default": true,
+      "title": "Json Response Enabled",
+      "type": "boolean"
+    },
+    "plugins_enabled": {
+      "default": false,
+      "description": "Enable the plugin framework",
+      "title": "Plugins Enabled",
+      "type": "boolean"
+    },
+    "plugin_config_file": {
+      "default": "plugins/config.yaml",
+      "description": "Path to main plugin configuration file",
+      "title": "Plugin Config File",
+      "type": "string"
+    },
+    "plugins_cli_completion": {
+      "default": false,
+      "description": "Enable auto-completion for plugins CLI",
+      "title": "Plugins Cli Completion",
+      "type": "boolean"
+    },
+    "plugins_cli_markup_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Set markup mode for plugins CLI",
+      "title": "Plugins Cli Markup Mode"
+    },
+    "dev_mode": {
+      "default": false,
+      "title": "Dev Mode",
+      "type": "boolean"
+    },
+    "reload": {
+      "default": false,
+      "title": "Reload",
+      "type": "boolean"
+    },
+    "debug": {
+      "default": false,
+      "title": "Debug",
+      "type": "boolean"
+    },
+    "otel_enable_observability": {
+      "default": true,
+      "description": "Enable OpenTelemetry observability",
+      "title": "Otel Enable Observability",
+      "type": "boolean"
+    },
+    "otel_traces_exporter": {
+      "default": "otlp",
+      "description": "Traces exporter: otlp, jaeger, zipkin, console, none",
+      "title": "Otel Traces Exporter",
+      "type": "string"
+    },
+    "otel_exporter_otlp_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OTLP endpoint (e.g., http://localhost:4317)",
+      "title": "Otel Exporter Otlp Endpoint"
+    },
+    "otel_exporter_otlp_protocol": {
+      "default": "grpc",
+      "description": "OTLP protocol: grpc or http",
+      "title": "Otel Exporter Otlp Protocol",
+      "type": "string"
+    },
+    "otel_exporter_otlp_insecure": {
+      "default": true,
+      "description": "Use insecure connection for OTLP",
+      "title": "Otel Exporter Otlp Insecure",
+      "type": "boolean"
+    },
+    "otel_exporter_otlp_headers": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "OTLP headers (comma-separated key=value)",
+      "title": "Otel Exporter Otlp Headers"
+    },
+    "otel_exporter_jaeger_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Jaeger endpoint",
+      "title": "Otel Exporter Jaeger Endpoint"
+    },
+    "otel_exporter_zipkin_endpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Zipkin endpoint",
+      "title": "Otel Exporter Zipkin Endpoint"
+    },
+    "otel_service_name": {
+      "default": "mcp-gateway",
+      "description": "Service name for traces",
+      "title": "Otel Service Name",
+      "type": "string"
+    },
+    "otel_resource_attributes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Resource attributes (comma-separated key=value)",
+      "title": "Otel Resource Attributes"
+    },
+    "otel_bsp_max_queue_size": {
+      "default": 2048,
+      "description": "Max queue size for batch span processor",
+      "title": "Otel Bsp Max Queue Size",
+      "type": "integer"
+    },
+    "otel_bsp_max_export_batch_size": {
+      "default": 512,
+      "description": "Max export batch size",
+      "title": "Otel Bsp Max Export Batch Size",
+      "type": "integer"
+    },
+    "otel_bsp_schedule_delay": {
+      "default": 5000,
+      "description": "Schedule delay in milliseconds",
+      "title": "Otel Bsp Schedule Delay",
+      "type": "integer"
+    },
+    "well_known_enabled": {
+      "default": true,
+      "title": "Well Known Enabled",
+      "type": "boolean"
+    },
+    "well_known_robots_txt": {
+      "default": "User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default",
+      "title": "Well Known Robots Txt",
+      "type": "string"
+    },
+    "well_known_security_txt": {
+      "default": "",
+      "title": "Well Known Security Txt",
+      "type": "string"
+    },
+    "well_known_security_txt_enabled": {
+      "default": false,
+      "title": "Well Known Security Txt Enabled",
+      "type": "boolean"
+    },
+    "well_known_custom_files": {
+      "default": "{}",
+      "title": "Well Known Custom Files",
+      "type": "string"
+    },
+    "well_known_cache_max_age": {
+      "default": 3600,
+      "title": "Well Known Cache Max Age",
+      "type": "integer"
+    },
+    "gateway_tool_name_separator": {
+      "default": "-",
+      "title": "Gateway Tool Name Separator",
+      "type": "string"
+    },
+    "validation_dangerous_html_pattern": {
+      "default": "<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>",
+      "title": "Validation Dangerous Html Pattern",
+      "type": "string"
+    },
+    "validation_dangerous_js_pattern": {
+      "default": "(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)",
+      "title": "Validation Dangerous Js Pattern",
+      "type": "string"
+    },
+    "validation_allowed_url_schemes": {
+      "default": [
+        "http://",
+        "https://",
+        "ws://",
+        "wss://"
+      ],
+      "items": {
+        "type": "string"
+      },
+      "title": "Validation Allowed Url Schemes",
+      "type": "array"
+    },
+    "validation_name_pattern": {
+      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
+      "title": "Validation Name Pattern",
+      "type": "string"
+    },
+    "validation_identifier_pattern": {
+      "default": "^[a-zA-Z0-9_\\-\\.]+$",
+      "title": "Validation Identifier Pattern",
+      "type": "string"
+    },
+    "validation_safe_uri_pattern": {
+      "default": "^[a-zA-Z0-9_\\-.:/?=&%]+$",
+      "title": "Validation Safe Uri Pattern",
+      "type": "string"
+    },
+    "validation_unsafe_uri_pattern": {
+      "default": "[<>\"\\'\\\\]",
+      "title": "Validation Unsafe Uri Pattern",
+      "type": "string"
+    },
+    "validation_tool_name_pattern": {
+      "default": "^[a-zA-Z][a-zA-Z0-9._-]*$",
+      "title": "Validation Tool Name Pattern",
+      "type": "string"
+    },
+    "validation_tool_method_pattern": {
+      "default": "^[a-zA-Z][a-zA-Z0-9_\\./-]*$",
+      "title": "Validation Tool Method Pattern",
+      "type": "string"
+    },
+    "validation_max_name_length": {
+      "default": 255,
+      "title": "Validation Max Name Length",
+      "type": "integer"
+    },
+    "validation_max_description_length": {
+      "default": 8192,
+      "title": "Validation Max Description Length",
+      "type": "integer"
+    },
+    "validation_max_template_length": {
+      "default": 65536,
+      "title": "Validation Max Template Length",
+      "type": "integer"
+    },
+    "validation_max_content_length": {
+      "default": 1048576,
+      "title": "Validation Max Content Length",
+      "type": "integer"
+    },
+    "validation_max_json_depth": {
+      "default": 10,
+      "title": "Validation Max Json Depth",
+      "type": "integer"
+    },
+    "validation_max_url_length": {
+      "default": 2048,
+      "title": "Validation Max Url Length",
+      "type": "integer"
+    },
+    "validation_max_rpc_param_size": {
+      "default": 262144,
+      "title": "Validation Max Rpc Param Size",
+      "type": "integer"
+    },
+    "validation_max_method_length": {
+      "default": 128,
+      "title": "Validation Max Method Length",
+      "type": "integer"
     },
     "validation_allowed_mime_types": {
       "default": [
@@ -1199,168 +1690,36 @@
       "title": "Validation Allowed Mime Types",
       "type": "array"
     },
-    "validation_allowed_url_schemes": {
-      "default": [
-        "http://",
-        "https://",
-        "ws://",
-        "wss://"
-      ],
-      "items": {
-        "type": "string"
-      },
-      "title": "Validation Allowed Url Schemes",
-      "type": "array"
-    },
-    "validation_dangerous_html_pattern": {
-      "default": "<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>",
-      "title": "Validation Dangerous Html Pattern",
-      "type": "string"
-    },
-    "validation_dangerous_js_pattern": {
-      "default": "(?i)(?:^|\\s|[\\\"'`<>=])(javascript:|vbscript:|data:\\s*[^,]*[;\\s]*(javascript|vbscript)|\\bon[a-z]+\\s*=|<\\s*script\\b)",
-      "title": "Validation Dangerous Js Pattern",
-      "type": "string"
-    },
-    "validation_identifier_pattern": {
-      "default": "^[a-zA-Z0-9_\\-\\.]+$",
-      "title": "Validation Identifier Pattern",
-      "type": "string"
-    },
-    "validation_max_content_length": {
-      "default": 1048576,
-      "title": "Validation Max Content Length",
-      "type": "integer"
-    },
-    "validation_max_description_length": {
-      "default": 8192,
-      "title": "Validation Max Description Length",
-      "type": "integer"
-    },
-    "validation_max_json_depth": {
-      "default": 10,
-      "title": "Validation Max Json Depth",
-      "type": "integer"
-    },
-    "validation_max_method_length": {
-      "default": 128,
-      "title": "Validation Max Method Length",
-      "type": "integer"
-    },
-    "validation_max_name_length": {
-      "default": 255,
-      "title": "Validation Max Name Length",
-      "type": "integer"
-    },
     "validation_max_requests_per_minute": {
       "default": 60,
       "title": "Validation Max Requests Per Minute",
       "type": "integer"
     },
-    "validation_max_rpc_param_size": {
-      "default": 262144,
-      "title": "Validation Max Rpc Param Size",
-      "type": "integer"
-    },
-    "validation_max_template_length": {
-      "default": 65536,
-      "title": "Validation Max Template Length",
-      "type": "integer"
-    },
-    "validation_max_url_length": {
-      "default": 2048,
-      "title": "Validation Max Url Length",
-      "type": "integer"
-    },
-    "validation_name_pattern": {
-      "default": "^[a-zA-Z0-9_.\\-\\s]+$",
-      "title": "Validation Name Pattern",
-      "type": "string"
-    },
-    "validation_safe_uri_pattern": {
-      "default": "^[a-zA-Z0-9_\\-.:/?=&%]+$",
-      "title": "Validation Safe Uri Pattern",
-      "type": "string"
-    },
-    "validation_tool_method_pattern": {
-      "default": "^[a-zA-Z][a-zA-Z0-9_\\./-]*$",
-      "title": "Validation Tool Method Pattern",
-      "type": "string"
-    },
-    "validation_tool_name_pattern": {
-      "default": "^[a-zA-Z][a-zA-Z0-9._-]*$",
-      "title": "Validation Tool Name Pattern",
-      "type": "string"
-    },
-    "validation_unsafe_uri_pattern": {
-      "default": "[<>\"\\'\\\\]",
-      "title": "Validation Unsafe Uri Pattern",
-      "type": "string"
-    },
-    "websocket_ping_interval": {
-      "default": 30,
-      "title": "Websocket Ping Interval",
-      "type": "integer"
-    },
-    "well_known_cache_max_age": {
-      "default": 3600,
-      "title": "Well Known Cache Max Age",
-      "type": "integer"
-    },
-    "well_known_custom_files": {
-      "default": "{}",
-      "title": "Well Known Custom Files",
-      "type": "string"
-    },
-    "well_known_enabled": {
-      "default": true,
-      "title": "Well Known Enabled",
-      "type": "boolean"
-    },
-    "well_known_robots_txt": {
-      "default": "User-agent: *\nDisallow: /\n\n# MCP Gateway is a private API gateway\n# Public crawling is disabled by default",
-      "title": "Well Known Robots Txt",
-      "type": "string"
-    },
-    "well_known_security_txt": {
-      "default": "",
-      "title": "Well Known Security Txt",
-      "type": "string"
-    },
-    "well_known_security_txt_enabled": {
+    "enable_header_passthrough": {
       "default": false,
-      "title": "Well Known Security Txt Enabled",
+      "description": "Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)",
+      "title": "Enable Header Passthrough",
       "type": "boolean"
     },
-    "x_content_type_options_enabled": {
-      "default": true,
-      "env": "X_CONTENT_TYPE_OPTIONS_ENABLED",
-      "title": "X Content Type Options Enabled",
+    "enable_overwrite_base_headers": {
+      "default": false,
+      "description": "Enable overwriting of base headers",
+      "title": "Enable Overwrite Base Headers",
       "type": "boolean"
     },
-    "x_download_options_enabled": {
-      "default": true,
-      "env": "X_DOWNLOAD_OPTIONS_ENABLED",
-      "title": "X Download Options Enabled",
-      "type": "boolean"
+    "default_passthrough_headers": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Default Passthrough Headers",
+      "type": "array"
     },
-    "x_frame_options": {
-      "default": "DENY",
-      "env": "X_FRAME_OPTIONS",
-      "title": "X Frame Options",
+    "masked_auth_value": {
+      "default": "*****",
+      "title": "Masked Auth Value",
       "type": "string"
-    },
-    "x_xss_protection_enabled": {
-      "default": true,
-      "env": "X_XSS_PROTECTION_ENABLED",
-      "title": "X Xss Protection Enabled",
-      "type": "boolean"
     }
   },
-  "required": [
-    "jwt_secret_key",
-    "app_domain"
-  ],
   "title": "Settings",
   "type": "object"
 }

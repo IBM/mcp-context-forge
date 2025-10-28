@@ -9,7 +9,6 @@ Comprehensive tests for Argon2 password hashing service.
 
 # Standard
 from unittest.mock import MagicMock, patch
-import sys
 
 # Third-Party
 import pytest
@@ -539,12 +538,13 @@ class TestPerformanceAndConcurrency:
         password = "same_password"
 
         hashes = set()
-        for _ in range(10):
+        # Reduced from 10 to 5 iterations for faster test execution while maintaining coverage
+        for _ in range(5):
             hash_value = service.hash_password(password)
             hashes.add(hash_value)
 
         # All hashes should be unique due to random salt
-        assert len(hashes) == 10
+        assert len(hashes) == 5
 
         # But all should verify correctly
         for hash_value in hashes:

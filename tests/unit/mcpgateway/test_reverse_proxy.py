@@ -10,9 +10,7 @@ Unit tests for the MCP reverse proxy module.
 # Standard
 import asyncio
 import json
-import os
 import signal
-import sys
 from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
@@ -58,10 +56,17 @@ class TestStdioProcess:
     async def test_start_success(self):
         """Test successful process start."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
+            mock_process = MagicMock()
             mock_process.pid = 12345
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
+            mock_process.returncode = 0
             mock_create.return_value = mock_process
 
             await self.stdio.start()
@@ -98,10 +103,16 @@ class TestStdioProcess:
     async def test_stop_graceful(self):
         """Test graceful process stop."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
+            mock_process = MagicMock()
             mock_process.pid = 12345
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
             mock_process.returncode = 0
             mock_create.return_value = mock_process
 
@@ -115,10 +126,16 @@ class TestStdioProcess:
         """Test force kill when process doesn't terminate."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
             with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
-                mock_process = AsyncMock()
+                mock_process = MagicMock()
                 mock_process.pid = 12345
-                mock_process.stdin = AsyncMock()
-                mock_process.stdout = AsyncMock()
+                mock_process.stdin = MagicMock()
+                mock_process.stdin.write = MagicMock()
+                mock_process.stdin.drain = AsyncMock()
+                mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+                mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
+                mock_process.wait = AsyncMock(return_value=0)
+                mock_process.terminate = MagicMock()
+                mock_process.kill = MagicMock()
                 mock_process.returncode = None
                 mock_create.return_value = mock_process
 
@@ -137,9 +154,17 @@ class TestStdioProcess:
     async def test_send_message(self):
         """Test sending message to subprocess."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
+            mock_process = MagicMock()
+            mock_process.pid = 12345
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
+            mock_process.returncode = 0
             mock_create.return_value = mock_process
 
             await self.stdio.start()
@@ -175,17 +200,28 @@ class TestStdioProcess:
     async def test_read_stdout_messages(self):
         """Test reading messages from stdout."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
-            mock_create.return_value = mock_process
-
-            # Mock readline to return messages then EOF
-            mock_process.stdout.readline.side_effect = [
+            # Use an iterator to avoid side_effect initialization issues
+            messages = iter([
                 b'{"test": "message1"}\n',
                 b'{"test": "message2"}\n',
-                b'',  # EOF
-            ]
+                b"",  # EOF
+            ])
+
+            async def readline_func():
+                return next(messages)
+
+            mock_process = MagicMock()
+            mock_process.pid = 12345
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = readline_func
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
+            mock_process.returncode = 0
+            mock_create.return_value = mock_process
 
             handler = AsyncMock()
             self.stdio.add_message_handler(handler)
@@ -197,46 +233,69 @@ class TestStdioProcess:
 
             # Verify handler was called with messages
             assert handler.call_count == 2
-            handler.assert_has_calls([
-                call('{"test": "message1"}'),
-                call('{"test": "message2"}')
-            ])
+            handler.assert_has_calls([call('{"test": "message1"}'), call('{"test": "message2"}')])
 
     @pytest.mark.asyncio
     async def test_read_stdout_handler_error(self):
         """Test error handling in message handlers."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
+            # Use an iterator to avoid side_effect initialization issues
+            messages = iter([
+                b'{"test": "message"}\n',
+                b"",  # EOF
+            ])
+
+            async def readline_func():
+                return next(messages)
+
+            mock_process = MagicMock()
+            mock_process.pid = 12345
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = readline_func
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
+            mock_process.returncode = 0
             mock_create.return_value = mock_process
 
-            mock_process.stdout.readline.side_effect = [
-                b'{"test": "message"}\n',
-                b'',  # EOF
-            ]
+            # Handler that raises exception - use real async function to avoid AsyncMock issues
+            handler_called = []
 
-            # Handler that raises exception
-            handler = AsyncMock(side_effect=Exception("Handler error"))
-            self.stdio.add_message_handler(handler)
+            async def error_handler(msg):
+                handler_called.append(msg)
+                raise Exception("Handler error")
+
+            self.stdio.add_message_handler(error_handler)
 
             await self.stdio.start()
             await asyncio.sleep(0.1)
             await self.stdio.stop()
 
-            handler.assert_called_once()
+            assert len(handler_called) == 1
 
     @pytest.mark.asyncio
     async def test_read_stdout_cancelled(self):
         """Test cancellation of stdout reader."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
-            mock_process.stdin = AsyncMock()
-            mock_process.stdout = AsyncMock()
-            mock_create.return_value = mock_process
+            # Create async function that raises CancelledError
+            async def raise_cancelled():
+                raise asyncio.CancelledError()
 
-            # Mock readline to block indefinitely
-            mock_process.stdout.readline = AsyncMock(side_effect=asyncio.CancelledError())
+            mock_process = MagicMock()
+            mock_process.pid = 12345
+            mock_process.stdin = MagicMock()
+            mock_process.stdin.write = MagicMock()
+            mock_process.stdin.drain = AsyncMock()
+            mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
+            mock_process.stdout.readline = raise_cancelled
+            mock_process.wait = AsyncMock(return_value=0)
+            mock_process.terminate = MagicMock()
+            mock_process.kill = MagicMock()
+            mock_process.returncode = 0
+            mock_create.return_value = mock_process
 
             await self.stdio.start()
             # Stop should cancel the reader task
@@ -273,10 +332,7 @@ class TestReverseProxyClient:
 
     def test_init_defaults(self):
         """Test initialization with default values."""
-        client = ReverseProxyClient(
-            gateway_url="wss://example.com",
-            local_command="echo test"
-        )
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test")
         assert client.token is None
         assert client.reconnect_delay == DEFAULT_RECONNECT_DELAY
         assert client.max_retries == DEFAULT_MAX_RETRIES
@@ -287,14 +343,7 @@ class TestReverseProxyClient:
 
     def test_init_custom_values(self):
         """Test initialization with custom values."""
-        client = ReverseProxyClient(
-            gateway_url="wss://example.com",
-            local_command="echo test",
-            token="custom-token",
-            reconnect_delay=5.0,
-            max_retries=10,
-            keepalive_interval=60
-        )
+        client = ReverseProxyClient(gateway_url="wss://example.com", local_command="echo test", token="custom-token", reconnect_delay=5.0, max_retries=10, keepalive_interval=60)
         assert client.token == "custom-token"
         assert client.reconnect_delay == 5.0
         assert client.max_retries == 10
@@ -318,6 +367,8 @@ class TestReverseProxyClient:
             with patch.object(self.client.stdio_process, "start", AsyncMock()):
                 with patch.object(self.client, "_register", AsyncMock()):
                     with patch("asyncio.create_task") as mock_create_task:
+                        mock_task = MagicMock()  # create_task returns a Task (sync object)
+                        mock_create_task.return_value = mock_task
                         await self.client.connect()
 
             assert self.client.state == ConnectionState.CONNECTED
@@ -434,7 +485,7 @@ class TestReverseProxyClient:
         """Test handling invalid JSON from stdio."""
         self.client.connection = AsyncMock()
 
-        message = 'invalid json'
+        message = "invalid json"
         await self.client._handle_stdio_message(message)
 
         # Should not send anything to gateway
@@ -444,10 +495,7 @@ class TestReverseProxyClient:
     async def test_handle_gateway_message_request(self):
         """Test handling request from gateway."""
         with patch.object(self.client.stdio_process, "send", AsyncMock()) as mock_send:
-            message = json.dumps({
-                "type": MessageType.REQUEST.value,
-                "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}
-            })
+            message = json.dumps({"type": MessageType.REQUEST.value, "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}})
 
             await self.client._handle_gateway_message(message)
 
@@ -471,10 +519,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_handle_gateway_message_error(self):
         """Test handling error message from gateway."""
-        message = json.dumps({
-            "type": MessageType.ERROR.value,
-            "message": "Test error"
-        })
+        message = json.dumps({"type": MessageType.ERROR.value, "message": "Test error"})
 
         await self.client._handle_gateway_message(message)
         # Should log error but not crash
@@ -497,10 +542,7 @@ class TestReverseProxyClient:
     async def test_receive_websocket_messages(self):
         """Test receiving messages from WebSocket."""
         mock_connection = AsyncMock()
-        mock_connection.__aiter__.return_value = [
-            '{"type": "heartbeat"}',
-            '{"type": "request", "payload": {"method": "test"}}'
-        ]
+        mock_connection.__aiter__.return_value = ['{"type": "heartbeat"}', '{"type": "request", "payload": {"method": "test"}}']
         self.client.connection = mock_connection
 
         with patch.object(self.client, "_handle_gateway_message", AsyncMock()) as mock_handle:
@@ -517,6 +559,7 @@ class TestReverseProxyClient:
         try:
             # Third-Party
             from websockets.exceptions import ConnectionClosed
+
             mock_connection.__aiter__.side_effect = ConnectionClosed(None, None)
         except ImportError:
             # If websockets not available, use generic exception
@@ -583,8 +626,8 @@ class TestReverseProxyClient:
         """Test full disconnect cleanup."""
         self.client.state = ConnectionState.CONNECTED
         self.client.connection = AsyncMock()
-        self.client._keepalive_task = AsyncMock()
-        self.client._receive_task = AsyncMock()
+        self.client._keepalive_task = MagicMock()
+        self.client._receive_task = MagicMock()
 
         with patch.object(self.client.stdio_process, "stop", AsyncMock()) as mock_stop:
             await self.client.disconnect()
@@ -633,6 +676,7 @@ class TestReverseProxyClient:
     async def test_run_with_reconnect_success(self):
         """Test successful run with reconnection."""
         self.client.max_retries = 2
+        self.client.reconnect_delay = 0.01  # Fast for testing
         connect_count = 0
 
         async def mock_connect():
@@ -642,7 +686,7 @@ class TestReverseProxyClient:
                 # First connection succeeds
                 self.client.state = ConnectionState.CONNECTED
                 # Simulate disconnection after a short time
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.01)  # Reduced from 0.1 for faster test execution
                 self.client.state = ConnectionState.DISCONNECTED
             else:
                 # Second connection triggers shutdown
@@ -721,15 +765,24 @@ class TestParseArgs:
 
     def test_parse_all_args(self):
         """Test parsing all arguments."""
-        args = parse_args([
-            "--local-stdio", "uvx mcp-server-git",
-            "--gateway", "wss://gateway.example.com",
-            "--token", "secret-token",
-            "--reconnect-delay", "2.0",
-            "--max-retries", "5",
-            "--keepalive", "60",
-            "--log-level", "DEBUG",
-        ])
+        args = parse_args(
+            [
+                "--local-stdio",
+                "uvx mcp-server-git",
+                "--gateway",
+                "wss://gateway.example.com",
+                "--token",
+                "secret-token",
+                "--reconnect-delay",
+                "2.0",
+                "--max-retries",
+                "5",
+                "--keepalive",
+                "60",
+                "--log-level",
+                "DEBUG",
+            ]
+        )
 
         assert args.local_stdio == "uvx mcp-server-git"
         assert args.gateway == "wss://gateway.example.com"
@@ -755,18 +808,11 @@ reconnect_delay: 3.0
 
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
-                mock_yaml.safe_load.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token",
-                    "reconnect_delay": 3.0
-                }
+                mock_yaml.safe_load.return_value = {"gateway": "https://config.example.com", "token": "config-token", "reconnect_delay": 3.0}
 
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
-                    args = parse_args([
-                        "--local-stdio", "echo test",
-                        "--config", "config.yaml"
-                    ])
+                    args = parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
 
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
@@ -779,17 +825,11 @@ reconnect_delay: 3.0
 
         with patch("builtins.open", mock_open(read_data=config_content)):
             with patch("json.load") as mock_json:
-                mock_json.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token"
-                }
+                mock_json.return_value = {"gateway": "https://config.example.com", "token": "config-token"}
 
                 # Need to provide gateway in environment since config loading happens after validation
                 with patch.dict("os.environ", {"REVERSE_PROXY_GATEWAY": "https://config.example.com"}):
-                    args = parse_args([
-                        "--local-stdio", "echo test",
-                        "--config", "config.json"
-                    ])
+                    args = parse_args(["--local-stdio", "echo test", "--config", "config.json"])
 
                 assert args.gateway == "https://config.example.com"
                 assert args.token == "config-token"
@@ -798,25 +838,15 @@ reconnect_delay: 3.0
         """Test config file parsing when PyYAML not available."""
         with patch("mcpgateway.reverse_proxy.yaml", None):
             with pytest.raises(SystemExit):
-                parse_args([
-                    "--local-stdio", "echo test",
-                    "--config", "config.yaml"
-                ])
+                parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
 
     def test_parse_command_line_overrides_config(self):
         """Test command line arguments override config file."""
         with patch("builtins.open", mock_open()):
             with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
-                mock_yaml.safe_load.return_value = {
-                    "gateway": "https://config.example.com",
-                    "token": "config-token"
-                }
+                mock_yaml.safe_load.return_value = {"gateway": "https://config.example.com", "token": "config-token"}
 
-                args = parse_args([
-                    "--local-stdio", "echo test",
-                    "--gateway", "https://cli.example.com",
-                    "--config", "config.yaml"
-                ])
+                args = parse_args(["--local-stdio", "echo test", "--gateway", "https://cli.example.com", "--config", "config.yaml"])
 
                 # CLI should override config
                 assert args.gateway == "https://cli.example.com"
@@ -830,22 +860,13 @@ reconnect_delay: 3.0
 
     def test_token_from_env(self):
         """Test reading token from environment."""
-        with patch.dict("os.environ", {
-            ENV_GATEWAY: "https://gateway.example.com",
-            ENV_TOKEN: "env-token"
-        }):
+        with patch.dict("os.environ", {ENV_GATEWAY: "https://gateway.example.com", ENV_TOKEN: "env-token"}):
             args = parse_args(["--local-stdio", "echo test"])
             assert args.token == "env-token"
 
     def test_env_variables(self):
         """Test reading various environment variables."""
-        with patch.dict("os.environ", {
-            ENV_GATEWAY: "https://gateway.example.com",
-            ENV_TOKEN: "env-token",
-            ENV_RECONNECT_DELAY: "5.0",
-            ENV_MAX_RETRIES: "10",
-            ENV_LOG_LEVEL: "WARNING"
-        }):
+        with patch.dict("os.environ", {ENV_GATEWAY: "https://gateway.example.com", ENV_TOKEN: "env-token", ENV_RECONNECT_DELAY: "5.0", ENV_MAX_RETRIES: "10", ENV_LOG_LEVEL: "WARNING"}):
             # Environment variables don't override command line args in current implementation
             # This test documents the current behavior
             args = parse_args(["--local-stdio", "echo test"])
@@ -925,22 +946,20 @@ class TestMainAndRun:
 
     def test_run_success(self):
         """Test run function success."""
-        with patch("asyncio.run") as mock_run:
-            with patch("mcpgateway.reverse_proxy.main") as mock_main:
-                run()
-                mock_run.assert_called_once()
-                mock_main.assert_called_once()
+        with patch("mcpgateway.reverse_proxy.main", new_callable=AsyncMock) as mock_main:
+            run()
+            mock_main.assert_called_once()
 
     def test_run_keyboard_interrupt(self):
         """Test run function handles KeyboardInterrupt."""
-        with patch("asyncio.run", side_effect=KeyboardInterrupt):
+        with patch("mcpgateway.reverse_proxy.main", new_callable=AsyncMock, side_effect=KeyboardInterrupt):
             with patch("sys.exit") as mock_exit:
                 run()
                 mock_exit.assert_called_once_with(0)
 
     def test_run_exception(self):
         """Test run function handles general exceptions."""
-        with patch("asyncio.run", side_effect=Exception("Test error")):
+        with patch("mcpgateway.reverse_proxy.main", new_callable=AsyncMock, side_effect=Exception("Test error")):
             with patch("sys.exit") as mock_exit:
                 run()
                 mock_exit.assert_called_once_with(1)
@@ -988,4 +1007,5 @@ def mock_open(read_data=""):
     """Create a mock for open() that returns read_data."""
     # Standard
     from unittest.mock import mock_open as _mock_open
+
     return _mock_open(read_data=read_data)

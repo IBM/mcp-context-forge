@@ -17,6 +17,7 @@ import os
 from typing import Any, Optional, Type, TypeVar
 
 # Third-Party
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -26,8 +27,10 @@ from pydantic import BaseModel
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, IGNORE_CONFIG_EXTERNAL, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
+from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
 from mcpgateway.plugins.framework.models import (
     HookType,
+    MCPClientTLSConfig,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
@@ -146,13 +149,54 @@ class ExternalPlugin(Plugin):
         max_retries = 3
         base_delay = 1.0
 
+        plugin_tls = self._config.mcp.tls if self._config and self._config.mcp else None
+        tls_config = plugin_tls or MCPClientTLSConfig.from_env()
+
+        def _tls_httpx_client_factory(
+            headers: Optional[dict[str, str]] = None,
+            timeout: Optional[httpx.Timeout] = None,
+            auth: Optional[httpx.Auth] = None,
+        ) -> httpx.AsyncClient:
+            """Build an httpx client with TLS configuration for external MCP servers.
+
+            Args:
+                headers: Optional HTTP headers to include in requests.
+                timeout: Optional timeout configuration for HTTP requests.
+                auth: Optional authentication handler for HTTP requests.
+
+            Returns:
+                Configured httpx AsyncClient with TLS settings applied.
+
+            Raises:
+                PluginError: If TLS configuration fails.
+            """
+
+            kwargs: dict[str, Any] = {"follow_redirects": True}
+            if headers:
+                kwargs["headers"] = headers
+            kwargs["timeout"] = timeout or httpx.Timeout(30.0)
+            if auth is not None:
+                kwargs["auth"] = auth
+
+            if not tls_config:
+                return httpx.AsyncClient(**kwargs)
+
+            # Create SSL context using the utility function
+            # This implements certificate validation per test_client_certificate_validation.py
+            ssl_context = create_ssl_context(tls_config, self.name)
+            kwargs["verify"] = ssl_context
+
+            return httpx.AsyncClient(**kwargs)
+
         for attempt in range(max_retries):
             logger.info(f"Connecting to external plugin server: {uri} (attempt {attempt + 1}/{max_retries})")
 
             try:
                 # Create a fresh exit stack for each attempt
                 async with AsyncExitStack() as temp_stack:
-                    http_transport = await temp_stack.enter_async_context(streamablehttp_client(uri))
+                    client_factory = _tls_httpx_client_factory if tls_config else None
+                    streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
+                    http_transport = await temp_stack.enter_async_context(streamable_client)
                     http_client, write_func, _ = http_transport
                     session = await temp_stack.enter_async_context(ClientSession(http_client, write_func))
 
@@ -164,8 +208,10 @@ class ExternalPlugin(Plugin):
                     logger.info("Successfully connected to plugin MCP server with tools: %s", " ".join([tool.name for tool in tools]))
 
                 # Success! Now move to the main exit stack
-                self._http = await self._exit_stack.enter_async_context(streamablehttp_client(uri))
-                self._http, self._write, _ = self._http
+                client_factory = _tls_httpx_client_factory if tls_config else None
+                streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
+                http_transport = await self._exit_stack.enter_async_context(streamable_client)
+                self._http, self._write, _ = http_transport
                 self._session = await self._exit_stack.enter_async_context(ClientSession(self._http, self._write))
                 await self._session.initialize()
                 return

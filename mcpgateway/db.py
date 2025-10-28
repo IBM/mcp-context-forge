@@ -29,7 +29,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -1570,6 +1570,7 @@ class Tool(Base):
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
     headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
     input_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
+    output_schema: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     annotations: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, default=lambda: {})
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -1601,6 +1602,17 @@ class Tool(Base):
     custom_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[Optional[str]] = mapped_column(String(255), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # Passthrough REST fields
+    base_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    path_template: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    query_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    header_mapping: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    timeout_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, default=None)
+    expose_passthrough: Mapped[bool] = mapped_column(Boolean, default=True)
+    allowlist: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    plugin_chain_pre: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    plugin_chain_post: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
 
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id"))
@@ -1828,7 +1840,7 @@ class Resource(Base):
     __tablename__ = "resources"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    uri: Mapped[str] = mapped_column(String(767), unique=True)
+    uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -1869,6 +1881,7 @@ class Resource(Base):
 
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),)
 
     @property
     def content(self) -> "ResourceContent":
@@ -1915,6 +1928,7 @@ class Resource(Base):
         if self.text_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type,
                 text=self.text_content,
@@ -1922,6 +1936,7 @@ class Resource(Base):
         if self.binary_content is not None:
             return ResourceContent(
                 type="resource",
+                id=str(self.id),
                 uri=self.uri,
                 mime_type=self.mime_type or "application/octet-stream",
                 blob=self.binary_content,
@@ -2066,7 +2081,7 @@ class Prompt(Base):
     __tablename__ = "prompts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
@@ -2103,6 +2118,8 @@ class Prompt(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),)
 
     def validate_arguments(self, args: Dict[str, str]) -> None:
         """
@@ -2536,8 +2553,8 @@ class A2AAgent(Base):
     __tablename__ = "a2a_agents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
-    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
@@ -2582,6 +2599,7 @@ class A2AAgent(Base):
     # Relationships
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),)
 
     @property
     def execution_count(self) -> int:
@@ -2655,6 +2673,76 @@ class A2AAgent(Base):
             "<A2AAgent(id='123', name='test-agent', agent_type='custom')>"
         """
         return f"<A2AAgent(id='{self.id}', name='{self.name}', agent_type='{self.agent_type}')>"
+
+
+class GrpcService(Base):
+    """
+    ORM model for gRPC services with reflection-based discovery.
+
+    gRPC services represent external gRPC servers that can be automatically discovered
+    via server reflection and exposed as MCP tools. The gateway translates between
+    gRPC/Protobuf and MCP/JSON protocols.
+    """
+
+    __tablename__ = "grpc_services"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    target: Mapped[str] = mapped_column(String(767), nullable=False)  # host:port format
+
+    # Configuration
+    reflection_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    tls_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    tls_cert_path: Mapped[Optional[str]] = mapped_column(String(767))
+    tls_key_path: Mapped[Optional[str]] = mapped_column(String(767))
+    grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
+
+    # Status
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    reachable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Discovery results from reflection
+    service_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    method_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    discovered_services: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # Service descriptors
+    last_reflection: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Tags for categorization
+    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    import_batch_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    federation_source: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    # Team scoping fields for resource organization
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    def __repr__(self) -> str:
+        """Return a string representation of the GrpcService instance.
+
+        Returns:
+            str: A formatted string containing the service's ID, name, and target.
+        """
+        return f"<GrpcService(id='{self.id}', name='{self.name}', target='{self.target}')>"
 
 
 class SessionRecord(Base):
@@ -2948,7 +3036,7 @@ class TokenUsageLog(Base):
     __tablename__ = "token_usage_logs"
 
     # Primary key
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     # Token reference
     token_jti: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
@@ -3016,7 +3104,8 @@ class SSOProvider(Base):
     """SSO identity provider configuration for OAuth2/OIDC authentication.
 
     Stores configuration and credentials for external identity providers
-    like GitHub, Google, IBM Security Verify, and Okta.
+    like GitHub, Google, IBM Security Verify, Okta, Microsoft Entra ID,
+    and any generic OIDC-compliant provider (Keycloak, Auth0, Authentik, etc.).
 
     Attributes:
         id (str): Unique provider ID (e.g., 'github', 'google', 'ibm_verify')
@@ -3054,7 +3143,7 @@ class SSOProvider(Base):
     __tablename__ = "sso_providers"
 
     # Provider identification
-    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # github, google, ibm_verify, okta, keycloak, entra, or any custom ID
     name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_type: Mapped[str] = mapped_column(String(20), nullable=False)  # oauth2, oidc
@@ -3306,6 +3395,18 @@ def set_a2a_agent_slug(_mapper, _conn, target):
         _mapper: Mapper
         _conn: Connection
         target: Target A2AAgent instance
+    """
+    target.slug = slugify(target.name)
+
+
+@event.listens_for(GrpcService, "before_insert")
+def set_grpc_service_slug(_mapper, _conn, target):
+    """Set the slug for a GrpcService before insert.
+
+    Args:
+        _mapper: Mapper
+        _conn: Connection
+        target: Target GrpcService instance
     """
     target.slug = slugify(target.name)
 

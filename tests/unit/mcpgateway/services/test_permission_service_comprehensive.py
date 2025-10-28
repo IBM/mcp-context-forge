@@ -8,15 +8,15 @@ Comprehensive unit tests for PermissionService to maximize coverage.
 """
 
 # Standard
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeamMember, EmailUser, PermissionAuditLog, Permissions, Role, UserRole, utc_now
+from mcpgateway.db import EmailTeamMember, PermissionAuditLog, Permissions, UserRole, utc_now
 from mcpgateway.services.permission_service import PermissionService
 
 
@@ -49,36 +49,31 @@ class TestPermissionServiceCore:
         permission = "tools.create"
 
         # Mock dependencies
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value={permission}), \
-             patch.object(permission_service, '_log_permission_check') as mock_log, \
-             patch.object(permission_service, '_get_roles_for_audit', return_value={"roles": []}):
-
+        with (
+            patch.object(permission_service, "_is_user_admin", return_value=False),
+            patch.object(permission_service, "get_user_permissions", return_value={permission}),
+            patch.object(permission_service, "_log_permission_check") as mock_log,
+            patch.object(permission_service, "_get_roles_for_audit", return_value={"roles": []}),
+        ):
             result = await permission_service.check_permission(
-                user_email=user_email,
-                permission=permission,
-                resource_type="tool",
-                resource_id="tool-123",
-                team_id="team-456",
-                ip_address="192.168.1.1",
-                user_agent="Mozilla/5.0"
+                user_email=user_email, permission=permission, resource_type="tool", resource_id="tool-123", team_id="team-456", ip_address="192.168.1.1", user_agent="Mozilla/5.0"
             )
 
             assert result == True
             # Verify audit logging was called
             mock_log.assert_called_once()
             call_args = mock_log.call_args[1]
-            assert call_args['user_email'] == user_email
-            assert call_args['permission'] == permission
-            assert call_args['granted'] == True
-            assert call_args['ip_address'] == "192.168.1.1"
-            assert call_args['user_agent'] == "Mozilla/5.0"
+            assert call_args["user_email"] == user_email
+            assert call_args["permission"] == permission
+            assert call_args["granted"] == True
+            assert call_args["ip_address"] == "192.168.1.1"
+            assert call_args["user_agent"] == "Mozilla/5.0"
 
     @pytest.mark.asyncio
     async def test_check_permission_exception_handling(self, permission_service):
         """Test permission check handles exceptions gracefully."""
         # Make _is_user_admin raise an exception
-        with patch.object(permission_service, '_is_user_admin', side_effect=Exception("Database error")):
+        with patch.object(permission_service, "_is_user_admin", side_effect=Exception("Database error")):
             result = await permission_service.check_permission("user@example.com", "tools.read")
             # Should default to deny on error
             assert result == False
@@ -86,19 +81,18 @@ class TestPermissionServiceCore:
     @pytest.mark.asyncio
     async def test_check_permission_wildcard(self, permission_service):
         """Test permission check with wildcard permissions."""
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value={Permissions.ALL_PERMISSIONS}):
-
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value={Permissions.ALL_PERMISSIONS}):
             result = await permission_service.check_permission("user@example.com", "any.permission")
             assert result == True
 
     @pytest.mark.asyncio
     async def test_check_permission_team_fallback_not_called_for_non_team(self, permission_service):
         """Test fallback is not called for non-team permissions."""
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value=set()), \
-             patch.object(permission_service, '_check_team_fallback_permissions') as mock_fallback:
-
+        with (
+            patch.object(permission_service, "_is_user_admin", return_value=False),
+            patch.object(permission_service, "get_user_permissions", return_value=set()),
+            patch.object(permission_service, "_check_team_fallback_permissions") as mock_fallback,
+        ):
             result = await permission_service.check_permission("user@example.com", "tools.create")
             assert result == False
             # Fallback should not be called for non-team permissions
@@ -121,7 +115,7 @@ class TestPermissionCaching:
         permission_service._cache_timestamps[cache_key] = utc_now()
 
         # Mock _is_cache_valid to return True
-        with patch.object(permission_service, '_is_cache_valid', return_value=True):
+        with patch.object(permission_service, "_is_cache_valid", return_value=True):
             result = await permission_service.get_user_permissions(user_email, team_id)
 
             assert result == cached_permissions
@@ -142,9 +136,7 @@ class TestPermissionCaching:
         mock_user_role.role = mock_role
 
         # Mock database query
-        with patch.object(permission_service, '_is_cache_valid', return_value=False), \
-             patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role]):
-
+        with patch.object(permission_service, "_is_cache_valid", return_value=False), patch.object(permission_service, "_get_user_roles", return_value=[mock_user_role]):
             result = await permission_service.get_user_permissions(user_email, team_id)
 
             assert "tools.read" in result
@@ -278,26 +270,15 @@ class TestResourcePermissions:
     @pytest.mark.asyncio
     async def test_has_permission_on_resource_granted(self, permission_service):
         """Test has_permission_on_resource when permission is granted."""
-        with patch.object(permission_service, 'check_permission', return_value=True):
-            result = await permission_service.has_permission_on_resource(
-                user_email="user@example.com",
-                permission="tools.read",
-                resource_type="tool",
-                resource_id="tool-123",
-                team_id="team-456"
-            )
+        with patch.object(permission_service, "check_permission", return_value=True):
+            result = await permission_service.has_permission_on_resource(user_email="user@example.com", permission="tools.read", resource_type="tool", resource_id="tool-123", team_id="team-456")
             assert result == True
 
     @pytest.mark.asyncio
     async def test_has_permission_on_resource_denied(self, permission_service):
         """Test has_permission_on_resource when permission is denied."""
-        with patch.object(permission_service, 'check_permission', return_value=False):
-            result = await permission_service.has_permission_on_resource(
-                user_email="user@example.com",
-                permission="tools.read",
-                resource_type="tool",
-                resource_id="tool-123"
-            )
+        with patch.object(permission_service, "check_permission", return_value=False):
+            result = await permission_service.has_permission_on_resource(user_email="user@example.com", permission="tools.read", resource_type="tool", resource_id="tool-123")
             assert result == False
 
 
@@ -307,7 +288,7 @@ class TestAdminPermissions:
     @pytest.mark.asyncio
     async def test_check_admin_permission_platform_admin(self, permission_service):
         """Test check_admin_permission for platform admin."""
-        with patch.object(permission_service, '_is_user_admin', return_value=True):
+        with patch.object(permission_service, "_is_user_admin", return_value=True):
             result = await permission_service.check_admin_permission("admin@example.com")
             assert result == True
 
@@ -316,9 +297,7 @@ class TestAdminPermissions:
         """Test check_admin_permission for user with admin permissions."""
         admin_perms = {Permissions.ADMIN_SYSTEM_CONFIG, "other.permission"}
 
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value=admin_perms):
-
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=admin_perms):
             result = await permission_service.check_admin_permission("user@example.com")
             assert result == True
 
@@ -327,9 +306,7 @@ class TestAdminPermissions:
         """Test check_admin_permission for regular user."""
         regular_perms = {"tools.read", "resources.write"}
 
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value=regular_perms):
-
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=regular_perms):
             result = await permission_service.check_admin_permission("user@example.com")
             assert result == False
 
@@ -350,7 +327,7 @@ class TestAuditLogging:
             granted=True,
             roles_checked={"roles": []},
             ip_address="192.168.1.1",
-            user_agent="TestAgent"
+            user_agent="TestAgent",
         )
 
         # Verify audit log was added to database
@@ -378,7 +355,7 @@ class TestAuditLogging:
         mock_user_role.role = mock_role
         mock_user_role.scope = "global"
 
-        with patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role]):
+        with patch.object(permission_service, "_get_user_roles", return_value=[mock_user_role]):
             result = await permission_service._get_roles_for_audit("user@example.com", None)
 
             assert "roles" in result
@@ -394,36 +371,26 @@ class TestTeamFallbackPermissions:
     @pytest.mark.asyncio
     async def test_team_fallback_global_create(self, permission_service):
         """Test fallback allows global team creation."""
-        result = await permission_service._check_team_fallback_permissions(
-            "user@example.com", "teams.create", None
-        )
+        result = await permission_service._check_team_fallback_permissions("user@example.com", "teams.create", None)
         assert result == True
 
     @pytest.mark.asyncio
     async def test_team_fallback_global_read(self, permission_service):
         """Test fallback allows global team read."""
-        result = await permission_service._check_team_fallback_permissions(
-            "user@example.com", "teams.read", None
-        )
+        result = await permission_service._check_team_fallback_permissions("user@example.com", "teams.read", None)
         assert result == True
 
     @pytest.mark.asyncio
     async def test_team_fallback_global_denied(self, permission_service):
         """Test fallback denies other global team operations."""
-        result = await permission_service._check_team_fallback_permissions(
-            "user@example.com", "teams.delete", None
-        )
+        result = await permission_service._check_team_fallback_permissions("user@example.com", "teams.delete", None)
         assert result == False
 
     @pytest.mark.asyncio
     async def test_team_fallback_unknown_role(self, permission_service):
         """Test fallback with unknown team role."""
-        with patch.object(permission_service, '_is_team_member', return_value=True), \
-             patch.object(permission_service, '_get_user_team_role', return_value="unknown"):
-
-            result = await permission_service._check_team_fallback_permissions(
-                "user@example.com", "teams.read", "team-123"
-            )
+        with patch.object(permission_service, "_is_team_member", return_value=True), patch.object(permission_service, "_get_user_team_role", return_value="unknown"):
+            result = await permission_service._check_team_fallback_permissions("user@example.com", "teams.read", "team-123")
             assert result == False
 
 
@@ -480,13 +447,12 @@ class TestNoAuditMode:
     @pytest.mark.asyncio
     async def test_check_permission_no_audit(self, permission_service_no_audit):
         """Test permission check without audit logging."""
-        with patch.object(permission_service_no_audit, '_is_user_admin', return_value=False), \
-             patch.object(permission_service_no_audit, 'get_user_permissions', return_value={"tools.read"}), \
-             patch.object(permission_service_no_audit, '_log_permission_check') as mock_log:
-
-            result = await permission_service_no_audit.check_permission(
-                "user@example.com", "tools.read"
-            )
+        with (
+            patch.object(permission_service_no_audit, "_is_user_admin", return_value=False),
+            patch.object(permission_service_no_audit, "get_user_permissions", return_value={"tools.read"}),
+            patch.object(permission_service_no_audit, "_log_permission_check") as mock_log,
+        ):
+            result = await permission_service_no_audit.check_permission("user@example.com", "tools.read")
 
             assert result == True
             # Audit logging should not be called
@@ -499,9 +465,7 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_empty_user_permissions(self, permission_service):
         """Test handling of empty user permissions."""
-        with patch.object(permission_service, '_is_user_admin', return_value=False), \
-             patch.object(permission_service, 'get_user_permissions', return_value=set()):
-
+        with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
             result = await permission_service.check_permission("user@example.com", "tools.read")
             assert result == False
 
@@ -521,9 +485,7 @@ class TestEdgeCases:
         mock_user_role2 = MagicMock()
         mock_user_role2.role = mock_role2
 
-        with patch.object(permission_service, '_is_cache_valid', return_value=False), \
-             patch.object(permission_service, '_get_user_roles', return_value=[mock_user_role1, mock_user_role2]):
-
+        with patch.object(permission_service, "_is_cache_valid", return_value=False), patch.object(permission_service, "_get_user_roles", return_value=[mock_user_role1, mock_user_role2]):
             result = await permission_service.get_user_permissions("user@example.com")
 
             # Should have all unique permissions from both roles
@@ -536,12 +498,12 @@ class TestEdgeCases:
     async def test_cache_key_format(self, permission_service):
         """Test cache key format for different scenarios."""
         # Global context
-        cache_key = f"user@example.com:global"
+        cache_key = "user@example.com:global"
         assert ":" in cache_key
         assert cache_key.endswith("global")
 
         # Team context
-        team_cache_key = f"user@example.com:team-123"
+        team_cache_key = "user@example.com:team-123"
         assert ":" in team_cache_key
         assert team_cache_key.endswith("team-123")
 

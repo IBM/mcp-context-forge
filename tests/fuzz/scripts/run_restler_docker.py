@@ -19,6 +19,7 @@ Environment variables:
 
 CLI options mirror these and take precedence over env values.
 """
+
 # Future
 from __future__ import annotations
 
@@ -75,20 +76,31 @@ def run_docker_restler(out_dir: Path, time_budget: int, no_ssl: bool) -> None:
     image = "ghcr.io/microsoft/restler"
 
     compile_cmd = [
-        "docker", "run", "--rm",
-        "-v", volume,
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        volume,
         image,
-        "restler", "compile",
-        "--api_spec", "/workspace/openapi.json",
+        "restler",
+        "compile",
+        "--api_spec",
+        "/workspace/openapi.json",
     ]
 
     test_cmd = [
-        "docker", "run", "--rm",
-        "-v", volume,
+        "docker",
+        "run",
+        "--rm",
+        "-v",
+        volume,
         image,
-        "restler", "test",
-        "--grammar_dir", "/workspace/Compile",
-        "--time_budget", str(time_budget),
+        "restler",
+        "test",
+        "--grammar_dir",
+        "/workspace/Compile",
+        "--time_budget",
+        str(time_budget),
     ]
     if no_ssl:
         test_cmd.append("--no_ssl")

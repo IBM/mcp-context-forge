@@ -1,453 +1,137 @@
 # MCP Gateway Security Features
 
-**Current Version: 0.8.0 (Beta)** - MCP Gateway is currently in beta. Security features are continuously evolving toward the 1.0 release.
+**Current Version: 0.8.0 (Beta)** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
-## Comprehensive Security Capabilities
+## Security Posture Overview
 
-**Legend**: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
+- **Authentication on by default.** `AUTH_REQUIRED=true` ensures every API, SSE, and Admin UI route requires an authenticated session unless you explicitly opt out for local testing.
+- **Secure defaults for operators.** The service binds to `127.0.0.1` unless overridden, `MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false` keep the Admin UI/API offline in production, and cookies are hardened with `SECURE_COOKIES=true`, HttpOnly, and `SameSite=lax`.
+- **Environment-aware CORS & cookies.** `ENVIRONMENT` and `APP_DOMAIN` drive cors/origin policy, switching between a localhost allowlist in development and strict origin checks in production (`mcpgateway/middleware/security_headers.py`).
+- **Security posture reporting.** Startup invokes `validate_security_configuration()` (`mcpgateway/main.py`) which consumes `settings.get_security_status()` to log weak secrets, missing auth, or insecure federation setups. Setting `REQUIRE_STRONG_SECRETS=true` upgrades warnings to hard failures.
 
-### 🔐 Authentication & Identity Management
+## Authentication & Identity
 
-* **JWT Token Management** - Configurable JWT tokens with **symmetric (HMAC) and asymmetric (RSA/ECDSA) algorithm support**, expiration, per-user token catalogs, and revocation support ([#87](https://github.com/IBM/mcp-context-forge/issues/87), ✅ [#425](https://github.com/IBM/mcp-context-forge/issues/425))
-  - **HMAC Support**: HS256, HS384, HS512 for simple deployments
-  - **RSA Support**: RS256, RS384, RS512 for enterprise and distributed architectures
-  - **ECDSA Support**: ES256, ES384, ES512 for modern cryptographic requirements
-  - **Key Management**: Configurable public/private key paths for asymmetric algorithms
-  - **Dynamic Configuration**: Runtime algorithm validation and key loading
+### Core Gateway Authentication
 
-* **Database-Backed User Authentication** - Argon2id password hashing replacing basic auth ([#544](https://github.com/IBM/mcp-context-forge/issues/544)) 🚧
+- **HTTP Basic Auth** protects the Admin UI and optionally the OpenAPI docs (`DOCS_ALLOW_BASIC_AUTH=true`). Credentials are defined by `BASIC_AUTH_USER`/`BASIC_AUTH_PASSWORD`, and the config endpoint masks secrets (`mcpgateway/admin.py`).
+- **JWT bearer tokens** are required for API access and MCP transports when `MCP_CLIENT_AUTH_ENABLED=true` (default). For reverse proxies you can opt into `TRUST_PROXY_AUTH=true` and provide the authenticated identity through `PROXY_USER_HEADER`.
+- **Token issuance tooling.** `python -m mcpgateway.utils.create_jwt_token` produces gateway-signed tokens for automation. The helper respects configured expiry, issuer, and audience claims.
 
-* **Enterprise SSO Integration** - Support for GitHub, Google, LDAP/Active Directory identity providers ([#220](https://github.com/IBM/mcp-context-forge/issues/220), [#277](https://github.com/IBM/mcp-context-forge/issues/277), [#278](https://github.com/IBM/mcp-context-forge/issues/278), [#284](https://github.com/IBM/mcp-context-forge/issues/284))
+### JWT Token Management
 
-* **OAuth Integration** - Support for OAuth 2.0 for delegated access to MCP servers (✅ [#605](https://github.com/IBM/mcp-context-forge/issues/605))
+- **Algorithm agility.** `mcpgateway/utils/jwt_config_helper.py` supports HS256/384/512, RS256/384/512, and ES256/384/512. For asymmetric algorithms the helper validates key paths on startup and reads the PEM material securely.
+- **Secret validation.** The Pydantic field validator (`Settings.validate_secrets`) logs warnings for default or low-entropy secrets, and when `REQUIRE_STRONG_SECRETS=true` startup fails if critical values remain weak.
+- **Revocation and audit.** API tokens are modelled as JWTs with per-token `jti` identifiers. Revocations (`TokenRevocation`) and usage logs (`TokenUsageLog`) persist to the database, enabling immediate invalidation and monitoring.
 
-* **Per-Virtual-Server API Keys** - Scoped access control for individual virtual servers ([#282](https://github.com/IBM/mcp-context-forge/issues/282))
+### Email-Based Authentication
 
-* **Enhanced Session Management** - Secure session handling for Admin UI ([#541](https://github.com/IBM/mcp-context-forge/issues/541)) 🚧
+- **Argon2id password hashing.** `EmailAuthService` hashes credentials with configurable `ARGON2ID_TIME_COST`, `ARGON2ID_MEMORY_COST`, and `ARGON2ID_PARALLELISM`.
+- **Password policy controls.** Minimum length and complexity are driven by `PASSWORD_MIN_LENGTH` and related flags. Attempts that fail policy raise `PasswordValidationError`.
+- **Account lockout & auditing.** `MAX_FAILED_LOGIN_ATTEMPTS` and `ACCOUNT_LOCKOUT_DURATION_MINUTES` enforce lockouts at the ORM layer (`EmailUser.increment_failed_attempts`). Every login, registration, or password change emits an `EmailAuthEvent` with IP and user-agent metadata for investigation.
+- **Admin bootstrap.** The first superuser is provisioned from `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD`, enabling secure initial access even when SSO is not configured.
 
-* **CSRF Token Protection** - Cross-site request forgery prevention ([#543](https://github.com/IBM/mcp-context-forge/issues/543)) 🚧
+### Token Catalog & API Keys
 
-### 🛡️ Authorization & Access Control
+- **Hashed personal and team tokens.** `TokenCatalogService` stores only SHA-256 hashes (`token_hash`) of issued tokens (`EmailApiToken`) and keeps the raw secret in memory just long enough to present it once.
+- **Fine-grained scopes.** Tokens can be confined to a server, a permission list, IP CIDRs, and time-of-day or usage quotas via `TokenScope`.
+- **Usage analytics.** Every request records method, endpoint, IP, user-agent, latency, and block reason in `TokenUsageLog`, supporting anomaly detection.
+- **Immediate revocation.** `TokenRevocation` entries are enforced before gateway execution, guaranteeing revoked tokens cannot be replayed.
 
-* **Role-Based Access Control (RBAC)** - User/Team/Global scopes with private, team, and global catalog separation ([#283](https://github.com/IBM/mcp-context-forge/issues/283))
+### OAuth & SSO Federation
 
-* **Attribute-Based Access Control (ABAC)** - Dynamic authorization based on user attributes, resource properties, and environmental context ([#706](https://github.com/IBM/mcp-context-forge/issues/706)) 🚧
+- **Multi-provider SSO.** `mcpgateway/services/sso_service.py` supports GitHub, Google, IBM Security Verify, Microsoft Entra ID, Okta, Keycloak, and generic OIDC providers. Secrets are encrypted with a Fernet key derived from `AUTH_ENCRYPTION_SECRET`.
+- **Security-state tracking.** `SSOAuthSession` persists OAuth state tokens, PKCE `code_verifier`, and nonces to prevent CSRF and replay attacks.
+- **Per-user OAuth vault.** `TokenStorageService` encrypts access/refresh tokens using AES-GCM (`oauth_encryption.py`) and keys them by both gateway and gateway user to prevent cross-tenant leakage.
+- **Dynamic Client Registration (DCR).** `DcrService` discovers OAuth metadata (RFC 8414), honours issuer allowlists (`DCR_ALLOWED_ISSUERS`), registers clients, and encrypts the resulting client secrets and registration access tokens before storing them (`RegisteredOAuthClient`).
+- **Tool credential encryption.** The same `AUTH_ENCRYPTION_SECRET` powers `services_auth.encode_auth()` to store upstream tool auth blobs as AES-GCM tokens inside the database.
 
-* **Policy-as-Code Engine** - Rego-based policy enforcement for fine-grained authorization ([#271](https://github.com/IBM/mcp-context-forge/issues/271))
+## Authorization & Access Control
 
-* **IP-Based Access Control** - Configurable IP allowlisting for network-level security ([#536](https://github.com/IBM/mcp-context-forge/issues/536)) 🚧
+- **Role-Based Access Control (RBAC).** `PermissionService` and `RoleService` implement global/team/personal scopes with caching, inheritance, and audit logging (`PermissionAuditLog`). Admin bypass is explicit, and permission checks default to deny on error.
+- **Multi-tenancy primitives.** Teams, invites, and memberships (`EmailTeam`, `EmailTeamMember`, `TeamInvitationService`) enforce owner-only invitations, configurable expiry, and per-team quotas (`MAX_TEAMS_PER_USER`, `MAX_MEMBERS_PER_TEAM`). Personal teams can be auto-created with `AUTO_CREATE_PERSONAL_TEAMS=true`.
+- **Resource visibility.** Tools, prompts, resources, and gateways include a `visibility` flag (private/team/public) that PermissionService respects when resolving access.
+- **Feature gating.** Administrative capabilities stay off unless you opt in: `MCPGATEWAY_UI_ENABLED`, `MCPGATEWAY_ADMIN_API_ENABLED`, `MCPGATEWAY_BULK_IMPORT_ENABLED`, `MCPGATEWAY_CATALOG_ENABLED`, and `MCPGATEWAY_A2A_ENABLED` all default to safe values.
+- **Scoped API credentials.** Tokens can be restricted to individual virtual servers, explicit permission strings, and IP ranges; blocked requests are captured via `TokenUsageLog.blocked`.
+- **Header passthrough controls.** `utils/passthrough_headers.py` keeps passthrough disabled unless `ENABLE_HEADER_PASSTHROUGH=true`, sanitises header names/values, rejects conflicting `Authorization` headers, and lets clients safely supply `X-Upstream-Authorization` for upstream delegation.
+- **Policy-as-code plugins.** The plugin framework powers deny/allow decisions before and after prompt/tool/resource execution. Security-focused plugins include `deny_filter`, `pii_filter`, `content_moderation`, `output_length_guard`, `schema_guard`, `sql_sanitizer`, `secrets_detection`, `rate_limiter`, `url_reputation`, `vault`, `watchdog`, and the optional external OPA integration for Rego policies (`plugins/external/opa`).
+- **Federation safeguards.** Startup validation warns when `federation_enabled` is combined with unauthenticated deployments, and federation forwarding honours global rate limits to protect upstream peers.
 
-* **Endpoint Feature Flags** - Selectively enable/disable tools, resources, prompts, servers, gateways ([#537](https://github.com/IBM/mcp-context-forge/issues/537)) 🚧
+## Data Protection & Secret Handling
 
-* **Resource-Level Access Control** - Virtual server composition with granular tool/resource visibility control
+- **AES-GCM secret vault.** `mcpgateway/utils/services_auth.py` derives a 32-byte key from `AUTH_ENCRYPTION_SECRET` and encrypts tool/resource credentials, ensuring secrets stored in the database or logs are opaque without the passphrase.
+- **Encrypted OAuth/SSO secrets.** The SSO service and DCR service wrap client secrets and registration tokens with Fernet and only decrypt them on demand.
+- **Cookie security helpers.** `utils/security_cookies.py` sets auth/session cookies with HttpOnly, `SameSite`, and `secure` flags (enforced for production or when `SECURE_COOKIES=true`) and provides symmetric deletion helpers to avoid stale cookies.
+- **Security headers middleware.** `SecurityHeadersMiddleware` adds CSP, X-Frame-Options (default `DENY`), X-Content-Type-Options (`nosniff`), X-Download-Options (`noopen`), Referrer-Policy, HSTS (when HTTPS is detected), and strips `Server`/`X-Powered-By` headers.
+- **TLS ready.** `make certs` creates local certificates, `make serve-ssl` runs Gunicorn with TLS, and the client defaults keep `SKIP_SSL_VERIFY=false`. The container images trust RHEL certificate bundles for outbound TLS.
+- **Support bundle sanitisation.** `SupportBundleService` redacts passwords, tokens, secrets, and bearer values before writing diagnostic ZIPs. Patterns cover API keys, JWTs, Authorization headers, and database URLs.
+- **Configuration masking.** `/admin/config/settings` hides sensitive keys using the `mask_sensitive` helper to prevent secret exfiltration through the Admin UI/API.
+- **Hardened containers.** `Containerfile.lite` builds on patched RHEL UBI 10 ↦ scratch, installs dependencies in a venv, strips debugging symbols, removes package managers, deletes setuid/setgid binaries, creates a non-root `UID 1001`, preserves the RPM DB for scanning, and sets security-oriented runtime env vars.
+- **Logging controls.** `LoggingService` centralises formatting with JSON or text output, supports log rotation, and the support bundle honours size/line caps to avoid log leakage.
 
-* **Capability-Based Security** - Fine-grained permissions for individual MCP operations (Planned)
+## Input Validation & Guardrails
 
-### 🔒 Data Protection & Encryption
+- **SecurityValidator centralises sanitisation.** `mcpgateway/validators.py` enforces length limits, safe character sets, scheme allowlists, JSON depth (`MAX_JSON_DEPTH`), and detects dangerous HTML/JS patterns across every Pydantic schema.
+- **Schema-driven enforcement.** `mcpgateway/schemas.py` applies the validator to tool names, URLs, resource URIs, descriptions, prompts, and JSON payloads, trimming or rejecting unsafe values before they hit business logic.
+- **Guardrail plugins.** Content filters (PII, harmful content, markdown cleanup), output length guards, regex filters, and SQL sanitizers run as pre/post hooks to block malicious prompt/tool/resource usage.
+- **Rate limiting & quotas.** Admin routes use the `rate_limit` decorator to enforce per-IP quotas (`admin.py`), bulk import has configurable ceilings (`MCPGATEWAY_BULK_IMPORT_RATE_LIMIT`, `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS`), and runtime limits (`tool_rate_limit`, `tool_timeout`, `tool_concurrent_limit`) prevent resource exhaustion.
+- **Header and payload hygiene.** Passthrough headers strip control characters, clamp values to 4 KB, and refuse malformed names; request/response retries honour jitter and backoff to mitigate abuse.
+- **Secure invitation flows.** Team invitations use cryptographically random, URL-safe tokens, enforce owner-only issuance, respect expiry, and prevent over-subscribing teams (`TeamInvitationService`).
 
-* **Cryptographic Request Signing** - End-to-end request/response signing and verification ([#230](https://github.com/IBM/mcp-context-forge/issues/230))
+## Operational Security & Monitoring
 
-* **TLS/mTLS Support** - Certificate-based authentication with private CA support ([#568](https://github.com/IBM/mcp-context-forge/issues/568)) 🚧
+- **Startup enforcement.** `validate_security_configuration()` blocks boot when critical issues remain and `REQUIRE_STRONG_SECRETS=true`, and otherwise prints actionable warnings (default secrets, disabled auth, SSL verification overrides).
+- **Continuous telemetry.** Permission checks, OAuth flows, and token usage log structured events with timestamps, IP addresses, user-agent strings, span attributes, and success/failure flags for downstream monitoring.
+- **Security tooling baked into the build.** The `Makefile` exposes `make security-all`, `make security-scan`, `make security-report`, `make bandit`, `make semgrep`, `make dodgy`, `make gitleaks`, `make trivy`, `make grype-scan`, `make snyk-all`, and `make fuzz-security`, providing repeatable security automation for CI/CD.
+- **Observability hooks.** OpenTelemetry exports (when configured) tag spans with error flags, latency, and success status, supporting tracing-based detection of anomalies.
+- **Support bundle hygiene.** Operators can gather diagnostics without leaking credentials thanks to sanitisation routines and configurable size/time limits.
 
-* **Enterprise Secrets Management** - HashiCorp Vault integration for secure credential storage ([#542](https://github.com/IBM/mcp-context-forge/issues/542)) 🚧
+## Production Hardening Checklist
 
-* **Transport Layer Security** - Multiple secure protocols (SSE, WebSocket, HTTPS) with configurable TLS termination
+- [ ] **Set production posture.** Run with `ENVIRONMENT=production`, configure `APP_DOMAIN` and explicit `ALLOWED_ORIGINS`, and leave `SKIP_SSL_VERIFY=false`.
+- [ ] **Harden secrets.** Rotate `BASIC_AUTH_PASSWORD`, `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Keep auth mandatory.** Maintain `AUTH_REQUIRED=true`, `MCP_CLIENT_AUTH_ENABLED=true`, and only enable `TRUST_PROXY_AUTH` behind a trusted authentication proxy.
+- [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
+- [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.
+- [ ] **Secure the data plane.** Terminate TLS with real certificates (`make certs`/`make serve-ssl` or a fronting proxy), and prefer PostgreSQL/MySQL with TLS over SQLite in production.
+- [ ] **Monitor activity.** Ship `token_usage_logs`, `email_auth_events`, audit trails, and structured logs to your SIEM/observability stack; alert on repeated failures or blocked requests.
+- [ ] **Lock down federation.** If `federation_enabled` remains on, restrict `FEDERATION_PEERS`, ensure every peer enforces auth, and monitor health-check traffic.
+- [ ] **Automate security checks.** Integrate the security Make targets into CI/CD so images, dependencies, and IaC are scanned before deployment.
 
-* **End-to-End Encryption** - Optional E2E encryption for sensitive data flows (Planned)
+## Planned & In-Progress Enhancements (🚧 Planned)
 
-* **Key Management Service (KMS) Integration** - Support for AWS KMS, Azure Key Vault, Google Cloud KMS (Planned)
+The items below are active roadmap work or design explorations. Track status in `docs/docs/architecture/roadmap.md` and the linked GitHub issues.
 
-* **Data Loss Prevention (DLP)** - Automatic detection and redaction of sensitive data patterns (Planned)
+### Authentication & Authorization
 
-### 🚦 Input Validation & Sanitization
+- 🚧 **Attribute-Based Access Control (ABAC)** — Use user attributes and resource metadata to supplement RBAC for multi-tenant servers ([#706](https://github.com/IBM/mcp-context-forge/issues/706)).
+- 🚧 **Policy-as-Code enforcement** — Integrate Rego/OPA policies directly into gateway decisions beyond the current optional plugin ([#271](https://github.com/IBM/mcp-context-forge/issues/271)).
+- 🚧 **Per-virtual-server API keys & conditional capabilities** — Expand token scopes to cover tool-level capability grants and auto-expiry policies.
 
-* **Gateway-Level Input Validation** - Prevent path traversal and injection attacks ([#221](https://github.com/IBM/mcp-context-forge/issues/221))
+### Data Protection & Secrets
 
-* **AI Guardrails & PII Masking** - Input/output sanitization with sensitive data detection ([#229](https://github.com/IBM/mcp-context-forge/issues/229))
+- 🚧 **HashiCorp Vault & external KMS** — Native secret backends for tool credentials, JWT keys, and OAuth secrets ([#542](https://github.com/IBM/mcp-context-forge/issues/542)).
+- 🚧 **mTLS and certificate pinning** — Stronger upstream trust requirements for MCP servers with automatic pin management ([#568](https://github.com/IBM/mcp-context-forge/issues/568)).
+- 🚧 **Data Loss Prevention (DLP)** — Inline scanning for sensitive payloads with redact-or-drop policies.
+- 🚧 **Advanced cryptography** — Evaluating TEEs, HSM-backed signing, and post-quantum algorithms for long-lived deployments.
 
-* **Content Size & Type Limits** - Security limits for resources and prompts ([#538](https://github.com/IBM/mcp-context-forge/issues/538)) 🚧
+### Runtime & Infrastructure Security
 
-* **XSS Prevention** - DOMPurify integration and content sanitization (✅ [#336](https://github.com/IBM/mcp-context-forge/issues/336), [#341](https://github.com/IBM/mcp-context-forge/issues/341), ✅ [#361](https://github.com/IBM/mcp-context-forge/issues/361))
+- 🚧 **Container runtime enforcement** — Integrations for Falco, AppArmor/SELinux profiles, seccomp, and CapDrop during container deployment.
+- 🚧 **Service mesh alignment** — Dedicated Istio/Linkerd blueprints for mTLS, traffic policies, and zero-trust networking.
+- 🚧 **Federated attestation** — Signing/verification workflow for MCP gateways and servers to establish trust before federation link-up.
+- 🚧 **Sandboxed execution** — gVisor, Firecracker, or WebAssembly sandboxes for untrusted MCP servers and plugins.
 
-* **SQL Injection Prevention** - Database-level security constraints ([#342](https://github.com/IBM/mcp-context-forge/issues/342)) 🚧
+### Monitoring & Governance
 
-### 🛠️ Plugin & Middleware Framework
+- 🚧 **Dynamic security posture scoring** — Automated risk evaluations enriched with runtime metrics and audit history.
+- 🚧 **Behavioral analytics** — ML-assisted anomaly detection for unusual tool usage, prompt patterns, or federation activity.
+- 🚧 **Immutable audit trails** — Evaluating tamper-resistant storage (e.g., append-only or ledger-backed logs) for high-assurance environments.
 
-* **Pre/Post Request Hooks** - Extensible plugin system for custom security policies (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682))
+These features remain aspirational until the associated PRs merge. Expect the documentation to move them into the "Current" sections when code lands.
 
-* **Plugin CLI Tools** - Command-line interface for authoring and packaging plugins (✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
+## Additional References
 
-* **AI Middleware Integration** - Framework for adding LLM-based security capabilities ([#313](https://github.com/IBM/mcp-context-forge/issues/313))
-
-* **Semantic Tool Filtering** - Intelligent auto-filtering of tools based on context ([#182](https://github.com/IBM/mcp-context-forge/issues/182))
-
-* **Dynamic Tool Generation** - LLM-powered tool creation with security controls ([#130](https://github.com/IBM/mcp-context-forge/issues/130))
-
-### 📊 Monitoring & Audit
-
-* **Comprehensive Audit Logging** - Database-backed audit trail for all operations ([#535](https://github.com/IBM/mcp-context-forge/issues/535)) 🚧
-
-* **Structured JSON Logging** - Correlation IDs for request tracing ([#300](https://github.com/IBM/mcp-context-forge/issues/300))
-
-* **Dual Logging Support** - Console and file outputs with rotation policies (✅ [#364](https://github.com/IBM/mcp-context-forge/issues/364))
-
-* **OpenTelemetry Integration** - Vendor-agnostic observability with comprehensive metrics (✅ [#735](https://github.com/IBM/mcp-context-forge/issues/735))
-
-* **Phoenix Observability Plugin** - Built-in Phoenix integration for ML monitoring (✅ [#727](https://github.com/IBM/mcp-context-forge/issues/727))
-
-* **Prometheus Metrics** - Performance and security metrics instrumentation ([#218](https://github.com/IBM/mcp-context-forge/issues/218))
-
-* **Security Information and Event Management (SIEM) Integration** - Native support for Splunk, ELK, Datadog (Planned)
-
-* **Compliance Reporting** - Automated reports for SOC2, ISO 27001, HIPAA, GDPR (Planned)
-
-* **Forensic Analysis Tools** - Advanced incident investigation capabilities (Planned)
-
-### 🚨 Rate Limiting & DDoS Protection
-
-* **Gateway-Level Rate Limiting** - Configurable request throttling per client/endpoint ([#257](https://github.com/IBM/mcp-context-forge/issues/257))
-
-* **Tool Execution Limits** - Resource controls and execution boundaries ([#539](https://github.com/IBM/mcp-context-forge/issues/539)) 🚧
-
-* **Circuit Breakers** - Automatic failover for unstable backends ([#301](https://github.com/IBM/mcp-context-forge/issues/301))
-
-* **Smart Retry Mechanisms** - Exponential backoff with jitter ([#258](https://github.com/IBM/mcp-context-forge/issues/258), ✅ [#456](https://github.com/IBM/mcp-context-forge/issues/456))
-
-### 🔍 Security Testing & Validation
-
-* **SAST/DAST Integration** - Semgrep and OWASP ZAP automated testing ([#259](https://github.com/IBM/mcp-context-forge/issues/259))
-
-* **Input Validation Test Suite** - Comprehensive security validation tests (✅ [#552](https://github.com/IBM/mcp-context-forge/issues/552))
-
-* **Fuzz Testing** - Hypothesis, atheris, schemathesis, RESTler (✅ [#256](https://github.com/IBM/mcp-context-forge/issues/256))
-
-* **Mutation Testing** - Test quality validation with mutmut (✅ [#280](https://github.com/IBM/mcp-context-forge/issues/280))
-
-* **Security Scanners** - Bandit, grype, nodejsscan integration ([#279](https://github.com/IBM/mcp-context-forge/issues/279), ✅ [#415](https://github.com/IBM/mcp-context-forge/issues/415), ✅ [#499](https://github.com/IBM/mcp-context-forge/issues/499))
-
-### 🏗️ Infrastructure Security
-
-* **Zero-Trust Architecture** - Peer gateway health checks with automatic failover (✅ [#424](https://github.com/IBM/mcp-context-forge/issues/424))
-
-* **Configuration Validation** - Schema enforcement with startup security checks ([#285](https://github.com/IBM/mcp-context-forge/issues/285), [#534](https://github.com/IBM/mcp-context-forge/issues/534)) 🚧
-
-* **Security Headers & Configurable Admin UI Security** - Comprehensive security headers with full configurability (✅ [#344](https://github.com/IBM/mcp-context-forge/issues/344), ✅ [#533](https://github.com/IBM/mcp-context-forge/issues/533))
-  - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing attacks (configurable)
-  - **X-Frame-Options: DENY** - Prevents clickjacking attacks (configurable: DENY/SAMEORIGIN)
-  - **X-Download-Options: noopen** - Prevents IE download execution (configurable)
-  - **Content-Security-Policy** - Comprehensive XSS and injection protection (Admin UI compatible)
-  - **Strict-Transport-Security** - Forces HTTPS connections (configurable max-age & subdomains)
-  - **Environment-aware CORS** - Automatic origin configuration for dev/production
-  - **Secure cookies** - HttpOnly, Secure, SameSite attributes for authentication
-  - **Static analysis compatibility** - Meta tags complement HTTP headers for nodejsscan
-  - **15 configuration options** - Individual control over all security features
-
-* **Well-Known URI Handler** - security.txt and robots.txt support (✅ [#540](https://github.com/IBM/mcp-context-forge/issues/540))
-
-* **Password Policy Engine** - Configurable password and secret policies ([#426](https://github.com/IBM/mcp-context-forge/issues/426)) 🚧
-
-* **Graceful Shutdown** - SIGTERM-safe rollouts with connection draining ([#217](https://github.com/IBM/mcp-context-forge/issues/217))
-
-### 🔐 Advanced Security Capabilities (Planned)
-
-These advanced security features are under consideration for future releases:
-
-#### MCP Server Verification & Trust
-
-* **MCP Server Attestation** - Cryptographic verification of MCP server identity and integrity before connection
-
-* **Signature Verification** - Digital signature validation for MCP server responses and tool executions
-
-* **MCP Server Code Scanning** - Automated security analysis of MCP server source code using multiple linters and security scanners (Bandit, Semgrep, CodeQL) before deployment ([#654](https://github.com/IBM/mcp-context-forge/issues/654)) 🚧
-
-* **Binary Analysis** - Static and dynamic analysis of compiled MCP server binaries for vulnerabilities
-
-#### Sandboxed Execution Environments
-
-* **Container Sandboxing** - Run MCP servers in isolated containers with strict security policies:
-  - **Read-only root filesystems** - Prevent runtime modifications
-  - **Minimal base images** - Using scratch-based or Red Hat UBI9-micro containers
-  - **Capability dropping** - Remove unnecessary Linux capabilities
-  - **Seccomp profiles** - Restrict system calls
-  - **AppArmor/SELinux policies** - Mandatory access controls
-  - **Network isolation** - Namespace and network policy restrictions
-  - **Resource limits** - CPU, memory, and I/O constraints
-
-* **gVisor Integration** - User-space kernel for additional isolation layer
-
-* **Firecracker MicroVMs** - Lightweight virtual machines for strong isolation
-
-* **WebAssembly Sandbox** - WASM-based secure execution for untrusted code
-
-#### Advanced Cryptography & Trust
-
-* **Confidential Computing** - Support for encrypted computation in trusted execution environments (TEEs)
-
-* **Hardware Security Module (HSM) Integration** - Hardware-backed key management and cryptographic operations
-
-* **Homomorphic Encryption** - Process encrypted data without decryption for sensitive operations
-
-* **Zero-Knowledge Proofs** - Verify MCP server capabilities without revealing implementation details
-
-* **Quantum-Resistant Cryptography** - Post-quantum cryptographic algorithms for future-proofing
-
-#### Distributed Security & Governance
-
-* **Blockchain-Based Audit Trail** - Immutable distributed ledger for critical security events
-
-* **Federated Authorization** - Cross-domain authorization with SAML, OAuth 2.0, and OpenID Connect
-
-* **Secure Multi-Party Computation** - Enable multiple parties to compute on shared data without revealing inputs
-
-#### Runtime Protection & Monitoring
-
-* **Dynamic Security Posture Assessment** - Real-time security scoring and risk evaluation for connected servers
-
-* **Behavioral Analytics** - ML-based anomaly detection for unusual MCP server patterns
-
-* **Container Runtime Security** - Runtime protection with Falco, AppArmor, SELinux policies
-
-* **Service Mesh Integration** - Native support for Istio, Linkerd for advanced network security
-
-* **Certificate Pinning** - Prevent MITM attacks by validating specific certificates for MCP servers
-
-## Multi-Layered Defense Strategy
-
-MCP Gateway implements a comprehensive, multi-layered security approach with "defense in depth" and "secure by design" principles:
-
-### Security Philosophy
-
-- **Proactive Security**: Security measures are built-in from design phase, not added retroactively
-- **Human + Automated**: Combines 30+ automated security tools with manual code reviews and threat modeling
-- **Continuous Improvement**: Regular updates to security toolchain and practices based on community feedback
-- **Shared Responsibility**: Security across all system components - gateway is one layer in your defense strategy
-
-### Comprehensive Security Pipeline
-
-**Pre-commit Security Gates**:
-
-- Bandit, Semgrep, Dodgy for security scanning
-- Type checking and code quality enforcement
-- Run `make security-all` locally before pushing
-
-**Continuous Integration Security**:
-
-- 30+ security scans on every PR
-- CodeQL semantic analysis
-- Gitleaks secret detection
-- Dependency vulnerability scanning
-- Container security assessment
-
-**Runtime Security**:
-
-- Monitoring and security policies
-- Anomaly detection
-- Incident response procedures
-
-## Security Compliance & Standards
-
-### 🏆 Currently Implemented (v0.8.0)
-
-* **Multi-Tenancy & RBAC** (v0.7.0): Complete enterprise multi-tenancy with team-based resource scoping, role-based access control (Platform Admin, Team Owner, Team Member), and resource visibility controls (Private/Team/Public)
-* **Advanced Authentication**:
-  - Email-based authentication with Argon2id password hashing
-  - JWT tokens with team context and asymmetric algorithm support (HS256/384/512, RS256/384/512, ES256/384/512)
-  - OAuth 2.0 with Password Grant Flow, Dynamic Client Registration (DCR), and PKCE support (v0.8.0)
-  - Multi-provider SSO (GitHub, Google, IBM Security Verify, Okta)
-  - Per-virtual-server API keys and team-level token scoping (v0.8.0)
-* **Input Validation**: Comprehensive validation across all API endpoints using Pydantic v2 (✅ [#339](https://github.com/IBM/mcp-context-forge/issues/339), ✅ [#340](https://github.com/IBM/mcp-context-forge/issues/340))
-* **XSS Prevention**: Character restrictions, URL scheme validation, JSON depth limits (✅ [#409](https://github.com/IBM/mcp-context-forge/issues/409))
-* **Security Scanning**: 30+ security tools integrated, 100% Bandit pass rate (✅ [#421](https://github.com/IBM/mcp-context-forge/issues/421), ✅ [#638](https://github.com/IBM/mcp-context-forge/issues/638), ✅ [#590](https://github.com/IBM/mcp-context-forge/issues/590))
-* **Container Hardening**:
-  - **Ultra-minimal scratch-based runtime** - Final image contains only Python runtime and application
-  - **Red Hat UBI9-based build** - Built from latest patched UBI9 (registry.access.redhat.com/ubi9/ubi:9.6)
-  - **Fully patched on every build** - Automatic security updates via `dnf upgrade -y`
-  - **Non-root execution** - Runs as UID 1001 with OpenShift compatibility
-  - **Stripped binaries** - All unnecessary symbols removed to reduce attack surface
-  - **No package managers in runtime** - DNF/YUM/RPM removed from final image
-  - **No setuid/setgid binaries** - All privileged binaries removed
-  - **Pre-compiled Python bytecode** - Optimized with -OO, stripping docstrings and assertions
-  - **Minimal attack surface** - No shell, no development tools, no documentation
-* **Secure Defaults**: Admin UI disabled by default, localhost-only binding
-* **Secret Detection**: Gitleaks, Dodgy integration preventing credential leaks (✅ [#558](https://github.com/IBM/mcp-context-forge/issues/558))
-* **Security Headers**: HTTP header passthrough with authorization support (✅ [#685](https://github.com/IBM/mcp-context-forge/issues/685))
-* **Authentication Masking**: Auth values masked in API responses (✅ [#601](https://github.com/IBM/mcp-context-forge/issues/601), ✅ [#471](https://github.com/IBM/mcp-context-forge/issues/471), ✅ [#472](https://github.com/IBM/mcp-context-forge/issues/472))
-* **Plugin Framework** (v0.8.0):
-  - Comprehensive plugin system with pre/post hooks and CLI tools (✅ [#319](https://github.com/IBM/mcp-context-forge/issues/319), ✅ [#682](https://github.com/IBM/mcp-context-forge/issues/682), ✅ [#720](https://github.com/IBM/mcp-context-forge/issues/720))
-  - Plugin Management API & UI (✅ [#1129](https://github.com/IBM/mcp-context-forge/issues/1129), ✅ [#1130](https://github.com/IBM/mcp-context-forge/issues/1130))
-  - 15+ security plugins: Content Moderation, Safe HTML Sanitizer, Harmful Content Detector, SQL Sanitizer, PII Filter, Circuit Breaker, and more
-* **Policy-as-Code** (v0.8.0): Enhanced OPA policy engine with customizable policy paths, multi-arch support, and input data mapping
-* **OpenTelemetry Observability**: Vendor-agnostic observability with Phoenix integration (✅ [#735](https://github.com/IBM/mcp-context-forge/issues/735), ✅ [#727](https://github.com/IBM/mcp-context-forge/issues/727))
-* **Well-Known URI Security**: Configurable handlers for security.txt and robots.txt (✅ [#540](https://github.com/IBM/mcp-context-forge/issues/540))
-* **Enhanced Testing**: Mutation testing, fuzz testing, and comprehensive security validation (✅ [#280](https://github.com/IBM/mcp-context-forge/issues/280), ✅ [#256](https://github.com/IBM/mcp-context-forge/issues/256))
-
-### 🚀 Security Release History & Roadmap
-
-**Release 0.7.0 - Completed September 2025**
-- ✅ Enterprise multi-tenancy architecture
-- ✅ Full RBAC implementation (Platform Admin, Team Owner, Team Member)
-- ✅ Email-based authentication with Argon2id password hashing
-- ✅ Team management system with resource scoping
-- ✅ Multi-provider SSO (GitHub, Google, IBM Security Verify, Okta)
-- ✅ Resource visibility controls (Private/Team/Public)
-- ✅ Password policy engine
-- ✅ JWT asymmetric algorithm support (RSA, ECDSA)
-- ✅ Plugin framework with security hooks
-- ✅ OpenTelemetry observability integration
-- ✅ Well-known URI security handlers
-- ✅ Enhanced testing (mutation, fuzz testing)
-
-**Release 0.8.0 - Completed October 2025**
-- ✅ Advanced OAuth 2.0 (Password Grant Flow, DCR, PKCE)
-- ✅ Plugin Management API & UI
-- ✅ 15+ Security Plugins (Content Moderation, SQL Sanitizer, Safe HTML Sanitizer, Circuit Breaker, etc.)
-- ✅ Enhanced OPA Policy Engine (customizable paths, multi-arch support)
-- ✅ Team-level API token scoping
-- ✅ MCP Server Registry & Catalog
-- ✅ Secure cookie warnings for development environments
-- ✅ Pydantic v2 configuration validation
-
-**Release 0.9.0 - Planned Q1 2026**
-- Advanced rate limiting and DDoS protection
-- Marketplace security validation
-- Enhanced plugin guardrails
-- Correlation ID tracking across distributed systems
-- Advanced audit logging
-
-**Release 1.0.0 - Planned Q2 2026**
-- Security audit completion
-- Production hardening certification
-- GA security compliance certification
-- Enhanced vulnerability scanning
-- Security documentation for compliance frameworks
-
-## Production Deployment Security
-
-### ⚠️ Critical Production Requirements
-
-**The Admin UI is development-only and must NEVER be exposed in production**:
-
-- Designed for localhost-only access with trusted MCP servers
-- Single-user administration without access controls
-- Must be disabled in production: `MCPGATEWAY_UI_ENABLED=false`
-
-### 📋 Production Security Checklist
-
-- [ ] **Disable unused features** (`FEATURES_ROOTS_ENABLED=false`, `FEATURES_PROMPTS_ENABLED=false`, etc.)
-- [ ] **Disable Admin UI and API** (`MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`)
-- [ ] **Enable authentication** with strong passwords/keys and custom usernames
-- [ ] **Configure TLS/HTTPS** with valid certificates (never HTTP in production)
-- [ ] **Validate all MCP servers** before connecting
-- [ ] **Implement network controls** (firewalls, ingress policies)
-- [ ] **Set rate limits** per endpoint and client
-- [ ] **Configure monitoring** and anomaly detection
-- [ ] **Secure databases** (TLS, strong passwords, restricted access)
-- [ ] **Set resource limits** (CPU, memory) to prevent DoS
-- [ ] **Implement secrets management** (never hardcode credentials)
-- [ ] **Configure CORS policies** appropriately
-- [ ] **Disable debug mode** in production
-- [ ] **Keep gateway updated** to latest version
-- [ ] **Regular security audits** of connected servers
-
-## Security Best Practices
-
-### Gateway as One Layer in Defense-in-Depth
-
-MCP Gateway should be integrated as **one component** in a comprehensive security architecture:
-
-1. **Upstream validation**: Validate and trust all MCP servers before connection
-2. **Gateway validation**: Input/output validation at gateway level
-3. **Downstream validation**: Applications must implement their own security controls
-4. **Network isolation**: Use network policies to restrict access
-5. **Comprehensive monitoring**: Log and alert on suspicious activities
-
-### Integration Requirements
-
-MCP Gateway is **not a standalone product**. Integrate with:
-- API gateways/reverse proxies (auth, rate-limiting, routing)
-- Secrets management systems (Vault, SOPS)
-- Identity and access management (IAM) platforms
-- Logging, monitoring, and SIEM platforms
-- Runtime security and anomaly detection
-- Custom UI/orchestration layers for multi-tenancy
-
-### Developer Security Tools
-
-**Core Security Commands**:
-
-- `make security-all` - Run all security tools
-- `make security-report` - Generate security report
-- `make security-fix` - Auto-fix issues where possible
-- `make pre-commit` - Run pre-commit hooks locally
-- `make lint` - 30+ linting and security tools
-
-**Individual Security Scanners**:
-
-- `make bandit` - Python security vulnerabilities
-- `make semgrep` - Semantic code analysis
-- `make dodgy` - Hardcoded secrets detection
-- `make gitleaks` - Git history secrets scan
-- `make pip-audit` - Dependency vulnerabilities
-- `make trivy` - Container security scan
-- `make grype-scan` - Container vulnerability audit
-- `make osv-scan` - Open source vulnerability scan
-
-## Multi-Tenancy Considerations
-
-**MCP Gateway is not yet multi-tenant ready**. For multi-user platforms, implement:
-- User isolation and data segregation
-- Role-Based Access Control (RBAC)
-- Resource cleanup and lifecycle management
-- Tenant-specific validation and limits
-- Per-user audit logging
-- Team/organization management
-
-Deploy as a **single-tenant component** within your larger multi-tenant architecture.
-
-## Security Patching Policy
-
-**⚠️ Disclaimer**: All patching is **best-effort** with no SLAs or commercial support.
-
-- **Critical/High**: Best-effort patches within 1 week (minor version bump)
-- **Medium**: Addressed in next release (~2 weeks)
-- **Low**: Regular maintenance updates (~2-4 weeks)
-- **No backports**: Fixes only applied to latest main branch
-- **No zero-day guarantees**: Users must evaluate and mitigate risks
-
-## Future Security Roadmap Considerations
-
-Beyond the planned features in our roadmap, these additional security capabilities could enhance MCP Gateway:
-
-### 🛡️ Trust & Verification
-- **Distributed Trust Networks** - Reputation-based MCP server trust scoring
-- **Continuous Compliance Monitoring** - Real-time compliance validation against security frameworks
-- **Supply Chain Security** - SLSA framework compliance for build provenance
-- **Code Signing** - Verify authenticity of MCP server binaries and updates
-
-### 🔍 Advanced Threat Detection
-- **Threat Intelligence Integration** - Real-time threat feeds from MITRE ATT&CK, STIX/TAXII
-- **Deception Technology** - Honeypots and canary tokens for early breach detection
-- **User and Entity Behavior Analytics (UEBA)** - Detect insider threats and compromised accounts
-- **Network Traffic Analysis** - Deep packet inspection for protocol anomalies
-
-### 🏛️ Governance & Compliance
-- **Privacy-Preserving Analytics** - Differential privacy for usage metrics
-- **Right to be Forgotten** - GDPR Article 17 compliance automation
-- **Data Residency Controls** - Geographic restrictions for data processing
-- **Consent Management** - Granular user consent tracking and enforcement
-
-### 🔬 Emerging Technologies
-- **WebAssembly Sandbox** - Secure execution environment for untrusted MCP servers
-- **Decentralized Identity (DID)** - Self-sovereign identity for MCP server authentication
-- **Secure Enclaves** - iOS/Android secure enclave support for mobile deployments
-- **API Security Posture Management (ASPM)** - Continuous API security assessment
-
-## Security Contact
-
-For security vulnerabilities, report privately via [GitHub's security reporting](https://docs.github.com/en/code-security/security-advisories/guidance-on-reporting-and-writing-information-about-vulnerabilities/privately-reporting-a-security-vulnerability):
-
-1. Navigate to Security tab
-2. Click "Report a vulnerability"
-3. Fill out the vulnerability details
-
-For more information, see our [Security Policy](https://github.com/IBM/mcp-context-forge/security/policy).
+- **Configuration reference:** `.env.example` and `README.md` cover every toggle in more depth.
+- **Security policy:** `SECURITY.md` documents vulnerability disclosure expectations.
+- **Multi-tenancy details:** `docs/docs/architecture/multitenancy.md` digs deeper into RBAC and team scoping.
+- **Deployment guidance:** `docs/docs/deployment/helm.md` and `Containerfile.lite` showcase hardened deployment patterns.

@@ -213,7 +213,7 @@ class TestMultiAuthHeaders:
         auth_headers = [
             {"key": "X-API-Key", "value": "first_value"},
             {"key": "X-API-Key", "value": "second_value"},  # Duplicate
-            {"key": "X-Client-ID", "value": "client123"}
+            {"key": "X-Client-ID", "value": "client123"},
         ]
 
         gateway = GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)
@@ -232,7 +232,7 @@ class TestMultiAuthHeaders:
         """Test creating gateway with mixed valid and invalid header keys."""
         auth_headers = [
             {"key": "Valid-Header", "value": "test123"},
-            {"key": "Invalid@Key!", "value": "should_fail"}  # This should fail validation
+            {"key": "Invalid@Key!", "value": "should_fail"},  # This should fail validation
         ]
 
         with pytest.raises(ValidationError) as exc_info:
@@ -250,7 +250,7 @@ class TestMultiAuthHeaders:
             {"key": "X_API_KEY", "value": "test2"},  # Underscores allowed
             {"key": "API-Key-123", "value": "test3"},  # Numbers and hyphens
             {"key": "UPPERCASE", "value": "test4"},  # Uppercase
-            {"key": "lowercase", "value": "test5"}   # Lowercase
+            {"key": "lowercase", "value": "test5"},  # Lowercase
         ]
 
         gateway = GatewayCreate(name="Test Gateway", url="http://example.com", auth_type="authheaders", auth_headers=auth_headers)

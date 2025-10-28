@@ -94,7 +94,7 @@ async def main():
     if initial_analysis["success"]:
         analysis = initial_analysis["analysis"]
         basic_info = analysis["basic_info"]
-        print(f"✅ Initial analysis complete:")
+        print("✅ Initial analysis complete:")
         print(f"   • Dataset shape: {basic_info['shape']}")
         print(f"   • Missing values: {sum(basic_info['missing_values'].values())}")
         print(f"   • Data quality: {analysis.get('data_quality_score', 'N/A')}/100")
@@ -115,8 +115,16 @@ async def main():
         {"operation": "fill_na", "columns": ["revenue"], "method": "median"},
         {"operation": "fill_na", "columns": ["price"], "method": "median"},
         {"operation": "drop_duplicates"},
-        {"operation": "outlier_removal", "columns": ["revenue"], "method": "iqr", "threshold": 2.0},
-        {"operation": "drop_na", "columns": ["product_name"]},  # Convert types not directly supported
+        {
+            "operation": "outlier_removal",
+            "columns": ["revenue"],
+            "method": "iqr",
+            "threshold": 2.0,
+        },
+        {
+            "operation": "drop_na",
+            "columns": ["product_name"],
+        },  # Convert types not directly supported
     ]
 
     cleaning_result = await client.call_tool(
@@ -132,25 +140,46 @@ async def main():
     if cleaning_result["success"]:
         cleaned_dataset_id = cleaning_result["new_dataset_id"]
         cleaning_summary = cleaning_result["transformation_summary"]
-        print(f"✅ Data cleaning completed:")
+        print("✅ Data cleaning completed:")
         print(f"   • Cleaned dataset ID: {cleaned_dataset_id}")
-        print(f"   • Operations applied: {len(cleaning_summary.get('transformation_log', []))}")
+        print(
+            f"   • Operations applied: {len(cleaning_summary.get('transformation_log', []))}"
+        )
 
         if "shape_changes" in cleaning_summary:
             shapes = cleaning_summary["shape_changes"]
             print(f"   • Shape: {shapes.get('before')} → {shapes.get('after')}")
     else:
         cleaned_dataset_id = primary_dataset_id
-        print(f"⚠️  Using original dataset due to cleaning issues")
+        print("⚠️  Using original dataset due to cleaning issues")
 
     print("\n🔬 Step 2.2: Feature engineering...")
 
     # Advanced feature engineering
     feature_operations = [
-        {"operation": "feature_engineering", "feature_type": "ratio", "columns": ["revenue", "quantity_sold"], "new_column": "revenue_per_unit"},
-        {"operation": "bin_numeric", "column": "revenue", "bins": [0, 1000, 5000, 10000, float("inf")], "labels": ["Low", "Medium", "High", "Premium"], "new_column": "revenue_tier"},
-        {"operation": "encode_categorical", "columns": ["product_category"], "method": "onehot"},
-        {"operation": "scale", "columns": ["revenue", "quantity_sold"], "method": "standard"},
+        {
+            "operation": "feature_engineering",
+            "feature_type": "ratio",
+            "columns": ["revenue", "quantity_sold"],
+            "new_column": "revenue_per_unit",
+        },
+        {
+            "operation": "bin_numeric",
+            "column": "revenue",
+            "bins": [0, 1000, 5000, 10000, float("inf")],
+            "labels": ["Low", "Medium", "High", "Premium"],
+            "new_column": "revenue_tier",
+        },
+        {
+            "operation": "encode_categorical",
+            "columns": ["product_category"],
+            "method": "onehot",
+        },
+        {
+            "operation": "scale",
+            "columns": ["revenue", "quantity_sold"],
+            "method": "standard",
+        },
         {"operation": "create_dummy", "columns": ["customer_segment"]},
     ]
 
@@ -167,7 +196,7 @@ async def main():
     if feature_result["success"]:
         featured_dataset_id = feature_result["new_dataset_id"]
         feature_summary = feature_result["transformation_summary"]
-        print(f"✅ Feature engineering completed:")
+        print("✅ Feature engineering completed:")
         print(f"   • Enhanced dataset ID: {featured_dataset_id}")
 
         if "new_columns" in feature_summary:
@@ -175,7 +204,7 @@ async def main():
             print(f"   • New features created: {new_features}...")
     else:
         featured_dataset_id = cleaned_dataset_id
-        print(f"⚠️  Feature engineering had issues, using cleaned dataset")
+        print("⚠️  Feature engineering had issues, using cleaned dataset")
 
     # Phase 3: STATISTICAL ANALYSIS AND HYPOTHESIS TESTING
     print("\n📊 PHASE 3: STATISTICAL ANALYSIS")
@@ -197,14 +226,19 @@ async def main():
 
     if stat_analysis["success"]:
         analysis = stat_analysis["analysis"]
-        print(f"✅ Statistical analysis completed:")
+        print("✅ Statistical analysis completed:")
 
         # Report key statistical insights
-        if "correlations" in analysis and "strong_correlations" in analysis["correlations"]:
+        if (
+            "correlations" in analysis
+            and "strong_correlations" in analysis["correlations"]
+        ):
             strong_corrs = analysis["correlations"]["strong_correlations"][:3]
             print(f"   • Strong correlations found: {len(strong_corrs)}")
             for corr in strong_corrs:
-                print(f"     - {corr.get('feature_1')} ↔ {corr.get('feature_2')}: {corr.get('correlation', 0):.3f}")
+                print(
+                    f"     - {corr.get('feature_1')} ↔ {corr.get('feature_2')}: {corr.get('correlation', 0):.3f}"
+                )
 
     print("\n🎯 Step 3.2: Hypothesis testing - Revenue by Product Category...")
 
@@ -223,7 +257,7 @@ async def main():
 
     if hypothesis_test["success"]:
         test_result = hypothesis_test["test_result"]
-        print(f"✅ ANOVA test completed:")
+        print("✅ ANOVA test completed:")
         print(f"   • F-statistic: {test_result.get('statistic', 0):.4f}")
         print(f"   • P-value: {test_result.get('p_value', 1):.4f}")
         print(f"   • Conclusion: {test_result.get('conclusion', 'N/A')}")
@@ -244,7 +278,7 @@ async def main():
 
     if chi_test["success"]:
         test_result = chi_test["test_result"]
-        print(f"✅ Chi-square test (Revenue Tier vs Category):")
+        print("✅ Chi-square test (Revenue Tier vs Category):")
         print(f"   • Chi-square: {test_result.get('statistic', 0):.4f}")
         print(f"   • P-value: {test_result.get('p_value', 1):.4f}")
         print(f"   • Association strength: {test_result.get('effect_size', 'N/A')}")
@@ -271,18 +305,22 @@ async def main():
 
     if ts_analysis["success"]:
         ts_result = ts_analysis["time_series_analysis"]
-        print(f"✅ Time series analysis completed:")
+        print("✅ Time series analysis completed:")
 
         if "trend_analysis" in ts_result:
             trend = ts_result["trend_analysis"]
             if "direction" in trend:
-                print(f"   • Trend: {trend.get('direction', 'N/A')} ({trend.get('strength', 'N/A')} strength)")
+                print(
+                    f"   • Trend: {trend.get('direction', 'N/A')} ({trend.get('strength', 'N/A')} strength)"
+                )
 
         if "forecast" in ts_result:
             forecast = ts_result["forecast"]
-            print(f"   • Forecast generated: {len(forecast.get('forecast', []))} periods")
+            print(
+                f"   • Forecast generated: {len(forecast.get('forecast', []))} periods"
+            )
     else:
-        print(f"ℹ️  Time series analysis not applicable to this dataset")
+        print("ℹ️  Time series analysis not applicable to this dataset")
 
     # Phase 5: ADVANCED QUERYING AND INSIGHTS
     print("\n🔍 PHASE 5: ADVANCED ANALYTICS QUERIES")
@@ -321,7 +359,11 @@ async def main():
         if "data" in query_data:
             print("   Top performing category-tier combinations:")
             for i, row in enumerate(query_data["data"][:5], 1):
-                print(f"   {i}. {row.get('product_category', 'N/A')} - {row.get('revenue_tier', 'N/A')}: " f"${row.get('total_revenue', 0):,.0f} " f"({row.get('transaction_count', 0)} transactions)")
+                print(
+                    f"   {i}. {row.get('product_category', 'N/A')} - {row.get('revenue_tier', 'N/A')}: "
+                    f"${row.get('total_revenue', 0):,.0f} "
+                    f"({row.get('transaction_count', 0)} transactions)"
+                )
 
     print("\n🎯 Step 5.2: Customer behavior analysis...")
 
@@ -496,49 +538,71 @@ async def main():
 
     if summary_stats["success"]:
         stats = summary_stats["query_result"]["data"][0]
-        print(f"Dataset Overview:")
+        print("Dataset Overview:")
         total_records = stats.get("total_records", 0)
         customer_segments = stats.get("customer_segments", 0)
-        print(f"  • Total Records: {total_records:,}" if isinstance(total_records, (int, float)) else f"  • Total Records: {total_records}")
-        print(f"  • Customer Segments: {customer_segments:,}" if isinstance(customer_segments, (int, float)) else f"  • Customer Segments: {customer_segments}")
+        print(
+            f"  • Total Records: {total_records:,}"
+            if isinstance(total_records, (int, float))
+            else f"  • Total Records: {total_records}"
+        )
+        print(
+            f"  • Customer Segments: {customer_segments:,}"
+            if isinstance(customer_segments, (int, float))
+            else f"  • Customer Segments: {customer_segments}"
+        )
         print(f"  • Product Categories: {stats.get('product_categories', 'N/A')}")
         total_revenue = stats.get("total_revenue", 0)
         avg_revenue = stats.get("avg_revenue_per_transaction", 0)
         total_items = stats.get("total_items_sold", 0)
-        print(f"  • Total Revenue: ${total_revenue:,.2f}" if isinstance(total_revenue, (int, float)) else f"  • Total Revenue: ${total_revenue}")
-        print(f"  • Average Transaction: ${avg_revenue:.2f}" if isinstance(avg_revenue, (int, float)) else f"  • Average Transaction: ${avg_revenue}")
-        print(f"  • Total Items Sold: {total_items:,}" if isinstance(total_items, (int, float)) else f"  • Total Items Sold: {total_items}")
+        print(
+            f"  • Total Revenue: ${total_revenue:,.2f}"
+            if isinstance(total_revenue, (int, float))
+            else f"  • Total Revenue: ${total_revenue}"
+        )
+        print(
+            f"  • Average Transaction: ${avg_revenue:.2f}"
+            if isinstance(avg_revenue, (int, float))
+            else f"  • Average Transaction: ${avg_revenue}"
+        )
+        print(
+            f"  • Total Items Sold: {total_items:,}"
+            if isinstance(total_items, (int, float))
+            else f"  • Total Items Sold: {total_items}"
+        )
 
-    print(f"\n🔧 WORKFLOW STAGES COMPLETED:")
-    print(f"  ✅ 1. Data Loading & Exploration")
-    print(f"  ✅ 2. Data Cleaning & Preprocessing")
-    print(f"  ✅ 3. Feature Engineering")
-    print(f"  ✅ 4. Statistical Analysis & Hypothesis Testing")
-    print(f"  ✅ 5. Time Series Analysis (where applicable)")
-    print(f"  ✅ 6. Advanced SQL Analytics")
-    print(f"  ✅ 7. Comprehensive Visualizations")
-    print(f"  ✅ 8. Results Export & Reporting")
+    print("\n🔧 WORKFLOW STAGES COMPLETED:")
+    print("  ✅ 1. Data Loading & Exploration")
+    print("  ✅ 2. Data Cleaning & Preprocessing")
+    print("  ✅ 3. Feature Engineering")
+    print("  ✅ 4. Statistical Analysis & Hypothesis Testing")
+    print("  ✅ 5. Time Series Analysis (where applicable)")
+    print("  ✅ 6. Advanced SQL Analytics")
+    print("  ✅ 7. Comprehensive Visualizations")
+    print("  ✅ 8. Results Export & Reporting")
 
-    print(f"\n📊 ANALYSIS OUTPUTS GENERATED:")
-    print(f"  • Multiple dataset versions (raw → cleaned → featured)")
-    print(f"  • Statistical test results (ANOVA, Chi-square)")
-    print(f"  • Business intelligence queries")
-    print(f"  • Customer segmentation analysis")
-    print(f"  • 4+ Visualizations (static PNG + interactive HTML)")
-    print(f"  • Exportable reports (CSV, JSON, HTML formats)")
-    print(f"  • Executive summary with key metrics")
+    print("\n📊 ANALYSIS OUTPUTS GENERATED:")
+    print("  • Multiple dataset versions (raw → cleaned → featured)")
+    print("  • Statistical test results (ANOVA, Chi-square)")
+    print("  • Business intelligence queries")
+    print("  • Customer segmentation analysis")
+    print("  • 4+ Visualizations (static PNG + interactive HTML)")
+    print("  • Exportable reports (CSV, JSON, HTML formats)")
+    print("  • Executive summary with key metrics")
 
-    print(f"\n🚀 MCP DATA ANALYSIS SERVER CAPABILITIES DEMONSTRATED:")
-    print(f"  ✅ 7 MCP Tools: load_dataset, analyze_dataset, transform_data,")
-    print(f"      statistical_test, time_series_analysis, query_data, create_visualization")
-    print(f"  ✅ 14+ Data transformation operations")
-    print(f"  ✅ 7+ Statistical tests and analyses")
-    print(f"  ✅ 6+ Visualization types (static + interactive)")
-    print(f"  ✅ SQL-like querying with complex analytics")
-    print(f"  ✅ Multiple export formats and reporting")
-    print(f"  ✅ Complete end-to-end data science pipeline")
+    print("\n🚀 MCP DATA ANALYSIS SERVER CAPABILITIES DEMONSTRATED:")
+    print("  ✅ 7 MCP Tools: load_dataset, analyze_dataset, transform_data,")
+    print(
+        "      statistical_test, time_series_analysis, query_data, create_visualization"
+    )
+    print("  ✅ 14+ Data transformation operations")
+    print("  ✅ 7+ Statistical tests and analyses")
+    print("  ✅ 6+ Visualization types (static + interactive)")
+    print("  ✅ SQL-like querying with complex analytics")
+    print("  ✅ Multiple export formats and reporting")
+    print("  ✅ Complete end-to-end data science pipeline")
 
-    print(f"\nDataset IDs for reference:")
+    print("\nDataset IDs for reference:")
     print(f"  • Original: {primary_dataset_id}")
     print(f"  • Cleaned: {cleaned_dataset_id}")
     print(f"  • Featured: {featured_dataset_id}")

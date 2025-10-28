@@ -84,7 +84,9 @@ async def main():
             print("   • Close price statistics:")
             print(f"     - Mean: ${close_stats['mean']:.2f}")
             print(f"     - Std Dev: ${close_stats['std']:.2f}")
-            print(f"     - Range: ${close_stats['min']:.2f} - ${close_stats['max']:.2f}")
+            print(
+                f"     - Range: ${close_stats['min']:.2f} - ${close_stats['max']:.2f}"
+            )
 
     # Step 3: Time series visualization
     print("\n📊 Step 3: Creating time series visualizations...")
@@ -121,7 +123,9 @@ async def main():
     )
 
     if volume_viz_result["success"]:
-        print(f"✅ Created volume plot: {volume_viz_result['visualization']['filename']}")
+        print(
+            f"✅ Created volume plot: {volume_viz_result['visualization']['filename']}"
+        )
 
     # Step 4: Time series analysis
     print("\n📈 Step 4: Performing comprehensive time series analysis...")
@@ -146,23 +150,31 @@ async def main():
         for column, results in ts_analysis["results"].items():
             print(f"\n   📊 Analysis for {column}:")
             print(f"   • Data points: {results['data_points']}")
-            print(f"   • Time range: {results['time_range']['start']} to {results['time_range']['end']}")
+            print(
+                f"   • Time range: {results['time_range']['start']} to {results['time_range']['end']}"
+            )
             print(f"   • Frequency: {results['frequency']}")
 
             # Trend analysis
             if "trend_analysis" in results:
                 trend = results["trend_analysis"]
                 if "error" not in trend:
-                    print(f"   • Trend: {trend['direction']} ({trend['strength']} strength)")
+                    print(
+                        f"   • Trend: {trend['direction']} ({trend['strength']} strength)"
+                    )
                     print(f"   • R-squared: {trend['r_squared']:.3f}")
-                    print(f"   • Significant: {'Yes' if trend['significant'] else 'No'}")
+                    print(
+                        f"   • Significant: {'Yes' if trend['significant'] else 'No'}"
+                    )
 
             # Stationarity test
             if "stationarity" in results:
                 stationarity = results["stationarity"]
                 if "rolling_stats" in stationarity:
                     rs = stationarity["rolling_stats"]
-                    print(f"   • Appears stationary: {'Yes' if rs['appears_stationary'] else 'No'}")
+                    print(
+                        f"   • Appears stationary: {'Yes' if rs['appears_stationary'] else 'No'}"
+                    )
 
             # Forecast results
             if "forecast" in results:
@@ -170,7 +182,9 @@ async def main():
                 if "error" not in forecast:
                     print(f"   • Forecast: {forecast['periods']} periods ahead")
                     print(f"   • Method: {forecast['method']}")
-                    print(f"   • Forecast values: {forecast['forecast'][:3]}... (showing first 3)")
+                    print(
+                        f"   • Forecast values: {forecast['forecast'][:3]}... (showing first 3)"
+                    )
 
     # Step 5: Statistical tests on time series data
     print("\n🧮 Step 5: Statistical analysis of price movements...")
@@ -203,7 +217,9 @@ async def main():
     )
 
     if correlation_viz["success"]:
-        print(f"✅ Created correlation plot: {correlation_viz['visualization']['filename']}")
+        print(
+            f"✅ Created correlation plot: {correlation_viz['visualization']['filename']}"
+        )
 
     # Step 6: Sector analysis
     print("\n🏢 Step 6: Sector-based analysis...")
@@ -248,7 +264,9 @@ async def main():
         query_data = high_volume_query["query_result"]
         if "data" in query_data:
             for row in query_data["data"]:
-                print(f"   • {row['date']}: {row['symbol']} - Volume: {row['volume']:,}, Price: ${row['close']:.2f}")
+                print(
+                    f"   • {row['date']}: {row['symbol']} - Volume: {row['volume']:,}, Price: ${row['close']:.2f}"
+                )
 
     print("\n🎉 Time series analysis example completed!")
     print("\nThis example demonstrated:")

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Module Description.
+"""Schema Guard Plugin.
+
 Location: ./plugins/schema_guard/__init__.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
 
-Module documentation...
+Schema Guard plugin implementation.
 """

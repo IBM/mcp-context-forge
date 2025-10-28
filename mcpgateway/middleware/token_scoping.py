@@ -491,7 +491,7 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', " f"token is scoped to teams {token_team_ids}")
+                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE SERVERS: Check if server belongs to token's teams
@@ -535,7 +535,7 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', " f"token is scoped to teams {token_team_ids}")
+                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE TOOLS: Check if tool is in token's team context
@@ -580,7 +580,7 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Team resource {resource_id} belongs to token's team {resource_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', " f"token is scoped to teams {token_team_ids}")
+                    logger.warning(f"Access denied: Resource {resource_id} is team-scoped to '{resource_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE RESOURCES: Check if resource is in token's team context
@@ -625,7 +625,7 @@ class TokenScopingMiddleware:
                         logger.debug(f"Access granted: Team prompt {resource_id} belongs to token's team {prompt_team_id}")
                         return True
 
-                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', " f"token is scoped to teams {token_team_ids}")
+                    logger.warning(f"Access denied: Prompt {resource_id} is team-scoped to '{prompt_team_id}', token is scoped to teams {token_team_ids}")
                     return False
 
                 # PRIVATE PROMPTS: Check if prompt is in token's team context

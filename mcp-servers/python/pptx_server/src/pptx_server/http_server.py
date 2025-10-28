@@ -8,15 +8,16 @@ HTTP file serving for PowerPoint MCP Server downloads.
 """
 
 # Standard
-from datetime import datetime
 import json
 import os
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any
+
+import uvicorn
 
 # Third-Party
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-import uvicorn
 
 # Local
 from .server import config
@@ -25,16 +26,26 @@ from .server import config
 config.ensure_directories()
 
 
-app = FastAPI(title="PowerPoint MCP Server Downloads", description="Secure file download service for PowerPoint presentations", version="0.1.0")
+app = FastAPI(
+    title="PowerPoint MCP Server Downloads",
+    description="Secure file download service for PowerPoint presentations",
+    version="0.1.0",
+)
 
 
 @app.get("/")
 async def root():
     """Root endpoint with server information."""
-    return {"server": "PowerPoint MCP Server - Download Service", "version": "0.1.0", "status": "running", "download_endpoint": "/download/{token}/{filename}", "health_endpoint": "/health"}
+    return {
+        "server": "PowerPoint MCP Server - Download Service",
+        "version": "0.1.0",
+        "status": "running",
+        "download_endpoint": "/download/{token}/{filename}",
+        "health_endpoint": "/health",
+    }
 
 
-def _load_token_info(token: str) -> Optional[Dict[str, Any]]:
+def _load_token_info(token: str) -> dict[str, Any] | None:
     """Load token info from file storage."""
     tokens_dir = os.path.join(config.work_dir, "tokens")
     token_file = os.path.join(tokens_dir, f"{token}.json")
@@ -43,7 +54,7 @@ def _load_token_info(token: str) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        with open(token_file, "r") as f:
+        with open(token_file) as f:
             token_info = json.load(f)
 
         # Check if token has expired
@@ -67,7 +78,12 @@ async def health_check():
     if os.path.exists(tokens_dir):
         active_tokens = len([f for f in os.listdir(tokens_dir) if f.endswith(".json")])
 
-    return {"status": "healthy", "active_download_tokens": active_tokens, "work_directory": config.work_dir, "downloads_enabled": config.enable_downloads}
+    return {
+        "status": "healthy",
+        "active_download_tokens": active_tokens,
+        "work_directory": config.work_dir,
+        "downloads_enabled": config.enable_downloads,
+    }
 
 
 @app.get("/download/{token}/{filename}")
@@ -151,11 +167,16 @@ def start_download_server(host: str = None, port: int = None):
     server_host = host or config.server_host
     server_port = port or config.server_port
 
-    print(f"🌐 Starting PowerPoint MCP Download Server...")
+    print("🌐 Starting PowerPoint MCP Download Server...")
     print(f"📥 Download endpoint: http://{server_host}:{server_port}/download/{{token}}")
     print(f"❤️  Health check: http://{server_host}:{server_port}/health")
 
-    uvicorn.run(app, host=server_host, port=server_port, log_level="info" if config.server_debug else "warning")
+    uvicorn.run(
+        app,
+        host=server_host,
+        port=server_port,
+        log_level="info" if config.server_debug else "warning",
+    )
 
 
 if __name__ == "__main__":

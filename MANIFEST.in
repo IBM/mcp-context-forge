@@ -26,6 +26,7 @@ include *.yml
 include *.json
 include *.sh
 include *.txt
+include *.lua
 recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
@@ -60,6 +61,11 @@ recursive-include alembic *.mako
 recursive-include alembic *.md
 recursive-include alembic *.py
 
+# nginx configuration and docker files
+recursive-include nginx *.conf
+recursive-include nginx *.md
+include nginx/Dockerfile
+
 # Export/Import functionality (explicitly include new files)
 include mcpgateway/cli_export_import.py
 include mcpgateway/services/export_service.py
@@ -77,6 +83,15 @@ recursive-include plugins *.py
 recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
+
+# Rust plugins (optional - exclude build artifacts)
+recursive-include plugins_rust *.rs
+recursive-include plugins_rust *.toml
+include plugins_rust/Makefile
+include plugins_rust/README.md
+include plugins_rust/QUICKSTART.md
+prune plugins_rust/target
+prune plugins_rust/benchmarks
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -125,6 +140,7 @@ prune node_modules
 exclude .env
 exclude .env.backup
 exclude .env.ce.example
+exclude cookies.txt
 
 # Database and runtime files
 exclude *.db

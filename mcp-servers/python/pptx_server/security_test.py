@@ -13,8 +13,8 @@ Demonstrates the multi-agent security issue and shows the proper secure usage pa
 # Standard
 import asyncio
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
@@ -35,7 +35,9 @@ async def demonstrate_security_issue():
     try:
         # Simulate Agent A
         print("\n👤 AGENT A Operations:")
-        pres_a = await create_presentation("confidential_report.pptx", "Agent A Confidential Report")
+        pres_a = await create_presentation(
+            "confidential_report.pptx", "Agent A Confidential Report"
+        )
         print(f"   Created: {os.path.basename(pres_a['message'].split(': ')[1])}")
         print(f"   Path: {pres_a['message'].split(': ')[1]}")
 
@@ -49,12 +51,12 @@ async def demonstrate_security_issue():
         path_a = pres_a["message"].split(": ")[1]
         path_b = pres_b["message"].split(": ")[1]
 
-        print(f"\n🚨 SECURITY ANALYSIS:")
+        print("\n🚨 SECURITY ANALYSIS:")
         if path_a == path_b:
-            print(f"   ❌ CRITICAL: Same file path! Agent B overwrote Agent A's file!")
+            print("   ❌ CRITICAL: Same file path! Agent B overwrote Agent A's file!")
             print(f"   ❌ File collision: {path_a}")
         else:
-            print(f"   ✅ Different paths (session isolation working)")
+            print("   ✅ Different paths (session isolation working)")
 
         return {"agent_a_path": path_a, "agent_b_path": path_b, "collision": path_a == path_b}
 
@@ -84,7 +86,7 @@ async def demonstrate_secure_solution():
         print(f"   📂 Workspace: {session_b['workspace_dir']}")
 
         # Verify complete isolation
-        print(f"\n🔒 ISOLATION VERIFICATION:")
+        print("\n🔒 ISOLATION VERIFICATION:")
         print(f"   Agent A workspace: {session_a['workspace_dir']}")
         print(f"   Agent B workspace: {session_b['workspace_dir']}")
         print(f"   ✅ Completely isolated: {session_a_id != session_b_id}")
@@ -93,16 +95,20 @@ async def demonstrate_secure_solution():
         files_a = await list_session_files(session_a_id)
         files_b = await list_session_files(session_b_id)
 
-        print(f"\n📁 SESSION FILE ISOLATION:")
+        print("\n📁 SESSION FILE ISOLATION:")
         print(f"   Agent A files: {files_a['file_count']} (in {files_a['workspace_dir']})")
         print(f"   Agent B files: {files_b['file_count']} (in {files_b['workspace_dir']})")
 
         # Generate secure download links
-        print(f"\n🔗 SECURE DOWNLOAD LINKS:")
-        print(f"   Each agent gets isolated download tokens")
-        print(f"   No cross-session access possible")
+        print("\n🔗 SECURE DOWNLOAD LINKS:")
+        print("   Each agent gets isolated download tokens")
+        print("   No cross-session access possible")
 
-        return {"session_a": session_a_id, "session_b": session_b_id, "isolated": session_a_id != session_b_id}
+        return {
+            "session_a": session_a_id,
+            "session_b": session_b_id,
+            "isolated": session_a_id != session_b_id,
+        }
 
     except Exception as e:
         print(f"❌ Error in secure demo: {e}")
@@ -134,10 +140,10 @@ async def security_recommendations():
 
     # Get current status
     status = await get_server_status()
-    print(f"\n📊 CURRENT SERVER STATUS:")
+    print("\n📊 CURRENT SERVER STATUS:")
     print(f"   Active sessions: {status['statistics']['active_sessions']}")
-    print(f"   Security framework: ✅ IMPLEMENTED")
-    print(f"   Session isolation: ⚠️  PARTIAL (needs completion)")
+    print("   Security framework: ✅ IMPLEMENTED")
+    print("   Session isolation: ⚠️  PARTIAL (needs completion)")
 
 
 async def main():

@@ -8,15 +8,11 @@ Tests for context passing plugins.
 """
 
 import pytest
-import re
 from mcpgateway.plugins.framework import (
     GlobalContext,
-    PluginError,
     PluginManager,
     ToolPreInvokePayload,
     ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokeResult,
 )
 
 
@@ -64,6 +60,7 @@ async def test_shared_context_across_pre_post_hooks():
     assert result.continue_processing
     assert result.modified_payload is None
     await manager.shutdown()
+
 
 @pytest.mark.asyncio
 async def test_shared_context_across_pre_post_hooks_multi_plugins():

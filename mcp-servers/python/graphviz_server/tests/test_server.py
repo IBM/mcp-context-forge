@@ -7,11 +7,10 @@ Authors: Mihai Criveti
 Tests for Graphviz MCP Server (FastMCP).
 """
 
-import json
-import pytest
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from graphviz_server.server_fastmcp import processor
 
 
@@ -24,7 +23,7 @@ def test_create_graph():
             file_path=file_path,
             graph_type="digraph",
             graph_name="TestGraph",
-            attributes={"rankdir": "TB", "bgcolor": "white"}
+            attributes={"rankdir": "TB", "bgcolor": "white"},
         )
 
         assert result["success"] is True
@@ -33,7 +32,7 @@ def test_create_graph():
         assert result["graph_name"] == "TestGraph"
 
         # Check file content
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
             assert "digraph TestGraph {" in content
             assert 'rankdir="TB"' in content
@@ -53,7 +52,7 @@ def test_add_node():
             file_path=file_path,
             node_id="node1",
             label="Test Node",
-            attributes={"shape": "box", "color": "blue"}
+            attributes={"shape": "box", "color": "blue"},
         )
 
         assert result["success"] is True
@@ -61,7 +60,7 @@ def test_add_node():
         assert result["label"] == "Test Node"
 
         # Check file content
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
             assert 'node1 [label="Test Node", shape="box", color="blue"];' in content
 
@@ -80,7 +79,7 @@ def test_add_edge():
             from_node="A",
             to_node="B",
             label="edge1",
-            attributes={"color": "red", "style": "bold"}
+            attributes={"color": "red", "style": "bold"},
         )
 
         assert result["success"] is True
@@ -89,7 +88,7 @@ def test_add_edge():
         assert result["label"] == "edge1"
 
         # Check file content
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
             assert 'A -> B [label="edge1", color="red", style="bold"];' in content
 
@@ -100,7 +99,7 @@ def test_analyze_graph():
         file_path = str(Path(tmpdir) / "test.dot")
 
         # Create a graph with some content
-        graph_content = '''digraph TestGraph {
+        graph_content = """digraph TestGraph {
     rankdir=TB;
 
     A [label="Node A"];
@@ -110,15 +109,13 @@ def test_analyze_graph():
     A -> B [label="edge1"];
     B -> C [label="edge2"];
     A -> C [label="edge3"];
-}'''
+}"""
 
-        with open(file_path, 'w') as f:
+        with open(file_path, "w") as f:
             f.write(graph_content)
 
         result = processor.analyze_graph(
-            file_path=file_path,
-            include_structure=True,
-            include_metrics=True
+            file_path=file_path, include_structure=True, include_metrics=True
         )
 
         assert result["success"] is True
@@ -130,7 +127,7 @@ def test_analyze_graph():
         assert structure["edge_count"] == 3  # A->B, B->C, A->C
 
 
-@patch('graphviz_server.server_fastmcp.subprocess.run')
+@patch("graphviz_server.server_fastmcp.subprocess.run")
 def test_validate_graph_success(mock_subprocess):
     """Test successful graph validation."""
     # Mock successful validation
@@ -144,8 +141,8 @@ def test_validate_graph_success(mock_subprocess):
         file_path = str(Path(tmpdir) / "test.dot")
 
         # Create a valid DOT file
-        with open(file_path, 'w') as f:
-            f.write('digraph G { A -> B; }')
+        with open(file_path, "w") as f:
+            f.write("digraph G { A -> B; }")
 
         result = processor.validate_graph(file_path=file_path)
 
@@ -165,13 +162,13 @@ def test_set_attributes():
         result = processor.set_attributes(
             file_path=file_path,
             target_type="graph",
-            attributes={"splines": "curved", "overlap": "false"}
+            attributes={"splines": "curved", "overlap": "false"},
         )
 
         assert result["success"] is True
 
         # Check file content
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
             assert 'splines="curved"' in content
             assert 'overlap="false"' in content
@@ -182,10 +179,7 @@ def test_create_graph_missing_directory():
     with tempfile.TemporaryDirectory() as tmpdir:
         file_path = str(Path(tmpdir) / "subdir" / "test.dot")
 
-        result = processor.create_graph(
-            file_path=file_path,
-            graph_type="digraph"
-        )
+        result = processor.create_graph(file_path=file_path, graph_type="digraph")
 
         assert result["success"] is True
         # Should create directory and file
@@ -229,16 +223,12 @@ def test_undirected_graph_edge():
         processor.create_graph(file_path=file_path, graph_type="graph")
 
         # Add edge
-        result = processor.add_edge(
-            file_path=file_path,
-            from_node="A",
-            to_node="B"
-        )
+        result = processor.add_edge(file_path=file_path, from_node="A", to_node="B")
 
         assert result["success"] is True
 
         # Check file content for undirected edge operator
-        with open(file_path, 'r') as f:
+        with open(file_path) as f:
             content = f.read()
-            assert 'A -- B;' in content
-            assert 'A -> B' not in content  # Should not have directed edge
+            assert "A -- B;" in content
+            assert "A -> B" not in content  # Should not have directed edge

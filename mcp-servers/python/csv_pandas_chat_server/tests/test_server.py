@@ -7,13 +7,13 @@ Authors: Mihai Criveti
 Tests for CSV Pandas Chat MCP Server (FastMCP).
 """
 
-import json
 import pytest
+
 from csv_pandas_chat_server.server_fastmcp import (
+    analyze_csv,
     chat_with_csv,
     get_csv_info,
-    analyze_csv,
-    processor
+    processor,
 )
 
 
@@ -34,7 +34,9 @@ async def test_get_csv_info():
 @pytest.mark.asyncio
 async def test_analyze_csv_basic():
     """Test basic CSV analysis."""
-    csv_content = "product,sales,region\nWidget A,1000,North\nWidget B,1500,South\nGadget X,800,East"
+    csv_content = (
+        "product,sales,region\nWidget A,1000,North\nWidget B,1500,South\nGadget X,800,East"
+    )
 
     result = await analyze_csv(csv_content=csv_content, analysis_type="basic")
 
@@ -62,10 +64,7 @@ async def test_chat_with_csv_missing_api_key():
     """Test chat with CSV without API key."""
     csv_content = "product,sales\nWidget A,1000\nWidget B,1500"
 
-    result = await chat_with_csv(
-        query="Show me the data",
-        csv_content=csv_content
-    )
+    result = await chat_with_csv(query="Show me the data", csv_content=csv_content)
 
     assert result["success"] is False
     assert "API key" in result["error"]
@@ -82,10 +81,7 @@ async def test_get_csv_info_missing_source():
 async def test_get_csv_info_multiple_sources():
     """Test CSV info with multiple data sources."""
     with pytest.raises(ValueError, match="Exactly one"):
-        await get_csv_info(
-            csv_content="a,b\n1,2",
-            file_path="/some/file.csv"
-        )
+        await get_csv_info(csv_content="a,b\n1,2", file_path="/some/file.csv")
 
 
 @pytest.mark.asyncio

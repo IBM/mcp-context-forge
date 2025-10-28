@@ -155,6 +155,9 @@ class TestSupportBundleService:
         assert "sso_google_client_secret" not in config
         assert "sso_ibm_verify_client_secret" not in config
         assert "sso_okta_client_secret" not in config
+        assert "sso_keycloak_client_secret" not in config
+        assert "sso_entra_client_secret" not in config
+        assert "sso_generic_client_secret" not in config
 
     def test_collect_logs_file_not_found(self):
         """Test log collection when file doesn't exist."""
@@ -273,6 +276,9 @@ class TestSupportBundleService:
                 assert "sso_google_client_secret" not in settings_data
                 assert "sso_ibm_verify_client_secret" not in settings_data
                 assert "sso_okta_client_secret" not in settings_data
+                assert "sso_keycloak_client_secret" not in settings_data
+                assert "sso_entra_client_secret" not in settings_data
+                assert "sso_generic_client_secret" not in settings_data
 
     def test_support_bundle_config_validation(self):
         """Test SupportBundleConfig validation."""

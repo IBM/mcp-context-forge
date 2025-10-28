@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # Standard
-from functools import lru_cache
 import os
-from typing import List, Optional
+from functools import lru_cache
 
 # Load .env file if it exists
 try:
     # Third-Party
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     # python-dotenv not available, skip
@@ -20,13 +20,15 @@ except ImportError:
     # Third-Party
     from models import AgentConfig
 
-def _parse_tools_list(tools_str: str) -> Optional[List[str]]:
+
+def _parse_tools_list(tools_str: str) -> list[str] | None:
     """Parse comma-separated tools string into list"""
     if not tools_str or not tools_str.strip():
         return None
     return [tool.strip() for tool in tools_str.split(",") if tool.strip()]
 
-@lru_cache()
+
+@lru_cache
 def get_settings() -> AgentConfig:
     """Get application settings from environment variables"""
     return AgentConfig(
@@ -34,46 +36,39 @@ def get_settings() -> AgentConfig:
         mcp_gateway_url=os.getenv("MCP_GATEWAY_URL", "http://localhost:4444"),
         gateway_bearer_token=os.getenv("MCPGATEWAY_BEARER_TOKEN"),
         tools_allowlist=_parse_tools_list(os.getenv("TOOLS", "")),
-
         # LLM Provider Configuration
         llm_provider=os.getenv("LLM_PROVIDER", "openai").lower(),
         default_model=os.getenv("DEFAULT_MODEL", "gpt-4o-mini"),
-
         # OpenAI Configuration
         openai_api_key=os.getenv("OPENAI_API_KEY"),
         openai_base_url=os.getenv("OPENAI_BASE_URL"),
         openai_organization=os.getenv("OPENAI_ORGANIZATION"),
-
         # Azure OpenAI Configuration
         azure_openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
         azure_openai_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
         azure_openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview"),
         azure_deployment_name=os.getenv("AZURE_DEPLOYMENT_NAME"),
-
         # AWS Bedrock Configuration
         aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
         aws_region=os.getenv("AWS_REGION", "us-east-1"),
         bedrock_model_id=os.getenv("BEDROCK_MODEL_ID"),
-
         # OLLAMA Configuration
         ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         ollama_model=os.getenv("OLLAMA_MODEL"),
-
         # Anthropic Configuration
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
-
         # Agent Configuration
         max_iterations=int(os.getenv("MAX_ITERATIONS", "10")),
         temperature=float(os.getenv("TEMPERATURE", "0.7")),
         streaming_enabled=os.getenv("STREAMING_ENABLED", "true").lower() == "true",
         debug_mode=os.getenv("DEBUG_MODE", "false").lower() == "true",
-
         # Performance Configuration
         request_timeout=int(os.getenv("REQUEST_TIMEOUT", "30")),
         max_tokens=int(os.getenv("MAX_TOKENS")) if os.getenv("MAX_TOKENS") else None,
         top_p=float(os.getenv("TOP_P")) if os.getenv("TOP_P") else None,
     )
+
 
 def validate_environment() -> dict:
     """Validate environment configuration and return status"""
@@ -131,11 +126,8 @@ def validate_environment() -> dict:
     except ValueError:
         warnings.append("TEMPERATURE is not a valid float")
 
-    return {
-        "valid": len(issues) == 0,
-        "issues": issues,
-        "warnings": warnings
-    }
+    return {"valid": len(issues) == 0, "issues": issues, "warnings": warnings}
+
 
 def get_example_env() -> str:
     """Get example environment configuration"""

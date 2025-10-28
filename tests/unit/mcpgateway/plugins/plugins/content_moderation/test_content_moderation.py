@@ -112,7 +112,7 @@ class TestContentModerationPlugin:
         plugin = _create_plugin()
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={
                 "query": "This is a test query",
                 "context": "Additional context",
@@ -319,7 +319,7 @@ class TestContentModerationPlugin:
         ))
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={"query": "hateful content here"}
         )
 
@@ -347,7 +347,7 @@ class TestContentModerationPlugin:
         ))
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={"query": "some bad words"}
         )
 
@@ -454,7 +454,7 @@ class TestContentModerationPlugin:
         plugin._moderate_content = AsyncMock(side_effect=Exception("All services down"))
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={"query": "test content"}
         )
 
@@ -502,7 +502,7 @@ class TestContentModerationPlugin:
         ))
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={"query": "test content"}
         )
 
@@ -537,7 +537,7 @@ class TestContentModerationPlugin:
         context = _create_context()
 
         payload = PromptPrehookPayload(
-            name="test_prompt",
+            prompt_id="test_prompt",
             args={"query": "content with multiple violations"}
         )
 

@@ -13,13 +13,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
-import httpx
 import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 
@@ -116,8 +114,10 @@ class TestA2AAgentService:
 
         # Patch ToolRead.model_validate to accept the dict without error
         import mcpgateway.schemas
+
         if hasattr(mcpgateway.schemas.ToolRead, "model_validate"):
             from unittest.mock import patch
+
             with patch.object(mcpgateway.schemas.ToolRead, "model_validate", return_value=MagicMock()):
                 result = await service.register_agent(mock_db, sample_agent_create)
         else:
@@ -209,7 +209,7 @@ class TestA2AAgentService:
         mock_db.refresh = MagicMock()
 
         # Mock the _db_to_schema method properly
-        with patch.object(service, '_db_to_schema') as mock_schema:
+        with patch.object(service, "_db_to_schema") as mock_schema:
             mock_schema.return_value = MagicMock()
 
             # Create update data
@@ -272,7 +272,7 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentNotFoundError):
             await service.delete_agent(mock_db, "non-existent-id")
 
-    @patch('httpx.AsyncClient')
+    @patch("httpx.AsyncClient")
     async def test_invoke_agent_success(self, mock_client_class, service, mock_db, sample_db_agent):
         """Test successful agent invocation."""
         # Mock HTTP client
@@ -284,15 +284,17 @@ class TestA2AAgentService:
         mock_client_class.return_value.__aenter__.return_value = mock_client
 
         # Mock database operations
-        service.get_agent_by_name = AsyncMock(return_value=MagicMock(
-            id=sample_db_agent.id,
-            name=sample_db_agent.name,
-            enabled=True,
-            endpoint_url=sample_db_agent.endpoint_url,
-            auth_type=sample_db_agent.auth_type,
-            auth_value=sample_db_agent.auth_value,
-            protocol_version=sample_db_agent.protocol_version,
-        ))
+        service.get_agent_by_name = AsyncMock(
+            return_value=MagicMock(
+                id=sample_db_agent.id,
+                name=sample_db_agent.name,
+                enabled=True,
+                endpoint_url=sample_db_agent.endpoint_url,
+                auth_type=sample_db_agent.auth_type,
+                auth_value=sample_db_agent.auth_value,
+                protocol_version=sample_db_agent.protocol_version,
+            )
+        )
         mock_db.add = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.execute.return_value.scalar_one.return_value = sample_db_agent
@@ -318,7 +320,7 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentError, match="disabled"):
             await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
 
-    @patch('httpx.AsyncClient')
+    @patch("httpx.AsyncClient")
     async def test_invoke_agent_http_error(self, mock_client_class, service, mock_db, sample_db_agent):
         """Test agent invocation with HTTP error."""
         # Mock HTTP client with error response
@@ -330,15 +332,17 @@ class TestA2AAgentService:
         mock_client_class.return_value.__aenter__.return_value = mock_client
 
         # Mock database operations
-        service.get_agent_by_name = AsyncMock(return_value=MagicMock(
-            id=sample_db_agent.id,
-            name=sample_db_agent.name,
-            enabled=True,
-            endpoint_url=sample_db_agent.endpoint_url,
-            auth_type=sample_db_agent.auth_type,
-            auth_value=sample_db_agent.auth_value,
-            protocol_version=sample_db_agent.protocol_version,
-        ))
+        service.get_agent_by_name = AsyncMock(
+            return_value=MagicMock(
+                id=sample_db_agent.id,
+                name=sample_db_agent.name,
+                enabled=True,
+                endpoint_url=sample_db_agent.endpoint_url,
+                auth_type=sample_db_agent.auth_type,
+                auth_value=sample_db_agent.auth_value,
+                protocol_version=sample_db_agent.protocol_version,
+            )
+        )
         mock_db.add = MagicMock()
         mock_db.commit = MagicMock()
         mock_db.execute.return_value.scalar_one.return_value = sample_db_agent
@@ -427,7 +431,7 @@ class TestA2AAgentService:
         sample_db_agent.import_batch_id = None
         sample_db_agent.federation_source = None
         sample_db_agent.version = 1
-        sample_db_agent.visibility="private"
+        sample_db_agent.visibility = "private"
 
         # Execute
         result = service._db_to_schema(sample_db_agent)

@@ -52,6 +52,7 @@ def test_client() -> TestClient:
     # Patch settings
     # First-Party
     from mcpgateway.config import settings
+
     mp.setattr(settings, "database_url", url, raising=False)
 
     # First-Party

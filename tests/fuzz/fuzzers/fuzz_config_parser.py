@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 Coverage-guided fuzzing for configuration parsing using Atheris.
 """
+
 # Standard
 import os
 import sys
@@ -16,7 +17,7 @@ import tempfile
 import atheris
 
 # Ensure the project is in the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 
 try:
     # Third-Party
@@ -48,36 +49,27 @@ def TestOneInput(data: bytes) -> None:
             kwargs = {}
 
             # Basic string fields
-            string_fields = [
-                'app_name', 'host', 'database_url', 'basic_auth_user',
-                'basic_auth_password', 'log_level', 'transport_type'
-            ]
+            string_fields = ["app_name", "host", "database_url", "basic_auth_user", "basic_auth_password", "log_level", "transport_type"]
 
             for field in string_fields:
                 if fdp.ConsumeBool():
                     kwargs[field] = fdp.ConsumeUnicodeNoSurrogates(100)
 
             # Integer fields
-            int_fields = ['port', 'resource_cache_size', 'resource_cache_ttl', 'tool_timeout']
+            int_fields = ["port", "resource_cache_size", "resource_cache_ttl", "tool_timeout"]
             for field in int_fields:
                 if fdp.ConsumeBool():
                     kwargs[field] = fdp.ConsumeIntInRange(-1000, 65535)
 
             # Boolean fields
-            bool_fields = [
-                'skip_ssl_verify', 'auth_required', 'federation_enabled',
-                'docs_allow_basic_auth', 'federation_discovery'
-            ]
+            bool_fields = ["skip_ssl_verify", "auth_required", "federation_enabled", "docs_allow_basic_auth", "federation_discovery"]
             for field in bool_fields:
                 if fdp.ConsumeBool():
                     kwargs[field] = fdp.ConsumeBool()
 
             # List fields
             if fdp.ConsumeBool():
-                kwargs['federation_peers'] = [
-                    fdp.ConsumeUnicodeNoSurrogates(50)
-                    for _ in range(fdp.ConsumeIntInRange(0, 5))
-                ]
+                kwargs["federation_peers"] = [fdp.ConsumeUnicodeNoSurrogates(50) for _ in range(fdp.ConsumeIntInRange(0, 5))]
 
             settings = Settings(**kwargs)
 
@@ -106,7 +98,7 @@ def TestOneInput(data: bytes) -> None:
             for _ in range(fdp.ConsumeIntInRange(0, 10)):
                 key = fdp.ConsumeUnicodeNoSurrogates(30)
                 value = fdp.ConsumeUnicodeNoSurrogates(100)
-                if key and not key.startswith('_'):
+                if key and not key.startswith("_"):
                     env_vars[key] = value
 
             # Backup original env
@@ -133,21 +125,21 @@ def TestOneInput(data: bytes) -> None:
             for _ in range(fdp.ConsumeIntInRange(0, 20)):
                 key = fdp.ConsumeUnicodeNoSurrogates(30)
                 value = fdp.ConsumeUnicodeNoSurrogates(100)
-                if key and '=' not in key and '\n' not in key:
+                if key and "=" not in key and "\n" not in key:
                     env_content += f"{key}={value}\n"
 
             # Create temporary .env file
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.env', delete=False) as f:
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".env", delete=False) as f:
                 f.write(env_content)
                 env_file_path = f.name
 
             try:
                 # Test loading from .env file (simulate)
-                lines = env_content.split('\n')
+                lines = env_content.split("\n")
                 env_dict = {}
                 for line in lines:
-                    if '=' in line and not line.startswith('#'):
-                        key, value = line.split('=', 1)
+                    if "=" in line and not line.startswith("#"):
+                        key, value = line.split("=", 1)
                         env_dict[key.strip()] = value.strip()
 
                 # Test with parsed values

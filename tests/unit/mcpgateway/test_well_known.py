@@ -8,7 +8,6 @@ Test cases for well-known URI endpoints.
 """
 
 # Standard
-import json
 from unittest.mock import patch
 
 # Third-Party
@@ -211,9 +210,7 @@ class TestCustomWellKnownFiles:
         """Test custom well-known file with known content type."""
         # Configure settings with custom file that has a known content type
         mock_settings.well_known_enabled = True
-        mock_settings.custom_well_known_files = {
-            "ai.txt": "User-agent: *\nDisallow: /private/"
-        }
+        mock_settings.custom_well_known_files = {"ai.txt": "User-agent: *\nDisallow: /private/"}
         mock_settings.well_known_cache_max_age = 7200
 
         response = client.get("/.well-known/ai.txt")
@@ -229,9 +226,7 @@ class TestCustomWellKnownFiles:
         """Test custom well-known file with unknown content type."""
         # Configure settings with custom file that's not in the registry
         mock_settings.well_known_enabled = True
-        mock_settings.custom_well_known_files = {
-            "custom-file.txt": "This is a custom well-known file"
-        }
+        mock_settings.custom_well_known_files = {"custom-file.txt": "This is a custom well-known file"}
         mock_settings.well_known_cache_max_age = 1800
 
         response = client.get("/.well-known/custom-file.txt")
@@ -250,6 +245,7 @@ class TestWellKnownAdminEndpoint:
         """Create a test client with auth dependency override."""
         # First-Party
         from mcpgateway.utils.verify_credentials import require_auth
+
         app.dependency_overrides[require_auth] = lambda: "test_user"
         client = TestClient(app)
         yield client
@@ -309,10 +305,7 @@ class TestWellKnownAdminEndpoint:
         # Configure settings with custom files
         mock_settings.well_known_enabled = True
         mock_settings.well_known_security_txt_enabled = False
-        mock_settings.custom_well_known_files = {
-            "custom1.txt": "Custom content 1",
-            "custom2.txt": "Custom content 2"
-        }
+        mock_settings.custom_well_known_files = {"custom1.txt": "Custom content 1", "custom2.txt": "Custom content 2"}
         mock_settings.well_known_cache_max_age = 1800
 
         response = auth_client.get("/admin/well-known")

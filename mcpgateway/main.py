@@ -52,6 +52,7 @@ from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as starletteRequest
 from starlette.responses import Response as starletteResponse
+from starlette_compress import CompressMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # First-Party
@@ -65,6 +66,7 @@ from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
@@ -99,7 +101,7 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -115,6 +117,7 @@ from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -395,13 +398,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("Shutdown complete")
 
 
-# Initialize FastAPI app
+# Initialize FastAPI app with orjson for 2-3x faster JSON serialization
 app = FastAPI(
     title=settings.app_name,
     version=__version__,
     description="A FastAPI-based MCP Gateway with federation support",
     root_path=settings.app_root_path,
     lifespan=lifespan,
+    default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
 )
 
 
@@ -889,6 +893,26 @@ app.add_middleware(
     expose_headers=["Content-Length", "X-Request-ID"],
 )
 
+# Add response compression middleware (Brotli, Zstd, GZip)
+# Automatically negotiates compression algorithm based on client Accept-Encoding header
+# Priority: Brotli (best compression) > Zstd (fast) > GZip (universal fallback)
+# Only compress responses larger than minimum_size to avoid overhead
+if settings.compression_enabled:
+    app.add_middleware(
+        CompressMiddleware,
+        minimum_size=settings.compression_minimum_size,  # Only compress responses > N bytes
+        gzip_level=settings.compression_gzip_level,  # GZip: 1=fastest, 9=best (default: 6)
+        brotli_quality=settings.compression_brotli_quality,  # Brotli: 0-3=fast, 4-9=balanced, 10-11=max (default: 4)
+        zstd_level=settings.compression_zstd_level,  # Zstd: 1-3=fast, 4-9=balanced, 10+=slow (default: 3)
+    )
+    logger.info(
+        f"🗜️  Response compression enabled: minimum_size={settings.compression_minimum_size}B, "
+        f"gzip_level={settings.compression_gzip_level}, "
+        f"brotli_quality={settings.compression_brotli_quality}, "
+        f"zstd_level={settings.compression_zstd_level}"
+    )
+else:
+    logger.info("🚫 Response compression disabled")
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
@@ -908,6 +932,9 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
+# Add request logging middleware if enabled
+if settings.log_requests:
+    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -1498,6 +1525,8 @@ async def update_server(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerNameConflictError as e:
@@ -1536,8 +1565,11 @@ async def toggle_server_status(
         HTTPException: If the server is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.toggle_server_status(db, server_id, activate)
+        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerError as e:
@@ -1563,11 +1595,14 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
     """
     try:
         logger.debug(f"User {user} is deleting server with ID {server_id}")
-        await server_service.delete_server(db, server_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await server_service.delete_server(db, server_id, user_email=user_email)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ServerError as e:
@@ -1928,6 +1963,7 @@ async def update_a2a_agent(
 
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -1936,7 +1972,10 @@ async def update_a2a_agent(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentNameConflictError as e:
@@ -1975,10 +2014,13 @@ async def toggle_a2a_agent_status(
         HTTPException: If the agent is not found or there is an error.
     """
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate)
+        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -2006,11 +2048,14 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         logger.debug(f"User {user} is deleting A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        await a2a_service.delete_agent(db, agent_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -2263,6 +2308,7 @@ async def update_tool(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await tool_service.update_tool(
             db,
             tool_id,
@@ -2271,20 +2317,23 @@ async def update_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            raise HTTPException(status_code=403, detail=str(ex))
         if isinstance(ex, ToolNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ex))
         if isinstance(ex, ValidationError):
-            logger.error(f"Validation error while creating tool: {ex}")
+            logger.error(f"Validation error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=ErrorFormatter.format_validation_error(ex))
         if isinstance(ex, IntegrityError):
-            logger.error(f"Integrity error while creating tool: {ex}")
+            logger.error(f"Integrity error while updating tool: {ex}")
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ErrorFormatter.format_database_error(ex))
         if isinstance(ex, ToolError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
-        logger.error(f"Unexpected error while creating tool: {ex}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
+        logger.error(f"Unexpected error while updating tool: {ex}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the tool")
 
 
 @tool_router.delete("/{tool_id}")
@@ -2306,8 +2355,13 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     """
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
-        await tool_service.delete_tool(db, tool_id)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2337,12 +2391,15 @@ async def toggle_tool_status(
     """
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
             "tool": tool.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2398,12 +2455,15 @@ async def toggle_resource_status(
     """
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
             "resource": resource.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2530,14 +2590,14 @@ async def create_resource(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@resource_router.get("/{uri:path}")
+@resource_router.get("/{resource_id}")
 @require_permission("resources.read")
-async def read_resource(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
+async def read_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Any:
     """
-    Read a resource by its URI with plugin support.
+    Read a resource by its ID with plugin support.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         request (Request): FastAPI request object for context.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -2552,20 +2612,20 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     server_id = request.headers.get("X-Server-ID")
 
-    logger.debug(f"User {user} requested resource with URI {uri} (request_id: {request_id})")
+    logger.debug(f"User {user} requested resource with ID {resource_id} (request_id: {request_id})")
 
     # Check cache
-    if cached := resource_cache.get(uri):
+    if cached := resource_cache.get(resource_id):
         return cached
 
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, uri, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(db, resource_id, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
-    resource_cache.set(uri, content)
+    resource_cache.set(resource_id, content)
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
@@ -2578,36 +2638,36 @@ async def read_resource(uri: str, request: Request, db: Session = Depends(get_db
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
-            return {"type": "resource", "uri": uri, "text": content.text}
+            return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content.text}
     except Exception:
         pass  # nosec B110 - Intentionally continue with fallback resource content handling
 
     if isinstance(content, bytes):
-        return {"type": "resource", "uri": uri, "blob": content.decode("utf-8", errors="ignore")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "blob": content.decode("utf-8", errors="ignore")}
     if isinstance(content, str):
-        return {"type": "resource", "uri": uri, "text": content}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": content}
 
     # Objects with a 'text' attribute (e.g., mocks) – best-effort mapping
     if hasattr(content, "text"):
-        return {"type": "resource", "uri": uri, "text": getattr(content, "text")}
+        return {"type": "resource", "id": resource_id, "uri": content.uri, "text": getattr(content, "text")}
 
-    return {"type": "resource", "uri": uri, "text": str(content)}
+    return {"type": "resource", "id": resource_id, "uri": content.uri, "text": str(content)}
 
 
-@resource_router.put("/{uri:path}", response_model=ResourceRead)
+@resource_router.put("/{resource_id}", response_model=ResourceRead)
 @require_permission("resources.update")
 async def update_resource(
-    uri: str,
+    resource_id: str,
     resource: ResourceUpdate,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ResourceRead:
     """
-    Update a resource identified by its URI.
+    Update a resource identified by its ID.
 
     Args:
-        uri (str): URI of the resource.
+        resource_id (str): ID of the resource.
         resource (ResourceUpdate): New resource data.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Database session.
@@ -2620,39 +2680,45 @@ async def update_resource(
         HTTPException: If the resource is not found or update fails.
     """
     try:
-        logger.debug(f"User {user} is updating resource with URI {uri}")
+        logger.debug(f"User {user} is updating resource with ID {resource_id}")
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         result = await resource_service.update_resource(
             db,
-            uri,
+            resource_id,
             resource,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ValidationError as e:
-        logger.error(f"Validation error while updating resource {uri}: {e}")
+        logger.error(f"Validation error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=422, detail=ErrorFormatter.format_validation_error(e))
     except IntegrityError as e:
-        logger.error(f"Integrity error while updating resource {uri}: {e}")
+        logger.error(f"Integrity error while updating resource {resource_id}: {e}")
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
-    await invalidate_resource_cache(uri)
+    except ResourceURIConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    await invalidate_resource_cache(resource_id)
     return result
 
 
-@resource_router.delete("/{uri:path}")
+@resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a resource by its URI.
+    Delete a resource by its ID.
 
     Args:
-        uri (str): URI of the resource to delete.
+        resource_id (str): ID of the resource to delete.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -2663,31 +2729,34 @@ async def delete_resource(uri: str, db: Session = Depends(get_db), user=Depends(
         HTTPException: If the resource is not found or deletion fails.
     """
     try:
-        logger.debug(f"User {user} is deleting resource with URI {uri}")
-        await resource_service.delete_resource(db, uri)
-        await invalidate_resource_cache(uri)
-        return {"status": "success", "message": f"Resource {uri} deleted"}
+        logger.debug(f"User {user} is deleting resource with id {resource_id}")
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        await invalidate_resource_cache(resource_id)
+        return {"status": "success", "message": f"Resource {resource_id} deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except ResourceError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@resource_router.post("/subscribe/{uri:path}")
+@resource_router.post("/subscribe/{resource_id}")
 @require_permission("resources.read")
-async def subscribe_resource(uri: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(resource_id: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        uri (str): URI of the resource to subscribe to.
+        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {user} is subscribing to resource with URI {uri}")
-    return StreamingResponse(resource_service.subscribe_events(uri), media_type="text/event-stream")
+    logger.debug(f"User {user} is subscribing to resource with resource_id {resource_id}")
+    return StreamingResponse(resource_service.subscribe_events(resource_id), media_type="text/event-stream")
 
 
 ###############
@@ -2718,12 +2787,15 @@ async def toggle_prompt_status(
     """
     logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
     try:
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate)
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
             "prompt": prompt.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -2856,22 +2928,22 @@ async def create_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the prompt")
 
 
-@prompt_router.post("/{name}")
+@prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt(
-    name: str,
+    prompt_id: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name with arguments.
+    """Get a prompt by prompt_id with arguments.
 
     This implements the prompts/get functionality from the MCP spec,
     which requires a POST request with arguments in the body.
 
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         args: Template arguments.
         db: Database session.
         user: Authenticated user.
@@ -2882,14 +2954,14 @@ async def get_prompt(
     Raises:
         Exception: Re-raised if not a handled exception type.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with args={args}")
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with args={args}")
 
     try:
         PromptExecuteArgs(args=args)
-        result = await prompt_service.get_prompt(db, name, args)
-        logger.debug(f"Prompt execution successful for '{name}'")
+        result = await prompt_service.get_prompt(db, prompt_id, args)
+        logger.debug(f"Prompt execution successful for '{prompt_id}'")
     except Exception as ex:
-        logger.error(f"Could not retrieve prompt {name}: {ex}")
+        logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
         if isinstance(ex, PluginViolationError):
             # Return the actual plugin violation message
             return JSONResponse(content={"message": ex.message, "details": str(ex.violation) if hasattr(ex, "violation") else None}, status_code=422)
@@ -2901,19 +2973,19 @@ async def get_prompt(
     return result
 
 
-@prompt_router.get("/{name}")
+@prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt_no_args(
-    name: str,
+    prompt_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
-    """Get a prompt by name without arguments.
+    """Get a prompt by ID without arguments.
 
     This endpoint is for convenience when no arguments are needed.
 
     Args:
-        name: The name of the prompt to retrieve
+        prompt_id: The ID of the prompt to retrieve
         db: Database session
         user: Authenticated user
 
@@ -2923,14 +2995,14 @@ async def get_prompt_no_args(
     Raises:
         Exception: Re-raised from prompt service.
     """
-    logger.debug(f"User: {user} requested prompt: {name} with no arguments")
-    return await prompt_service.get_prompt(db, name, {})
+    logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
+    return await prompt_service.get_prompt(db, prompt_id, {})
 
 
-@prompt_router.put("/{name}", response_model=PromptRead)
+@prompt_router.put("/{prompt_id}", response_model=PromptRead)
 @require_permission("prompts.update")
 async def update_prompt(
-    name: str,
+    prompt_id: str,
     prompt: PromptUpdate,
     request: Request,
     db: Session = Depends(get_db),
@@ -2940,7 +3012,7 @@ async def update_prompt(
     Update (overwrite) an existing prompt definition.
 
     Args:
-        name (str): Identifier of the prompt to update.
+        prompt_id (str): Identifier of the prompt to update.
         prompt (PromptUpdate): New prompt content and metadata.
         request (Request): The FastAPI request object for metadata extraction.
         db (Session): Active SQLAlchemy session.
@@ -2953,22 +3025,25 @@ async def update_prompt(
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
             * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
-    logger.info(f"User: {user} requested to update prompt: {name} with data={prompt}")
-    logger.debug(f"User: {user} requested to update prompt: {name} with data={prompt}")
+    logger.debug(f"User: {user} requested to update prompt: {prompt_id} with data={prompt}")
     try:
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await prompt_service.update_prompt(
             db,
-            name,
+            prompt_id,
             prompt,
             modified_by=mod_metadata["modified_by"],
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as e:
+        if isinstance(e, PermissionError):
+            raise HTTPException(status_code=403, detail=str(e))
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, ValidationError):
@@ -2988,14 +3063,14 @@ async def update_prompt(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while updating the prompt")
 
 
-@prompt_router.delete("/{name}")
+@prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Delete a prompt by name.
+    Delete a prompt by ID.
 
     Args:
-        name: Name of the prompt.
+        prompt_id: ID of the prompt.
         db: Database session.
         user: Authenticated user.
 
@@ -3005,16 +3080,19 @@ async def delete_prompt(name: str, db: Session = Depends(get_db), user=Depends(g
     Raises:
         HTTPException: If the prompt is not found, a prompt error occurs, or an unexpected error occurs during deletion.
     """
-    logger.debug(f"User: {user} requested deletion of prompt {name}")
+    logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
-        await prompt_service.delete_prompt(db, name)
-        return {"status": "success", "message": f"Prompt {name} deleted"}
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
+        if isinstance(e, PermissionError):
+            raise HTTPException(status_code=403, detail=str(e))
         if isinstance(e, PromptNotFoundError):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
         if isinstance(e, PromptError):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-        logger.error(f"Unexpected error while deleting prompt {name}: {e}")
+        logger.error(f"Unexpected error while deleting prompt {prompt_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while deleting the prompt")
 
     # except PromptNotFoundError as e:
@@ -3051,16 +3129,20 @@ async def toggle_gateway_status(
     """
     logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
     try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         gateway = await gateway_service.toggle_gateway_status(
             db,
             gateway_id,
             activate,
+            user_email=user_email,
         )
         return {
             "status": "success",
             "message": f"Gateway {gateway_id} {'activated' if activate else 'deactivated'}",
             "gateway": gateway.model_dump(),
         }
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
@@ -3205,6 +3287,7 @@ async def update_gateway(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
         return await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -3213,8 +3296,11 @@ async def update_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
     except Exception as ex:
+        if isinstance(ex, PermissionError):
+            return JSONResponse(content={"message": str(ex)}, status_code=403)
         if isinstance(ex, GatewayNotFoundError):
             return JSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
         if isinstance(ex, GatewayConnectionError):
@@ -3247,10 +3333,21 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
 
     Returns:
         Status message.
+
+    Raises:
+        HTTPException: If permission denied (403), gateway not found (404), or other gateway error (400).
     """
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
-    await gateway_service.delete_gateway(db, gateway_id)
-    return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
+    try:
+        user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except GatewayError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 ##############
@@ -3977,7 +4074,7 @@ async def get_entities_by_tag(
 @export_import_router.get("/export", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_configuration(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
@@ -4031,8 +4128,8 @@ async def export_configuration(
         else:
             username = None
 
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
 
         # Perform export
         export_data = await export_service.export_configuration(
@@ -4093,7 +4190,12 @@ async def export_selective_configuration(
         elif isinstance(user, dict):
             username = user.get("email")
 
-        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown")
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
+
+        export_data = await export_service.export_selective(
+            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
+        )
 
         return export_data
 
@@ -4346,6 +4448,17 @@ try:
     logger.info("Reverse proxy router included")
 except ImportError:
     logger.debug("Reverse proxy router not available")
+
+# Include LLMChat router
+if settings.llmchat_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.llmchat_router import llmchat_router
+
+        app.include_router(llmchat_router)
+        logger.info("LLM Chat router included")
+    except ImportError:
+        logger.debug("LLM Chat router not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

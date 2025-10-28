@@ -79,18 +79,18 @@ class TestTeamManagementService:
     def test_service_has_required_methods(self, service):
         """Test that service has all required methods."""
         required_methods = [
-            'create_team',
-            'get_team_by_id',
-            'get_team_by_slug',
-            'update_team',
-            'delete_team',
-            'add_member_to_team',
-            'remove_member_from_team',
-            'update_member_role',
-            'get_user_teams',
-            'get_team_members',
-            'get_user_role_in_team',
-            'list_teams',
+            "create_team",
+            "get_team_by_id",
+            "get_team_by_slug",
+            "update_team",
+            "delete_team",
+            "add_member_to_team",
+            "remove_member_from_team",
+            "update_member_role",
+            "get_user_teams",
+            "get_team_members",
+            "get_user_role_in_team",
+            "list_teams",
         ]
 
         for method_name in required_methods:
@@ -115,19 +115,15 @@ class TestTeamManagementService:
         # Mock the query for existing inactive teams to return None (no existing team)
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with patch('mcpgateway.services.team_management_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.team_management_service.EmailTeamMember') as MockMember, \
-             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
-
+        with (
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
+            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+        ):
             MockTeam.return_value = mock_team
             mock_slugify.return_value = "test-team"
 
-            result = await service.create_team(
-                name="Test Team",
-                description="A test team",
-                created_by="admin@example.com",
-                visibility="private"
-            )
+            result = await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com", visibility="private")
 
             assert result == mock_team
             mock_db.add.assert_called()
@@ -138,12 +134,7 @@ class TestTeamManagementService:
     async def test_create_team_invalid_visibility(self, service):
         """Test team creation with invalid visibility."""
         with pytest.raises(ValueError, match="Invalid visibility"):
-            await service.create_team(
-                name="Test Team",
-                description="A test team",
-                created_by="admin@example.com",
-                visibility="invalid"
-            )
+            await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com", visibility="invalid")
 
     @pytest.mark.asyncio
     async def test_create_team_database_error(self, service, mock_db):
@@ -152,15 +143,10 @@ class TestTeamManagementService:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.add.side_effect = Exception("Database error")
 
-        with patch('mcpgateway.services.team_management_service.EmailTeam'), \
-             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
+        with patch("mcpgateway.services.team_management_service.EmailTeam"), patch("mcpgateway.utils.create_slug.slugify") as mock_slugify:
             mock_slugify.return_value = "test-team"
             with pytest.raises(Exception):
-                await service.create_team(
-                    name="Test Team",
-                    description="A test team",
-                    created_by="admin@example.com"
-                )
+                await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com")
 
             mock_db.rollback.assert_called_once()
 
@@ -172,24 +158,21 @@ class TestTeamManagementService:
         # Mock the query for existing inactive teams to return None
         mock_db.query.return_value.filter.return_value.first.return_value = None
 
-        with patch('mcpgateway.services.team_management_service.settings') as mock_settings, \
-             patch('mcpgateway.services.team_management_service.EmailTeam') as MockTeam, \
-             patch('mcpgateway.services.team_management_service.EmailTeamMember'), \
-             patch('mcpgateway.utils.create_slug.slugify') as mock_slugify:
-
+        with (
+            patch("mcpgateway.services.team_management_service.settings") as mock_settings,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+        ):
             mock_settings.max_members_per_team = 50
             MockTeam.return_value = mock_team
             mock_slugify.return_value = "test-team"
 
-            await service.create_team(
-                name="Test Team",
-                description="A test team",
-                created_by="admin@example.com"
-            )
+            await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com")
 
             MockTeam.assert_called_once()
             call_kwargs = MockTeam.call_args[1]
-            assert call_kwargs['max_members'] == 50
+            assert call_kwargs["max_members"] == 50
 
     @pytest.mark.asyncio
     async def test_create_team_reactivates_existing_inactive_team(self, service, mock_db):
@@ -210,18 +193,11 @@ class TestTeamManagementService:
         mock_queries = [mock_existing_team, mock_existing_membership]
         mock_db.query.return_value.filter.return_value.first.side_effect = mock_queries
 
-        with patch('mcpgateway.utils.create_slug.slugify') as mock_slugify, \
-             patch('mcpgateway.services.team_management_service.utc_now') as mock_utc_now:
-
+        with patch("mcpgateway.utils.create_slug.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
             mock_slugify.return_value = "test-team"
             mock_utc_now.return_value = "2023-01-01T00:00:00Z"
 
-            result = await service.create_team(
-                name="Test Team",
-                description="A reactivated team",
-                created_by="admin@example.com",
-                visibility="public"
-            )
+            result = await service.create_team(name="Test Team", description="A reactivated team", created_by="admin@example.com", visibility="public")
 
             # Verify the existing team was reactivated with new details
             assert result == mock_existing_team
@@ -300,13 +276,8 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_team_success(self, service, mock_db, mock_team):
         """Test successful team update."""
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.update_team(
-                team_id="team123",
-                name="Updated Team",
-                description="Updated description",
-                visibility="public"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_team(team_id="team123", name="Updated Team", description="Updated description", visibility="public")
 
             assert result is True
             assert mock_team.name == "Updated Team"
@@ -317,7 +288,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_team_not_found(self, service):
         """Test updating non-existent team."""
-        with patch.object(service, 'get_team_by_id', return_value=None):
+        with patch.object(service, "get_team_by_id", return_value=None):
             result = await service.update_team(team_id="nonexistent", name="New Name")
 
             assert result is False
@@ -327,7 +298,7 @@ class TestTeamManagementService:
         """Test updating personal team is rejected."""
         mock_team.is_personal = True
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.update_team(team_id="team123", name="New Name")
 
             assert result is False
@@ -335,7 +306,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_team_invalid_visibility(self, service, mock_team):
         """Test updating team with invalid visibility."""
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.update_team(team_id="team123", visibility="invalid")
             assert result is False
 
@@ -344,7 +315,7 @@ class TestTeamManagementService:
         """Test team update with database error."""
         mock_db.commit.side_effect = Exception("Database error")
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.update_team(team_id="team123", name="New Name")
 
             assert result is False
@@ -361,7 +332,7 @@ class TestTeamManagementService:
         mock_query.filter.return_value.update.return_value = None
         mock_db.query.return_value = mock_query
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.delete_team(team_id="team123", deleted_by="admin@example.com")
 
             assert result is True
@@ -371,7 +342,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_delete_team_not_found(self, service):
         """Test deleting non-existent team."""
-        with patch.object(service, 'get_team_by_id', return_value=None):
+        with patch.object(service, "get_team_by_id", return_value=None):
             result = await service.delete_team(team_id="nonexistent", deleted_by="admin@example.com")
 
             assert result is False
@@ -381,7 +352,7 @@ class TestTeamManagementService:
         """Test deleting personal team is rejected."""
         mock_team.is_personal = True
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.delete_team(team_id="team123", deleted_by="admin@example.com")
             assert result is False
 
@@ -390,7 +361,7 @@ class TestTeamManagementService:
         """Test team deletion with database error."""
         mock_db.commit.side_effect = Exception("Database error")
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.delete_team(team_id="team123", deleted_by="admin@example.com")
 
             assert result is False
@@ -422,7 +393,7 @@ class TestTeamManagementService:
             elif model == EmailUser:
                 return mock_user_query
             elif model == EmailTeamMember:
-                if not hasattr(side_effect, 'call_count'):
+                if not hasattr(side_effect, "call_count"):
                     side_effect.call_count = 0
                 side_effect.call_count += 1
                 if side_effect.call_count == 1:
@@ -432,12 +403,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.add_member_to_team(
-                team_id="team123",
-                user_email="user@example.com",
-                role="member"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
 
             assert result is True
             assert mock_db.add.call_count == 2
@@ -446,21 +413,14 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_add_member_invalid_role(self, service):
         """Test adding member with invalid role."""
-        result = await service.add_member_to_team(
-            team_id="team123",
-            user_email="user@example.com",
-            role="invalid"
-        )
+        result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="invalid")
         assert result is False
 
     @pytest.mark.asyncio
     async def test_add_member_team_not_found(self, service):
         """Test adding member to non-existent team."""
-        with patch.object(service, 'get_team_by_id', return_value=None):
-            result = await service.add_member_to_team(
-                team_id="nonexistent",
-                user_email="user@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=None):
+            result = await service.add_member_to_team(team_id="nonexistent", user_email="user@example.com")
 
             assert result is False
 
@@ -471,11 +431,8 @@ class TestTeamManagementService:
         mock_query.filter.return_value.first.return_value = None
         mock_db.query.return_value = mock_query
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.add_member_to_team(
-                team_id="team123",
-                user_email="nonexistent@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.add_member_to_team(team_id="team123", user_email="nonexistent@example.com")
 
             assert result is False
 
@@ -495,11 +452,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.add_member_to_team(
-                team_id="team123",
-                user_email="user@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com")
 
             assert result is False
 
@@ -514,7 +468,7 @@ class TestTeamManagementService:
             if model == EmailUser:
                 mock_query.filter.return_value.first.return_value = mock_user
             elif model == EmailTeamMember:
-                if not hasattr(query_side_effect, 'call_count'):
+                if not hasattr(query_side_effect, "call_count"):
                     query_side_effect.call_count = 0
                 query_side_effect.call_count += 1
                 if query_side_effect.call_count == 1:
@@ -527,11 +481,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.add_member_to_team(
-                team_id="team123",
-                user_email="user@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com")
             assert result is False
 
     @pytest.mark.asyncio
@@ -541,11 +492,8 @@ class TestTeamManagementService:
         mock_query.filter.return_value.first.return_value = mock_membership
         mock_db.query.return_value = mock_query
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.remove_member_from_team(
-                team_id="team123",
-                user_email="user@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com")
 
             assert result is True
             assert mock_membership.is_active is False
@@ -559,7 +507,7 @@ class TestTeamManagementService:
         # Setup query mocks for membership lookup and owner count
         def query_side_effect(model):
             mock_query = MagicMock()
-            if hasattr(query_side_effect, 'call_count'):
+            if hasattr(query_side_effect, "call_count"):
                 query_side_effect.call_count += 1
             else:
                 query_side_effect.call_count = 1
@@ -574,11 +522,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.remove_member_from_team(
-                team_id="team123",
-                user_email="user@example.com"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com")
             assert result is False
 
     # =========================================================================
@@ -592,12 +537,8 @@ class TestTeamManagementService:
         mock_query.filter.return_value.first.return_value = mock_membership
         mock_db.query.return_value = mock_query
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.update_member_role(
-                team_id="team123",
-                user_email="user@example.com",
-                new_role="member"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
 
             assert result is True
             assert mock_membership.role == "member"
@@ -606,11 +547,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_member_role_invalid_role(self, service):
         """Test updating member with invalid role."""
-        result = await service.update_member_role(
-            team_id="team123",
-            user_email="user@example.com",
-            new_role="invalid"
-        )
+        result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="invalid")
         assert result is False
 
     @pytest.mark.asyncio
@@ -620,7 +557,7 @@ class TestTeamManagementService:
 
         def query_side_effect(model):
             mock_query = MagicMock()
-            if hasattr(query_side_effect, 'call_count'):
+            if hasattr(query_side_effect, "call_count"):
                 query_side_effect.call_count += 1
             else:
                 query_side_effect.call_count = 1
@@ -635,12 +572,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.update_member_role(
-                team_id="team123",
-                user_email="user@example.com",
-                new_role="member"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
             assert result is False
 
     # =========================================================================
@@ -780,7 +713,7 @@ class TestTeamManagementService:
             if model == EmailUser:
                 mock_query.filter.return_value.first.return_value = mock_user
             elif model == EmailTeamMember:
-                if not hasattr(query_side_effect, 'call_count'):
+                if not hasattr(query_side_effect, "call_count"):
                     query_side_effect.call_count = 0
                 query_side_effect.call_count += 1
                 if query_side_effect.call_count == 1:
@@ -791,12 +724,8 @@ class TestTeamManagementService:
 
         mock_db.query.side_effect = query_side_effect
 
-        with patch.object(service, 'get_team_by_id', return_value=mock_team):
-            result = await service.add_member_to_team(
-                team_id="team123",
-                user_email="user@example.com",
-                role="member"
-            )
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
 
             assert result is True
             assert mock_membership.is_active is True

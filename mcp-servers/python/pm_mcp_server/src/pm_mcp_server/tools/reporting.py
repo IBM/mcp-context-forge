@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import Dict, Iterable, List
+from collections.abc import Iterable
 
 from jinja2 import Template
 
@@ -26,19 +26,21 @@ def _load_template(name: str) -> Template:
     return Template(template_bytes.decode("utf-8"))
 
 
-def status_report_generator(payload: StatusReportPayload) -> Dict[str, str]:
+def status_report_generator(payload: StatusReportPayload) -> dict[str, str]:
     """Render markdown status report and return metadata."""
 
     template = _load_template("status_report.md.j2")
     markdown = template.render(**payload.model_dump(mode="json"))
-    resource_id = GLOBAL_RESOURCE_STORE.add(markdown.encode("utf-8"), "text/markdown", prefix="report")
+    resource_id = GLOBAL_RESOURCE_STORE.add(
+        markdown.encode("utf-8"), "text/markdown", prefix="report"
+    )
     return {
         "resource_id": resource_id,
         "markdown_preview": markdown,
     }
 
 
-def project_health_dashboard(snapshot: HealthDashboard) -> Dict[str, object]:
+def project_health_dashboard(snapshot: HealthDashboard) -> dict[str, object]:
     """Return structured dashboard summary and persist pretty JSON resource."""
 
     summary = {
@@ -62,7 +64,7 @@ def project_brief_generator(
     success_criteria: Iterable[str],
     budget: float,
     timeline: str,
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """Produce concise project brief summary."""
 
     brief = {
@@ -79,10 +81,10 @@ def project_brief_generator(
     return brief
 
 
-def lessons_learned_catalog(entries: List[Dict[str, str]]) -> Dict[str, List[str]]:
+def lessons_learned_catalog(entries: list[dict[str, str]]) -> dict[str, list[str]]:
     """Group retrospectives by theme."""
 
-    catalog: Dict[str, List[str]] = defaultdict(list)
+    catalog: dict[str, list[str]] = defaultdict(list)
     for entry in entries:
         theme = entry.get("theme", "general")
         insight = entry.get("insight", "")
@@ -91,12 +93,12 @@ def lessons_learned_catalog(entries: List[Dict[str, str]]) -> Dict[str, List[str
     return {theme: items for theme, items in catalog.items()}
 
 
-def document_template_library() -> Dict[str, str]:
+def document_template_library() -> dict[str, str]:
     """Expose packaged templates as downloadable resources."""
 
     from importlib import resources
 
-    resource_map: Dict[str, str] = {}
+    resource_map: dict[str, str] = {}
     templates_pkg = resources.files("pm_mcp_server.data.templates")
     mime_lookup = {
         "status_report.md.j2": "text/x-jinja",

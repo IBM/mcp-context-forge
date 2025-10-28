@@ -7,6 +7,7 @@ Authors: Fred Araujo
 Simple example plugin for searching and replacing text.
 This module loads configurations for plugins.
 """
+
 # Third-Party
 from pydantic import BaseModel
 
@@ -20,6 +21,12 @@ logger = logging_service.get_logger(__name__)
 
 
 class DenyListConfig(BaseModel):
+    """Configuration for deny list plugin.
+
+    Attributes:
+        words: List of words to deny.
+    """
+
     words: list[str]
 
 
@@ -27,6 +34,11 @@ class DenyListPlugin(Plugin):
     """Example deny list plugin."""
 
     def __init__(self, config: PluginConfig):
+        """Initialize the deny list plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._dconfig = DenyListConfig.model_validate(self._config.config)
         self._deny_list = []

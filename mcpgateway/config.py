@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     # Basic Settings
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
-    port: PositiveInt = Field(default=4444, ge=1, le=65535, env="PORT")
+    port: PositiveInt = Field(default=4444, ge=1, le=65535)
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
     templates_dir: Path = Path("mcpgateway/templates")
@@ -169,7 +169,7 @@ class Settings(BaseSettings):
     basic_auth_user: str = "admin"
     basic_auth_password: str = "changeme"
     jwt_algorithm: str = "HS256"
-    jwt_secret_key: SecretStr = Field(default="my-test-key", env="JWT_SECRET_KEY")
+    jwt_secret_key: SecretStr = Field(default="my-test-key")
     jwt_public_key_path: str = ""
     jwt_private_key_path: str = ""
     jwt_audience: str = "mcpgateway-api"
@@ -200,6 +200,33 @@ class Settings(BaseSettings):
     sso_okta_client_secret: Optional[str] = Field(default=None, description="Okta client secret")
     sso_okta_issuer: Optional[str] = Field(default=None, description="Okta issuer URL")
 
+    sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
+    sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
+    sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
+    sso_keycloak_client_secret: Optional[str] = Field(default=None, description="Keycloak client secret")
+    sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
+    sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
+    sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
+    sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
+
+    sso_entra_enabled: bool = Field(default=False, description="Enable Microsoft Entra ID OIDC authentication")
+    sso_entra_client_id: Optional[str] = Field(default=None, description="Microsoft Entra ID client ID")
+    sso_entra_client_secret: Optional[str] = Field(default=None, description="Microsoft Entra ID client secret")
+    sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
+
+    sso_generic_enabled: bool = Field(default=False, description="Enable generic OIDC provider (Keycloak, Auth0, etc.)")
+    sso_generic_provider_id: Optional[str] = Field(default=None, description="Provider ID (e.g., 'keycloak', 'auth0', 'authentik')")
+    sso_generic_display_name: Optional[str] = Field(default=None, description="Display name shown on login page")
+    sso_generic_client_id: Optional[str] = Field(default=None, description="Generic OIDC client ID")
+    sso_generic_client_secret: Optional[str] = Field(default=None, description="Generic OIDC client secret")
+    sso_generic_authorization_url: Optional[str] = Field(default=None, description="Authorization endpoint URL")
+    sso_generic_token_url: Optional[str] = Field(default=None, description="Token endpoint URL")
+    sso_generic_userinfo_url: Optional[str] = Field(default=None, description="Userinfo endpoint URL")
+    sso_generic_issuer: Optional[str] = Field(default=None, description="OIDC issuer URL")
+    sso_generic_scope: Optional[str] = Field(default="openid profile email", description="OAuth scopes (space-separated)")
+
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
     sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
@@ -220,7 +247,7 @@ class Settings(BaseSettings):
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
 
     #  Encryption key phrase for auth storage
-    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"), env="AUTH_ENCRYPTION_SECRET")
+    auth_encryption_secret: SecretStr = Field(default=SecretStr("my-test-salt"))
 
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
@@ -307,6 +334,13 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
+    # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
+    mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
+    mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")
+    mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
+    mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
+    mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+
     # MCP Server Catalog Configuration
     mcpgateway_catalog_enabled: bool = Field(default=True, description="Enable MCP server catalog feature")
     mcpgateway_catalog_file: str = Field(default="mcp-catalog.yml", description="Path to catalog configuration file")
@@ -319,28 +353,35 @@ class Settings(BaseSettings):
     cors_enabled: bool = True
 
     # Environment
-    environment: Literal["development", "staging", "production"] = Field(default="development", env="ENVIRONMENT")
+    environment: Literal["development", "staging", "production"] = Field(default="development")
 
     # Domain configuration
-    app_domain: HttpUrl = Field(default="http://localhost:4444", env="APP_DOMAIN")
+    app_domain: HttpUrl = Field(default="http://localhost:4444")
 
     # Security settings
-    secure_cookies: bool = Field(default=True, env="SECURE_COOKIES")
-    cookie_samesite: str = Field(default="lax", env="COOKIE_SAMESITE")
+    secure_cookies: bool = Field(default=True)
+    cookie_samesite: str = Field(default="lax")
 
     # CORS settings
-    cors_allow_credentials: bool = Field(default=True, env="CORS_ALLOW_CREDENTIALS")
+    cors_allow_credentials: bool = Field(default=True)
 
     # Security Headers Configuration
-    security_headers_enabled: bool = Field(default=True, env="SECURITY_HEADERS_ENABLED")
-    x_frame_options: str = Field(default="DENY", env="X_FRAME_OPTIONS")
-    x_content_type_options_enabled: bool = Field(default=True, env="X_CONTENT_TYPE_OPTIONS_ENABLED")
-    x_xss_protection_enabled: bool = Field(default=True, env="X_XSS_PROTECTION_ENABLED")
-    x_download_options_enabled: bool = Field(default=True, env="X_DOWNLOAD_OPTIONS_ENABLED")
-    hsts_enabled: bool = Field(default=True, env="HSTS_ENABLED")
-    hsts_max_age: int = Field(default=31536000, env="HSTS_MAX_AGE")  # 1 year
-    hsts_include_subdomains: bool = Field(default=True, env="HSTS_INCLUDE_SUBDOMAINS")
-    remove_server_headers: bool = Field(default=True, env="REMOVE_SERVER_HEADERS")
+    security_headers_enabled: bool = Field(default=True)
+    x_frame_options: str = Field(default="DENY")
+    x_content_type_options_enabled: bool = Field(default=True)
+    x_xss_protection_enabled: bool = Field(default=True)
+    x_download_options_enabled: bool = Field(default=True)
+    hsts_enabled: bool = Field(default=True)
+    hsts_max_age: int = Field(default=31536000)  # 1 year
+    hsts_include_subdomains: bool = Field(default=True)
+    remove_server_headers: bool = Field(default=True)
+
+    # Response Compression Configuration
+    compression_enabled: bool = Field(default=True, description="Enable response compression (Brotli, Zstd, GZip)")
+    compression_minimum_size: int = Field(default=500, ge=0, description="Minimum response size in bytes to compress (0 = compress all)")
+    compression_gzip_level: int = Field(default=6, ge=1, le=9, description="GZip compression level (1=fastest, 9=best compression)")
+    compression_brotli_quality: int = Field(default=4, ge=0, le=11, description="Brotli compression quality (0-3=fast, 4-9=balanced, 10-11=max)")
+    compression_zstd_level: int = Field(default=3, ge=1, le=22, description="Zstd compression level (1-3=fast, 4-9=balanced, 10+=slow)")
 
     # For allowed_origins, strip '' to ensure we're passing on valid JSON via env
     # Tell pydantic *not* to touch this env var - our validator will.
@@ -353,6 +394,8 @@ class Settings(BaseSettings):
     min_secret_length: int = 32
     min_password_length: int = 12
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
+
+    llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
@@ -627,7 +670,8 @@ class Settings(BaseSettings):
         return set(v)
 
     # Logging
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR", env="LOG_LEVEL")
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
+    log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
     log_filemode: str = "a+"  # append or overwrite
@@ -680,7 +724,7 @@ class Settings(BaseSettings):
     federation_discovery: bool = False
 
     # For federation_peers strip out quotes to ensure we're passing valid JSON via env
-    federation_peers: List[HttpUrl] = Field(default_factory=list, env="FEDERATION_PEERS")
+    federation_peers: List[HttpUrl] = Field(default_factory=list)
 
     @field_validator("federation_peers", mode="before")
     @classmethod
@@ -736,7 +780,7 @@ class Settings(BaseSettings):
 
     # SSO
     # For sso_issuers strip out quotes to ensure we're passing valid JSON via env
-    sso_issuers: Optional[list[HttpUrl]] = Field(default=None, env="SSO_ISSUERS")
+    sso_issuers: Optional[list[HttpUrl]] = Field(default=None)
 
     @field_validator("sso_issuers", mode="before")
     @classmethod
@@ -1209,6 +1253,43 @@ Disallow: /
 
     # Passthrough headers configuration
     default_passthrough_headers: List[str] = Field(default_factory=list)
+
+    # ===================================
+    # Pagination Configuration
+    # ===================================
+
+    # Default number of items per page for paginated endpoints
+    pagination_default_page_size: int = Field(default=50, ge=1, le=1000, description="Default number of items per page")
+
+    # Maximum allowed items per page (prevents abuse)
+    pagination_max_page_size: int = Field(default=500, ge=1, le=10000, description="Maximum allowed items per page")
+
+    # Minimum items per page
+    pagination_min_page_size: int = Field(default=1, ge=1, description="Minimum items per page")
+
+    # Threshold for switching from offset to cursor-based pagination
+    pagination_cursor_threshold: int = Field(default=10000, ge=1, description="Threshold for cursor-based pagination")
+
+    # Enable cursor-based pagination globally
+    pagination_cursor_enabled: bool = Field(default=True, description="Enable cursor-based pagination")
+
+    # Default sort field for paginated queries
+    pagination_default_sort_field: str = Field(default="created_at", description="Default sort field")
+
+    # Default sort order for paginated queries
+    pagination_default_sort_order: str = Field(default="desc", pattern="^(asc|desc)$", description="Default sort order")
+
+    # Maximum offset allowed for offset-based pagination (prevents abuse)
+    pagination_max_offset: int = Field(default=100000, ge=0, description="Maximum offset for pagination")
+
+    # Cache pagination counts for performance (seconds)
+    pagination_count_cache_ttl: int = Field(default=300, ge=0, description="Cache TTL for pagination counts")
+
+    # Enable pagination links in API responses
+    pagination_include_links: bool = Field(default=True, description="Include pagination links")
+
+    # Base URL for pagination links (defaults to request URL)
+    pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
 
     def __init__(self, **kwargs):
         """Initialize Settings with environment variable parsing.

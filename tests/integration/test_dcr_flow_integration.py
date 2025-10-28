@@ -14,7 +14,7 @@ Tests will FAIL until implementation is complete (TDD Red Phase).
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone, timedelta
-from mcpgateway.db import Base, RegisteredOAuthClient, OAuthState, Gateway
+from mcpgateway.db import RegisteredOAuthClient, OAuthState, Gateway
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.dcr_service import DcrService
 
@@ -35,8 +35,8 @@ class TestPKCEFlowIntegration:
         def mock_get_db():
             yield test_db
 
-        with patch('mcpgateway.db.get_db', mock_get_db):
-            with patch('mcpgateway.config.get_settings') as mock_settings:
+        with patch("mcpgateway.db.get_db", mock_get_db):
+            with patch("mcpgateway.config.get_settings") as mock_settings:
                 # Configure settings to use database cache
                 mock_settings.return_value.cache_type = "database"
 
@@ -44,15 +44,7 @@ class TestPKCEFlowIntegration:
                 oauth_manager = OAuthManager(token_storage=token_storage)
 
                 # Create test gateway
-                gateway = Gateway(
-                    id="test-gateway-123",
-                    name="Test Gateway",
-                    slug="test-gateway",
-                    description="Test",
-                    url="http://localhost:9000/mcp",
-                    transport="SSE",
-                    capabilities={}
-                )
+                gateway = Gateway(id="test-gateway-123", name="Test Gateway", slug="test-gateway", description="Test", url="http://localhost:9000/mcp", transport="SSE", capabilities={})
                 test_db.add(gateway)
                 test_db.commit()
 
@@ -63,27 +55,20 @@ class TestPKCEFlowIntegration:
                     "authorization_url": "https://as.example.com/authorize",
                     "token_url": "https://as.example.com/token",
                     "redirect_uri": "http://localhost:4444/callback",
-                    "scopes": ["mcp:read", "mcp:tools"]
+                    "scopes": ["mcp:read", "mcp:tools"],
                 }
 
                 state = oauth_manager._generate_state("test-gateway-123", "user@example.com")
 
                 # Manually store state in database for this test
                 oauth_state_record = OAuthState(
-                    gateway_id="test-gateway-123",
-                    state=state,
-                    code_verifier=pkce_params["code_verifier"],
-                    expires_at=datetime.now(timezone.utc) + timedelta(seconds=600),
-                    used=False
+                    gateway_id="test-gateway-123", state=state, code_verifier=pkce_params["code_verifier"], expires_at=datetime.now(timezone.utc) + timedelta(seconds=600), used=False
                 )
                 test_db.add(oauth_state_record)
                 test_db.commit()
 
                 # Verify state was stored
-                oauth_state = test_db.query(OAuthState).filter(
-                    OAuthState.gateway_id == "test-gateway-123",
-                    OAuthState.state == state
-                ).first()
+                oauth_state = test_db.query(OAuthState).filter(OAuthState.gateway_id == "test-gateway-123", OAuthState.state == state).first()
 
                 assert oauth_state is not None
                 assert oauth_state.code_verifier is not None
@@ -93,13 +78,9 @@ class TestPKCEFlowIntegration:
                 code = "authorization-code-from-as"
                 code_verifier = oauth_state.code_verifier
 
-                mock_token_response = {
-                    "access_token": "test-access-token",
-                    "token_type": "Bearer",
-                    "expires_in": 3600
-                }
+                mock_token_response = {"access_token": "test-access-token", "token_type": "Bearer", "expires_in": 3600}
 
-                with patch('aiohttp.ClientSession') as mock_session_class:
+                with patch("aiohttp.ClientSession") as mock_session_class:
                     # Create mock response
                     mock_response_obj = AsyncMock()
                     mock_response_obj.status = 200
@@ -121,22 +102,14 @@ class TestPKCEFlowIntegration:
                     mock_session_class.return_value = mock_session
 
                     # Complete flow
-                    result = await oauth_manager.complete_authorization_code_flow(
-                        gateway_id="test-gateway-123",
-                        code=code,
-                        state=state,
-                        credentials=credentials
-                    )
+                    result = await oauth_manager.complete_authorization_code_flow(gateway_id="test-gateway-123", code=code, state=state, credentials=credentials)
 
                 # Verify code_verifier was included in token request
                 call_kwargs = mock_post.call_args[1]
                 assert call_kwargs["data"]["code_verifier"] == code_verifier
 
                 # Verify state is consumed (single-use)
-                oauth_state_after = test_db.query(OAuthState).filter(
-                    OAuthState.gateway_id == "test-gateway-123",
-                    OAuthState.state == state
-                ).first()
+                oauth_state_after = test_db.query(OAuthState).filter(OAuthState.gateway_id == "test-gateway-123", OAuthState.state == state).first()
 
                 # State should be deleted or marked as used
                 assert oauth_state_after is None or oauth_state_after.used is True
@@ -153,15 +126,7 @@ class TestDCRFlowIntegration:
         oauth_manager = OAuthManager()
 
         # Create test gateway
-        gateway = Gateway(
-            id="test-gw-456",
-            name="DCR Test Gateway",
-            slug="dcr-test-gateway",
-            description="Test DCR",
-            url="http://localhost:9000/mcp",
-            transport="SSE",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-456", name="DCR Test Gateway", slug="dcr-test-gateway", description="Test DCR", url="http://localhost:9000/mcp", transport="SSE", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -171,7 +136,7 @@ class TestDCRFlowIntegration:
             "authorization_endpoint": "https://as.example.com/authorize",
             "token_endpoint": "https://as.example.com/token",
             "registration_endpoint": "https://as.example.com/register",
-            "code_challenge_methods_supported": ["S256"]
+            "code_challenge_methods_supported": ["S256"],
         }
 
         # Mock DCR registration response
@@ -183,12 +148,10 @@ class TestDCRFlowIntegration:
             "grant_types": ["authorization_code"],
             "token_endpoint_auth_method": "client_secret_basic",
             "registration_client_uri": "https://as.example.com/register/dcr-generated-id-789",
-            "registration_access_token": "registration-access-token-abc"
+            "registration_access_token": "registration-access-token-abc",
         }
 
-        with patch('aiohttp.ClientSession.get') as mock_get, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with patch("aiohttp.ClientSession.get") as mock_get, patch("aiohttp.ClientSession.post") as mock_post:
             # Mock metadata discovery
             mock_get_response = AsyncMock()
             mock_get_response.status = 200
@@ -208,7 +171,7 @@ class TestDCRFlowIntegration:
                 issuer="https://as.example.com",
                 redirect_uri="http://localhost:4444/oauth/callback",
                 scopes=["mcp:read", "mcp:tools"],
-                db=test_db
+                db=test_db,
             )
 
         # Verify client was registered and stored
@@ -222,10 +185,7 @@ class TestDCRFlowIntegration:
         assert len(registered_client.client_secret_encrypted) > 50  # Encrypted secrets are long
 
         # Verify client exists in database
-        db_client = test_db.query(RegisteredOAuthClient).filter(
-            RegisteredOAuthClient.gateway_id == "test-gw-456",
-            RegisteredOAuthClient.issuer == "https://as.example.com"
-        ).first()
+        db_client = test_db.query(RegisteredOAuthClient).filter(RegisteredOAuthClient.gateway_id == "test-gw-456", RegisteredOAuthClient.issuer == "https://as.example.com").first()
 
         assert db_client is not None
         assert db_client.client_id == "dcr-generated-id-789"
@@ -237,15 +197,12 @@ class TestDCRFlowIntegration:
             "authorization_url": mock_metadata["authorization_endpoint"],
             "token_url": mock_metadata["token_endpoint"],
             "redirect_uri": "http://localhost:4444/oauth/callback",
-            "scopes": ["mcp:read", "mcp:tools"]
+            "scopes": ["mcp:read", "mcp:tools"],
         }
 
         # Initiate OAuth flow with DCR-registered credentials
-        with patch.object(oauth_manager, 'token_storage', None):
-            result = await oauth_manager.initiate_authorization_code_flow(
-                gateway_id="test-gw-456",
-                credentials=credentials
-            )
+        with patch.object(oauth_manager, "token_storage", None):
+            result = await oauth_manager.initiate_authorization_code_flow(gateway_id="test-gw-456", credentials=credentials)
 
         # Verify authorization URL includes PKCE
         assert "code_challenge=" in result["authorization_url"]
@@ -257,15 +214,7 @@ class TestDCRFlowIntegration:
         dcr_service = DcrService()
 
         # Create test gateway
-        gateway = Gateway(
-            id="test-gw-reuse",
-            name="Reuse Test",
-            slug="reuse-test",
-            description="Test",
-            url="http://localhost:9000/mcp",
-            transport="SSE",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-reuse", name="Reuse Test", slug="reuse-test", description="Test", url="http://localhost:9000/mcp", transport="SSE", capabilities={})
         test_db.add(gateway)
 
         # Create existing client
@@ -278,19 +227,14 @@ class TestDCRFlowIntegration:
             redirect_uris='["http://localhost:4444/callback"]',
             grant_types='["authorization_code"]',
             is_active=True,
-            created_at=datetime.now(timezone.utc)
+            created_at=datetime.now(timezone.utc),
         )
         test_db.add(existing_client)
         test_db.commit()
 
         # Call get_or_register_client
         result = await dcr_service.get_or_register_client(
-            gateway_id="test-gw-reuse",
-            gateway_name="Reuse Test",
-            issuer="https://as.example.com",
-            redirect_uri="http://localhost:4444/callback",
-            scopes=["mcp:read"],
-            db=test_db
+            gateway_id="test-gw-reuse", gateway_name="Reuse Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
         )
 
         # Should return existing client
@@ -298,9 +242,7 @@ class TestDCRFlowIntegration:
         assert result.client_id == "existing-client-id"
 
         # Should not create a new client
-        all_clients = test_db.query(RegisteredOAuthClient).filter(
-            RegisteredOAuthClient.gateway_id == "test-gw-reuse"
-        ).all()
+        all_clients = test_db.query(RegisteredOAuthClient).filter(RegisteredOAuthClient.gateway_id == "test-gw-reuse").all()
 
         assert len(all_clients) == 1
 
@@ -317,15 +259,7 @@ class TestPKCESecurityIntegration:
         token_storage = TokenStorageService(test_db)
         oauth_manager = OAuthManager(token_storage=token_storage)
 
-        gateway = Gateway(
-            id="test-replay",
-            name="Test",
-            slug="test-replay",
-            description="Test",
-            url="http://localhost:9000/mcp",
-            transport="SSE",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-replay", name="Test", slug="test-replay", description="Test", url="http://localhost:9000/mcp", transport="SSE", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -334,15 +268,11 @@ class TestPKCESecurityIntegration:
             "authorization_url": "https://as.example.com/authorize",
             "token_url": "https://as.example.com/token",
             "redirect_uri": "http://localhost:4444/callback",
-            "scopes": ["mcp:read"]
+            "scopes": ["mcp:read"],
         }
 
         # Initiate flow and get state
-        result = await oauth_manager.initiate_authorization_code_flow(
-            gateway_id="test-replay",
-            credentials=credentials,
-            app_user_email="user@example.com"
-        )
+        result = await oauth_manager.initiate_authorization_code_flow(gateway_id="test-replay", credentials=credentials, app_user_email="user@example.com")
 
         state = result["state"]
 
@@ -365,16 +295,13 @@ class TestPKCESecurityIntegration:
             state="expired-state-123",
             code_verifier="verifier",
             expires_at=datetime.now(timezone.utc) - timedelta(seconds=60),  # Expired
-            used=False
+            used=False,
         )
         test_db.add(expired_state)
         test_db.commit()
 
         # Attempt to validate should fail
-        state_data = await oauth_manager._validate_and_retrieve_state(
-            "test-expired",
-            "expired-state-123"
-        )
+        state_data = await oauth_manager._validate_and_retrieve_state("test-expired", "expired-state-123")
 
         assert state_data is None
 
@@ -390,9 +317,7 @@ class TestPKCESecurityIntegration:
         pkce = oauth_manager._generate_pkce_params()
 
         # Manually compute challenge from verifier
-        expected_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(pkce["code_verifier"].encode('utf-8')).digest()
-        ).decode('utf-8').rstrip('=')
+        expected_challenge = base64.urlsafe_b64encode(hashlib.sha256(pkce["code_verifier"].encode("utf-8")).digest()).decode("utf-8").rstrip("=")
 
         # Verify they match
         assert pkce["code_challenge"] == expected_challenge
@@ -407,15 +332,7 @@ class TestDCRErrorHandling:
         """Test graceful handling when AS doesn't support DCR."""
         dcr_service = DcrService()
 
-        gateway = Gateway(
-            id="test-no-dcr",
-            name="Test",
-            slug="test-no-dcr",
-            description="Test",
-            url="http://localhost:9000/mcp",
-            transport="SSE",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-no-dcr", name="Test", slug="test-no-dcr", description="Test", url="http://localhost:9000/mcp", transport="SSE", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -423,11 +340,11 @@ class TestDCRErrorHandling:
         mock_metadata = {
             "issuer": "https://as-no-dcr.example.com",
             "authorization_endpoint": "https://as-no-dcr.example.com/authorize",
-            "token_endpoint": "https://as-no-dcr.example.com/token"
+            "token_endpoint": "https://as-no-dcr.example.com/token",
             # No registration_endpoint
         }
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_metadata)
@@ -437,12 +354,7 @@ class TestDCRErrorHandling:
 
             with pytest.raises(DcrError, match="does not support Dynamic Client Registration"):
                 await dcr_service.register_client(
-                    gateway_id="test-no-dcr",
-                    gateway_name="Test",
-                    issuer="https://as-no-dcr.example.com",
-                    redirect_uri="http://localhost:4444/callback",
-                    scopes=["mcp:read"],
-                    db=test_db
+                    gateway_id="test-no-dcr", gateway_name="Test", issuer="https://as-no-dcr.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
                 )
 
     @pytest.mark.asyncio
@@ -458,10 +370,10 @@ class TestDCRErrorHandling:
         # Mock metadata with mismatched issuer
         mock_metadata = {
             "issuer": "https://different-issuer.com",  # Doesn't match request
-            "authorization_endpoint": "https://as.example.com/authorize"
+            "authorization_endpoint": "https://as.example.com/authorize",
         }
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # Create mock response
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200

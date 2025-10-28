@@ -4,8 +4,8 @@ Pytest configuration and shared fixtures for tests.
 """
 
 # Standard
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 # Third-Party
 import numpy as np

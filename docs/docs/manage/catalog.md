@@ -50,6 +50,7 @@ The catalog file uses YAML format with the following structure:
 ```yaml
 # mcp-catalog.yml
 catalog_servers:
+
   - id: "time-server"
     name: "Time Server"
     category: "Utilities"
@@ -59,6 +60,7 @@ catalog_servers:
     description: "Fast time server providing current time utilities"
     requires_api_key: false
     tags:
+
       - "utilities"
       - "time"
       - "development"
@@ -72,17 +74,20 @@ catalog_servers:
     description: "Git repository MCP server"
     requires_api_key: false
     tags:
+
       - "git"
       - "version-control"
       - "development"
 
 # Optional: Categories for UI filtering
 categories:
+
   - Utilities
   - Software Development
 
 # Optional: Auth types for UI filtering
 auth_types:
+
   - Open
   - OAuth2.1
   - API Key
@@ -93,6 +98,7 @@ auth_types:
 ```yaml
 # Production MCP Server Catalog
 catalog_servers:
+
   - id: "production-time-server"
     name: "Production Time Server"
     category: "Utilities"
@@ -104,6 +110,7 @@ catalog_servers:
     requires_api_key: false
     secure: true
     tags:
+
       - "production"
       - "utilities"
       - "time"
@@ -122,6 +129,7 @@ catalog_servers:
     requires_api_key: true
     secure: true
     tags:
+
       - "production"
       - "websocket"
       - "real-time"
@@ -136,6 +144,7 @@ catalog_servers:
     requires_api_key: false
     secure: true
     tags:
+
       - "production"
       - "database"
       - "postgresql"
@@ -151,6 +160,7 @@ catalog_servers:
     requires_api_key: false
     secure: true
     tags:
+
       - "development"
       - "git"
       - "version-control"
@@ -158,11 +168,13 @@ catalog_servers:
     documentation_url: "https://docs.github.com"
 
 categories:
+
   - Utilities
   - Database
   - Software Development
 
 auth_types:
+
   - OAuth2.1
   - API Key
   - Open
@@ -261,6 +273,7 @@ Use clear, descriptive IDs and names:
 
 ```yaml
 catalog_servers:
+
   - id: "github-production"  # ✅ Good: Clear and unique
     name: "GitHub Production"
     # ... other fields
@@ -272,10 +285,12 @@ Use consistent tagging for easier filtering and management:
 
 ```yaml
 catalog_servers:
+
   - id: "prod-db-server"
     name: "Production Database"
     category: "Database"
     tags:
+
       - "production"      # Environment
       - "postgresql"      # Technology
       - "critical"        # Priority
@@ -287,6 +302,7 @@ Use standard categories that match your organization:
 
 ```yaml
 categories:
+
   - "Software Development"
   - "Database"
   - "Productivity"
@@ -299,6 +315,7 @@ Include logo and documentation URLs for better UX:
 
 ```yaml
 catalog_servers:
+
   - id: "time-server"
     name: "Time Server"
     description: "Provides current time utilities with geo-replication"
@@ -315,6 +332,7 @@ catalog_servers:
 ```yaml
 # mcp-catalog.dev.yml
 catalog_servers:
+
   - id: "local-time"
     name: "Local Time Server"
     category: "Utilities"
@@ -336,10 +354,12 @@ catalog_servers:
     tags: ["dev", "git", "version-control"]
 
 categories:
+
   - "Utilities"
   - "Software Development"
 
 auth_types:
+
   - "Open"
 ```
 
@@ -348,6 +368,7 @@ auth_types:
 ```yaml
 # mcp-catalog.prod.yml
 catalog_servers:
+
   - id: "prod-time-api"
     name: "Production Time API"
     category: "Utilities"
@@ -386,11 +407,13 @@ catalog_servers:
     documentation_url: "https://stripe.com/docs"
 
 categories:
+
   - "Utilities"
   - "Database"
   - "Payments"
 
 auth_types:
+
   - "OAuth2.1"
   - "API Key"
 ```
@@ -439,6 +462,7 @@ auth_types:
 2. Check server entry has all required fields:
    ```yaml
    catalog_servers:
+
      - id: "my-server"          # Required
        name: "My Server"        # Required
        category: "Utilities"    # Required
@@ -477,6 +501,7 @@ auth_types:
 1. Explicitly specify the `transport` field in your catalog YAML:
    ```yaml
    catalog_servers:
+
      - id: "websocket-server"
        url: "wss://api.example.com/mcp"
        transport: "WEBSOCKET"  # Explicitly set transport

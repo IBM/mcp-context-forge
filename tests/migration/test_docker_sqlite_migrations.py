@@ -13,13 +13,10 @@ different MCP Gateway versions with comprehensive validation.
 # Standard
 import logging
 from pathlib import Path
-import time
 
 # Third-Party
-import pytest
 
 # Local
-from .utils.data_seeder import DataGenerationConfig, DataSeeder
 from .utils.schema_validator import SchemaValidator
 
 logger = logging.getLogger(__name__)
@@ -60,7 +57,7 @@ class TestSQLiteMigrations:
         assert result.execution_time < 60, f"Migration took too long: {result.execution_time:.2f}s"
 
         # Log detailed results
-        logger.info(f"✅ Migration completed successfully:")
+        logger.info("✅ Migration completed successfully:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s")
         logger.info(f"   Records before: {result.records_before}")
         logger.info(f"   Records after: {result.records_after}")
@@ -95,7 +92,7 @@ class TestSQLiteMigrations:
         assert result.data_integrity_check, "Data integrity validation failed"
         assert result.execution_time < 120, f"Reverse migration took too long: {result.execution_time:.2f}s"
 
-        logger.info(f"✅ Reverse migration completed successfully:")
+        logger.info("✅ Reverse migration completed successfully:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s")
         logger.info(f"   Data integrity maintained: {result.data_integrity_check}")
 
@@ -114,7 +111,7 @@ class TestSQLiteMigrations:
         from_version, to_version = skip_version_pair
 
         logger.info(f"🧪 Testing skip-version migration: {from_version} ⏭️ {to_version}")
-        logger.info(f"📋 This migration skips intermediate versions")
+        logger.info("📋 This migration skips intermediate versions")
 
         # Execute skip-version migration test
         result = migration_runner.test_skip_version_migration(from_version, to_version, sample_test_data)
@@ -124,9 +121,9 @@ class TestSQLiteMigrations:
         assert result.data_integrity_check, "Data integrity validation failed"
         assert result.execution_time < 180, f"Skip-version migration took too long: {result.execution_time:.2f}s"
 
-        logger.info(f"✅ Skip-version migration completed successfully:")
+        logger.info("✅ Skip-version migration completed successfully:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s")
-        logger.info(f"   Schema evolution validated")
+        logger.info("   Schema evolution validated")
 
     def test_migration_with_large_dataset(self, migration_runner, large_test_data, performance_thresholds):
         """Test migration performance with large datasets.
@@ -134,7 +131,7 @@ class TestSQLiteMigrations:
         This test validates that migrations can handle realistic data volumes
         without performance degradation or failures.
         """
-        logger.info(f"🧪 Testing migration with large dataset")
+        logger.info("🧪 Testing migration with large dataset")
         logger.info(f"📊 Large dataset: {sum(len(entities) for entities in large_test_data.values())} records")
 
         # Test with recent version pair for performance
@@ -148,7 +145,7 @@ class TestSQLiteMigrations:
         max_duration = performance_thresholds["large_dataset"]["max_duration"]
         assert result.execution_time < max_duration, f"Large dataset migration too slow: {result.execution_time:.2f}s > {max_duration}s"
 
-        logger.info(f"✅ Large dataset migration completed:")
+        logger.info("✅ Large dataset migration completed:")
         logger.info(f"   Execution time: {result.execution_time:.2f}s (threshold: {max_duration}s)")
         logger.info(f"   Records processed: {sum(result.records_after.values())} total")
 
@@ -163,7 +160,7 @@ class TestSQLiteMigrations:
         This test validates that the migration system handles errors gracefully
         and provides useful diagnostic information.
         """
-        logger.info(f"🧪 Testing migration error recovery scenarios")
+        logger.info("🧪 Testing migration error recovery scenarios")
 
         # Test 1: Migration with invalid data
         logger.info("🔍 Test 1: Testing with corrupted test data")
@@ -172,7 +169,7 @@ class TestSQLiteMigrations:
                 {
                     # Missing required fields to trigger validation errors
                     "invalid_field": "this should cause issues",
-                    "schema": "not a valid schema object"
+                    "schema": "not a valid schema object",
                 }
             ]
         }
@@ -190,9 +187,7 @@ class TestSQLiteMigrations:
 
         # Test 2: Very fast migration (should always succeed)
         logger.info("🔍 Test 2: Testing minimal data migration")
-        minimal_data = {
-            "tools": [{"name": "minimal_tool", "description": "Minimal test tool", "schema": {"type": "object"}}]
-        }
+        minimal_data = {"tools": [{"name": "minimal_tool", "description": "Minimal test tool", "schema": {"type": "object"}}]}
 
         result = migration_runner.test_forward_migration("0.6.0", "latest", minimal_data)
         assert result.success, f"Minimal migration should always succeed: {result.error_message}"
@@ -208,7 +203,7 @@ class TestSQLiteMigrations:
         2. Breaking changes are identified
         3. Compatibility scores are calculated correctly
         """
-        logger.info(f"🧪 Testing comprehensive schema validation")
+        logger.info("🧪 Testing comprehensive schema validation")
 
         # Create schema validator
         schema_validator = SchemaValidator()
@@ -247,7 +242,7 @@ class TestSQLiteMigrations:
         # Compare schemas
         comparison = schema_validator.compare_schemas(schema_before, schema_after)
 
-        logger.info(f"📊 Schema comparison results:")
+        logger.info("📊 Schema comparison results:")
         logger.info(f"   Added tables: {comparison.added_tables}")
         logger.info(f"   Removed tables: {comparison.removed_tables}")
         logger.info(f"   Modified tables: {comparison.modified_tables}")
@@ -282,7 +277,7 @@ class TestSQLiteMigrations:
         This test validates that running the same migration multiple times
         produces the same result without errors or data corruption.
         """
-        logger.info(f"🧪 Testing migration idempotency")
+        logger.info("🧪 Testing migration idempotency")
 
         # Run migration twice and compare results
         logger.info("🔍 Running first migration")
@@ -309,7 +304,7 @@ class TestSQLiteMigrations:
         time_ratio = result2.execution_time / result1.execution_time if result1.execution_time > 0 else 1.0
         logger.info(f"⚡ Second run time ratio: {time_ratio:.2f} (< 1.0 means faster)")
 
-        logger.info(f"✅ Migration idempotency validated")
+        logger.info("✅ Migration idempotency validated")
 
     def test_migration_rollback_safety(self, migration_runner, sample_test_data):
         """Test migration rollback safety and data preservation.
@@ -317,7 +312,7 @@ class TestSQLiteMigrations:
         This test validates that forward migration followed by rollback
         preserves the original data state.
         """
-        logger.info(f"🧪 Testing migration rollback safety")
+        logger.info("🧪 Testing migration rollback safety")
 
         # Test forward migration followed by rollback
         logger.info("⬆️ Testing forward migration: 0.5.0 → 0.6.0")
@@ -348,4 +343,4 @@ class TestSQLiteMigrations:
         total_time = forward_result.execution_time + rollback_result.execution_time
         logger.info(f"⏱️ Total round-trip time: {total_time:.2f}s")
 
-        logger.info(f"✅ Migration rollback safety validated")
+        logger.info("✅ Migration rollback safety validated")

@@ -39,11 +39,27 @@ from mcpgateway.plugins.framework import (
 
 
 def _tokenize(text: str) -> list[str]:
+    """Tokenize text into lowercase words.
+
+    Args:
+        text: Input text to tokenize.
+
+    Returns:
+        List of lowercase tokens.
+    """
     # Simple whitespace + lowercasing tokenizer
     return [t for t in text.lower().split() if t]
 
 
 def _vectorize(text: str) -> Dict[str, float]:
+    """Convert text to L2-normalized word frequency vector.
+
+    Args:
+        text: Input text.
+
+    Returns:
+        Dictionary mapping tokens to normalized frequencies.
+    """
     vec: Dict[str, float] = {}
     for tok in _tokenize(text):
         vec[tok] = vec.get(tok, 0.0) + 1.0
@@ -55,6 +71,15 @@ def _vectorize(text: str) -> Dict[str, float]:
 
 
 def _cos_sim(a: Dict[str, float], b: Dict[str, float]) -> float:
+    """Compute cosine similarity between two vectors.
+
+    Args:
+        a: First vector (token -> frequency mapping).
+        b: Second vector (token -> frequency mapping).
+
+    Returns:
+        Cosine similarity score between 0.0 and 1.0.
+    """
     if not a or not b:
         return 0.0
     # Calculate dot product over intersection
@@ -64,6 +89,16 @@ def _cos_sim(a: Dict[str, float], b: Dict[str, float]) -> float:
 
 
 class ResponseCacheConfig(BaseModel):
+    """Configuration for response cache by prompt similarity.
+
+    Attributes:
+        cacheable_tools: List of tool names to cache.
+        fields: Argument fields to extract text from for similarity matching.
+        ttl: Time-to-live for cache entries in seconds.
+        threshold: Minimum cosine similarity threshold for cache hits.
+        max_entries: Maximum number of cache entries per tool.
+    """
+
     cacheable_tools: List[str] = Field(default_factory=list)
     fields: List[str] = Field(default_factory=lambda: ["prompt", "input", "query"])  # fields to read string text from args
     ttl: int = 600
@@ -73,6 +108,15 @@ class ResponseCacheConfig(BaseModel):
 
 @dataclass
 class _Entry:
+    """Cache entry storing text, vector, result, and expiration.
+
+    Attributes:
+        text: Original text that was cached.
+        vec: Normalized vector representation of text.
+        value: Cached result value.
+        expires_at: Unix timestamp when entry expires.
+    """
+
     text: str
     vec: Dict[str, float]
     value: Any
@@ -83,12 +127,25 @@ class ResponseCacheByPromptPlugin(Plugin):
     """Approximate response cache keyed by prompt similarity."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the response cache plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = ResponseCacheConfig(**(config.config or {}))
         # Per-tool list of entries
         self._cache: Dict[str, list[_Entry]] = {}
 
     def _gather_text(self, args: dict[str, Any] | None) -> str:
+        """Extract and concatenate text from configured argument fields.
+
+        Args:
+            args: Tool arguments dictionary.
+
+        Returns:
+            Concatenated text from configured fields.
+        """
         if not args:
             return ""
         chunks: list[str] = []
@@ -99,6 +156,15 @@ class ResponseCacheByPromptPlugin(Plugin):
         return "\n".join(chunks)
 
     def _find_best(self, tool: str, text: str) -> Tuple[Optional[_Entry], float]:
+        """Find the best matching cache entry for the given text.
+
+        Args:
+            tool: Tool name to search cache for.
+            text: Query text to match against.
+
+        Returns:
+            Tuple of (best matching entry, similarity score).
+        """
         vec = _vectorize(text)
         best: Optional[_Entry] = None
         best_sim = 0.0
@@ -113,6 +179,15 @@ class ResponseCacheByPromptPlugin(Plugin):
         return best, best_sim
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Check for cache hit before tool invocation.
+
+        Args:
+            payload: Tool invocation payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with metadata indicating cache hit status.
+        """
         tool = payload.name
         if tool not in self._cfg.cacheable_tools:
             return ToolPreInvokeResult(continue_processing=True)
@@ -137,6 +212,15 @@ class ResponseCacheByPromptPlugin(Plugin):
         return ToolPreInvokeResult(metadata=meta)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Store tool result in cache after invocation.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with metadata indicating cache storage.
+        """
         tool = payload.name
         if tool not in self._cfg.cacheable_tools:
             return ToolPostInvokeResult(continue_processing=True)

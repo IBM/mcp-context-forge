@@ -50,7 +50,7 @@ class PluginService:
         self._plugin_manager = manager
 
     def get_all_plugins(self) -> List[Dict[str, Any]]:
-        """Get all registered plugins with their configuration.
+        """Get all registered plugins with their configuration, including disabled plugins.
 
         Returns:
             List of plugin dictionaries containing configuration and status.
@@ -60,7 +60,10 @@ class PluginService:
 
         plugins = []
         registry = self._plugin_manager._registry  # pylint: disable=protected-access
+        config = self._plugin_manager._config  # pylint: disable=protected-access
 
+        # First, add all registered (enabled) plugins from the registry
+        registered_names = set()
         for plugin_ref in registry.get_all_plugins():
             # Get the plugin config from the plugin reference
             plugin_config = plugin_ref.plugin.config if hasattr(plugin_ref, "plugin") else plugin_ref._plugin.config if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
@@ -79,6 +82,11 @@ class PluginService:
                 "status": "enabled" if plugin_ref.mode != PluginMode.DISABLED else "disabled",
             }
 
+            # Add implementation type if available (e.g., Rust vs Python for PII filter)
+            plugin_instance = plugin_ref.plugin if hasattr(plugin_ref, "plugin") else plugin_ref._plugin if hasattr(plugin_ref, "_plugin") else None  # pylint: disable=protected-access
+            if plugin_instance and hasattr(plugin_instance, "implementation"):
+                plugin_dict["implementation"] = plugin_instance.implementation
+
             # Add config summary (first few keys only for list view)
             if plugin_config and hasattr(plugin_config, "config") and plugin_config.config:
                 config_keys = list(plugin_config.config.keys())[:5]
@@ -87,6 +95,33 @@ class PluginService:
                 plugin_dict["config_summary"] = {}
 
             plugins.append(plugin_dict)
+            registered_names.add(plugin_ref.name)
+
+        # Then, add disabled plugins from the configuration (not in registry)
+        if config and config.plugins:
+            for plugin_config in config.plugins:
+                if plugin_config.mode == PluginMode.DISABLED and plugin_config.name not in registered_names:
+                    plugin_dict = {
+                        "name": plugin_config.name,
+                        "description": plugin_config.description or "",
+                        "author": plugin_config.author or "Unknown",
+                        "version": plugin_config.version or "0.0.0",
+                        "mode": plugin_config.mode.value,
+                        "priority": plugin_config.priority or 100,
+                        "hooks": [hook.value for hook in plugin_config.hooks] if plugin_config.hooks else [],
+                        "tags": plugin_config.tags or [],
+                        "kind": plugin_config.kind or "",
+                        "namespace": plugin_config.namespace or "",
+                        "status": "disabled",
+                        "config_summary": {},
+                    }
+
+                    # Add config summary (first few keys only for list view)
+                    if hasattr(plugin_config, "config") and plugin_config.config:
+                        config_keys = list(plugin_config.config.keys())[:5]
+                        plugin_dict["config_summary"] = {k: plugin_config.config[k] for k in config_keys}
+
+                    plugins.append(plugin_dict)
 
         return sorted(plugins, key=lambda x: x["priority"])
 

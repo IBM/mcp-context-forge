@@ -52,15 +52,11 @@ SECRET = "unit-secret"
 ALGO = "HS256"
 
 
-
 def _token(payload: dict, *, exp_delta: int | None = 60, secret: str = SECRET) -> str:
     """Return a signed JWT with optional expiry offset (minutes)."""
     # Add required audience and issuer claims for compatibility with RBAC system
     token_payload = payload.copy()
-    token_payload.update({
-        "iss": "mcpgateway",
-        "aud": "mcpgateway-api"
-    })
+    token_payload.update({"iss": "mcpgateway", "aud": "mcpgateway-api"})
 
     if exp_delta is not None:
         expire = datetime.now(timezone.utc) + timedelta(minutes=exp_delta)
@@ -242,7 +238,7 @@ async def test_require_auth_override_basic_auth_enabled_success(monkeypatch):
     monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", "secret", raising=False)
-    basic_auth_header = f"Basic {base64.b64encode(f'alice:secret'.encode()).decode()}"
+    basic_auth_header = f"Basic {base64.b64encode('alice:secret'.encode()).decode()}"
     result = await vc.require_auth_override(auth_header=basic_auth_header)
     assert result == vc.settings.basic_auth_user
     assert result == "alice"

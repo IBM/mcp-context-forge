@@ -16,6 +16,7 @@ Tags are metadata labels that can be attached to any entity in MCP Gateway:
 - **A2A Agents** - Classify AI agents (e.g., `openai`, `anthropic`, `assistant`, `custom`)
 
 !!! info "Tag Format"
+
     - Tags are automatically normalized to lowercase
     - Length: 2-50 characters
     - Allowed characters: letters, numbers, hyphens, colons, dots
@@ -287,6 +288,7 @@ When listing entities, filter by tags using the `tags` parameter:
 ### Naming Conventions
 
 !!! tip "Recommended Tag Patterns"
+
     - **Functionality**: `auth`, `database`, `api`, `file-system`
     - **Environment**: `dev`, `test`, `staging`, `prod`
     - **Domain**: `finance`, `hr`, `sales`, `engineering`
@@ -297,6 +299,7 @@ When listing entities, filter by tags using the `tags` parameter:
 
 === "By Functionality"
     Group entities by what they do:
+
     - `auth` - Authentication/authorization
     - `database` - Database operations
     - `api` - External API interactions
@@ -305,6 +308,7 @@ When listing entities, filter by tags using the `tags` parameter:
 
 === "By Environment"
     Separate by deployment environment:
+
     - `dev` - Development only
     - `test` - Testing environment
     - `staging` - Pre-production
@@ -313,6 +317,7 @@ When listing entities, filter by tags using the `tags` parameter:
 
 === "By Access Control"
     Control visibility and access:
+
     - `public` - Available to all users
     - `internal` - Internal use only
     - `restricted` - Requires special permissions

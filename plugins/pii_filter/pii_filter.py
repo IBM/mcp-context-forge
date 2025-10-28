@@ -38,6 +38,23 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+# Try to import Rust-accelerated implementation
+_RUST_AVAILABLE = False
+_RustPIIDetector = None
+
+try:
+    from .pii_filter_rust import RustPIIDetector as _RustPIIDetector, RUST_AVAILABLE as _RUST_AVAILABLE
+    if _RUST_AVAILABLE:
+        logger.info("🦀 Rust PII filter available - using high-performance implementation (5-100x speedup)")
+    else:
+        logger.info("Rust module found but RUST_AVAILABLE=False - using Python implementation")
+except ImportError as e:
+    logger.debug(f"Rust PII filter not available (will use Python): {e}")
+    _RUST_AVAILABLE = False
+except Exception as e:
+    logger.warning(f"⚠️  Unexpected error loading Rust module: {e}", exc_info=True)
+    _RUST_AVAILABLE = False
+
 
 class PIIType(str, Enum):
     """Types of PII that can be detected."""
@@ -402,7 +419,17 @@ class PIIFilterPlugin(Plugin):
         """
         super().__init__(config)
         self.pii_config = PIIFilterConfig.model_validate(self._config.config)
-        self.detector = PIIDetector(self.pii_config)
+
+        # Auto-detect and use Rust implementation if available
+        if _RUST_AVAILABLE and _RustPIIDetector is not None:
+            self.detector = _RustPIIDetector(self.pii_config)
+            self.implementation = "Rust"
+            logger.info("🦀 PIIFilterPlugin initialized with Rust acceleration (5-100x speedup)")
+        else:
+            self.detector = PIIDetector(self.pii_config)
+            self.implementation = "Python"
+            logger.info("🐍 PIIFilterPlugin initialized with Python implementation")
+
         self.detection_count = 0
         self.masked_count = 0
 
@@ -431,7 +458,7 @@ class PIIFilterPlugin(Plugin):
                     all_detections[key] = detections
 
                     if self.pii_config.log_detections:
-                        logger.warning(f"PII detected in prompt argument '{key}': " f"{', '.join(detections.keys())}")
+                        logger.warning(f"PII detected in prompt argument '{key}': {', '.join(detections.keys())}")
 
                     if self.pii_config.block_on_detection:
                         violation = PluginViolation(
@@ -464,7 +491,7 @@ class PIIFilterPlugin(Plugin):
 
         # Return modified payload if PII was masked
         if all_detections:
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=modified_args))
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=modified_args))
 
         return PromptPrehookResult()
 
@@ -494,7 +521,7 @@ class PIIFilterPlugin(Plugin):
                     all_detections[f"message_{message.role}"] = detections
 
                     if self.pii_config.log_detections:
-                        logger.warning(f"PII detected in {message.role} message: " f"{', '.join(detections.keys())}")
+                        logger.warning(f"PII detected in {message.role} message: {', '.join(detections.keys())}")
 
                     # Mask the PII
                     masked_text = self.detector.mask(text, detections)
@@ -808,4 +835,4 @@ class PIIFilterPlugin(Plugin):
 
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""
-        logger.info(f"PII Filter plugin shutting down. " f"Total masked: {self.masked_count} items")
+        logger.info(f"PII Filter plugin ({self.implementation}) shutting down. Total masked: {self.masked_count} items")

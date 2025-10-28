@@ -14,8 +14,8 @@ secure downloads, and comprehensive workspace management.
 # Standard
 import asyncio
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -47,8 +47,12 @@ async def secure_enterprise_demo():
         print(f"✅ Server: {status['server_name']} v{status['version']}")
         print(f"📁 Secure work directory: {status['configuration']['work_dir']}")
         print(f"🔒 Security enabled: {status['security']['secure_directories']}")
-        print(f"📤 File uploads: {'✅ Enabled' if status['configuration']['file_uploads_enabled'] else '❌ Disabled'}")
-        print(f"📥 Downloads: {'✅ Enabled' if status['configuration']['downloads_enabled'] else '❌ Disabled'}")
+        print(
+            f"📤 File uploads: {'✅ Enabled' if status['configuration']['file_uploads_enabled'] else '❌ Disabled'}"
+        )
+        print(
+            f"📥 Downloads: {'✅ Enabled' if status['configuration']['downloads_enabled'] else '❌ Disabled'}"
+        )
         print(f"💾 Max file size: {status['configuration']['max_file_size_mb']} MB")
 
         # 2. Create secure enterprise sessions
@@ -76,7 +80,13 @@ async def secure_enterprise_demo():
         exec_path = exec_pres["message"].split(": ")[1]
         print(f"✅ Executive presentation: {os.path.basename(exec_path)}")
 
-        await create_title_slide("board_meeting_q4.pptx", "Q4 Board Meeting", "Strategic Review & 2025 Planning", "Executive Leadership Team", "December 15, 2024")
+        await create_title_slide(
+            "board_meeting_q4.pptx",
+            "Q4 Board Meeting",
+            "Strategic Review & 2025 Planning",
+            "Executive Leadership Team",
+            "December 15, 2024",
+        )
 
         # Finance presentation with data
         finance_pres = await create_presentation("finance_q4_report.pptx", "Finance Q4 Report")
@@ -91,11 +101,19 @@ async def secure_enterprise_demo():
             ["Cash Flow", "$0.9M", "$1.4M", "+56%"],
         ]
 
-        await create_data_slide("finance_q4_report.pptx", "Q4 Financial Performance", financial_data, include_chart=True, chart_type="column")
+        await create_data_slide(
+            "finance_q4_report.pptx",
+            "Q4 Financial Performance",
+            financial_data,
+            include_chart=True,
+            chart_type="column",
+        )
 
         # Apply corporate branding
         await apply_brand_theme("board_meeting_q4.pptx", "#003366", "#666666", "#FF6600", "Calibri")
-        await apply_brand_theme("finance_q4_report.pptx", "#003366", "#666666", "#FF6600", "Calibri")
+        await apply_brand_theme(
+            "finance_q4_report.pptx", "#003366", "#666666", "#FF6600", "Calibri"
+        )
 
         print("✅ Applied corporate branding to both presentations")
 
@@ -121,8 +139,12 @@ async def secure_enterprise_demo():
         exec_files = await list_session_files(exec_id)
         finance_files = await list_session_files(finance_id)
 
-        print(f"📂 Executive session: {exec_files['file_count']} files ({exec_files['total_size_mb']} MB)")
-        print(f"📂 Finance session: {finance_files['file_count']} files ({finance_files['total_size_mb']} MB)")
+        print(
+            f"📂 Executive session: {exec_files['file_count']} files ({exec_files['total_size_mb']} MB)"
+        )
+        print(
+            f"📂 Finance session: {finance_files['file_count']} files ({finance_files['total_size_mb']} MB)"
+        )
 
         # 6. Server statistics
         print("\n📈 6. ENTERPRISE METRICS")
@@ -132,13 +154,13 @@ async def secure_enterprise_demo():
         stats = final_status["statistics"]
         security = final_status["security"]
 
-        print(f"📊 Server Statistics:")
+        print("📊 Server Statistics:")
         print(f"   Active sessions: {stats['active_sessions']}")
         print(f"   Download tokens: {stats['active_download_tokens']}")
         print(f"   Total presentations: {stats['total_pptx_files']}")
         print(f"   Total storage: {stats['total_storage_mb']} MB")
 
-        print(f"\n🛡️  Security Configuration:")
+        print("\n🛡️  Security Configuration:")
         print(f"   Allowed extensions: {', '.join(security['allowed_extensions'])}")
         print(f"   Max presentation size: {security['max_presentation_size_mb']} MB")
         print(f"   Authentication required: {security['authentication_required']}")
@@ -165,17 +187,17 @@ async def main():
     result = await secure_enterprise_demo()
 
     if result:
-        print(f"\n🎉 SECURE ENTERPRISE DEMO COMPLETE!")
+        print("\n🎉 SECURE ENTERPRISE DEMO COMPLETE!")
         print("=" * 50)
-        print(f"✅ 47 tools available (including 6 security tools)")
+        print("✅ 47 tools available (including 6 security tools)")
         print(f"✅ {result['sessions_created']} secure sessions created")
         print(f"✅ {result['presentations_created']} presentations with 16:9 format")
         print(f"✅ {result['download_links']} secure download links generated")
-        print(f"\n🛡️  Security features verified and operational!")
-        print(f"🎯 Ready for enterprise deployment with full security!")
+        print("\n🛡️  Security features verified and operational!")
+        print("🎯 Ready for enterprise deployment with full security!")
         return 0
     else:
-        print(f"\n💥 Demo failed!")
+        print("\n💥 Demo failed!")
         return 1
 
 

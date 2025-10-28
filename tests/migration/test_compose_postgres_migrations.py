@@ -12,17 +12,15 @@ stacks across different MCP Gateway versions with comprehensive validation.
 
 # Standard
 import logging
-from pathlib import Path
 import time
 
 # Third-Party
 import pytest
 
 # Local
-from .utils.data_seeder import DataGenerationConfig, DataSeeder
-from .utils.schema_validator import SchemaValidator
 
 logger = logging.getLogger(__name__)
+
 
 @pytest.mark.slow
 class TestPostgreSQLMigrations:
@@ -59,7 +57,7 @@ class TestPostgreSQLMigrations:
             gateway_container = containers["gateway"]
             postgres_container = containers["postgres"]
 
-            logger.info(f"✅ Compose stack started:")
+            logger.info("✅ Compose stack started:")
             logger.info(f"   Gateway: {gateway_container[:12]}")
             logger.info(f"   PostgreSQL: {postgres_container[:12]}")
             logger.info(f"   Redis: {containers.get('redis', 'N/A')[:12]}")
@@ -69,11 +67,11 @@ class TestPostgreSQLMigrations:
             # The gateway application automatically initializes the database on startup
             # Let's give it time to complete initialization
             time.sleep(5)
-            logger.info(f"✅ Database initialized by application")
+            logger.info("✅ Database initialized by application")
 
             # Seed test data
             if sample_test_data:
-                logger.info(f"🌱 Seeding test data")
+                logger.info("🌱 Seeding test data")
                 self._seed_compose_test_data(container_manager, gateway_container, sample_test_data)
 
                 # Verify data was seeded
@@ -81,12 +79,12 @@ class TestPostgreSQLMigrations:
                 logger.info(f"📊 Records seeded: {records_before}")
 
             # Capture pre-migration state
-            logger.info(f"📋 Capturing pre-migration state")
+            logger.info("📋 Capturing pre-migration state")
             schema_before = container_manager.get_database_schema(postgres_container, "postgresql")
             logger.info(f"✅ Pre-migration schema captured ({len(schema_before)} chars)")
 
             # Stop compose stack
-            logger.info(f"🛑 Stopping compose stack")
+            logger.info("🛑 Stopping compose stack")
             self._stop_compose_stack(container_manager, docker_compose_file)
 
             # Start compose stack with target version
@@ -107,14 +105,14 @@ class TestPostgreSQLMigrations:
             logger.info(f"✅ Migration completed automatically in {migration_time:.2f}s")
 
             # Capture post-migration state
-            logger.info(f"📋 Capturing post-migration state")
+            logger.info("📋 Capturing post-migration state")
             schema_after = container_manager.get_database_schema(postgres_container, "postgresql")
             records_after = self._count_postgres_records(container_manager, gateway_container)
 
             logger.info(f"📊 Records after migration: {records_after}")
 
             # Validate data integrity
-            logger.info(f"🔍 Validating data integrity")
+            logger.info("🔍 Validating data integrity")
             data_integrity = self._validate_compose_data_integrity(records_before, records_after)
 
             # Validate results
@@ -122,18 +120,18 @@ class TestPostgreSQLMigrations:
             assert migration_time < 180, f"Compose migration took too long: {migration_time:.2f}s"
 
             # Validate service health
-            logger.info(f"❤️ Validating service health")
+            logger.info("❤️ Validating service health")
             health_ok = self._validate_compose_service_health(container_manager, containers)
             assert health_ok, "Service health validation failed"
 
-            logger.info(f"✅ Compose forward migration completed successfully:")
+            logger.info("✅ Compose forward migration completed successfully:")
             logger.info(f"   Migration time: {migration_time:.2f}s")
-            logger.info(f"   Data integrity: ✅")
-            logger.info(f"   Service health: ✅")
+            logger.info("   Data integrity: ✅")
+            logger.info("   Service health: ✅")
 
         finally:
             # Cleanup compose stack
-            logger.info(f"🧹 Cleaning up compose stack")
+            logger.info("🧹 Cleaning up compose stack")
             self._stop_compose_stack(container_manager, docker_compose_file)
 
     def test_compose_service_dependencies(self, container_manager, docker_compose_file):
@@ -145,10 +143,10 @@ class TestPostgreSQLMigrations:
         - Migration can connect to database
         - Services remain healthy throughout process
         """
-        logger.info(f"🧪 Testing compose service dependencies")
+        logger.info("🧪 Testing compose service dependencies")
 
         # Start stack and monitor startup sequence
-        logger.info(f"🚀 Starting compose stack with dependency monitoring")
+        logger.info("🚀 Starting compose stack with dependency monitoring")
         start_time = time.time()
 
         containers = container_manager.start_compose_stack("latest", docker_compose_file)
@@ -161,26 +159,26 @@ class TestPostgreSQLMigrations:
             postgres_container = containers["postgres"]
 
             # Test 1: PostgreSQL should be ready
-            logger.info(f"🔍 Test 1: Validating PostgreSQL readiness")
+            logger.info("🔍 Test 1: Validating PostgreSQL readiness")
             postgres_ready = self._check_postgres_ready(container_manager, postgres_container)
             assert postgres_ready, "PostgreSQL not ready after stack startup"
 
             # Test 2: Gateway should be able to connect to database
-            logger.info(f"🔍 Test 2: Validating gateway database connectivity")
+            logger.info("🔍 Test 2: Validating gateway database connectivity")
             db_connectivity = self._check_gateway_db_connection(container_manager, gateway_container)
             assert db_connectivity, "Gateway cannot connect to PostgreSQL"
 
             # Test 3: Migration should work
-            logger.info(f"🔍 Test 3: Validating migration execution")
+            logger.info("🔍 Test 3: Validating migration execution")
             migration_output = container_manager.exec_alembic_command(gateway_container, "upgrade head")
             assert "ERROR" not in migration_output, f"Migration failed: {migration_output}"
 
             # Test 4: Services should remain healthy
-            logger.info(f"🔍 Test 4: Validating ongoing service health")
+            logger.info("🔍 Test 4: Validating ongoing service health")
             health_ok = self._validate_compose_service_health(container_manager, containers)
             assert health_ok, "Services not healthy after migration"
 
-            logger.info(f"✅ Service dependencies validation completed")
+            logger.info("✅ Service dependencies validation completed")
 
         finally:
             self._stop_compose_stack(container_manager, docker_compose_file)
@@ -192,7 +190,7 @@ class TestPostgreSQLMigrations:
         multiple concurrent connections to the database, simulating production
         load conditions.
         """
-        logger.info(f"🧪 Testing compose migration with concurrent connections")
+        logger.info("🧪 Testing compose migration with concurrent connections")
         logger.info(f"📊 Large dataset: {sum(len(entities) for entities in large_test_data.values())} records")
 
         # Start compose stack
@@ -206,11 +204,11 @@ class TestPostgreSQLMigrations:
             container_manager.exec_alembic_command(gateway_container, "upgrade head")
 
             # Seed large dataset
-            logger.info(f"🌱 Seeding large dataset for concurrent testing")
+            logger.info("🌱 Seeding large dataset for concurrent testing")
             self._seed_compose_test_data(container_manager, gateway_container, large_test_data)
 
             # Simulate concurrent connections by running multiple operations
-            logger.info(f"🔀 Simulating concurrent database operations")
+            logger.info("🔀 Simulating concurrent database operations")
 
             concurrent_operations = []
 
@@ -227,7 +225,7 @@ class TestPostgreSQLMigrations:
                 return container_manager.exec_alembic_command(gateway_container, "current")
 
             # Execute operations concurrently (simulated)
-            logger.info(f"⚡ Executing concurrent operations")
+            logger.info("⚡ Executing concurrent operations")
             concurrent_start = time.time()
 
             records = count_operation()
@@ -256,10 +254,10 @@ class TestPostgreSQLMigrations:
         This test validates that data persists correctly when containers
         are stopped and restarted, simulating production deployment scenarios.
         """
-        logger.info(f"🧪 Testing compose data persistence across restarts")
+        logger.info("🧪 Testing compose data persistence across restarts")
 
         # Phase 1: Start stack, seed data, capture state
-        logger.info(f"📋 Phase 1: Initial setup and data seeding")
+        logger.info("📋 Phase 1: Initial setup and data seeding")
         containers = container_manager.start_compose_stack("latest", docker_compose_file)
 
         try:
@@ -278,11 +276,11 @@ class TestPostgreSQLMigrations:
 
         finally:
             # Stop stack
-            logger.info(f"🛑 Stopping stack for restart test")
+            logger.info("🛑 Stopping stack for restart test")
             self._stop_compose_stack(container_manager, docker_compose_file)
 
         # Phase 2: Restart stack and verify data persistence
-        logger.info(f"📋 Phase 2: Restarting stack and verifying persistence")
+        logger.info("📋 Phase 2: Restarting stack and verifying persistence")
 
         # Wait a moment to ensure full cleanup
         time.sleep(5)
@@ -300,7 +298,7 @@ class TestPostgreSQLMigrations:
             logger.info(f"📊 Post-restart state: {sum(records_after_restart.values())} records")
 
             # Validate data persistence
-            logger.info(f"🔍 Validating data persistence")
+            logger.info("🔍 Validating data persistence")
 
             # Record counts should match
             for table, initial_count in records_initial.items():
@@ -313,12 +311,12 @@ class TestPostgreSQLMigrations:
             logger.info(f"   Schema preserved: {len(schema_after_restart)} chars ✅")
 
             # Test that we can still run migrations
-            logger.info(f"🔧 Testing migration capability after restart")
+            logger.info("🔧 Testing migration capability after restart")
             alembic_current = container_manager.exec_alembic_command(gateway_container, "current")
             assert alembic_current, "Alembic not working after restart"
-            logger.info(f"   Alembic functional: ✅")
+            logger.info("   Alembic functional: ✅")
 
-            logger.info(f"✅ Data persistence validation completed successfully")
+            logger.info("✅ Data persistence validation completed successfully")
 
         finally:
             self._stop_compose_stack(container_manager, docker_compose_file)
@@ -329,10 +327,10 @@ class TestPostgreSQLMigrations:
         This test validates rollback capabilities in a full-stack environment
         with proper service coordination and data consistency.
         """
-        logger.info(f"🧪 Testing compose migration rollback")
+        logger.info("🧪 Testing compose migration rollback")
 
         # Start with 0.6.0, migrate to latest, then rollback
-        logger.info(f"📋 Phase 1: Setup with version 0.6.0")
+        logger.info("📋 Phase 1: Setup with version 0.6.0")
         containers = container_manager.start_compose_stack("0.6.0", docker_compose_file)
 
         try:
@@ -352,7 +350,7 @@ class TestPostgreSQLMigrations:
             self._stop_compose_stack(container_manager, docker_compose_file)
 
         # Phase 2: Upgrade to latest
-        logger.info(f"📋 Phase 2: Upgrade to latest version")
+        logger.info("📋 Phase 2: Upgrade to latest version")
         containers = container_manager.start_compose_stack("latest", docker_compose_file)
 
         try:
@@ -375,7 +373,7 @@ class TestPostgreSQLMigrations:
             self._stop_compose_stack(container_manager, docker_compose_file)
 
         # Phase 3: Rollback test
-        logger.info(f"📋 Phase 3: Testing rollback capability")
+        logger.info("📋 Phase 3: Testing rollback capability")
         containers = container_manager.start_compose_stack("0.6.0", docker_compose_file)
 
         try:
@@ -383,7 +381,7 @@ class TestPostgreSQLMigrations:
             postgres_container = containers["postgres"]
 
             # Attempt rollback (this might not always be possible depending on migration design)
-            logger.info(f"⬇️ Attempting rollback migration")
+            logger.info("⬇️ Attempting rollback migration")
 
             try:
                 rollback_output = container_manager.exec_alembic_command(gateway_container, "downgrade -1")
@@ -400,9 +398,9 @@ class TestPostgreSQLMigrations:
                             rollback_count = records_rollback.get(table, 0)
                             assert rollback_count >= original_count * 0.8, f"Significant data loss in {table} during rollback"
 
-                    logger.info(f"✅ Rollback completed successfully")
+                    logger.info("✅ Rollback completed successfully")
                 else:
-                    logger.info(f"ℹ️ Rollback not supported (expected for some migrations)")
+                    logger.info("ℹ️ Rollback not supported (expected for some migrations)")
 
             except Exception as e:
                 logger.info(f"ℹ️ Rollback failed as expected: {str(e)[:100]}...")
@@ -415,7 +413,7 @@ class TestPostgreSQLMigrations:
 
     def _seed_compose_test_data(self, container_manager, gateway_container, test_data):
         """Seed test data in compose environment via REST API."""
-        logger.debug(f"🌱 Seeding compose test data via API")
+        logger.debug("🌱 Seeding compose test data via API")
 
         # Get gateway container port (compose usually maps to a fixed port)
         port = container_manager._get_container_port(gateway_container, "4444")
@@ -424,11 +422,12 @@ class TestPostgreSQLMigrations:
         # Seed data using REST API
         # Third-Party
         import requests
+
         session = requests.Session()
         session.timeout = 15
 
         # Add tools
-        for tool in test_data.get('tools', []):
+        for tool in test_data.get("tools", []):
             try:
                 response = session.post(f"{base_url}/tools", json=tool)
                 response.raise_for_status()
@@ -437,7 +436,7 @@ class TestPostgreSQLMigrations:
                 logger.warning(f"⚠️ Failed to add tool {tool.get('name', 'unnamed')}: {e}")
 
         # Add servers
-        for server in test_data.get('servers', []):
+        for server in test_data.get("servers", []):
             try:
                 response = session.post(f"{base_url}/servers", json=server)
                 response.raise_for_status()
@@ -446,7 +445,7 @@ class TestPostgreSQLMigrations:
                 logger.warning(f"⚠️ Failed to add server {server.get('name', 'unnamed')}: {e}")
 
         # Add gateways
-        for gateway in test_data.get('gateways', []):
+        for gateway in test_data.get("gateways", []):
             try:
                 response = session.post(f"{base_url}/gateways", json=gateway)
                 response.raise_for_status()
@@ -456,7 +455,7 @@ class TestPostgreSQLMigrations:
 
     def _count_postgres_records(self, container_manager, gateway_container):
         """Count records in PostgreSQL database via REST API."""
-        logger.debug(f"📊 Counting PostgreSQL records via REST API")
+        logger.debug("📊 Counting PostgreSQL records via REST API")
 
         endpoints = ["tools", "servers", "gateways", "resources", "prompts", "a2a"]
         counts = {}
@@ -464,25 +463,30 @@ class TestPostgreSQLMigrations:
         for endpoint in endpoints:
             try:
                 # Use gateway container since that's where the REST API is running
-                result = container_manager._run_command([
-                    container_manager.runtime, "exec", gateway_container,
-                    "python3", "-c",
-                    f"import urllib.request; "
-                    f"resp = urllib.request.urlopen('http://localhost:4444/{endpoint}', timeout=5); "
-                    f"print(resp.read().decode())"
-                ], capture_output=True)
+                result = container_manager._run_command(
+                    [
+                        container_manager.runtime,
+                        "exec",
+                        gateway_container,
+                        "python3",
+                        "-c",
+                        f"import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/{endpoint}', timeout=5); print(resp.read().decode())",
+                    ],
+                    capture_output=True,
+                )
 
                 # Standard
                 import json
+
                 data = json.loads(result.stdout.strip())
 
                 # Handle different response formats
                 if isinstance(data, list):
                     counts[endpoint] = len(data)
-                elif isinstance(data, dict) and 'items' in data:
-                    counts[endpoint] = len(data['items'])
-                elif isinstance(data, dict) and 'data' in data:
-                    counts[endpoint] = len(data['data'])
+                elif isinstance(data, dict) and "items" in data:
+                    counts[endpoint] = len(data["items"])
+                elif isinstance(data, dict) and "data" in data:
+                    counts[endpoint] = len(data["data"])
                 else:
                     counts[endpoint] = 1 if data else 0
 
@@ -497,10 +501,7 @@ class TestPostgreSQLMigrations:
     def _check_postgres_ready(self, container_manager, postgres_container):
         """Check if PostgreSQL is ready for connections."""
         try:
-            result = container_manager._run_command([
-                container_manager.runtime, "exec", postgres_container,
-                "pg_isready", "-U", "test_user", "-d", "mcp_test"
-            ], capture_output=True, check=False)
+            result = container_manager._run_command([container_manager.runtime, "exec", postgres_container, "pg_isready", "-U", "test_user", "-d", "mcp_test"], capture_output=True, check=False)
 
             return result.returncode == 0
         except Exception:
@@ -510,10 +511,7 @@ class TestPostgreSQLMigrations:
         """Check if gateway can connect to database."""
         try:
             # Try to run alembic current, which requires DB connection
-            result = container_manager._run_command([
-                container_manager.runtime, "exec", gateway_container,
-                "python", "-m", "alembic", "current"
-            ], capture_output=True, check=False)
+            result = container_manager._run_command([container_manager.runtime, "exec", gateway_container, "python", "-m", "alembic", "current"], capture_output=True, check=False)
 
             return result.returncode == 0 and "ERROR" not in result.stdout
         except Exception:
@@ -534,14 +532,12 @@ class TestPostgreSQLMigrations:
 
     def _validate_compose_service_health(self, container_manager, containers):
         """Validate health of all services in compose stack."""
-        logger.debug(f"❤️ Validating compose service health")
+        logger.debug("❤️ Validating compose service health")
 
         for service_name, container_id in containers.items():
             try:
                 # Check if container is running
-                result = container_manager._run_command([
-                    container_manager.runtime, "ps", "-q", "--filter", f"id={container_id}"
-                ], capture_output=True, check=False)
+                result = container_manager._run_command([container_manager.runtime, "ps", "-q", "--filter", f"id={container_id}"], capture_output=True, check=False)
 
                 if not result.stdout.strip():
                     logger.error(f"❌ Service {service_name} not running")

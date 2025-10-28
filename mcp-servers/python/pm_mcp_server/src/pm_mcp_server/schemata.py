@@ -10,7 +10,6 @@ Pydantic models used by the project management MCP server.
 from __future__ import annotations
 
 from datetime import date
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -26,9 +25,9 @@ class WBSNode(StrictBaseModel):
 
     id: str = Field(..., description="WBS identifier, e.g., 1.1")
     name: str = Field(..., description="Work package name")
-    owner: Optional[str] = Field(None, description="Responsible owner")
-    estimate_days: Optional[float] = Field(None, ge=0, description="Estimated duration in days")
-    children: List["WBSNode"] = Field(default_factory=list, description="Sub-elements")
+    owner: str | None = Field(None, description="Responsible owner")
+    estimate_days: float | None = Field(None, ge=0, description="Estimated duration in days")
+    children: list[WBSNode] = Field(default_factory=list, description="Sub-elements")
 
 
 class ScheduleTask(StrictBaseModel):
@@ -37,30 +36,30 @@ class ScheduleTask(StrictBaseModel):
     id: str
     name: str
     duration_days: float = Field(..., ge=0.0)
-    dependencies: List[str] = Field(default_factory=list)
-    owner: Optional[str] = None
-    earliest_start: Optional[float] = None
-    earliest_finish: Optional[float] = None
-    latest_start: Optional[float] = None
-    latest_finish: Optional[float] = None
-    slack: Optional[float] = None
-    is_critical: Optional[bool] = None
+    dependencies: list[str] = Field(default_factory=list)
+    owner: str | None = None
+    earliest_start: float | None = None
+    earliest_finish: float | None = None
+    latest_start: float | None = None
+    latest_finish: float | None = None
+    slack: float | None = None
+    is_critical: bool | None = None
 
 
 class ScheduleModel(StrictBaseModel):
     """Composite schedule representation."""
 
-    tasks: List[ScheduleTask]
-    calendar: Optional[str] = Field(default="standard", description="Calendar profile identifier")
+    tasks: list[ScheduleTask]
+    calendar: str | None = Field(default="standard", description="Calendar profile identifier")
 
 
 class CriticalPathResult(StrictBaseModel):
     """Critical path computation result."""
 
-    tasks: List[ScheduleTask]
+    tasks: list[ScheduleTask]
     project_duration: float = Field(..., ge=0.0)
-    critical_task_ids: List[str]
-    generated_resources: Dict[str, str] = Field(default_factory=dict)
+    critical_task_ids: list[str]
+    generated_resources: dict[str, str] = Field(default_factory=dict)
 
 
 class RiskEntry(StrictBaseModel):
@@ -70,8 +69,8 @@ class RiskEntry(StrictBaseModel):
     description: str
     probability: float = Field(..., ge=0.0, le=1.0)
     impact: float = Field(..., ge=0.0, le=1.0)
-    mitigation: Optional[str] = None
-    owner: Optional[str] = None
+    mitigation: str | None = None
+    owner: str | None = None
     status: str = Field(default="Open")
 
     @property
@@ -82,8 +81,8 @@ class RiskEntry(StrictBaseModel):
 class RiskRegister(StrictBaseModel):
     """Risk register results."""
 
-    risks: List[RiskEntry]
-    high_risk_ids: List[str]
+    risks: list[RiskEntry]
+    high_risk_ids: list[str]
 
 
 class ChangeRequest(StrictBaseModel):
@@ -121,7 +120,7 @@ class EarnedValuePeriodMetric(StrictBaseModel):
 class EarnedValueResult(StrictBaseModel):
     """Earned value metrics."""
 
-    period_metrics: List[EarnedValuePeriodMetric]
+    period_metrics: list[EarnedValuePeriodMetric]
     cpi: float
     spi: float
     estimate_at_completion: float
@@ -132,9 +131,9 @@ class StatusReportItem(StrictBaseModel):
     """Generic status item for templating."""
 
     description: str
-    owner: Optional[str] = None
-    due_date: Optional[date] = None
-    severity: Optional[str] = None
+    owner: str | None = None
+    due_date: date | None = None
+    severity: str | None = None
 
 
 class StatusReportPayload(StrictBaseModel):
@@ -142,17 +141,17 @@ class StatusReportPayload(StrictBaseModel):
 
     reporting_period: str
     overall_health: str
-    highlights: List[str]
-    schedule: Dict[str, object]
-    risks: List[Dict[str, object]]
-    next_steps: List[StatusReportItem]
+    highlights: list[str]
+    schedule: dict[str, object]
+    risks: list[dict[str, object]]
+    next_steps: list[StatusReportItem]
 
 
 class DiagramArtifact(StrictBaseModel):
     """Reference to generated diagram resources."""
 
-    graphviz_svg_resource: Optional[str] = None
-    mermaid_markdown_resource: Optional[str] = None
+    graphviz_svg_resource: str | None = None
+    mermaid_markdown_resource: str | None = None
 
 
 class ActionItem(StrictBaseModel):
@@ -161,22 +160,22 @@ class ActionItem(StrictBaseModel):
     id: str
     description: str
     owner: str
-    due_date: Optional[str] = None
+    due_date: str | None = None
     status: str = Field(default="Open")
 
 
 class ActionItemLog(StrictBaseModel):
     """Collection of action items."""
 
-    items: List[ActionItem]
+    items: list[ActionItem]
 
 
 class MeetingSummary(StrictBaseModel):
     """Summarized meeting content."""
 
-    decisions: List[str]
+    decisions: list[str]
     action_items: ActionItemLog
-    notes: List[str]
+    notes: list[str]
 
 
 class Stakeholder(StrictBaseModel):
@@ -185,15 +184,15 @@ class Stakeholder(StrictBaseModel):
     name: str
     influence: str
     interest: str
-    role: Optional[str] = None
-    engagement_strategy: Optional[str] = None
+    role: str | None = None
+    engagement_strategy: str | None = None
 
 
 class StakeholderMatrixResult(StrictBaseModel):
     """Stakeholder analysis output."""
 
-    stakeholders: List[Stakeholder]
-    mermaid_resource: Optional[str] = None
+    stakeholders: list[Stakeholder]
+    mermaid_resource: str | None = None
 
 
 class HealthDashboard(StrictBaseModel):
@@ -203,5 +202,5 @@ class HealthDashboard(StrictBaseModel):
     schedule_health: str
     cost_health: str
     risk_health: str
-    upcoming_milestones: List[str]
-    notes: Optional[str] = None
+    upcoming_milestones: list[str]
+    notes: str | None = None

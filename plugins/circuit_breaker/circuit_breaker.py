@@ -39,6 +39,15 @@ from mcpgateway.plugins.framework import (
 
 @dataclass
 class _ToolState:
+    """Per-tool circuit breaker state.
+
+    Attributes:
+        failures: Deque of failure timestamps within the window.
+        calls: Deque of call timestamps within the window.
+        consecutive_failures: Count of consecutive failures.
+        open_until: Unix timestamp when breaker closes; 0 if closed.
+    """
+
     failures: Deque[float]
     calls: Deque[float]
     consecutive_failures: int
@@ -46,6 +55,17 @@ class _ToolState:
 
 
 class CircuitBreakerConfig(BaseModel):
+    """Configuration for circuit breaker plugin.
+
+    Attributes:
+        error_rate_threshold: Fraction of failures that triggers breaker (0-1).
+        window_seconds: Time window for calculating error rate.
+        min_calls: Minimum calls required before evaluating error rate.
+        consecutive_failure_threshold: Number of consecutive failures that opens breaker.
+        cooldown_seconds: Duration to keep breaker open after tripping.
+        tool_overrides: Per-tool configuration overrides.
+    """
+
     error_rate_threshold: float = 0.5  # fraction in [0,1]
     window_seconds: int = 60
     min_calls: int = 10
@@ -58,10 +78,23 @@ _STATE: Dict[str, _ToolState] = {}
 
 
 def _now() -> float:
+    """Get current Unix timestamp.
+
+    Returns:
+        Current time in seconds since epoch.
+    """
     return time.time()
 
 
 def _get_state(tool: str) -> _ToolState:
+    """Get or create circuit breaker state for a tool.
+
+    Args:
+        tool: Tool name.
+
+    Returns:
+        Circuit breaker state for the tool.
+    """
     st = _STATE.get(tool)
     if not st:
         st = _ToolState(failures=deque(), calls=deque(), consecutive_failures=0, open_until=0.0)
@@ -70,6 +103,15 @@ def _get_state(tool: str) -> _ToolState:
 
 
 def _cfg_for(cfg: CircuitBreakerConfig, tool: str) -> CircuitBreakerConfig:
+    """Get effective configuration for a tool, merging overrides if present.
+
+    Args:
+        cfg: Base circuit breaker configuration.
+        tool: Tool name.
+
+    Returns:
+        Effective configuration with tool-specific overrides applied.
+    """
     if tool in cfg.tool_overrides:
         merged = {**cfg.model_dump(), **cfg.tool_overrides[tool]}
         return CircuitBreakerConfig(**merged)
@@ -77,6 +119,14 @@ def _cfg_for(cfg: CircuitBreakerConfig, tool: str) -> CircuitBreakerConfig:
 
 
 def _is_error(result: Any) -> bool:
+    """Determine if a tool result represents an error.
+
+    Args:
+        result: Tool invocation result.
+
+    Returns:
+        True if result indicates an error, False otherwise.
+    """
     # ToolResult has is_error; otherwise look for common patterns
     try:
         if hasattr(result, "is_error"):
@@ -89,11 +139,27 @@ def _is_error(result: Any) -> bool:
 
 
 class CircuitBreakerPlugin(Plugin):
+    """Circuit breaker plugin to prevent cascading failures by tripping on high error rates."""
+
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the circuit breaker plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = CircuitBreakerConfig(**(config.config or {}))
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+        """Check circuit breaker state before tool invocation.
+
+        Args:
+            payload: Tool invocation payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking invocation if circuit is open, or allowing it to proceed.
+        """
         tool = payload.name
         st = _get_state(tool)
         now = _now()
@@ -116,6 +182,15 @@ class CircuitBreakerPlugin(Plugin):
         return ToolPreInvokeResult(continue_processing=True)
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Update circuit breaker state after tool invocation and trip if thresholds exceeded.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result with circuit breaker metrics metadata.
+        """
         tool = payload.name
         st = _get_state(tool)
         cfg = _cfg_for(self._cfg, tool)

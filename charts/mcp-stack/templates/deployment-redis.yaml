@@ -36,6 +36,11 @@ spec:
           image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
           imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
 
+          {{- if .Values.redis.persistence.enabled }}
+          # Use custom redis.conf with persistence settings
+          command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+          {{- end }}
+
           # Expose Redis TCP port inside the pod
           ports:
             - name: redis
@@ -53,8 +58,27 @@ spec:
 {{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
           {{- end }}
 
+          # ─── Volume mounts for persistence ───
+          volumeMounts:
+            {{- if .Values.redis.persistence.enabled }}
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /usr/local/etc/redis
+            {{- end }}
+
           # ─── Resource limits & requests ───
           {{- with .Values.redis.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
+
+      volumes:
+        {{- if .Values.redis.persistence.enabled }}
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-stack.fullname" . }}-redis-pvc
+        - name: redis-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-redis-config
+        {{- end }}
 {{- end }}

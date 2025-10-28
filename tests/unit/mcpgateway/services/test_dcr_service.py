@@ -7,7 +7,6 @@ Tests will FAIL until implementation is complete.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime, timezone
 from mcpgateway.services.dcr_service import DcrService, DcrError
 
 
@@ -25,10 +24,10 @@ class TestDiscoverASMetadata:
             "token_endpoint": "https://as.example.com/token",
             "registration_endpoint": "https://as.example.com/register",
             "code_challenge_methods_supported": ["S256", "plain"],
-            "grant_types_supported": ["authorization_code", "refresh_token"]
+            "grant_types_supported": ["authorization_code", "refresh_token"],
         }
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_metadata)
@@ -45,11 +44,12 @@ class TestDiscoverASMetadata:
         """Test that RFC 8414 path is tried first."""
         # Clear cache to ensure test isolation
         from mcpgateway.services.dcr_service import _metadata_cache
+
         _metadata_cache.clear()
 
         dcr_service = DcrService()
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # Create mock response
             mock_response = AsyncMock()
             mock_response.status = 200
@@ -79,11 +79,12 @@ class TestDiscoverASMetadata:
         """Test fallback to OIDC discovery if RFC 8414 fails."""
         # Clear cache
         from mcpgateway.services.dcr_service import _metadata_cache
+
         _metadata_cache.clear()
 
         dcr_service = DcrService()
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # First call (RFC 8414) fails
             mock_response_404 = AsyncMock()
             mock_response_404.status = 404
@@ -95,6 +96,7 @@ class TestDiscoverASMetadata:
 
             # Mock get to return different responses
             call_count = [0]
+
             def get_side_effect(*args, **kwargs):
                 call_count[0] += 1
                 if call_count[0] == 1:
@@ -125,11 +127,12 @@ class TestDiscoverASMetadata:
         """Test when metadata endpoints return 404."""
         # Clear cache
         from mcpgateway.services.dcr_service import _metadata_cache
+
         _metadata_cache.clear()
 
         dcr_service = DcrService()
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             # Both RFC 8414 and OIDC return 404
             mock_response_404 = AsyncMock()
             mock_response_404.status = 404
@@ -153,13 +156,14 @@ class TestDiscoverASMetadata:
         """Test that metadata is cached to avoid repeated requests."""
         # Clear cache first
         from mcpgateway.services.dcr_service import _metadata_cache
+
         _metadata_cache.clear()
 
         dcr_service = DcrService()
 
         mock_metadata = {"issuer": "https://as.example.com"}
 
-        with patch('aiohttp.ClientSession.get') as mock_get:
+        with patch("aiohttp.ClientSession.get") as mock_get:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_metadata)
@@ -180,16 +184,17 @@ class TestDiscoverASMetadata:
         """Test that discovered metadata validates issuer matches."""
         # Clear cache
         from mcpgateway.services.dcr_service import _metadata_cache
+
         _metadata_cache.clear()
 
         dcr_service = DcrService()
 
         mock_metadata = {
             "issuer": "https://different-issuer.com",  # Doesn't match
-            "authorization_endpoint": "https://as.example.com/authorize"
+            "authorization_endpoint": "https://as.example.com/authorize",
         }
 
-        with patch('aiohttp.ClientSession') as mock_session_class:
+        with patch("aiohttp.ClientSession") as mock_session_class:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value=mock_metadata)
@@ -217,9 +222,7 @@ class TestRegisterClient:
         """Test successful client registration."""
         dcr_service = DcrService()
 
-        mock_metadata = {
-            "registration_endpoint": "https://as.example.com/register"
-        }
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
         mock_registration_response = {
             "client_id": "dcr-generated-client-123",
@@ -229,12 +232,10 @@ class TestRegisterClient:
             "grant_types": ["authorization_code"],
             "token_endpoint_auth_method": "client_secret_basic",
             "registration_client_uri": "https://as.example.com/register/dcr-generated-client-123",
-            "registration_access_token": "registration-token-abc"
+            "registration_access_token": "registration-token-abc",
         }
 
-        with patch.object(dcr_service, 'discover_as_metadata') as mock_discover, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
             mock_discover.return_value = mock_metadata
 
             mock_response = AsyncMock()
@@ -248,7 +249,7 @@ class TestRegisterClient:
                 issuer="https://as.example.com",
                 redirect_uri="http://localhost:4444/oauth/callback",
                 scopes=["mcp:read", "mcp:tools"],
-                db=test_db
+                db=test_db,
             )
 
             assert result.client_id == "dcr-generated-client-123"
@@ -264,30 +265,18 @@ class TestRegisterClient:
         """Test that registration request has correct RFC 7591 fields."""
         dcr_service = DcrService()
 
-        mock_metadata = {
-            "registration_endpoint": "https://as.example.com/register"
-        }
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
-        with patch.object(dcr_service, 'discover_as_metadata') as mock_discover, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
             mock_discover.return_value = mock_metadata
 
             mock_response = AsyncMock()
             mock_response.status = 201
-            mock_response.json = AsyncMock(return_value={
-                "client_id": "test",
-                "redirect_uris": []
-            })
+            mock_response.json = AsyncMock(return_value={"client_id": "test", "redirect_uris": []})
             mock_post.return_value.__aenter__.return_value = mock_response
 
             await dcr_service.register_client(
-                gateway_id="test-gw",
-                gateway_name="Test Gateway",
-                issuer="https://as.example.com",
-                redirect_uri="http://localhost:4444/callback",
-                scopes=["mcp:read"],
-                db=test_db
+                gateway_id="test-gw", gateway_name="Test Gateway", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
             )
 
             # Verify request payload
@@ -310,17 +299,12 @@ class TestRegisterClient:
             # No registration_endpoint
         }
 
-        with patch.object(dcr_service, 'discover_as_metadata') as mock_discover:
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover:
             mock_discover.return_value = mock_metadata
 
             with pytest.raises(DcrError, match="does not support Dynamic Client Registration"):
                 await dcr_service.register_client(
-                    gateway_id="test-gw",
-                    gateway_name="Test",
-                    issuer="https://as.example.com",
-                    redirect_uri="http://localhost:4444/callback",
-                    scopes=["mcp:read"],
-                    db=test_db
+                    gateway_id="test-gw", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
                 )
 
     @pytest.mark.asyncio
@@ -328,32 +312,18 @@ class TestRegisterClient:
         """Test handling of registration errors (invalid_redirect_uri, etc.)."""
         dcr_service = DcrService()
 
-        mock_metadata = {
-            "registration_endpoint": "https://as.example.com/register"
-        }
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
 
-        with patch.object(dcr_service, 'discover_as_metadata') as mock_discover, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
             mock_discover.return_value = mock_metadata
 
             mock_response = AsyncMock()
             mock_response.status = 400
-            mock_response.json = AsyncMock(return_value={
-                "error": "invalid_redirect_uri",
-                "error_description": "Redirect URI not allowed"
-            })
+            mock_response.json = AsyncMock(return_value={"error": "invalid_redirect_uri", "error_description": "Redirect URI not allowed"})
             mock_post.return_value.__aenter__.return_value = mock_response
 
             with pytest.raises(DcrError, match="invalid_redirect_uri"):
-                await dcr_service.register_client(
-                    gateway_id="test-gw",
-                    gateway_name="Test",
-                    issuer="https://as.example.com",
-                    redirect_uri="http://invalid",
-                    scopes=["mcp:read"],
-                    db=test_db
-                )
+                await dcr_service.register_client(gateway_id="test-gw", gateway_name="Test", issuer="https://as.example.com", redirect_uri="http://invalid", scopes=["mcp:read"], db=test_db)
 
     @pytest.mark.asyncio
     async def test_register_client_stores_encrypted_secret(self, test_db):
@@ -361,15 +331,9 @@ class TestRegisterClient:
         dcr_service = DcrService()
 
         mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
-        mock_registration = {
-            "client_id": "test-client-encrypt",
-            "client_secret": "plaintext-secret",
-            "redirect_uris": ["http://localhost:4444/callback"]
-        }
+        mock_registration = {"client_id": "test-client-encrypt", "client_secret": "plaintext-secret", "redirect_uris": ["http://localhost:4444/callback"]}
 
-        with patch.object(dcr_service, 'discover_as_metadata') as mock_discover, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch("aiohttp.ClientSession.post") as mock_post:
             mock_discover.return_value = mock_metadata
             mock_response = AsyncMock()
             mock_response.status = 201
@@ -382,7 +346,7 @@ class TestRegisterClient:
                 issuer="https://as.example.com",
                 redirect_uri="http://localhost:4444/callback",
                 scopes=["mcp:read"],
-                db=test_db
+                db=test_db,
             )
 
             # Secret should NOT be stored as plaintext
@@ -403,14 +367,7 @@ class TestGetOrRegisterClient:
         from mcpgateway.db import RegisteredOAuthClient, Gateway
 
         # Add gateway first
-        gateway = Gateway(
-            id="test-gw-existing",
-            name="Test",
-            slug="test",
-            url="http://test.example.com",
-            description="Test",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-existing", name="Test", slug="test", url="http://test.example.com", description="Test", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -422,18 +379,13 @@ class TestGetOrRegisterClient:
             client_secret_encrypted="encrypted",
             redirect_uris='["http://localhost:4444/callback"]',
             grant_types='["authorization_code"]',
-            is_active=True
+            is_active=True,
         )
         test_db.add(existing_client)
         test_db.commit()
 
         result = await dcr_service.get_or_register_client(
-            gateway_id="test-gw-existing",
-            gateway_name="Test",
-            issuer="https://as-existing.example.com",
-            redirect_uri="http://localhost:4444/callback",
-            scopes=["mcp:read"],
-            db=test_db
+            gateway_id="test-gw-existing", gateway_name="Test", issuer="https://as-existing.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
         )
 
         assert result.id == "existing-id"
@@ -444,26 +396,15 @@ class TestGetOrRegisterClient:
         """Test that new client is registered if not found."""
         dcr_service = DcrService()
 
-        with patch.object(dcr_service, 'register_client') as mock_register:
+        with patch.object(dcr_service, "register_client") as mock_register:
             from mcpgateway.db import RegisteredOAuthClient
 
             mock_register.return_value = RegisteredOAuthClient(
-                id="new-id",
-                gateway_id="test-gw-new-reg",
-                issuer="https://as-new.example.com",
-                client_id="new-client",
-                client_secret_encrypted="encrypted",
-                redirect_uris='[]',
-                grant_types='[]'
+                id="new-id", gateway_id="test-gw-new-reg", issuer="https://as-new.example.com", client_id="new-client", client_secret_encrypted="encrypted", redirect_uris="[]", grant_types="[]"
             )
 
             result = await dcr_service.get_or_register_client(
-                gateway_id="test-gw-new-reg",
-                gateway_name="Test",
-                issuer="https://as-new.example.com",
-                redirect_uri="http://localhost:4444/callback",
-                scopes=["mcp:read"],
-                db=test_db
+                gateway_id="test-gw-new-reg", gateway_name="Test", issuer="https://as-new.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
             )
 
             mock_register.assert_called_once()
@@ -475,15 +416,10 @@ class TestGetOrRegisterClient:
         dcr_service = DcrService()
 
         # Patch the settings on the dcr_service instance
-        with patch.object(dcr_service.settings, 'dcr_auto_register_on_missing_credentials', False):
+        with patch.object(dcr_service.settings, "dcr_auto_register_on_missing_credentials", False):
             with pytest.raises(DcrError, match="Auto-register is disabled|auto-register is disabled"):
                 await dcr_service.get_or_register_client(
-                    gateway_id="test-gw-autoreg",
-                    gateway_name="Test",
-                    issuer="https://as-autoreg.example.com",
-                    redirect_uri="http://localhost:4444/callback",
-                    scopes=["mcp:read"],
-                    db=test_db
+                    gateway_id="test-gw-autoreg", gateway_name="Test", issuer="https://as-autoreg.example.com", redirect_uri="http://localhost:4444/callback", scopes=["mcp:read"], db=test_db
                 )
 
 
@@ -501,14 +437,7 @@ class TestUpdateClientRegistration:
         from mcpgateway.db import RegisteredOAuthClient, Gateway
 
         # Add gateway first
-        gateway = Gateway(
-            id="test-gw-update",
-            name="Test",
-            slug="test-update",
-            url="http://test-update.example.com",
-            description="Test",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-update", name="Test", slug="test-update", url="http://test-update.example.com", description="Test", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -525,18 +454,14 @@ class TestUpdateClientRegistration:
             registration_client_uri="https://as-update.example.com/register/test-client",
             registration_access_token_encrypted=encrypted_token,
             redirect_uris='["http://localhost:4444/callback"]',
-            grant_types='["authorization_code"]'
+            grant_types='["authorization_code"]',
         )
         test_db.add(client_record)
         test_db.commit()
 
-        mock_response = {
-            "client_id": "test-client-update",
-            "client_secret": "updated-secret",
-            "redirect_uris": ["http://localhost:4444/callback", "http://localhost:4444/callback2"]
-        }
+        mock_response = {"client_id": "test-client-update", "client_secret": "updated-secret", "redirect_uris": ["http://localhost:4444/callback", "http://localhost:4444/callback2"]}
 
-        with patch('aiohttp.ClientSession.put') as mock_put:
+        with patch("aiohttp.ClientSession.put") as mock_put:
             mock_response_obj = AsyncMock()
             mock_response_obj.status = 200
             mock_response_obj.json = AsyncMock(return_value=mock_response)
@@ -557,14 +482,7 @@ class TestUpdateClientRegistration:
         from mcpgateway.db import RegisteredOAuthClient, Gateway
 
         # Add gateway first
-        gateway = Gateway(
-            id="test-gw-update-auth",
-            name="Test",
-            slug="test-update-auth",
-            url="http://test-update-auth.example.com",
-            description="Test",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-update-auth", name="Test", slug="test-update-auth", url="http://test-update-auth.example.com", description="Test", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
@@ -580,13 +498,13 @@ class TestUpdateClientRegistration:
             client_secret_encrypted="encrypted",
             registration_client_uri="https://as-update-auth.example.com/register/test-client",
             registration_access_token_encrypted=encrypted_token,
-            redirect_uris='[]',
-            grant_types='[]'
+            redirect_uris="[]",
+            grant_types="[]",
         )
         test_db.add(client_record)
         test_db.commit()
 
-        with patch('aiohttp.ClientSession.put') as mock_put:
+        with patch("aiohttp.ClientSession.put") as mock_put:
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.json = AsyncMock(return_value={"client_id": "test-client-auth"})
@@ -618,11 +536,11 @@ class TestDeleteClientRegistration:
             client_secret_encrypted="encrypted",
             registration_client_uri="https://as.example.com/register/test-client",
             registration_access_token_encrypted="encrypted-token",
-            redirect_uris='[]',
-            grant_types='[]'
+            redirect_uris="[]",
+            grant_types="[]",
         )
 
-        with patch('aiohttp.ClientSession.delete') as mock_delete:
+        with patch("aiohttp.ClientSession.delete") as mock_delete:
             mock_response = AsyncMock()
             mock_response.status = 204
             mock_delete.return_value.__aenter__.return_value = mock_response
@@ -646,11 +564,11 @@ class TestDeleteClientRegistration:
             client_secret_encrypted="encrypted",
             registration_client_uri="https://as.example.com/register/test-client",
             registration_access_token_encrypted="encrypted-token",
-            redirect_uris='[]',
-            grant_types='[]'
+            redirect_uris="[]",
+            grant_types="[]",
         )
 
-        with patch('aiohttp.ClientSession.delete') as mock_delete:
+        with patch("aiohttp.ClientSession.delete") as mock_delete:
             mock_response = AsyncMock()
             mock_response.status = 404
             mock_delete.return_value.__aenter__.return_value = mock_response
@@ -671,7 +589,7 @@ class TestIssuerValidation:
 
         from mcpgateway.config import get_settings
 
-        with patch.object(get_settings(), 'dcr_allowed_issuers', []):
+        with patch.object(get_settings(), "dcr_allowed_issuers", []):
             # Should not raise error
             pass  # Validation happens in register_client
 
@@ -682,7 +600,7 @@ class TestIssuerValidation:
 
         from mcpgateway.config import get_settings
 
-        with patch.object(get_settings(), 'dcr_allowed_issuers', ["https://trusted.com"]):
+        with patch.object(get_settings(), "dcr_allowed_issuers", ["https://trusted.com"]):
             with pytest.raises(DcrError, match="not in allowed issuers"):
                 await dcr_service.register_client(
                     gateway_id="test-gw",
@@ -690,7 +608,7 @@ class TestIssuerValidation:
                     issuer="https://untrusted.com",  # Not in allowlist
                     redirect_uri="http://localhost:4444/callback",
                     scopes=["mcp:read"],
-                    db=test_db
+                    db=test_db,
                 )
 
     @pytest.mark.asyncio
@@ -701,29 +619,20 @@ class TestIssuerValidation:
         from mcpgateway.db import Gateway
 
         # Add gateway first
-        gateway = Gateway(
-            id="test-gw-issuer-auth",
-            name="Test",
-            slug="test-issuer-auth",
-            url="http://test-issuer-auth.example.com",
-            description="Test",
-            capabilities={}
-        )
+        gateway = Gateway(id="test-gw-issuer-auth", name="Test", slug="test-issuer-auth", url="http://test-issuer-auth.example.com", description="Test", capabilities={})
         test_db.add(gateway)
         test_db.commit()
 
         # Patch settings on the instance
-        with patch.object(dcr_service.settings, 'dcr_allowed_issuers', ["https://as-issuer-auth.example.com"]), \
-             patch.object(dcr_service, 'discover_as_metadata') as mock_discover, \
-             patch('aiohttp.ClientSession.post') as mock_post:
-
+        with (
+            patch.object(dcr_service.settings, "dcr_allowed_issuers", ["https://as-issuer-auth.example.com"]),
+            patch.object(dcr_service, "discover_as_metadata") as mock_discover,
+            patch("aiohttp.ClientSession.post") as mock_post,
+        ):
             mock_discover.return_value = {"registration_endpoint": "https://as-issuer-auth.example.com/register"}
             mock_response = AsyncMock()
             mock_response.status = 201
-            mock_response.json = AsyncMock(return_value={
-                "client_id": "test-issuer-auth",
-                "redirect_uris": []
-            })
+            mock_response.json = AsyncMock(return_value={"client_id": "test-issuer-auth", "redirect_uris": []})
             mock_post.return_value.__aenter__.return_value = mock_response
 
             # Should not raise error
@@ -733,7 +642,7 @@ class TestIssuerValidation:
                 issuer="https://as-issuer-auth.example.com",  # In allowlist
                 redirect_uri="http://localhost:4444/callback",
                 scopes=["mcp:read"],
-                db=test_db
+                db=test_db,
             )
 
 

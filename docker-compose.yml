@@ -14,11 +14,37 @@ volumes:                # Named volumes survive podman-compose down/up
   mongodata:
   pgadmindata:
   redisinsight_data:
+  nginx_cache:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
 ###############################################################################
 services:
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Nginx Caching Proxy - High-performance reverse proxy with CDN-like caching
+  # ──────────────────────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    image: mcpgateway/nginx-cache:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"                   # HTTP caching proxy (public-facing)
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - nginx_cache:/var/cache/nginx    # Persistent cache storage
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro  # Mount config as read-only
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # ──────────────────────────────────────────────────────────────────────
   # MCP Gateway - the main API server for the MCP stack

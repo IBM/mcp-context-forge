@@ -1,4 +1,15 @@
 # -*- coding: utf-8 -*-
+"""Location: ./plugins/vault/vault_plugin.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Vault Plugin.
+
+Generates bearer tokens from vault-saved tokens based on OAUTH2 config protecting a tool.
+
+Hook: tool_pre_invoke
+"""
 
 # Standard
 from enum import Enum
@@ -27,15 +38,37 @@ logger = logging_service.get_logger(__name__)
 
 
 class VaultHandling(Enum):
+    """Vault token handling modes.
+
+    Attributes:
+        RAW: Use raw token from vault.
+    """
+
     RAW = "raw"
 
 
 class SystemHandling(Enum):
+    """System identification handling modes.
+
+    Attributes:
+        TAG: Identify system from gateway tags.
+        OAUTH2_CONFIG: Identify system from OAuth2 config.
+    """
+
     TAG = "tag"
     OAUTH2_CONFIG = "oauth2_config"
 
 
 class VaultConfig(BaseModel):
+    """Configuration for vault plugin.
+
+    Attributes:
+        system_tag_prefix: Prefix for system tags.
+        vault_header_name: HTTP header name for vault tokens.
+        vault_handling: Vault token handling mode.
+        system_handling: System identification mode.
+    """
+
     system_tag_prefix: str = "system"
     vault_header_name: str = "X-Vault-Tokens"
     vault_handling: VaultHandling = VaultHandling.RAW
@@ -46,6 +79,11 @@ class Vault(Plugin):
     """Vault plugin that based on OAUTH2 config that protects a tool will generate bearer token based on a vault saved token"""
 
     def __init__(self, config: PluginConfig):
+        """Initialize the vault plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         # load config with pydantic model for convenience
         try:
@@ -130,4 +168,9 @@ class Vault(Plugin):
         return ToolPreInvokeResult()
 
     async def shutdown(self) -> None:
+        """Shutdown the plugin gracefully.
+
+        Returns:
+            None.
+        """
         return None

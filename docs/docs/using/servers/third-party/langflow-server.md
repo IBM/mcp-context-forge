@@ -13,6 +13,7 @@
 ### What is Langflow?
 
 **Langflow** is a visual framework that allows you to:
+
 - **Build AI workflows visually** with drag-and-drop components
 - **Create RAG applications** with document processing and retrieval
 - **Design multi-agent systems** with coordinated AI agents
@@ -22,6 +23,7 @@
 ### Integration Benefits
 
 When federated with MCP Gateway, you get:
+
 - ✅ **Workflow-as-Tools** - Langflow workflows become discoverable MCP tools
 - ✅ **Visual Development** - No code required for complex AI automation
 - ✅ **Enterprise Security** - JWT authentication and rate limiting via MCP Gateway
@@ -208,6 +210,7 @@ curl -X POST "http://localhost:4444/gateways" \
 ```
 
 **Important Notes**:
+
 - ✅ **Correct**: `http://localhost:7860/api/v1/mcp/project/{PROJECT_ID}/sse` - This is the MCP SSE endpoint
 - ❌ **Wrong**: `http://localhost:7860` - This is just the Langflow UI, not an MCP endpoint
 - The `transport_type` must be `"sse"`, not `"http"`
@@ -224,6 +227,7 @@ curl -X GET "http://localhost:4444/gateways" \
 ```
 
 **Verify in Admin UI**:
+
 1. Open http://localhost:4444/admin
 2. Navigate to "Gateways" section
 3. Confirm "Langflow MCP Server" appears with status "active"
@@ -267,6 +271,7 @@ curl -X GET "http://localhost:4444/tools" \
 ```
 
 **Workflow-to-Tool Naming Convention**:
+
 - Langflow flows are automatically converted to MCP tools
 - Tool names follow the pattern: `langflow-mcp-server-{flow-name}`
 - Each tool includes the complete input/output schema
@@ -360,6 +365,7 @@ curl -X GET "http://localhost:4444/tools" \
 ```
 
 You'll see updated metrics including:
+
 - `totalExecutions`: Number of times the tool was invoked
 - `successfulExecutions`: Successful invocations
 - `failedExecutions`: Failed invocations
@@ -544,6 +550,7 @@ curl -X GET "http://localhost:7860/api/v1/flows/{flow_id}/validate"
 ```yaml
 # Increase timeout in MCP Gateway configuration
 servers:
+
   - id: "langflow-server"
     settings:
       timeout: 300  # 5 minutes
@@ -585,6 +592,7 @@ auth:
 **Problem**: Slow workflow execution
 
 **Solution**:
+
 1. **Enable caching** for repetitive operations
 2. **Optimize component configurations** (reduce model sizes, chunk sizes)
 3. **Use streaming responses** for long workflows
@@ -629,6 +637,7 @@ Enable detailed logging for troubleshooting:
 
 ```yaml
 servers:
+
   - id: "langflow-server"
     settings:
       debug_mode: true
@@ -676,6 +685,7 @@ class LangflowMCPAdapter:
 ```yaml
 # production.yaml
 servers:
+
   - id: "langflow-production"
     name: "Langflow Production"
     transport:
@@ -696,6 +706,7 @@ servers:
 ```yaml
 # development.yaml
 servers:
+
   - id: "langflow-dev"
     name: "Langflow Development"
     transport:

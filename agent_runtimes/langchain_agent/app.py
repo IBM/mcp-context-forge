@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
 # Standard
-import asyncio
-from datetime import datetime, timezone
 import json
 import logging
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
 import uuid
+from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
+from typing import Any
 
 # Third-Party
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -17,12 +17,30 @@ try:
     # Local
     from .agent_langchain import LangchainMCPAgent
     from .config import get_settings
-    from .models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
+    from .models import (
+        ChatCompletionChoice,
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatMessage,
+        HealthResponse,
+        ReadyResponse,
+        ToolListResponse,
+        Usage,
+    )
 except ImportError:
     # Third-Party
     from agent_langchain import LangchainMCPAgent
     from config import get_settings
-    from models import ChatCompletionChoice, ChatCompletionRequest, ChatCompletionResponse, ChatMessage, HealthResponse, ReadyResponse, ToolListResponse, Usage
+    from models import (
+        ChatCompletionChoice,
+        ChatCompletionRequest,
+        ChatCompletionResponse,
+        ChatMessage,
+        HealthResponse,
+        ReadyResponse,
+        ToolListResponse,
+        Usage,
+    )
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,7 +50,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="MCP Langchain Agent",
     description="A Langchain agent with OpenAI-compatible API that integrates with MCP Gateway",
-    version="1.0.0"
+    version="1.0.0",
 )
 
 # Add CORS middleware
@@ -48,6 +66,7 @@ app.add_middleware(
 settings = get_settings()
 agent = LangchainMCPAgent.from_config(settings)
 
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize the agent and load tools on startup"""
@@ -57,6 +76,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Failed to initialize agent: {e}")
         raise
+
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -70,12 +90,13 @@ async def health_check():
             details={
                 "agent_initialized": agent.is_initialized(),
                 "tools_loaded": tools_count,
-                "gateway_url": settings.mcp_gateway_url
-            }
+                "gateway_url": settings.mcp_gateway_url,
+            },
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
+
 
 @app.get("/ready", response_model=ReadyResponse)
 async def readiness_check():
@@ -92,11 +113,12 @@ async def readiness_check():
             details={
                 "gateway_connection": await agent.test_gateway_connection(),
                 "tools_available": (len(agent.tools) > 0) or (len(agent.get_available_tools()) > 0),
-            }
+            },
         )
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(status_code=503, detail=f"Service not ready: {str(e)}")
+
 
 @app.get("/list_tools", response_model=ToolListResponse)
 async def list_tools():
@@ -112,30 +134,29 @@ async def list_tools():
                     "schema": tool.schema or {},
                     "url": tool.url,
                     "method": tool.method,
-                    "integration_type": tool.integration_type
+                    "integration_type": tool.integration_type,
                 }
                 for tool in tools
             ],
-            count=len(tools)
+            count=len(tools),
         )
     except Exception as e:
         logger.error(f"Failed to list tools: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list tools: {str(e)}")
+
 
 @app.post("/v1/chat/completions", response_model=ChatCompletionResponse)
 async def chat_completions(request: ChatCompletionRequest):
     """OpenAI-compatible chat completions endpoint"""
     try:
         if request.stream:
-            return StreamingResponse(
-                _stream_chat_completion(request),
-                media_type="text/plain"
-            )
+            return StreamingResponse(_stream_chat_completion(request), media_type="text/plain")
         else:
             return await _complete_chat(request)
     except Exception as e:
         logger.error(f"Chat completion failed: {e}")
         raise HTTPException(status_code=500, detail=f"Chat completion failed: {str(e)}")
+
 
 async def _complete_chat(request: ChatCompletionRequest) -> ChatCompletionResponse:
     """Handle non-streaming chat completion"""
@@ -150,7 +171,7 @@ async def _complete_chat(request: ChatCompletionRequest) -> ChatCompletionRespon
         model=request.model,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
-        tools_enabled=True
+        tools_enabled=True,
     )
 
     # Calculate token usage (approximate)
@@ -165,21 +186,11 @@ async def _complete_chat(request: ChatCompletionRequest) -> ChatCompletionRespon
         created=int(start_time),
         model=request.model,
         choices=[
-            ChatCompletionChoice(
-                index=0,
-                message=ChatMessage(
-                    role="assistant",
-                    content=response
-                ),
-                finish_reason="stop"
-            )
+            ChatCompletionChoice(index=0, message=ChatMessage(role="assistant", content=response), finish_reason="stop")
         ],
-        usage=Usage(
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens
-        )
+        usage=Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens, total_tokens=total_tokens),
     )
+
 
 async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenerator[str, None]:
     """Handle streaming chat completion"""
@@ -195,7 +206,7 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
         model=request.model,
         max_tokens=request.max_tokens,
         temperature=request.temperature,
-        tools_enabled=True
+        tools_enabled=True,
     ):
         # Format as OpenAI streaming response
         stream_chunk = {
@@ -203,13 +214,7 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
             "object": "chat.completion.chunk",
             "created": int(start_time),
             "model": request.model,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": chunk},
-                    "finish_reason": None
-                }
-            ]
+            "choices": [{"index": 0, "delta": {"content": chunk}, "finish_reason": None}],
         }
 
         yield f"data: {json.dumps(stream_chunk)}\n\n"
@@ -220,17 +225,12 @@ async def _stream_chat_completion(request: ChatCompletionRequest) -> AsyncGenera
         "object": "chat.completion.chunk",
         "created": int(start_time),
         "model": request.model,
-        "choices": [
-            {
-                "index": 0,
-                "delta": {},
-                "finish_reason": "stop"
-            }
-        ]
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
     }
 
     yield f"data: {json.dumps(final_chunk)}\n\n"
     yield "data: [DONE]\n\n"
+
 
 @app.get("/v1/models")
 async def list_models():
@@ -242,13 +242,14 @@ async def list_models():
                 "id": settings.default_model,
                 "object": "model",
                 "created": int(time.time()),
-                "owned_by": "mcp-langchain-agent"
+                "owned_by": "mcp-langchain-agent",
             }
-        ]
+        ],
     }
 
+
 @app.post("/v1/tools/invoke")
-async def invoke_tool(request: Dict[str, Any]):
+async def invoke_tool(request: dict[str, Any]):
     """Direct tool invocation endpoint"""
     try:
         tool_id = request.get("tool_id")
@@ -263,9 +264,10 @@ async def invoke_tool(request: Dict[str, Any]):
         logger.error(f"Tool invocation failed: {e}")
         raise HTTPException(status_code=500, detail=f"Tool invocation failed: {str(e)}")
 
+
 # A2A endpoint for agent-to-agent communication
 @app.post("/a2a")
-async def agent_to_agent(request: Dict[str, Any]):
+async def agent_to_agent(request: dict[str, Any]):
     """Agent-to-agent communication endpoint (JSON-RPC style)"""
     try:
         if request.get("method") == "invoke":
@@ -275,25 +277,16 @@ async def agent_to_agent(request: Dict[str, Any]):
 
             result = await agent.invoke_tool(tool_id, args)
 
-            return {
-                "jsonrpc": "2.0",
-                "id": request.get("id"),
-                "result": result
-            }
+            return {"jsonrpc": "2.0", "id": request.get("id"), "result": result}
         else:
             raise HTTPException(status_code=400, detail="Unsupported method")
     except Exception as e:
         logger.error(f"A2A communication failed: {e}")
-        return {
-            "jsonrpc": "2.0",
-            "id": request.get("id"),
-            "error": {
-                "code": -32603,
-                "message": str(e)
-            }
-        }
+        return {"jsonrpc": "2.0", "id": request.get("id"), "error": {"code": -32603, "message": str(e)}}
+
 
 if __name__ == "__main__":
     # Third-Party
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

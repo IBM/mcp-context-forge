@@ -6,6 +6,7 @@ Authors: Mihai Criveti
 
 Schemathesis-based API endpoint fuzzing.
 """
+
 # Third-Party
 from fastapi.testclient import TestClient
 import pytest
@@ -38,9 +39,9 @@ class TestAPIFuzzingCustom:
             "Negotiate token",
             "",
             None,
-            "Basic", # Incomplete
+            "Basic",  # Incomplete
             "Basic " + ":" * 100,  # Many colons
-            "Basic " + "=" * 50,   # Many equals
+            "Basic " + "=" * 50,  # Many equals
         ]
 
         for auth in auth_variants:
@@ -59,14 +60,10 @@ class TestAPIFuzzingCustom:
             "url": "http://example.com",
             "description": "x" * 10000,  # 10KB description
             "headers": {f"header_{i}": f"value_{i}" * 100 for i in range(50)},  # Many headers
-            "tags": [f"tag_{i}" for i in range(1000)]  # Many tags
+            "tags": [f"tag_{i}" for i in range(1000)],  # Many tags
         }
 
-        response = client.post(
-            "/admin/tools",
-            json=large_payload,
-            headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-        )
+        response = client.post("/admin/tools", json=large_payload, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
         # Should handle large payloads gracefully (may reject or accept)
         assert response.status_code in [200, 201, 400, 401, 413, 422]
@@ -78,25 +75,18 @@ class TestAPIFuzzingCustom:
         malformed_json_cases = [
             '{"incomplete":',
             '{"key": "value",}',  # Trailing comma
-            '{"key": value}',     # Unquoted value
-            '{key: "value"}',     # Unquoted key
+            '{"key": value}',  # Unquoted value
+            '{key: "value"}',  # Unquoted key
             '{"nested": {"incomplete"}',
-            '[]',                 # Array instead of object
-            '"string"',           # String instead of object
-            '123',                # Number instead of object
-            'null',               # Null instead of object
+            "[]",  # Array instead of object
+            '"string"',  # String instead of object
+            "123",  # Number instead of object
+            "null",  # Null instead of object
             '{"unicode": "\\uXXXX"}',  # Invalid unicode
         ]
 
         for malformed in malformed_json_cases:
-            response = client.post(
-                "/admin/tools",
-                data=malformed,
-                headers={
-                    "Authorization": "Basic YWRtaW46Y2hhbmdlbWU=",
-                    "Content-Type": "application/json"
-                }
-            )
+            response = client.post("/admin/tools", data=malformed, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU=", "Content-Type": "application/json"})
 
             # Should handle malformed JSON gracefully
             assert response.status_code in [400, 401, 422], f"Unexpected status for malformed JSON: {response.status_code}"
@@ -115,11 +105,7 @@ class TestAPIFuzzingCustom:
         ]
 
         for test_case in unicode_test_cases:
-            response = client.post(
-                "/admin/tools",
-                json=test_case,
-                headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-            )
+            response = client.post("/admin/tools", json=test_case, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
 
             # Should handle unicode gracefully
             assert response.status_code in [200, 201, 400, 401, 422]
@@ -135,11 +121,7 @@ class TestAPIFuzzingCustom:
 
         def make_request():
             try:
-                response = client.post(
-                    "/admin/tools",
-                    json={"name": f"tool_{time.time()}", "url": "http://example.com"},
-                    headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="}
-                )
+                response = client.post("/admin/tools", json={"name": f"tool_{time.time()}", "url": "http://example.com"}, headers={"Authorization": "Basic YWRtaW46Y2hhbmdlbWU="})
                 results.append(response.status_code)
             except Exception as e:
                 results.append(f"Exception: {e}")
@@ -189,11 +171,7 @@ class TestAPIFuzzingCustom:
             if content_type is not None:
                 headers["Content-Type"] = content_type
 
-            response = client.post(
-                "/admin/tools",
-                data=test_data,
-                headers=headers
-            )
+            response = client.post("/admin/tools", data=test_data, headers=headers)
 
             # Should handle various content types gracefully
             assert response.status_code in [200, 201, 400, 401, 415, 422]

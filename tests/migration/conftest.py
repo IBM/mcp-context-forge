@@ -26,12 +26,7 @@ from .version_config import VersionConfig
 
 # Configure logging for migration tests
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('tests/migration/reports/migration_tests.log', mode='a')
-    ]
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", handlers=[logging.StreamHandler(), logging.FileHandler("tests/migration/reports/migration_tests.log", mode="a")]
 )
 
 logger = logging.getLogger(__name__)
@@ -62,8 +57,7 @@ def container_runtime():
 
     # Try Docker first
     try:
-        subprocess.run(["docker", "--version"],
-                      capture_output=True, check=True, timeout=10)
+        subprocess.run(["docker", "--version"], capture_output=True, check=True, timeout=10)
         logger.info("🐳 Using Docker as container runtime")
         return "docker"
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -71,8 +65,7 @@ def container_runtime():
 
     # Try Podman
     try:
-        subprocess.run(["podman", "--version"],
-                      capture_output=True, check=True, timeout=10)
+        subprocess.run(["podman", "--version"], capture_output=True, check=True, timeout=10)
         logger.info("🦭 Using Podman as container runtime")
         return "podman"
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -119,14 +112,8 @@ def sample_test_data() -> Dict:
             {
                 "name": "test_tool_basic",
                 "description": "Basic test tool for migration validation",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string", "description": "Input parameter"}
-                    },
-                    "required": ["input"]
-                },
-                "annotations": {"category": "test", "version": "1.0"}
+                "schema": {"type": "object", "properties": {"input": {"type": "string", "description": "Input parameter"}}, "required": ["input"]},
+                "annotations": {"category": "test", "version": "1.0"},
             },
             {
                 "name": "test_tool_complex",
@@ -138,64 +125,39 @@ def sample_test_data() -> Dict:
                             "type": "object",
                             "properties": {
                                 "enabled": {"type": "boolean"},
-                                "settings": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "properties": {
-                                            "key": {"type": "string"},
-                                            "value": {"type": "string"}
-                                        }
-                                    }
-                                }
-                            }
+                                "settings": {"type": "array", "items": {"type": "object", "properties": {"key": {"type": "string"}, "value": {"type": "string"}}}},
+                            },
                         },
-                        "metadata": {"type": "object", "additionalProperties": True}
-                    }
+                        "metadata": {"type": "object", "additionalProperties": True},
+                    },
                 },
-                "annotations": {"category": "test", "complexity": "high"}
-            }
+                "annotations": {"category": "test", "complexity": "high"},
+            },
         ],
         "servers": [
-            {
-                "name": "test_server_basic",
-                "description": "Basic test server",
-                "transport": "sse",
-                "annotations": {"environment": "test", "purpose": "migration"}
-            },
+            {"name": "test_server_basic", "description": "Basic test server", "transport": "sse", "annotations": {"environment": "test", "purpose": "migration"}},
             {
                 "name": "test_server_websocket",
                 "description": "WebSocket test server",
                 "transport": "websocket",
                 "connection_string": "ws://localhost:8080/ws",
-                "annotations": {"transport": "websocket", "protocol": "mcp"}
-            }
+                "annotations": {"transport": "websocket", "protocol": "mcp"},
+            },
         ],
         "gateways": [
             {
                 "name": "test_gateway_federation",
                 "base_url": "http://test-peer.example.com:4444",
                 "description": "Test gateway for federation scenarios",
-                "annotations": {"type": "federation", "region": "test"}
+                "annotations": {"type": "federation", "region": "test"},
             }
         ],
         "resources": [
-            {
-                "name": "test_resource_file",
-                "uri": "file:///app/test_data/sample.txt",
-                "description": "Test file resource",
-                "mimeType": "text/plain",
-                "annotations": {"source": "test", "type": "file"}
-            }
+            {"name": "test_resource_file", "uri": "file:///app/test_data/sample.txt", "description": "Test file resource", "mimeType": "text/plain", "annotations": {"source": "test", "type": "file"}}
         ],
         "prompts": [
-            {
-                "name": "test_prompt_simple",
-                "description": "Simple test prompt",
-                "template": "Hello, {{name}}! How are you today?",
-                "annotations": {"category": "greeting", "complexity": "low"}
-            }
-        ]
+            {"name": "test_prompt_simple", "description": "Simple test prompt", "template": "Hello, {{name}}! How are you today?", "annotations": {"category": "greeting", "complexity": "low"}}
+        ],
     }
 
 
@@ -207,50 +169,38 @@ def large_test_data() -> Dict:
     # Generate 100 tools, 20 servers, 10 gateways
     tools = []
     for i in range(100):
-        tools.append({
-            "name": f"perf_test_tool_{i:03d}",
-            "description": f"Performance test tool number {i}",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "param1": {"type": "string"},
-                    "param2": {"type": "integer", "minimum": 0},
-                    "options": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    }
-                }
-            },
-            "annotations": {
-                "batch": "performance_test",
-                "index": i,
-                "category": f"category_{i % 10}"
+        tools.append(
+            {
+                "name": f"perf_test_tool_{i:03d}",
+                "description": f"Performance test tool number {i}",
+                "schema": {"type": "object", "properties": {"param1": {"type": "string"}, "param2": {"type": "integer", "minimum": 0}, "options": {"type": "array", "items": {"type": "string"}}}},
+                "annotations": {"batch": "performance_test", "index": i, "category": f"category_{i % 10}"},
             }
-        })
+        )
 
     servers = []
     for i in range(20):
-        servers.append({
-            "name": f"perf_test_server_{i:02d}",
-            "description": f"Performance test server {i}",
-            "transport": "sse" if i % 2 == 0 else "websocket",
-            "annotations": {"batch": "performance_test", "index": i}
-        })
+        servers.append(
+            {
+                "name": f"perf_test_server_{i:02d}",
+                "description": f"Performance test server {i}",
+                "transport": "sse" if i % 2 == 0 else "websocket",
+                "annotations": {"batch": "performance_test", "index": i},
+            }
+        )
 
     gateways = []
     for i in range(10):
-        gateways.append({
-            "name": f"perf_test_gateway_{i:02d}",
-            "base_url": f"http://test-gateway-{i}.example.com:4444",
-            "description": f"Performance test gateway {i}",
-            "annotations": {"batch": "performance_test", "index": i}
-        })
+        gateways.append(
+            {
+                "name": f"perf_test_gateway_{i:02d}",
+                "base_url": f"http://test-gateway-{i}.example.com:4444",
+                "description": f"Performance test gateway {i}",
+                "annotations": {"batch": "performance_test", "index": i},
+            }
+        )
 
-    return {
-        "tools": tools,
-        "servers": servers,
-        "gateways": gateways
-    }
+    return {"tools": tools, "servers": servers, "gateways": gateways}
 
 
 @pytest.fixture
@@ -258,26 +208,14 @@ def version_matrix():
     """Return the version matrix for testing."""
     return {
         "available_versions": ["0.2.0", "0.3.0", "0.4.0", "0.5.0", "0.6.0", "latest"],
-        "forward_pairs": [
-            ("0.2.0", "0.3.0"),
-            ("0.3.0", "0.4.0"),
-            ("0.4.0", "0.5.0"),
-            ("0.5.0", "0.6.0"),
-            ("0.6.0", "latest")
-        ],
-        "reverse_pairs": [
-            ("latest", "0.6.0"),
-            ("0.6.0", "0.5.0"),
-            ("0.5.0", "0.4.0"),
-            ("0.4.0", "0.3.0"),
-            ("0.3.0", "0.2.0")
-        ],
+        "forward_pairs": [("0.2.0", "0.3.0"), ("0.3.0", "0.4.0"), ("0.4.0", "0.5.0"), ("0.5.0", "0.6.0"), ("0.6.0", "latest")],
+        "reverse_pairs": [("latest", "0.6.0"), ("0.6.0", "0.5.0"), ("0.5.0", "0.4.0"), ("0.4.0", "0.3.0"), ("0.3.0", "0.2.0")],
         "skip_pairs": [
             ("0.2.0", "0.4.0"),  # Skip 0.3.0
             ("0.3.0", "0.6.0"),  # Skip 0.4.0, 0.5.0
-            ("0.4.0", "latest"), # Skip 0.5.0, 0.6.0
-            ("0.2.0", "latest")  # Skip all intermediate
-        ]
+            ("0.4.0", "latest"),  # Skip 0.5.0, 0.6.0
+            ("0.2.0", "latest"),  # Skip all intermediate
+        ],
     }
 
 
@@ -295,7 +233,7 @@ def migration_test_logging(request):
 @pytest.fixture
 def docker_compose_file():
     """Return path to docker-compose file for PostgreSQL testing."""
-    compose_content = '''
+    compose_content = """
 version: "3.9"
 
 networks:
@@ -350,13 +288,13 @@ services:
     networks: [migration_test]
     labels:
       migration-test: "true"
-'''
+"""
 
     # Write compose file to temporary location
     compose_file = Path("tests/migration/docker-compose.test.yml")
     compose_file.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(compose_file, 'w') as f:
+    with open(compose_file, "w") as f:
         f.write(compose_content)
 
     logger.info(f"📄 Created docker-compose file: {compose_file}")
@@ -369,21 +307,21 @@ def performance_thresholds():
     """Define performance thresholds for migration tests."""
     return {
         "sqlite_upgrade": {
-            "max_duration": 30,      # seconds
-            "max_memory_mb": 256     # MB
+            "max_duration": 30,  # seconds
+            "max_memory_mb": 256,  # MB
         },
         "postgres_upgrade": {
-            "max_duration": 120,     # seconds
-            "max_memory_mb": 512     # MB
+            "max_duration": 120,  # seconds
+            "max_memory_mb": 512,  # MB
         },
         "large_dataset": {
-            "max_duration": 300,     # seconds
-            "max_memory_mb": 1024    # MB
+            "max_duration": 300,  # seconds
+            "max_memory_mb": 1024,  # MB
         },
         "skip_version": {
-            "max_duration": 60,      # seconds
-            "max_memory_mb": 512     # MB
-        }
+            "max_duration": 60,  # seconds
+            "max_memory_mb": 512,  # MB
+        },
     }
 
 
@@ -419,7 +357,8 @@ def test_result_collector():
         results_file = Path("tests/migration/reports/test_results.json")
         # Standard
         import json
-        with open(results_file, 'w') as f:
+
+        with open(results_file, "w") as f:
             json.dump(results, f, indent=2)
         logger.info(f"💾 Saved {len(results)} test results to {results_file}")
 
@@ -430,21 +369,18 @@ def pytest_generate_tests(metafunc):
     if "version_pair" in metafunc.fixturenames:
         # Generate version pairs for forward migration testing (n-2 policy)
         pairs = VersionConfig.get_forward_migration_pairs()
-        metafunc.parametrize("version_pair", pairs,
-                           ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
+        metafunc.parametrize("version_pair", pairs, ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
 
     elif "reverse_version_pair" in metafunc.fixturenames:
         # Generate version pairs for reverse migration testing (n-2 policy)
         pairs = VersionConfig.get_reverse_migration_pairs()
-        metafunc.parametrize("reverse_version_pair", pairs,
-                           ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
+        metafunc.parametrize("reverse_version_pair", pairs, ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
 
     elif "skip_version_pair" in metafunc.fixturenames:
         # Generate version pairs for skip-version migration testing (n-2 policy)
         pairs = VersionConfig.get_skip_version_pairs()
         if pairs:  # Only parametrize if we have pairs
-            metafunc.parametrize("skip_version_pair", pairs,
-                               ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
+            metafunc.parametrize("skip_version_pair", pairs, ids=[f"{p[0]}-to-{p[1]}" for p in pairs])
 
 
 # Mock fixtures for testing without containers (if needed)

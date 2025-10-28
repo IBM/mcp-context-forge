@@ -45,7 +45,9 @@ async def main():
     # Step 1: Load raw employee data
     print("\n📊 Step 1: Loading raw employee data...")
 
-    employee_data_path = Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
+    employee_data_path = (
+        Path(__file__).parent.parent / "sample_data" / "employee_data.csv"
+    )
 
     load_result = await client.call_tool(
         "load_dataset",
@@ -83,7 +85,7 @@ async def main():
     if raw_analysis["success"]:
         analysis = raw_analysis["analysis"]
         basic_info = analysis["basic_info"]
-        print(f"✅ Raw data analysis:")
+        print("✅ Raw data analysis:")
         print(f"   • Shape: {basic_info['shape']}")
         print(f"   • Columns: {basic_info['shape'][1]}")
         print(f"   • Missing values: {sum(basic_info['missing_values'].values())}")
@@ -124,14 +126,16 @@ async def main():
     if cleaning_result["success"]:
         cleaned_id = cleaning_result["new_dataset_id"]
         summary = cleaning_result["transformation_summary"]
-        print(f"✅ Data cleaning completed:")
+        print("✅ Data cleaning completed:")
         print(f"   • New dataset ID: {cleaned_id}")
         print(f"   • Operations applied: {len(summary.get('transformation_log', []))}")
 
         # Show transformation effects
         if "shape_changes" in summary:
             shape_changes = summary["shape_changes"]
-            print(f"   • Shape change: {shape_changes.get('before')} → {shape_changes.get('after')}")
+            print(
+                f"   • Shape change: {shape_changes.get('before')} → {shape_changes.get('after')}"
+            )
     else:
         cleaned_id = dataset_id  # Fallback to original
         print(f"❌ Cleaning failed: {cleaning_result.get('error')}")
@@ -172,7 +176,7 @@ async def main():
     if feature_result["success"]:
         featured_id = feature_result["new_dataset_id"]
         summary = feature_result["transformation_summary"]
-        print(f"✅ Feature engineering completed:")
+        print("✅ Feature engineering completed:")
         print(f"   • New dataset ID: {featured_id}")
 
         # Show new features created
@@ -211,7 +215,7 @@ async def main():
 
     if scaling_result["success"]:
         scaled_id = scaling_result["new_dataset_id"]
-        print(f"✅ Scaling and normalization completed:")
+        print("✅ Scaling and normalization completed:")
         print(f"   • Final dataset ID: {scaled_id}")
     else:
         scaled_id = featured_id  # Fallback
@@ -242,7 +246,7 @@ async def main():
 
     if column_result["success"]:
         final_id = column_result["dataset_id"]
-        print(f"✅ Column operations completed:")
+        print("✅ Column operations completed:")
         print(f"   • Dataset updated in place: {final_id}")
     else:
         final_id = scaled_id
@@ -266,7 +270,7 @@ async def main():
     if final_analysis["success"]:
         analysis = final_analysis["analysis"]
         basic_info = analysis["basic_info"]
-        print(f"✅ Final dataset analysis:")
+        print("✅ Final dataset analysis:")
         print(f"   • Shape: {basic_info['shape']}")
         print(f"   • Columns: {basic_info['shape'][1]}")
         print(f"   • Missing values: {sum(basic_info['missing_values'].values())}")
@@ -274,9 +278,15 @@ async def main():
         # Show new feature statistics
         if "descriptive_stats" in analysis:
             desc_stats = analysis["descriptive_stats"]
-            if "numeric_columns" in desc_stats and "salary_x_age" in desc_stats["numeric_columns"]:
+            if (
+                "numeric_columns" in desc_stats
+                and "salary_x_age" in desc_stats["numeric_columns"]
+            ):
                 salary_x_age = desc_stats["numeric_columns"]["salary_x_age"]
-                print(f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, " f"Std: {salary_x_age.get('std', 0):.2f}")
+                print(
+                    f"   • Salary*Age interaction - Mean: {salary_x_age.get('mean', 0):.2f}, "
+                    f"Std: {salary_x_age.get('std', 0):.2f}"
+                )
 
     # Step 8: Transformation pipeline summary
     print("\n📋 Step 8: Querying transformation results...")
@@ -302,7 +312,11 @@ async def main():
         if "data" in query_data:
             print("✅ Sample of transformation results:")
             for i, row in enumerate(query_data["data"][:5]):
-                print(f"   • Row {i+1}: {row['department']}, " f"Salary=${row['annual_salary']:.2f}, " f"Salary*Age={row['salary_x_age']:.2f}")
+                print(
+                    f"   • Row {i + 1}: {row['department']}, "
+                    f"Salary=${row['annual_salary']:.2f}, "
+                    f"Salary*Age={row['salary_x_age']:.2f}"
+                )
 
     # Step 9: Create visualization of transformed data
     print("\n📈 Step 9: Visualizing transformation results...")
@@ -322,7 +336,9 @@ async def main():
 
     if viz_result["success"]:
         viz_info = viz_result["visualization"]
-        print(f"✅ Created transformation visualization: {viz_info.get('filename', 'N/A')}")
+        print(
+            f"✅ Created transformation visualization: {viz_info.get('filename', 'N/A')}"
+        )
 
     # Final summary
     print("\n🎉 Data Transformation Pipeline Complete!")

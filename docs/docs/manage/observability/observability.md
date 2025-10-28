@@ -4,14 +4,90 @@ MCP Gateway includes production-grade OpenTelemetry instrumentation for distribu
 
 ## Overview
 
-The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend:
+The observability implementation is **vendor-agnostic** and works with any OTLP-compatible backend. MCP Gateway supports multiple observability backends, each optimized for different use cases.
 
-- **[Arize Phoenix](https://github.com/Arize-ai/phoenix)** - AI/LLM-focused observability
-- **[Jaeger](https://www.jaegertracing.io/)** - Open source distributed tracing
-- **[Zipkin](https://zipkin.io/)** - Distributed tracing system
-- **[Grafana Tempo](https://grafana.com/oss/tempo/)** - High-scale distributed tracing
-- **Datadog, New Relic, Honeycomb** - Commercial APM solutions
-- **Console** - Debug output to stdout (development)
+## Recommended Backend Options
+
+### Arize Phoenix - AI/LLM-Focused Observability
+
+**Best for**: AI applications, LLM debugging, and prompt optimization
+
+[Arize Phoenix](https://github.com/Arize-ai/phoenix) is an open-source AI observability platform specifically designed for LLM applications and AI systems. Built on OpenTelemetry, it provides specialized features for understanding AI application behavior.
+
+**Key Features**:
+
+- **LLM Tracing**: Purpose-built for tracking LLM calls, token usage, and model performance
+- **Evaluation Tools**: Built-in evaluators for response quality, retrieval accuracy, and hallucination detection
+- **Prompt Playground**: Interactive environment for optimizing prompts with version control and experimentation
+- **Framework Support**: Native integrations with LlamaIndex, LangChain, Haystack, DSPy, and major LLM providers
+- **Cost Tracking**: Monitor token usage and API costs across different providers
+- **Zero Lock-in**: Fully open source and self-hostable with no feature gates
+
+**Ideal Use Cases**:
+
+- Debugging RAG (Retrieval-Augmented Generation) pipelines
+- Optimizing prompt templates and model parameters
+- Tracking LLM performance metrics and costs
+- Evaluating response quality and accuracy
+
+**Transport**: Uses OTLP (OpenTelemetry Protocol) via gRPC
+
+### Jaeger - Production-Grade Distributed Tracing
+
+**Best for**: Microservices architectures, production deployments, and general-purpose tracing
+
+[Jaeger](https://www.jaegertracing.io/) is a mature, battle-tested distributed tracing platform originally created by Uber and now a CNCF graduated project. It excels at monitoring complex distributed systems.
+
+**Key Features**:
+
+- **Proven Scale**: Handles high-volume production environments with battle-tested reliability
+- **Full Observability**: Comprehensive request flow visualization across microservices
+- **Multiple Storage Backends**: Supports Elasticsearch, Cassandra, and other scalable storage solutions
+- **Kubernetes Native**: Deep integration with cloud-native environments
+- **Advanced Sampling**: Configurable sampling strategies (constant, probabilistic, rate-limiting)
+- **OpenTelemetry Integration**: Full OTLP support in v2 with native OpenTelemetry data model
+
+**Ideal Use Cases**:
+
+- Large-scale microservices deployments
+- Performance bottleneck identification
+- Service dependency mapping
+- Root cause analysis of distributed failures
+
+**Transport**: Supports both native Jaeger protocol and OTLP
+
+### Grafana Tempo - Cost-Efficient High-Scale Tracing
+
+**Best for**: High-volume environments, cost-conscious deployments, and Grafana ecosystem users
+
+[Grafana Tempo](https://grafana.com/oss/tempo/) is a high-scale, low-cost distributed tracing backend that eliminates expensive indexing by leveraging object storage (S3, GCS, Azure Blob).
+
+**Key Features**:
+
+- **Extreme Cost Efficiency**: Uses cheap object storage instead of expensive databases (Elasticsearch/Cassandra)
+- **Massive Scale**: Designed to handle 100% trace capture without prohibitive costs
+- **No Heavy Indexing**: Lightweight bloom filters instead of full-text indexes reduce storage costs dramatically
+- **TraceQL Query Language**: Powerful query language inspired by PromQL and LogQL
+- **Grafana Ecosystem Integration**: Deep integration with Grafana, Prometheus, Loki, and Mimir
+- **Multi-Protocol Support**: Compatible with Jaeger, Zipkin, OpenCensus, and OpenTelemetry
+
+**Ideal Use Cases**:
+
+- High-volume microservices (170k+ spans/second proven in production)
+- Cost-sensitive environments requiring long trace retention
+- Organizations already using Grafana stack
+- Teams wanting 100% trace capture without sampling
+
+**Transport**: Uses OTLP (OpenTelemetry Protocol) via gRPC
+
+### Other Compatible Backends
+
+The OTLP exporter also works with commercial APM solutions:
+
+- **Datadog APM** - Full-featured commercial observability platform
+- **New Relic** - Cloud-based application performance monitoring
+- **Honeycomb** - Observability for production systems
+- **Zipkin** - Lightweight distributed tracing (legacy but widely supported)
 
 ## What Gets Traced
 
@@ -29,12 +105,11 @@ The observability implementation is **vendor-agnostic** and works with any OTLP-
 The observability packages are included in the Docker containers by default. For local development:
 
 ```bash
-# Install with observability support
+# Install base gateway with core observability support
 pip install mcp-contextforge-gateway[observability]
-
-# Or add all backends
-pip install mcp-contextforge-gateway[observability-all]
 ```
+
+**Important**: Only one exporter backend should be installed at a time - they are mutually exclusive. Install the specific backend package based on your chosen observability platform (see backend-specific instructions in the "Start Your Backend" section below).
 
 ### 2. Configure Environment
 
@@ -63,7 +138,11 @@ export OTEL_EXPORTER_OTLP_INSECURE=true
 Choose your preferred observability backend:
 
 #### Phoenix (AI/LLM Focus)
+
 ```bash
+# Install Phoenix exporter backend
+pip install opentelemetry-exporter-otlp-proto-grpc
+
 # Start Phoenix
 docker run -d \
   --name phoenix \
@@ -80,7 +159,11 @@ export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 #### Jaeger
+
 ```bash
+# Install Jaeger exporter backend
+pip install opentelemetry-exporter-jaeger
+
 # Start Jaeger
 docker run -d \
   --name jaeger \
@@ -97,7 +180,11 @@ export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 #### Zipkin
+
 ```bash
+# Install Zipkin exporter backend
+pip install opentelemetry-exporter-zipkin
+
 # Start Zipkin
 docker run -d \
   --name zipkin \
@@ -113,7 +200,11 @@ export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 #### Grafana Tempo
+
 ```bash
+# Install OTLP exporter backend (Tempo uses OTLP)
+pip install opentelemetry-exporter-otlp-proto-grpc
+
 # Start Tempo
 docker run -d \
   --name tempo \
@@ -128,6 +219,7 @@ export OTEL_SERVICE_NAME=mcp-gateway
 ```
 
 #### Console (Development)
+
 ```bash
 # For debugging - prints traces to stdout
 export OTEL_TRACES_EXPORTER=console
@@ -216,6 +308,7 @@ Each span includes standard attributes:
 ### Error Tracking
 
 Failed operations include:
+
 - `error`: `true`
 - `error.type`: Exception class name
 - `error.message`: Error description
@@ -246,15 +339,20 @@ spec:
   template:
     spec:
       containers:
+
       - name: gateway
         image: ghcr.io/ibm/mcp-context-forge:0.8.0
         env:
+
         - name: OTEL_ENABLE_OBSERVABILITY
           value: "true"
+
         - name: OTEL_TRACES_EXPORTER
           value: "otlp"
+
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
           value: "http://otel-collector:4317"
+
         - name: OTEL_SERVICE_NAME
           valueFrom:
             fieldRef:
@@ -289,6 +387,7 @@ python tests/integration/helpers/trace_generator.py
 ```
 
 This will send sample traces for:
+
 - Tool invocations
 - Prompt rendering
 - Resource fetching
@@ -300,16 +399,19 @@ This will send sample traces for:
 ### No Traces Appearing
 
 1. Check observability is enabled:
+
    ```bash
    echo $OTEL_ENABLE_OBSERVABILITY  # Should be "true"
    ```
 
 2. Verify endpoint is reachable:
+
    ```bash
    curl -v http://localhost:4317  # Should connect
    ```
 
 3. Use console exporter for debugging:
+
    ```bash
    export OTEL_TRACES_EXPORTER=console
    mcpgateway  # Traces will print to stdout
@@ -318,6 +420,7 @@ This will send sample traces for:
 ### High Memory Usage
 
 Reduce batch size and queue limits:
+
 ```bash
 export OTEL_BSP_MAX_QUEUE_SIZE=512
 export OTEL_BSP_MAX_EXPORT_BATCH_SIZE=128
@@ -326,6 +429,7 @@ export OTEL_BSP_MAX_EXPORT_BATCH_SIZE=128
 ### Missing Spans
 
 Check sampling rate:
+
 ```bash
 # Temporarily disable sampling
 export OTEL_TRACES_SAMPLER=always_on

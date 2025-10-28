@@ -1093,10 +1093,13 @@ class TestResourceAPIs:
             "visibility": "private"
         }
 
-        await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response=await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        resource = response.json()
+        assert resource["name"] == "test_doc"
+        resource_id = resource["id"]
 
         # Read the resource
-        response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1114,11 +1117,14 @@ class TestResourceAPIs:
             "visibility": "private"
         }
 
-        await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        response_resource = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        resource = response_resource.json()
+        assert resource["name"] == "update_test"
+        resource_id = resource["id"]
 
         # Update the resource
         update_data = {"content": "Updated content", "description": "Updated description"}
-        response = await client.put(f"/resources/{resource_data['resource']['uri']}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1152,10 +1158,11 @@ class TestResourceAPIs:
             "visibility": "private"
         }
 
-        await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        resource_id = create_response.json()["id"]
 
         # Delete the resource
-        response = await client.delete(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1168,9 +1175,13 @@ class TestResourceAPIs:
     async def test_resource_uri_conflict(self, client: AsyncClient, mock_auth):
         """Test creating resource with duplicate URI."""
         resource_data = {
-            "resource": {"uri": "duplicate/resource", "name": "duplicate", "content": "test"},
-            "team_id": None,
-            "visibility": "private"
+            "resource": {
+                "uri": "duplicate/resource",
+                "name": "duplicate",
+                "content": "test",
+                "team_id": None,
+                "visibility": "private"
+            }
         }
 
         # Create first resource
@@ -1241,17 +1252,19 @@ class TestResourceAPIs:
         assert response.status_code == 422
 
     async def test_update_resource_success_and_invalid(self, client: AsyncClient, mock_auth):
-        """Test PUT /resources/{uri:path} - update resource success and invalid uri."""
+        """Test PUT /resources/{resource_id} - update resource success and invalid uri."""
         # Create a resource first
         resource_data = {
             "resource": {"uri": "test/update2", "name": "update2", "content": "original"},
             "team_id": None,
             "visibility": "private"
         }
-        await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        created_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
+        resource_id = created_response.json()["id"]
+        assert created_response.status_code == 200
         # Update
         update_data = {"content": "updated content"}
-        response = await client.put(f"/resources/{resource_data['resource']['uri']}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/resources/{resource_id}", json=update_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["uri"] == resource_data["resource"]["uri"]
@@ -1262,9 +1275,14 @@ class TestResourceAPIs:
     async def test_resource_uri_conflict(self, client: AsyncClient, mock_auth):
         """Test creating resource with duplicate URI."""
         resource_data = {
-            "resource": {"uri": "duplicate/resource", "name": "duplicate", "content": "test"},
-            "team_id": None,
-            "visibility": "private"
+            "resource": {
+                "uri": "duplicate/resource",
+                "name": "duplicate",
+                "content": "test",
+                "team_id": "1",
+                "owner_email": "user@example.com",
+                "visibility": "private"
+            }
         }
 
         # Create first resource
@@ -1273,7 +1291,7 @@ class TestResourceAPIs:
 
         # Try to create duplicate
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
-        assert response.status_code in [400, 409]
+        assert response.status_code == 409
         resp_json = response.json()
         if "message" in resp_json:
             assert "already exists" in resp_json["message"]
@@ -1356,7 +1374,7 @@ class TestPromptAPIs:
         assert "HTML tags" in str(response.json())
 
     async def test_get_prompt_with_args(self, client: AsyncClient, mock_auth):
-        """Test POST /prompts/{name} - execute prompt with arguments."""
+        """Test POST /prompts/{prompt_id} - execute prompt with arguments."""
         # First create a prompt
         prompt_data = {
             "prompt": {
@@ -1369,10 +1387,11 @@ class TestPromptAPIs:
             "visibility": "private"
         }
 
-        await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        prompt_id = create_response.json()["id"]
 
         # Execute the prompt with arguments
-        response = await client.post(f"/prompts/{prompt_data['prompt']['name']}", json={"name": "Alice", "company": "Acme Corp"}, headers=TEST_AUTH_HEADER)
+        response = await client.post(f"/prompts/{prompt_id}", json={"name": "Alice", "company": "Acme Corp"}, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1380,7 +1399,7 @@ class TestPromptAPIs:
         assert result["messages"][0]["content"]["text"] == "Hello Alice, welcome to Acme Corp!"
 
     async def test_get_prompt_no_args(self, client: AsyncClient, mock_auth):
-        """Test GET /prompts/{name} - get prompt without executing."""
+        """Test GET /prompts/{prompt_id} - get prompt without executing."""
         # Create a simple prompt
         prompt_data = {
             "prompt": {"name": "simple_prompt", "template": "Simple message", "arguments": []},
@@ -1388,10 +1407,11 @@ class TestPromptAPIs:
             "visibility": "private"
         }
 
-        await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        prompt_id = create_response.json()["id"]
 
         # Get the prompt without arguments
-        response = await client.get(f"/prompts/{prompt_data['prompt']['name']}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1417,7 +1437,7 @@ class TestPromptAPIs:
         assert "deactivated" in response.json()["message"]
 
     async def test_update_prompt(self, client: AsyncClient, mock_auth):
-        """Test PUT /prompts/{name}."""
+        """Test PUT /prompts/{prompt_id}."""
         # Create a prompt
         prompt_data = {
             "prompt": {"name": "update_prompt", "description": "Original description", "template": "Original template", "arguments": []},
@@ -1425,11 +1445,11 @@ class TestPromptAPIs:
             "visibility": "private"
         }
 
-        await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
-
+        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        prompt_id = create_response.json()["id"]
         # Update the prompt
         update_data = {"description": "Updated description", "template": "Updated template with {{ param }}"}
-        response = await client.put(f"/prompts/{prompt_data['prompt']['name']}", json=update_data, headers=TEST_AUTH_HEADER)
+        response = await client.put(f"/prompts/{prompt_id}", json=update_data, headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
@@ -1437,7 +1457,7 @@ class TestPromptAPIs:
         assert result["template"] == update_data["template"]
 
     async def test_delete_prompt(self, client: AsyncClient, mock_auth):
-        """Test DELETE /prompts/{name}."""
+        """Test DELETE /prompts/{prompt_id}."""
         # Create a prompt
         prompt_data = {
             "prompt": {"name": "delete_prompt", "template": "To be deleted", "arguments": []},
@@ -1445,10 +1465,10 @@ class TestPromptAPIs:
             "visibility": "private"
         }
 
-        await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
-
+        create_response = await client.post("/prompts", json=prompt_data, headers=TEST_AUTH_HEADER)
+        prompt_id = create_response.json()["id"]
         # Delete the prompt
-        response = await client.delete(f"/prompts/{prompt_data['prompt']['name']}", headers=TEST_AUTH_HEADER)
+        response = await client.delete(f"/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1457,8 +1477,8 @@ class TestPromptAPIs:
     async def test_prompt_name_conflict(self, client: AsyncClient, mock_auth):
         """Test creating prompt with duplicate name."""
         prompt_data = {
-            "prompt": {"name": "duplicate_prompt", "template": "Test", "arguments": []},
-            "team_id": None,
+            "prompt": {"name": "duplicate_prompt", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "owner@example.com", "visibility": "private"},
+            "team_id": "1",
             "visibility": "private"
         }
 
@@ -1516,8 +1536,8 @@ class TestPromptAPIs:
     async def test_create_prompt_duplicate_name(self, client: AsyncClient, mock_auth):
         """Test POST /prompts with duplicate name returns 409 or 400."""
         prompt_data = {
-            "prompt": {"name": "duplicate_prompt_case", "template": "Test", "arguments": []},
-            "team_id": None,
+            "prompt": {"name": "duplicate_prompt_case", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "owner@example.com", "visibility": "private" },
+            "team_id": "1",
             "visibility": "private"
         }
         # Create first prompt
@@ -2038,7 +2058,8 @@ class TestIntegrationScenarios:
         }
         create_resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_resp.status_code == 200
-        get_resp = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        resource_id = create_resp.json()["id"]
+        get_resp = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert get_resp.status_code == 200
         assert get_resp.json()["uri"] == resource_data["resource"]["uri"]
 
@@ -2104,33 +2125,34 @@ class TestIntegrationScenarios:
         """Test complete resource lifecycle: create, read, update, delete."""
         # Create
         resource_data = {
-            "resource": {"uri": "test/lifecycle", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
+            "resource": {"uri": "file:///home/user/documents/report.pdf", "name": "lifecycle_test", "content": "Initial content", "mimeType": "text/plain"},
             "team_id": None,
             "visibility": "private"
         }
 
         create_response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_response.status_code == 200
+        resource_id = create_response.json()["id"]
 
         # Read
-        read_response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        read_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert read_response.status_code == 200
 
         # Update
-        update_response = await client.put(f"/resources/{resource_data['resource']['uri']}", json={"content": "Updated content"}, headers=TEST_AUTH_HEADER)
+        update_response = await client.put(f"/resources/{resource_id}", json={"content": "Updated content"}, headers=TEST_AUTH_HEADER)
         assert update_response.status_code == 200
 
         # Verify update
-        verify_response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        verify_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert verify_response.status_code == 200
         # Note: The actual content check would depend on ResourceContent model structure
 
         # Delete
-        delete_response = await client.delete(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        delete_response = await client.delete(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert delete_response.status_code == 200
 
         # Verify deletion
-        final_response = await client.get(f"/resources/{resource_data['resource']['uri']}", headers=TEST_AUTH_HEADER)
+        final_response = await client.get(f"/resources/{resource_id}", headers=TEST_AUTH_HEADER)
         assert final_response.status_code == 404
 
 

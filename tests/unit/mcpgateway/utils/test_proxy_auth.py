@@ -10,7 +10,6 @@ Tests the new MCP_CLIENT_AUTH_ENABLED and proxy authentication features.
 """
 
 # Standard
-import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
@@ -28,15 +27,16 @@ class TestProxyAuthentication:
     @pytest.fixture
     def mock_settings(self):
         """Create mock settings for testing."""
+
         class MockSettings:
-            jwt_secret_key = 'test-secret'
-            jwt_algorithm = 'HS256'
-            basic_auth_user = 'admin'
-            basic_auth_password = 'password'
+            jwt_secret_key = "test-secret"
+            jwt_algorithm = "HS256"
+            basic_auth_user = "admin"
+            basic_auth_password = "password"
             auth_required = True
             mcp_client_auth_enabled = True
             trust_proxy_auth = False
-            proxy_user_header = 'X-Authenticated-User'
+            proxy_user_header = "X-Authenticated-User"
             require_token_expiration = False
             docs_allow_basic_auth = False
 
@@ -56,7 +56,7 @@ class TestProxyAuthentication:
         mock_settings.mcp_client_auth_enabled = True
         mock_settings.auth_required = True
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             # Test with no credentials should raise exception
             with pytest.raises(HTTPException) as exc_info:
                 await vc.require_auth(mock_request, None, None)
@@ -70,7 +70,7 @@ class TestProxyAuthentication:
         mock_settings.trust_proxy_auth = False
         mock_settings.auth_required = True
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             # Should return anonymous and log warning (warning logged in config)
             result = await vc.require_auth(mock_request, None, None)
             assert result == "anonymous"
@@ -80,9 +80,9 @@ class TestProxyAuthentication:
         """Test proxy authentication with user header."""
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.trust_proxy_auth = True
-        mock_request.headers = {'X-Authenticated-User': 'proxy-user'}
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             result = await vc.require_auth(mock_request, None, None)
             assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
 
@@ -93,7 +93,7 @@ class TestProxyAuthentication:
         mock_settings.trust_proxy_auth = True
         mock_request.headers = {}  # No proxy header
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             result = await vc.require_auth(mock_request, None, None)
             assert result == "anonymous"
 
@@ -102,10 +102,10 @@ class TestProxyAuthentication:
         """Test proxy authentication with custom header name."""
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.trust_proxy_auth = True
-        mock_settings.proxy_user_header = 'X-Remote-User'
-        mock_request.headers = {'X-Remote-User': 'custom-user'}
+        mock_settings.proxy_user_header = "X-Remote-User"
+        mock_request.headers = {"X-Remote-User": "custom-user"}
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             result = await vc.require_auth(mock_request, None, None)
             assert result == {"sub": "custom-user", "source": "proxy", "token": None}
 
@@ -118,7 +118,7 @@ class TestProxyAuthentication:
 
         # Even with proxy trust enabled, if MCP client auth is enabled,
         # it should use standard JWT flow
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             result = await vc.require_auth(mock_request, None, None)
             assert result == "anonymous"  # No token provided, auth not required
 
@@ -128,7 +128,7 @@ class TestProxyAuthentication:
         mock_settings.mcp_client_auth_enabled = True  # Default
         mock_settings.auth_required = False
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             # Should return anonymous when auth not required
             result = await vc.require_auth(mock_request, None, None)
             assert result == "anonymous"
@@ -141,13 +141,13 @@ class TestProxyAuthentication:
 
         mock_settings.mcp_client_auth_enabled = False
         mock_settings.trust_proxy_auth = True
-        mock_request.headers = {'X-Authenticated-User': 'proxy-user'}
+        mock_request.headers = {"X-Authenticated-User": "proxy-user"}
 
         # Create a valid JWT token
-        token = jwt.encode({'sub': 'jwt-user'}, mock_settings.jwt_secret_key, algorithm='HS256')
-        creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
+        token = jwt.encode({"sub": "jwt-user"}, mock_settings.jwt_secret_key, algorithm="HS256")
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
-        with patch.object(vc, 'settings', mock_settings):
+        with patch.object(vc, "settings", mock_settings):
             # When MCP client auth is disabled, proxy takes precedence
             result = await vc.require_auth(mock_request, creds, None)
             assert result == {"sub": "proxy-user", "source": "proxy", "token": None}
@@ -172,7 +172,7 @@ class TestWebSocketAuthentication:
         websocket.close = AsyncMock()
 
         # Mock settings with auth required
-        with patch('mcpgateway.main.settings') as mock_settings:
+        with patch("mcpgateway.main.settings") as mock_settings:
             mock_settings.mcp_client_auth_enabled = True
             mock_settings.auth_required = True
             mock_settings.trust_proxy_auth = False
@@ -197,20 +197,20 @@ class TestWebSocketAuthentication:
 
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
-        token = jwt.encode({'sub': 'test-user'}, 'test-secret', algorithm='HS256')
+        token = jwt.encode({"sub": "test-user"}, "test-secret", algorithm="HS256")
         websocket.query_params = {"token": token}
         websocket.headers = {}
         websocket.accept = AsyncMock()
         websocket.receive_text = AsyncMock(side_effect=Exception("Test complete"))
 
         # Mock settings
-        with patch('mcpgateway.main.settings') as mock_settings:
+        with patch("mcpgateway.main.settings") as mock_settings:
             mock_settings.mcp_client_auth_enabled = True
             mock_settings.auth_required = True
             mock_settings.port = 8000
 
             # Mock verify_jwt_token to succeed
-            with patch('mcpgateway.main.verify_jwt_token', new=AsyncMock(return_value={'sub': 'test-user'})):
+            with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "test-user"})):
                 # First-Party
                 from mcpgateway.main import websocket_endpoint
 
@@ -235,15 +235,15 @@ class TestWebSocketAuthentication:
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
         websocket.query_params = {}
-        websocket.headers = {'X-Authenticated-User': 'proxy-user'}
+        websocket.headers = {"X-Authenticated-User": "proxy-user"}
         websocket.accept = AsyncMock()
         websocket.receive_text = AsyncMock(side_effect=Exception("Test complete"))
 
         # Mock settings for proxy auth
-        with patch('mcpgateway.main.settings') as mock_settings:
+        with patch("mcpgateway.main.settings") as mock_settings:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
-            mock_settings.proxy_user_header = 'X-Authenticated-User'
+            mock_settings.proxy_user_header = "X-Authenticated-User"
             mock_settings.auth_required = False
             mock_settings.port = 8000
 
@@ -288,6 +288,7 @@ class TestWebSocketAuthentication:
     async def test_streamable_http_auth_no_header_denied_when_required(self):
         """Should deny when proxy header missing and auth_required true."""
         from mcpgateway.transports.streamablehttp_transport import streamable_http_auth
+
         scope = {
             "type": "http",
             "path": "/servers/123/mcp",

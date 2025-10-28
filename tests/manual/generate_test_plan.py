@@ -17,7 +17,6 @@ Usage:
 import sys
 import yaml
 from pathlib import Path
-from datetime import datetime
 
 try:
     import openpyxl
@@ -59,22 +58,22 @@ def generate_excel_from_yaml():
 
     # Styles
     styles = {
-        'title': Font(size=16, bold=True, color="1F4E79"),
-        'header_fill': PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid"),
-        'header_font': Font(color="FFFFFF", bold=True),
-        'critical_fill': PatternFill(start_color="C5504B", end_color="C5504B", fill_type="solid"),
-        'critical_font': Font(color="FFFFFF", bold=True)
+        "title": Font(size=16, bold=True, color="1F4E79"),
+        "header_fill": PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid"),
+        "header_font": Font(color="FFFFFF", bold=True),
+        "critical_fill": PatternFill(start_color="C5504B", end_color="C5504B", fill_type="solid"),
+        "critical_font": Font(color="FFFFFF", bold=True),
     }
 
     # Process each YAML file
     for yaml_file in yaml_files:
         try:
-            with open(yaml_file, 'r') as f:
+            with open(yaml_file, "r") as f:
                 yaml_data = yaml.safe_load(f)
 
-            worksheet_name = yaml_data.get('worksheet_name', yaml_file.stem)
-            headers = yaml_data.get('headers', [])
-            tests = yaml_data.get('tests', [])
+            worksheet_name = yaml_data.get("worksheet_name", yaml_file.stem)
+            headers = yaml_data.get("headers", [])
+            tests = yaml_data.get("tests", [])
 
             print(f"\n   📄 {yaml_file.name} → {worksheet_name}")
             print(f"      📊 {len(tests)} tests")
@@ -85,8 +84,8 @@ def generate_excel_from_yaml():
             # Add headers
             for i, header in enumerate(headers, 1):
                 cell = sheet.cell(row=1, column=i, value=header)
-                cell.fill = styles['header_fill']
-                cell.font = styles['header_font']
+                cell.fill = styles["header_fill"]
+                cell.font = styles["header_font"]
 
             # Add test data
             for row_idx, test in enumerate(tests, 2):
@@ -96,8 +95,8 @@ def generate_excel_from_yaml():
 
                     # Apply formatting
                     if header.lower() == "priority" and value == "CRITICAL":
-                        cell.fill = styles['critical_fill']
-                        cell.font = styles['critical_font']
+                        cell.fill = styles["critical_fill"]
+                        cell.font = styles["critical_font"]
                     elif header.lower() == "status":
                         cell.value = "☐"
 
@@ -111,7 +110,7 @@ def generate_excel_from_yaml():
                 width = min(max(max_len + 2, 10), 60)
                 sheet.column_dimensions[get_column_letter(col)].width = width
 
-            print(f"      ✅ Created")
+            print("      ✅ Created")
 
         except Exception as e:
             print(f"      ❌ Failed: {e}")
@@ -120,7 +119,7 @@ def generate_excel_from_yaml():
     output_path = Path("test-plan.xlsx")
 
     try:
-        print(f"\n💾 Saving Excel file...")
+        print("\n💾 Saving Excel file...")
         wb.save(output_path)
         wb.close()  # CRITICAL: Close properly
 
@@ -161,15 +160,15 @@ def get_yaml_value(test, header):
         "Target": "target",
         "Risk Level": "risk_level",
         "Attack Steps": "attack_steps",
-        "Expected Defense": "expected_defense"
+        "Expected Defense": "expected_defense",
     }
 
-    yaml_key = mappings.get(header, header.lower().replace(' ', '_'))
+    yaml_key = mappings.get(header, header.lower().replace(" ", "_"))
     value = test.get(yaml_key, "")
 
     # Handle special cases
     if header in ["SQLite", "PostgreSQL"]:
-        return "✓" if test.get(f'{header.lower()}_support', True) else "❌"
+        return "✓" if test.get(f"{header.lower()}_support", True) else "❌"
     elif header in ["Actual Output", "Actual Status", "Actual Response", "Tester", "Date", "Comments"]:
         return ""  # Empty for tester to fill
     elif header == "Status":

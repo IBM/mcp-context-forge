@@ -8,13 +8,13 @@ Tests for gateway service resource and prompt fetching functionality.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.schemas import GatewayCreate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import PromptCreate, ResourceCreate, ToolCreate
 from mcpgateway.services.gateway_service import GatewayService
 
 
@@ -50,46 +50,27 @@ class TestGatewayResourcesPrompts:
 
             # Mock responses
             mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {
-                "protocolVersion": "0.1.0",
-                "resources": {"listChanged": True},
-                "prompts": {"listChanged": True},
-                "tools": {"listChanged": True}
-            }
+            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
-            mock_tool.model_dump.return_value = {
-                "name": "test_tool",
-                "description": "Test tool",
-                "inputSchema": {}
-            }
+            mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Mock resources response
             mock_resources_response = MagicMock()
             mock_resource = MagicMock()
-            mock_resource.model_dump.return_value = {
-                "uri": "test://resource",
-                "name": "Test Resource",
-                "description": "A test resource",
-                "mime_type": "text/plain"
-            }
+            mock_resource.model_dump.return_value = {"uri": "test://resource", "name": "Test Resource", "description": "A test resource", "mime_type": "text/plain"}
             mock_resources_response.resources = [mock_resource]
             mock_session_instance.list_resources.return_value = mock_resources_response
 
             # Mock prompts response
             mock_prompts_response = MagicMock()
             mock_prompt = MagicMock()
-            mock_prompt.model_dump.return_value = {
-                "name": "test_prompt",
-                "description": "A test prompt",
-                "template": "Test template {{arg}}",
-                "arguments": [{"name": "arg", "type": "string"}]
-            }
+            mock_prompt.model_dump.return_value = {"name": "test_prompt", "description": "A test prompt", "template": "Test template {{arg}}", "arguments": [{"name": "arg", "type": "string"}]}
             mock_prompts_response.prompts = [mock_prompt]
             mock_session_instance.list_prompts.return_value = mock_prompts_response
 
@@ -97,11 +78,7 @@ class TestGatewayResourcesPrompts:
             service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway(
-                "http://test.example.com",
-                {"Authorization": "Bearer token"},
-                "SSE"
-            )
+            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
             # Verify
             assert capabilities["resources"]["listChanged"] is True
@@ -147,20 +124,13 @@ class TestGatewayResourcesPrompts:
 
             # Mock responses - no resources/prompts capabilities
             mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {
-                "protocolVersion": "0.1.0",
-                "tools": {"listChanged": True}
-            }
+            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "tools": {"listChanged": True}}
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
-            mock_tool.model_dump.return_value = {
-                "name": "test_tool",
-                "description": "Test tool",
-                "inputSchema": {}
-            }
+            mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -168,11 +138,7 @@ class TestGatewayResourcesPrompts:
             service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway(
-                "http://test.example.com",
-                None,
-                "SSE"
-            )
+            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify
             assert "resources" not in capabilities
@@ -214,22 +180,13 @@ class TestGatewayResourcesPrompts:
 
             # Mock responses with resources capability
             mock_init_response = MagicMock()
-            mock_init_response.capabilities.model_dump.return_value = {
-                "protocolVersion": "0.1.0",
-                "resources": {"listChanged": True},
-                "prompts": {"listChanged": True},
-                "tools": {"listChanged": True}
-            }
+            mock_init_response.capabilities.model_dump.return_value = {"protocolVersion": "0.1.0", "resources": {"listChanged": True}, "prompts": {"listChanged": True}, "tools": {"listChanged": True}}
             mock_session_instance.initialize.return_value = mock_init_response
 
             # Mock tools response - success
             mock_tools_response = MagicMock()
             mock_tool = MagicMock()
-            mock_tool.model_dump.return_value = {
-                "name": "test_tool",
-                "description": "Test tool",
-                "inputSchema": {}
-            }
+            mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
@@ -243,11 +200,7 @@ class TestGatewayResourcesPrompts:
             service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
-            capabilities, tools, resources, prompts = await service._initialize_gateway(
-                "http://test.example.com",
-                None,
-                "SSE"
-            )
+            capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")
 
             # Verify - should return empty lists for resources/prompts on failure
             assert len(tools) == 1

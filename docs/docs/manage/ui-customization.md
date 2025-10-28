@@ -35,6 +35,7 @@ Every other visual/behaviour change is code-driven.
    RELOAD=true
    ```
    This enables template + static reloads while you work.
+
 2. Start the dev server: `make dev` (serves the UI at http://localhost:8000).
 3. Edit any of the following and refresh your browser:
    - `mcpgateway/templates/admin.html`
@@ -68,12 +69,14 @@ app is mounted behind a proxy.
 ### Document Title & Header
 - Update the `<title>` element and the main `<h1>` block near the top of
   `admin.html` with your organisation's name.
+
 - The secondary copy and links (Docs, GitHub star) live in the same header
   section—edit or remove them as needed.
 
 ### Logo & Favicon
 - Replace the default files in `mcpgateway/static/` (or add your own under
   `static/images/`).
+
 - Update the `<link rel="icon">` and `<img src="...">` references in
   `admin.html` to point to your assets, e.g.
   ```html
@@ -84,6 +87,7 @@ app is mounted behind a proxy.
 ### Colors & Tailwind
 - Tailwind is initialised in `admin.html` via `https://cdn.tailwindcss.com` with
   `darkMode: "class"`.
+
 - Add a custom config block to extend colours/fonts and swap utility classes, for example:
   ```html
   <script>
@@ -119,12 +123,16 @@ app is mounted behind a proxy.
 - `admin.js` powers form helpers (e.g. locking the Tool URL field when MCP is
   selected) and general UX‐polish. Append your scripts there or include a new JS
   file at the end of `admin.html`.
+
 - Use HTMX hooks (`htmx:beforeSwap`, `htmx:afterSwap`, etc.) if you need to
   intercept requests.
+
 - Alpine components live on each panel (look for `x-data="tabs"`, etc.)—extend
   them by adding properties/methods in the `x-data` object.
+
 - Avoid writing raw `innerHTML` with user data to preserve the UI's XSS
   protections; prefer `textContent`.
+
 - Lazy-loaded sections (bulk import, A2A, teams, etc.) are clearly marked in the
   template—remove panels you don't need.
 
@@ -150,6 +158,7 @@ When packaging the gateway:
 
 - **Bake into the image** – copy customised templates/static files during the
   container build.
+
 - **Mount at runtime** – overlay files via volumes:
   ```bash
   docker run \
@@ -158,6 +167,7 @@ When packaging the gateway:
     ghcr.io/ibm/mcp-context-forge:0.8.0
   ```
   Then update template references to point at `static/custom/...`.
+
 - **Fork + rebase** – maintain a thin fork that carries your branding patches.
 
 In Kubernetes, place customised assets in a ConfigMap/Secret and mount over the
@@ -171,6 +181,7 @@ Roll the deployment after changes so the pod picks up the new files.
 1. `make dev` – confirm the UI renders, tabs switch, and tables load as expected.
 2. Optional: `pytest tests/playwright/ -k admin` – run UI smoke tests if you
    altered interaction logic.
+
 3. Verify in a staging/production-like environment that:
    - Static assets resolve behind your proxy (`ROOT_PATH`/`APP_DOMAIN`).
    - Authentication flows still succeed (basic + JWT).

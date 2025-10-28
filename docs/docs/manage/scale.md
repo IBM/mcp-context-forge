@@ -47,12 +47,14 @@ Python's Global Interpreter Lock (GIL) prevents multiple native threads from exe
 MCP Gateway leverages **Pydantic v2.11+** for all request/response validation and schema definitions. Unlike pure Python libraries, Pydantic v2 includes a **Rust-based core** (`pydantic-core`) that significantly improves performance:
 
 **Performance benefits:**
+
 - **5-50x faster validation** compared to Pydantic v1
 - **JSON parsing** in Rust (bypasses GIL for serialization/deserialization)
 - **Schema validation** runs in compiled Rust code
 - **Reduced CPU overhead** for request processing
 
 **Impact on scaling:**
+
 - 5,463 lines of Pydantic schemas (`mcpgateway/schemas.py`)
 - Every API request validated through Rust-optimized code
 - Lower CPU usage per request = higher throughput per worker
@@ -133,11 +135,13 @@ mcpContextForge:
 **CPU**: Allocate 1 CPU core per 2 workers (allows for I/O wait)
 
 **Memory**:
+
 - Base: 256MB
 - Per worker: 128-256MB (depending on workload)
 - Formula: `memory = 256 + (workers × 200)` MB
 
 **Example for 16 workers:**
+
 - CPU: `8-10 cores` (allows headroom)
 - Memory: `3.5-4 GB` (256 + 16×200 = 3.5GB)
 
@@ -180,12 +184,14 @@ PYTHON_GIL=0 python3.14 -m gunicorn ...
 | Multi-process (current) | **No change** (already bypasses GIL) |
 
 **Benefits when available:**
+
 - **True parallel threads**: Multiple threads execute Python code simultaneously
 - **Lower memory overhead**: Threads share memory (vs. separate processes)
 - **Faster inter-thread communication**: Shared memory, no IPC overhead
 - **Better resource efficiency**: One interpreter instance instead of multiple processes
 
 **Trade-offs:**
+
 - **Single-threaded penalty**: 3-15% slower due to fine-grained locking
 - **Library compatibility**: Some C extensions need updates (most popular libraries already compatible)
 - **Different scaling model**: Move from `workers=16` to `workers=2 --threads=32`
@@ -223,6 +229,7 @@ PYTHON_GIL=0 python3.14 -m gunicorn ...
    ```
 
 **Current recommendation**:
+
 - **Production**: Use Python 3.11-3.13 with multi-process Gunicorn (proven, stable)
 - **Testing**: Experiment with Python 3.14 beta in non-production environments
 - **Monitoring**: Watch for library compatibility announcements
@@ -237,6 +244,7 @@ MCP Gateway's architecture already benefits from components that will perform ev
 4. **Stateless design**: No shared mutable state between requests
 
 **Resources:**
+
 - [Python 3.14 Free-Threading Guide](https://www.pythoncheatsheet.org/blog/python-3-14-breaking-free-from-gil)
 - [PEP 703: Making the GIL Optional](https://peps.python.org/pep-0703/)
 - [Python 3.14 Release Schedule](https://peps.python.org/pep-0745/)
@@ -270,6 +278,11 @@ DATABASE_URL=postgresql+asyncpg://user:pass@postgres:5432/mcp
 │                      Load Balancer                          │
 │                    (Kubernetes Service)                     │
 └────────────┬────────────────────────────────┬───────────────┘
+             │                                │
+    ┌────────▼─────────┐            ┌────────▼─────────┐
+    │  Nginx Cache 1   │            │  Nginx Cache 2   │
+    │  (proxy layer)   │            │  (proxy layer)   │
+    └────────┬─────────┘            └────────┬─────────┘
              │                                │
     ┌────────▼─────────┐            ┌────────▼─────────┐
     │  Gateway Pod 1   │            │  Gateway Pod 2   │
@@ -373,9 +386,11 @@ kubectl get hpa -n mcp-gateway
 **Total capacity** = `pods × workers × requests_per_second`
 
 **Example:**
+
 - 10 pods × 8 workers × 100 RPS = **8,000 RPS**
 
 **Database connections needed:**
+
 - 10 pods × 50 pool size = **500 connections**
 - Add 20% overhead = **600 connections**
 - Set `max_connections=1000` (buffer for maintenance)
@@ -537,10 +552,12 @@ redis:
 ### Redis Sizing
 
 **Memory calculation:**
+
 - Sessions: `concurrent_users × 50KB`
 - Messages: `messages_per_minute × 100KB × (TTL/60)`
 
 **Example:**
+
 - 10,000 users × 50KB = 500MB
 - 1,000 msg/min × 100KB × 10min = 1GB
 - **Total: 1.5GB + 50% overhead = 2.5GB**
@@ -571,15 +588,18 @@ REDIS_URL=redis://redis-cluster:6379/0?cluster=true
 MCP Gateway's technology stack is optimized for high performance:
 
 **Rust-Powered Components:**
+
 - **Pydantic v2** (5-50x faster validation via Rust core)
 - **Uvicorn** (ASGI server with Rust-based httptools)
 
 **Async-First Design:**
+
 - **FastAPI** (async request handling)
 - **SQLAlchemy 2.0** (async database operations)
 - **asyncio** event loop per worker
 
 **Performance characteristics:**
+
 - Request validation: **< 1ms** (Pydantic v2 Rust core)
 - JSON serialization: **3-5x faster** than pure Python
 - Database queries: Non-blocking async I/O
@@ -658,6 +678,200 @@ RETRY_MAX_DELAY=60
 HEALTH_CHECK_INTERVAL=60
 HEALTH_CHECK_TIMEOUT=10
 UNHEALTHY_THRESHOLD=3
+```
+
+### Nginx Caching Proxy (CDN-like Performance)
+
+**Overview**: Deploy an nginx reverse proxy with intelligent caching to dramatically reduce backend load and improve response times.
+
+The MCP Gateway includes a production-ready nginx caching proxy configuration (`nginx/`) with three dedicated cache zones:
+
+1. **Static Assets Cache** (1GB, 30-day TTL): CSS, JS, images, fonts
+2. **API Response Cache** (512MB, 5-minute TTL): Read-only endpoints
+3. **Schema Cache** (256MB, 24-hour TTL): OpenAPI specs, docs
+
+**Performance Benefits**:
+
+- **Static assets**: 80-95% faster (20-50ms → 1-5ms)
+- **API endpoints**: 60-80% faster with cache hits
+- **Backend load**: 60-80% reduction in requests
+- **Cache hit rates**: 40-99% depending on endpoint type
+- **Database pressure**: 40-70% fewer queries
+
+**Docker Compose Setup**:
+
+```bash
+# Start with nginx caching proxy
+docker-compose up -d nginx
+
+# Access via caching proxy
+curl http://localhost:8080/health  # Cached
+curl http://localhost:4444/health  # Direct (bypass cache)
+
+# Verify caching
+curl -I http://localhost:8080/openapi.json | grep X-Cache-Status
+# X-Cache-Status: MISS (first request)
+# X-Cache-Status: HIT  (subsequent requests)
+```
+
+**Kubernetes Deployment**:
+
+Add nginx sidecar to gateway pods:
+
+```yaml
+# production-values.yaml
+mcpContextForge:
+  # Enable nginx caching sidecar
+  nginx:
+    enabled: true
+    cacheSize: 2Gi              # Total cache size
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+  # Gateway configuration remains the same
+  replicaCount: 5
+  resources:
+    limits:
+      cpu: 4000m
+      memory: 8Gi
+```
+
+**Cache Configuration**:
+
+```bash
+# Nginx cache zones are pre-configured in nginx/nginx.conf
+# Adjust TTLs by editing nginx.conf:
+
+# Static assets: 30 days (aggressive caching)
+proxy_cache_valid 200 30d;
+
+# API responses: 5 minutes (balance freshness/performance)
+proxy_cache_valid 200 5m;
+
+# OpenAPI schema: 24 hours (rarely changes)
+proxy_cache_valid 200 24h;
+```
+
+**Cache Bypass Rules**:
+
+Nginx automatically bypasses cache for:
+
+- POST, PUT, PATCH, DELETE requests
+- WebSocket connections (`/servers/*/ws`)
+- Server-Sent Events (`/servers/*/sse`)
+- JSON-RPC endpoint (`/`)
+
+**Monitoring**:
+
+```bash
+# Check cache status (via X-Cache-Status header)
+curl -I http://localhost:8080/tools | grep X-Cache-Status
+
+# View cache size
+docker-compose exec nginx du -sh /var/cache/nginx/*
+
+# Analyze cache hit rate
+docker-compose exec nginx cat /var/log/nginx/access.log | \
+  grep -oP 'cache_status=\K\w+' | sort | uniq -c
+```
+
+**When to Use**:
+
+- ✅ High traffic (>1000 req/sec)
+- ✅ Read-heavy workloads
+- ✅ Static asset delivery
+- ✅ Mobile/remote clients (reduces bandwidth)
+- ❌ Write-heavy workloads (limited benefit)
+- ❌ Real-time updates required (<1 min staleness)
+
+**Documentation**: See `nginx/README.md` for detailed configuration.
+
+---
+
+### Response Compression
+
+**Bandwidth Optimization**: Reduce data transfer by 30-70% with automatic response compression.
+
+MCP Gateway includes built-in response compression middleware that automatically compresses JSON, HTML, CSS, and JavaScript responses:
+
+```bash
+# Enable compression (default: true)
+COMPRESSION_ENABLED=true
+
+# Minimum response size to compress (bytes)
+# Responses smaller than this won't be compressed
+COMPRESSION_MINIMUM_SIZE=500
+
+# Compression quality levels
+COMPRESSION_GZIP_LEVEL=6          # GZip: 1-9 (6=balanced)
+COMPRESSION_BROTLI_QUALITY=4      # Brotli: 0-11 (4=balanced)
+COMPRESSION_ZSTD_LEVEL=3          # Zstd: 1-22 (3=fast)
+```
+
+**Algorithm Priority**: Brotli (best) > Zstd (fast) > GZip (universal)
+
+**Performance Impact**:
+
+- **Bandwidth reduction**: 30-70% for JSON/HTML responses
+- **CPU overhead**: <5% (Brotli level 4, GZip level 6)
+- **Latency**: Minimal (<10ms for typical responses)
+- **Scalability**: Increases effective throughput per pod
+
+**Tuning for Scale**:
+
+```bash
+# High-traffic production (optimize for speed)
+COMPRESSION_GZIP_LEVEL=4          # Faster compression
+COMPRESSION_BROTLI_QUALITY=3      # Lower quality, faster
+COMPRESSION_ZSTD_LEVEL=1          # Fastest
+
+# Bandwidth-constrained (optimize for size)
+COMPRESSION_GZIP_LEVEL=9          # Best compression
+COMPRESSION_BROTLI_QUALITY=11     # Maximum quality
+COMPRESSION_ZSTD_LEVEL=9          # Balanced slow
+
+# Development (disable compression)
+COMPRESSION_ENABLED=false         # No compression overhead
+```
+
+**Benefits at Scale**:
+
+- **Lower bandwidth costs**: 30-70% reduction in egress traffic
+- **Faster response times**: Smaller payloads transfer faster
+- **Higher throughput**: More requests per second with same bandwidth
+- **Better cache hit rates**: Smaller cached responses
+- **Mobile-friendly**: Critical for mobile clients on slow networks
+
+**Kubernetes Configuration**:
+
+```yaml
+# production-values.yaml
+mcpContextForge:
+  config:
+    COMPRESSION_ENABLED: "true"
+    COMPRESSION_MINIMUM_SIZE: "500"
+    COMPRESSION_GZIP_LEVEL: "6"
+    COMPRESSION_BROTLI_QUALITY: "4"
+    COMPRESSION_ZSTD_LEVEL: "3"
+```
+
+**Monitoring Compression**:
+
+```bash
+# Check compression in action
+curl -H "Accept-Encoding: br" https://gateway.example.com/openapi.json -v \
+  | grep -i "content-encoding"
+# Should show: content-encoding: br
+
+# Measure compression ratio
+UNCOMPRESSED=$(curl -s https://gateway.example.com/openapi.json | wc -c)
+COMPRESSED=$(curl -H "Accept-Encoding: br" -s https://gateway.example.com/openapi.json | wc -c)
+echo "Compression ratio: $((100 - COMPRESSED * 100 / UNCOMPRESSED))%"
 ```
 
 ---
@@ -744,6 +958,7 @@ Response time histogram:
 ```
 
 **Key metrics:**
+
 - **Requests/sec**: Throughput (target: >1000 RPS per pod)
 - **P99 latency**: 99th percentile (target: <500ms)
 - **Error rate**: 5xx responses (target: <0.1%)
@@ -860,12 +1075,14 @@ async def readiness_check(db: Session = Depends(get_db)):
 ```yaml
 # charts/mcp-stack/templates/deployment-mcpgateway.yaml
 containers:
+
   - name: mcp-context-forge
 
     # Startup probe (initial readiness)
     startupProbe:
       exec:
         command:
+
           - python3
           - /app/mcpgateway/utils/db_isready.py
           - --max-tries=1
@@ -900,16 +1117,19 @@ containers:
 ### Probe Tuning Guidelines
 
 **Startup Probe:**
+
 - Use for slow initialization (database migrations, model loading)
 - `failureThreshold × periodSeconds` = max startup time
 - Example: 60 × 5s = 5 minutes
 
 **Readiness Probe:**
+
 - Aggressive: Remove pod from load balancer quickly
 - `failureThreshold` = 3 (fail fast)
 - `periodSeconds` = 10 (frequent checks)
 
 **Liveness Probe:**
+
 - Conservative: Avoid unnecessary restarts
 - `failureThreshold` = 5 (tolerate transient issues)
 - `periodSeconds` = 15 (less frequent)
@@ -958,6 +1178,7 @@ USE_STATEFUL_SESSIONS=true  # Event store in database
 ```
 
 **Limitations:**
+
 - Sessions tied to specific pods
 - Requires sticky sessions (session affinity)
 - Doesn't scale horizontally
@@ -971,6 +1192,7 @@ CACHE_TYPE=redis
 ```
 
 **Benefits:**
+
 - Any pod can handle any request
 - True horizontal scaling
 - Automatic failover
@@ -1011,6 +1233,7 @@ spec:
   type: ClusterIP
   sessionAffinity: None        # No sticky sessions
   ports:
+
     - port: 80
       targetPort: 4444
 ```
@@ -1026,9 +1249,11 @@ metadata:
     nginx.ingress.kubernetes.io/websocket-services: "mcp-gateway-service"
 spec:
   rules:
+
     - host: gateway.example.com
       http:
         paths:
+
           - path: /
             pathType: Prefix
             backend:
@@ -1049,6 +1274,7 @@ Client ← Load Balancer → Pod B (reconnect)
 ```
 
 **Best practices:**
+
 1. Client implements reconnection logic
 2. Server sets `SSE_KEEPALIVE_INTERVAL=30` (keepalive events)
 3. Load balancer timeout > keepalive interval
@@ -1231,29 +1457,36 @@ spec:
     matchLabels:
       app: mcp-gateway
   policyTypes:
+
     - Ingress
     - Egress
   ingress:
+
     - from:
         - podSelector:
             matchLabels:
               app: ingress-nginx
       ports:
+
         - protocol: TCP
           port: 4444
   egress:
+
     - to:
         - podSelector:
             matchLabels:
               app: postgres
       ports:
+
         - protocol: TCP
           port: 5432
+
     - to:
         - podSelector:
             matchLabels:
               app: redis
       ports:
+
         - protocol: TCP
           port: 6379
 ```
@@ -1292,16 +1525,19 @@ helm install prometheus prometheus-community/kube-prometheus-stack \
 ### Key Metrics to Monitor
 
 **Application Metrics:**
+
 - Request rate: `rate(http_requests_total[1m])`
 - Latency: `histogram_quantile(0.99, http_request_duration_seconds)`
 - Error rate: `rate(http_requests_total{status=~"5.."}[1m])`
 
 **System Metrics:**
+
 - CPU usage: `container_cpu_usage_seconds_total`
 - Memory usage: `container_memory_working_set_bytes`
 - Network I/O: `container_network_receive_bytes_total`
 
 **Database Metrics:**
+
 - Connection pool usage: `db_pool_size` / `db_pool_connections_active`
 - Query latency: `db_query_duration_seconds`
 - Deadlocks: `pg_stat_database_deadlocks`
@@ -1314,6 +1550,7 @@ kubectl get hpa -n mcp-gateway -w
 ### Grafana Dashboards
 
 Import dashboards:
+
 1. **Kubernetes Cluster Monitoring** (ID: 7249)
 2. **PostgreSQL** (ID: 9628)
 3. **Redis** (ID: 11835)
@@ -1330,9 +1567,11 @@ metadata:
   namespace: monitoring
 spec:
   groups:
+
     - name: mcp-gateway
       interval: 30s
       rules:
+
         - alert: HighErrorRate
           expr: |
             rate(http_requests_total{status=~"5..", namespace="mcp-gateway"}[5m]) > 0.05

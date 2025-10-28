@@ -8,16 +8,15 @@ both programmatically and via HTTP API calls.
 
 # Standard
 import asyncio
-import json
 import os
 import sys
-from typing import Any, Dict
+from typing import Any
 
 # Third-Party
 import httpx
 
 
-async def test_agent_api(base_url: str = "http://localhost:8000") -> Dict[str, Any]:
+async def test_agent_api(base_url: str = "http://localhost:8000") -> dict[str, Any]:
     """Test the LangChain agent API endpoints.
 
     Args:
@@ -26,14 +25,7 @@ async def test_agent_api(base_url: str = "http://localhost:8000") -> Dict[str, A
     Returns:
         Test results dictionary
     """
-    results = {
-        "health": False,
-        "ready": False,
-        "tools": 0,
-        "chat": False,
-        "a2a": False,
-        "errors": []
-    }
+    results = {"health": False, "ready": False, "tools": 0, "chat": False, "a2a": False, "errors": []}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         try:
@@ -76,11 +68,9 @@ async def test_agent_api(base_url: str = "http://localhost:8000") -> Dict[str, A
                 f"{base_url}/v1/chat/completions",
                 json={
                     "model": "gpt-4o-mini",
-                    "messages": [
-                        {"role": "user", "content": "Say hello briefly"}
-                    ],
-                    "max_tokens": 10
-                }
+                    "messages": [{"role": "user", "content": "Say hello briefly"}],
+                    "max_tokens": 10,
+                },
             )
             if response.status_code == 200:
                 results["chat"] = True
@@ -93,13 +83,7 @@ async def test_agent_api(base_url: str = "http://localhost:8000") -> Dict[str, A
         try:
             # Test A2A endpoint
             response = await client.post(
-                f"{base_url}/a2a",
-                json={
-                    "jsonrpc": "2.0",
-                    "id": "demo-test",
-                    "method": "list_tools",
-                    "params": {}
-                }
+                f"{base_url}/a2a", json={"jsonrpc": "2.0", "id": "demo-test", "method": "list_tools", "params": {}}
             )
             if response.status_code == 200:
                 data = response.json()
@@ -116,7 +100,7 @@ async def test_agent_api(base_url: str = "http://localhost:8000") -> Dict[str, A
     return results
 
 
-def print_results(results: Dict[str, Any]) -> None:
+def print_results(results: dict[str, Any]) -> None:
     """Print test results in a formatted way."""
     print("🎯 Test Results:")
     print("===============")
@@ -132,12 +116,7 @@ def print_results(results: Dict[str, Any]) -> None:
             print(f"   {error}")
 
     # Overall status
-    all_working = (
-        results["health"] and
-        results["ready"] and
-        results["chat"] and
-        results["a2a"]
-    )
+    all_working = results["health"] and results["ready"] and results["chat"] and results["a2a"]
 
     print(f"\n🎉 Overall Status: {'✅ WORKING' if all_working else '❌ ISSUES'}")
 

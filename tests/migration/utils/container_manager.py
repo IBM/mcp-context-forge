@@ -19,7 +19,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ContainerConfig:
     """Configuration for a container instance."""
+
     image: str
     version: str
     db_type: str
@@ -66,10 +67,7 @@ class ContainerManager:
 
         # Set up logging
         if verbose:
-            logging.basicConfig(
-                level=logging.INFO,
-                format='%(asctime)s [%(levelname)s] %(name)s: %(message)s'
-            )
+            logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 
         logger.info(f"🚀 Initialized ContainerManager with runtime={runtime}")
         self._verify_runtime()
@@ -84,8 +82,7 @@ class ContainerManager:
             logger.error(f"❌ {self.runtime} runtime not available: {e}")
             raise RuntimeError(f"{self.runtime} not found or not working")
 
-    def _run_command(self, cmd: List[str], capture_output: bool = False,
-                     check: bool = True, env: Dict[str, str] = None) -> subprocess.CompletedProcess:
+    def _run_command(self, cmd: List[str], capture_output: bool = False, check: bool = True, env: Dict[str, str] = None) -> subprocess.CompletedProcess:
         """Run a command with detailed logging.
 
         Args:
@@ -97,19 +94,13 @@ class ContainerManager:
         Returns:
             CompletedProcess result
         """
-        cmd_str = ' '.join(cmd)
+        cmd_str = " ".join(cmd)
         logger.info(f"🔧 Executing: {cmd_str}")
 
         start_time = time.time()
 
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=capture_output,
-                text=True,
-                check=check,
-                env={**os.environ, **(env or {})}
-            )
+            result = subprocess.run(cmd, capture_output=capture_output, text=True, check=check, env={**os.environ, **(env or {})})
 
             duration = time.time() - start_time
             logger.info(f"✅ Command completed in {duration:.2f}s: {cmd_str}")
@@ -162,11 +153,7 @@ class ContainerManager:
             self._run_command(["make", "docker-prod"], capture_output=True)
 
             # Tag the built image appropriately
-            tag_cmd = [
-                self.runtime, "tag",
-                "mcpgateway/mcpgateway:latest",
-                "ghcr.io/ibm/mcp-context-forge:latest"
-            ]
+            tag_cmd = [self.runtime, "tag", "mcpgateway/mcpgateway:latest", "ghcr.io/ibm/mcp-context-forge:latest"]
             self._run_command(tag_cmd)
             logger.info("✅ Latest image built and tagged successfully")
 
@@ -174,10 +161,7 @@ class ContainerManager:
             logger.error(f"❌ Failed to build latest image: {e}")
             raise
 
-    def start_sqlite_container(self, version: str,
-                              db_file: str = "mcp-alembic-migration-test.db",
-                              extra_env: Dict[str, str] = None,
-                              data_dir: str = None) -> str:
+    def start_sqlite_container(self, version: str, db_file: str = "mcp-alembic-migration-test.db", extra_env: Dict[str, str] = None, data_dir: str = None) -> str:
         """Start SQLite container with mounted test database.
 
         Args:
@@ -234,20 +218,16 @@ class ContainerManager:
                 "PYTHONUNBUFFERED": "1",
                 "HOST": "0.0.0.0",  # Bind to all interfaces for external access
                 "PORT": "4444",
-                **(extra_env or {})
+                **(extra_env or {}),
             },
-            volumes={
-                temp_dir: "/app/data"
-            },
-            labels={"migration-test": "true", "version": version, "db-type": "sqlite"}
+            volumes={temp_dir: "/app/data"},
+            labels={"migration-test": "true", "version": version, "db-type": "sqlite"},
         )
 
         container_id = self._start_container(config)
 
         # Store the data directory as a container label for later retrieval
-        self._run_command([
-            self.runtime, "container", "update", "--label", f"data_dir={temp_dir}", container_id
-        ], check=False)  # Don't fail if labeling doesn't work
+        self._run_command([self.runtime, "container", "update", "--label", f"data_dir={temp_dir}", container_id], check=False)  # Don't fail if labeling doesn't work
 
         return container_id
 
@@ -261,9 +241,7 @@ class ContainerManager:
             Data directory path on host
         """
         try:
-            result = self._run_command([
-                self.runtime, "inspect", "--format", "{{index .Config.Labels \"data_dir\"}}", container_id
-            ], capture_output=True)
+            result = self._run_command([self.runtime, "inspect", "--format", '{{index .Config.Labels "data_dir"}}', container_id], capture_output=True)
             data_dir = result.stdout.strip()
             if data_dir and data_dir != "<no value>":
                 return data_dir
@@ -272,9 +250,7 @@ class ContainerManager:
 
         # Fallback: try to extract from volume mounts
         try:
-            result = self._run_command([
-                self.runtime, "inspect", "--format", "{{range .Mounts}}{{if eq .Destination \"/app/data\"}}{{.Source}}{{end}}{{end}}", container_id
-            ], capture_output=True)
+            result = self._run_command([self.runtime, "inspect", "--format", '{{range .Mounts}}{{if eq .Destination "/app/data"}}{{.Source}}{{end}}{{end}}', container_id], capture_output=True)
             return result.stdout.strip()
         except Exception as e:
             logger.warning(f"⚠️ Could not get data directory from container {container_id[:12]}: {e}")
@@ -341,9 +317,7 @@ class ContainerManager:
         while time.time() - start_time < timeout:
             try:
                 # Check if container is still running
-                result = self._run_command([
-                    self.runtime, "ps", "-q", "--filter", f"id={container_id}"
-                ], capture_output=True, check=False)
+                result = self._run_command([self.runtime, "ps", "-q", "--filter", f"id={container_id}"], capture_output=True, check=False)
 
                 if not result.stdout.strip():
                     # Container stopped - check logs
@@ -356,9 +330,7 @@ class ContainerManager:
                 port = self._get_container_port(container_id, "4444")
                 health_url = f"http://localhost:{port}/health"
 
-                curl_result = self._run_command([
-                    "curl", "-f", "-s", "--max-time", "5", health_url
-                ], capture_output=True, check=False)
+                curl_result = self._run_command(["curl", "-f", "-s", "--max-time", "5", health_url], capture_output=True, check=False)
 
                 if curl_result.returncode == 0:
                     logger.info(f"✅ Container {container_id[:12]} is ready and healthy (response: {curl_result.stdout.strip()[:50]})")
@@ -388,9 +360,7 @@ class ContainerManager:
         Returns:
             Host port number as string
         """
-        result = self._run_command([
-            self.runtime, "port", container_id, container_port
-        ], capture_output=True)
+        result = self._run_command([self.runtime, "port", container_id, container_port], capture_output=True)
 
         # Parse output like "0.0.0.0:32768"
         port_mapping = result.stdout.strip()
@@ -411,12 +381,7 @@ class ContainerManager:
         logger.info(f"🐙 Starting compose stack for version {version}")
         logger.info(f"📄 Using compose file: {compose_file}")
 
-        env = {
-            "IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}",
-            "POSTGRES_PASSWORD": "test_migration_password_123",
-            "POSTGRES_USER": "test_user",
-            "POSTGRES_DB": "mcp_test"
-        }
+        env = {"IMAGE_LOCAL": f"ghcr.io/ibm/mcp-context-forge:{version}", "POSTGRES_PASSWORD": "test_migration_password_123", "POSTGRES_USER": "test_user", "POSTGRES_DB": "mcp_test"}
 
         logger.info(f"🔧 Environment variables: {env}")
 
@@ -456,8 +421,7 @@ class ContainerManager:
         for container_id in container_ids:
             if container_id:
                 # Get service name for this container
-                inspect_cmd = [self.runtime, "inspect", container_id,
-                              "--format", "{{.Config.Labels.\"com.docker.compose.service\"}}"]
+                inspect_cmd = [self.runtime, "inspect", container_id, "--format", '{{.Config.Labels."com.docker.compose.service"}}']
                 inspect_result = self._run_command(inspect_cmd, capture_output=True)
                 service_name = inspect_result.stdout.strip()
                 containers[service_name] = container_id
@@ -478,10 +442,7 @@ class ContainerManager:
         while time.time() - start_time < timeout:
             try:
                 # Try to connect to PostgreSQL
-                result = self._run_command([
-                    self.runtime, "exec", container_id,
-                    "pg_isready", "-U", "test_user", "-d", "mcp_test"
-                ], capture_output=True, check=False)
+                result = self._run_command([self.runtime, "exec", container_id, "pg_isready", "-U", "test_user", "-d", "mcp_test"], capture_output=True, check=False)
 
                 if result.returncode == 0:
                     logger.info(f"✅ PostgreSQL {container_id[:12]} is ready")
@@ -510,9 +471,7 @@ class ContainerManager:
         full_cmd = f"cd /app && python -m alembic {command}"
         logger.info(f"🔧 Running Alembic in {container_id[:12]}: {command}")
 
-        result = self._run_command([
-            self.runtime, "exec", container_id, "sh", "-c", full_cmd
-        ], capture_output=True)
+        result = self._run_command([self.runtime, "exec", container_id, "sh", "-c", full_cmd], capture_output=True)
 
         logger.info(f"✅ Alembic command completed: {command}")
         if result.stdout:
@@ -540,17 +499,18 @@ class ContainerManager:
         try:
             # Check if application is responding to REST API calls using python3
             health_cmd = [
-                self.runtime, "exec", container_id,
-                "python3", "-c",
-                "import urllib.request; "
-                "resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); "
-                "print(resp.read().decode())"
+                self.runtime,
+                "exec",
+                container_id,
+                "python3",
+                "-c",
+                "import urllib.request; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); print(resp.read().decode())",
             ]
             result = self._run_command(health_cmd, capture_output=True)
 
             # If health check passes, return a placeholder indicating schema is ready
             schema_placeholder = f"-- {db_type.upper()} schema managed by application\n"
-            schema_placeholder += f"-- Database initialized and accessible via REST API\n"
+            schema_placeholder += "-- Database initialized and accessible via REST API\n"
             schema_placeholder += f"-- Health check: {result.stdout.strip()}\n"
 
             logger.info(f"✅ Application-managed {db_type} schema verified via health check")
@@ -573,7 +533,7 @@ class ContainerManager:
         self._copy_to_container(container_id, data_file, "/app/seed_data.json")
 
         # Create data loading script
-        load_script = '''
+        load_script = """
 import json
 import sys
 import os
@@ -614,10 +574,10 @@ def load_test_data():
 
 if __name__ == "__main__":
     load_test_data()
-'''
+"""
 
         # Write script to container
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(load_script)
             script_path = f.name
 
@@ -625,12 +585,9 @@ if __name__ == "__main__":
             self._copy_to_container(container_id, script_path, "/app/load_test_data.py")
 
             # Execute data loading
-            result = self._run_command([
-                self.runtime, "exec", container_id,
-                "python", "/app/load_test_data.py"
-            ], capture_output=True)
+            result = self._run_command([self.runtime, "exec", container_id, "python", "/app/load_test_data.py"], capture_output=True)
 
-            logger.info(f"✅ Test data seeded successfully")
+            logger.info("✅ Test data seeded successfully")
             if result.stdout:
                 logger.info(f"📤 Load output: {result.stdout}")
 
@@ -650,7 +607,7 @@ if __name__ == "__main__":
         cmd = [self.runtime, "cp", src_path, f"{container_id}:{dest_path}"]
         self._run_command(cmd)
 
-        logger.debug(f"✅ File copied successfully")
+        logger.debug("✅ File copied successfully")
 
     def get_container_logs(self, container_id: str, tail_lines: int = 50) -> str:
         """Get container logs.
@@ -699,10 +656,7 @@ if __name__ == "__main__":
 
         # Clean up any remaining migration test containers
         try:
-            cleanup_cmd = [
-                self.runtime, "container", "prune", "-f",
-                "--filter", "label=migration-test=true"
-            ]
+            cleanup_cmd = [self.runtime, "container", "prune", "-f", "--filter", "label=migration-test=true"]
             self._run_command(cleanup_cmd, check=False)
             logger.info("✅ All migration test containers cleaned up")
         except Exception as e:

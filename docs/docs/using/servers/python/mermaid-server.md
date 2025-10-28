@@ -52,6 +52,7 @@ make serve-http
 Create and render Mermaid diagrams.
 
 **Parameters:**
+
 - `diagram_type` (required): Type of diagram ("flowchart", "sequence", "gantt", "class", etc.)
 - `mermaid_code` (required): Mermaid syntax code
 - `title`: Diagram title
@@ -65,6 +66,7 @@ Create and render Mermaid diagrams.
 Create flowcharts from structured data.
 
 **Parameters:**
+
 - `nodes` (required): List of node definitions with id, label, and shape
 - `connections` (required): List of connections between nodes
 - `direction`: Flow direction ("TD", "TB", "BT", "LR", "RL") - default: "TD"
@@ -76,6 +78,7 @@ Create flowcharts from structured data.
 Create sequence diagrams.
 
 **Parameters:**
+
 - `participants` (required): List of participant names
 - `messages` (required): List of message definitions
 - `title`: Sequence diagram title
@@ -86,6 +89,7 @@ Create sequence diagrams.
 Create Gantt charts from task data.
 
 **Parameters:**
+
 - `title` (required): Chart title
 - `tasks` (required): List of task definitions with name, start, duration/end
 - `output_format`: Output format - default: "svg"
@@ -95,12 +99,14 @@ Create Gantt charts from task data.
 Validate Mermaid syntax.
 
 **Parameters:**
+
 - `mermaid_code` (required): Mermaid code to validate
 
 ### get_templates
 Get diagram templates.
 
 **Parameters:**
+
 - `diagram_type`: Specific diagram type to get templates for
 
 ## Configuration

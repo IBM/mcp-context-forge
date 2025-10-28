@@ -118,6 +118,7 @@ services:
   mcpgateway:
     image: ghcr.io/ibm/mcp-context-forge:0.8.0
     environment:
+
       - LOG_LEVEL=INFO
       # Default: logs to stdout/stderr only (recommended for containers)
       # Optional: Enable file logging (no rotation)
@@ -145,8 +146,10 @@ spec:
   template:
     spec:
       containers:
+
       - name: mcpgateway
         env:
+
         - name: LOG_LEVEL
           value: "INFO"
         # Default: logs to stdout/stderr (recommended for Kubernetes)
@@ -245,8 +248,10 @@ grep -E "HTTP|request" logs/mcpgateway.log
 # Configure Filebeat to ship logs
 # filebeat.yml
 filebeat.inputs:
+
 - type: log
   paths:
+
     - /var/log/mcpgateway/*.log
   json.keys_under_root: true
   json.add_error_key: true
@@ -260,6 +265,7 @@ logs_config:
   logs_dd_url: intake.logs.datadoghq.com:10516
 
 logs:
+
   - type: file
     path: "/var/log/mcpgateway/*.log"
     service: mcpgateway
@@ -272,8 +278,10 @@ logs:
 # Use log-based metrics with promtail
 # promtail-config.yml
 scrape_configs:
+
 - job_name: mcpgateway
   static_configs:
+
   - targets:
     - localhost
     labels:

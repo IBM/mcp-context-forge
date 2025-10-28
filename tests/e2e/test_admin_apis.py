@@ -59,6 +59,7 @@ setup_logging()
 
 # pytest.skip("Temporarily disabling this suite", allow_module_level=True)
 
+
 # -------------------------
 # Test Configuration
 # -------------------------
@@ -72,16 +73,17 @@ def create_test_jwt_token():
 
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
     payload = {
-        'sub': 'admin@example.com',
-        'email': 'admin@example.com',
-        'iat': int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
-        'exp': int(expire.timestamp()),
-        'iss': 'mcpgateway',
-        'aud': 'mcpgateway-api',
+        "sub": "admin@example.com",
+        "email": "admin@example.com",
+        "iat": int(datetime.datetime.now(datetime.timezone.utc).timestamp()),
+        "exp": int(expire.timestamp()),
+        "iss": "mcpgateway",
+        "aud": "mcpgateway-api",
     }
 
     # Use the test JWT secret key
-    return jwt.encode(payload, 'my-test-key', algorithm='HS256')
+    return jwt.encode(payload, "my-test-key", algorithm="HS256")
+
 
 TEST_JWT_TOKEN = create_test_jwt_token()
 TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
@@ -90,12 +92,7 @@ TEST_AUTH_HEADER = {"Authorization": f"Bearer {TEST_JWT_TOKEN}"}
 # Test user for the updated authentication system
 from tests.utils.rbac_mocks import create_mock_email_user
 
-TEST_USER = create_mock_email_user(
-    email="admin@example.com",
-    full_name="Test Admin",
-    is_admin=True,
-    is_active=True
-)
+TEST_USER = create_mock_email_user(email="admin@example.com", full_name="Test Admin", is_admin=True, is_active=True)
 
 
 # -------------------------
@@ -124,11 +121,7 @@ async def client(app_with_temp_db):
 
     # Create mock user context with actual test database session
     test_db_session = get_test_db_session()
-    test_user_context = create_mock_user_context(
-        email="admin@example.com",
-        full_name="Test Admin",
-        is_admin=True
-    )
+    test_user_context = create_mock_user_context(email="admin@example.com", full_name="Test Admin", is_admin=True)
     test_user_context["db"] = test_db_session
 
     # Mock admin authentication function
@@ -214,8 +207,12 @@ class TestAdminServerAPIs:
         """Test GET /admin/servers returns list of servers."""
         response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        # Don't assume empty - accept either the legacy list response
+        # or the newer paginated dict response with 'data' key.
+        resp_json = response.json()
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json and isinstance(resp_json["data"], list)
 
     async def test_admin_server_lifecycle(self, client: AsyncClient, mock_settings):
         """Test complete server lifecycle through admin UI."""
@@ -280,8 +277,12 @@ class TestAdminToolAPIs:
         """Test GET /admin/tools returns list of tools."""
         response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
-        # Don't assume empty - just check it returns a list
-        assert isinstance(response.json(), list)
+        # Don't assume empty - accept either the legacy list response
+        # or the newer paginated dict response with 'data' key.
+        resp_json = response.json()
+        assert isinstance(resp_json, (list, dict))
+        if isinstance(resp_json, dict):
+            assert "data" in resp_json and isinstance(resp_json["data"], list)
 
     # FIXME: Temporarily disabled due to issues with tool lifecycle tests
     # async def test_admin_tool_lifecycle(self, client: AsyncClient, mock_settings):
@@ -342,9 +343,11 @@ class TestAdminToolAPIs:
     async def test_admin_tool_name_conflict(self, client: AsyncClient, mock_settings):
         """Test creating tool with duplicate name via admin UI for private, team, and public scopes."""
         import uuid
+
         unique_name = f"duplicate_tool_{uuid.uuid4().hex[:8]}"
-        #create a real team and use its ID
+        # create a real team and use its ID
         from mcpgateway.services.team_management_service import TeamManagementService
+
         # Get db session from test fixture context
         # The client fixture sets test_user_context["db"]
         db = None
@@ -354,17 +357,13 @@ class TestAdminToolAPIs:
             # Fallback: import get_db and use it directly if available
             try:
                 from mcpgateway.db import get_db
+
                 db = next(get_db())
             except Exception:
                 pass
         assert db is not None, "Test database session not found. Ensure your test fixture exposes db."
         team_service = TeamManagementService(db)
-        new_team = await team_service.create_team(
-            name="Test Team",
-            description="A team for testing",
-            created_by="admin@example.com",
-            visibility="private"
-        )
+        new_team = await team_service.create_team(name="Test Team", description="A team for testing", created_by="admin@example.com", visibility="private")
         # Private scope (owner-level)
         form_data_private = {
             "name": unique_name,
@@ -513,7 +512,7 @@ class TestAdminPromptAPIs:
         prompt_id = prompt["id"]
 
         # Get individual prompt
-        response = await client.get(f"/admin/prompts/{form_data['name']}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["name"] == "test_admin_prompt"
 
@@ -524,7 +523,7 @@ class TestAdminPromptAPIs:
             "template": "Updated {{greeting}}",
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
         }
-        response = await client.post(f"/admin/prompts/{form_data['name']}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
         # Toggle prompt status
@@ -532,7 +531,7 @@ class TestAdminPromptAPIs:
         assert response.status_code == 303
 
         # Delete prompt (use updated name)
-        response = await client.post(f"/admin/prompts/{edit_data['name']}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/prompts/{prompt_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
 

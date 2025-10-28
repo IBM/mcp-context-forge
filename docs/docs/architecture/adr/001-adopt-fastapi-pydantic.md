@@ -15,15 +15,18 @@ We explored Python-native frameworks that support async-first operation, data va
 We will adopt:
 
 - **FastAPI** as the core web framework for routing HTTP, WebSocket, and streaming endpoints.
-- **Pydantic v2** for all settings, schemas, and typed data models (e.g., `Tool`, `Resource`, `GatewayMetadata`, etc.).
+- **Pydantic v2.11+** for all settings, schemas, and typed data models (e.g., `Tool`, `Resource`, `GatewayMetadata`, etc.).
 
 These will form the foundation for the application layer and public API.
+
+Pydantic v2 uses a **Rust-based core** (`pydantic-core`) that provides 5-50x performance improvements over Pydantic v1 for schema validation, type coercion, and model serialization. The Rust components release the GIL during execution, enabling better concurrency even within single worker processes.
 
 ## Consequences
 
 - ✨ Strong typing, runtime validation, and auto-generated OpenAPI specs.
 - 🧩 Unified model structure across internal logic, external APIs, and config parsing.
 - 🚀 Excellent async performance with Uvicorn and Starlette compatibility.
+- ⚡ Rust-powered validation (5-50x faster than Pydantic v1) with GIL release during validation.
 - 🔒 Tight coupling to Pydantic means future transitions (e.g., to dataclasses or attrs) would be non-trivial.
 
 ## Alternatives Considered

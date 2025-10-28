@@ -107,7 +107,7 @@ plugin_dirs: []
 
                 # Test clean content (should pass)
                 payload = PromptPrehookPayload(
-                    name="test_prompt",
+                    prompt_id="test_prompt",
                     args={"query": "What is the weather like today?"}
                 )
 
@@ -190,7 +190,7 @@ plugin_dirs: []
 
                 # Test harmful content
                 payload = PromptPrehookPayload(
-                    name="harmful_prompt",
+                    prompt_id="harmful_prompt",
                     args={"query": "I hate all those people and want them gone"}
                 )
 
@@ -347,7 +347,7 @@ plugin_dirs: []
                 context = GlobalContext(request_id="redaction-test", user="testuser")
 
                 payload = PromptPrehookPayload(
-                    name="profanity_prompt",
+                    prompt_id="profanity_prompt",
                     args={"query": "This damn thing is not working"}
                 )
 
@@ -438,7 +438,7 @@ plugin_dirs: []
 
                 # Test prompt (goes to Watson)
                 prompt_payload = PromptPrehookPayload(
-                    name="test_prompt",
+                    prompt_id="test_prompt",
                     args={"query": "What is machine learning?"}
                 )
 

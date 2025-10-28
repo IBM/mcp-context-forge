@@ -60,7 +60,9 @@ class DataAnalyzer:
             "dataset_shape": df.shape,
             "confidence_level": confidence_level,
             "basic_info": self.descriptive_stats.get_basic_info(df),
-            "descriptive_stats": self.descriptive_stats.get_descriptive_stats(df, confidence_level, columns),
+            "descriptive_stats": self.descriptive_stats.get_descriptive_stats(
+                df, confidence_level, columns
+            ),
         }
 
         if analysis_type in ["exploratory", "correlation"]:
@@ -122,7 +124,9 @@ class DataAnalyzer:
                             "variable1": col1,
                             "variable2": col2,
                             "correlation": float(corr_value),
-                            "strength": ("strong" if abs(corr_value) > 0.8 else "moderate"),
+                            "strength": (
+                                "strong" if abs(corr_value) > 0.8 else "moderate"
+                            ),
                         }
                     )
 
@@ -200,7 +204,7 @@ class DataAnalyzer:
     def _get_percentiles(self, series: pd.Series) -> dict[str, float]:
         """Get percentile values for a series."""
         percentiles = [0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99]
-        return {f"p{int(p*100)}": float(series.quantile(p)) for p in percentiles}
+        return {f"p{int(p * 100)}": float(series.quantile(p)) for p in percentiles}
 
     def _detect_iqr_outliers(self, series: pd.Series) -> dict[str, Any]:
         """Detect outliers using IQR method."""
@@ -222,7 +226,9 @@ class DataAnalyzer:
             "outliers": outliers.tolist()[:50],  # Limit to first 50
         }
 
-    def _detect_zscore_outliers(self, series: pd.Series, threshold: float = 3.0) -> dict[str, Any]:
+    def _detect_zscore_outliers(
+        self, series: pd.Series, threshold: float = 3.0
+    ) -> dict[str, Any]:
         """Detect outliers using Z-score method."""
         z_scores = np.abs(stats.zscore(series))
         outliers = series[z_scores > threshold]

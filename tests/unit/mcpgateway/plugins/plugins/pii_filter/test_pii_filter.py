@@ -190,7 +190,10 @@ class TestPIIDetector:
 
         # Test REMOVE strategy
         config = PIIFilterConfig(
-            detect_ssn=True, detect_phone=False, detect_bank_account=False, default_mask_strategy=MaskingStrategy.REMOVE  # Disable phone detection  # Disable bank account detection
+            detect_ssn=True,
+            detect_phone=False,
+            detect_bank_account=False,
+            default_mask_strategy=MaskingStrategy.REMOVE,  # Disable phone detection  # Disable bank account detection
         )
         detector = PIIDetector(config)
         text = "SSN: 123-45-6789"
@@ -251,7 +254,7 @@ class TestPIIFilterPlugin:
         context = PluginContext(global_context=GlobalContext(request_id="test-1"))
 
         # Create payload with PII
-        payload = PromptPrehookPayload(name="test_prompt", args={"user_input": "My email is john@example.com and SSN is 123-45-6789", "safe_input": "This has no PII"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"user_input": "My email is john@example.com and SSN is 123-45-6789", "safe_input": "This has no PII"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -274,7 +277,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(global_context=GlobalContext(request_id="test-2"))
 
-        payload = PromptPrehookPayload(name="test_prompt", args={"input": "My SSN is 123-45-6789"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "My SSN is 123-45-6789"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -296,7 +299,7 @@ class TestPIIFilterPlugin:
             Message(role=Role.ASSISTANT, content=TextContent(type="text", text="I'll reach you at the provided contact: AKIAIOSFODNN7EXAMPLE")),
         ]
 
-        payload = PromptPosthookPayload(name="test_prompt", result=PromptResult(messages=messages))
+        payload = PromptPosthookPayload(prompt_id="test_prompt", result=PromptResult(messages=messages))
 
         result = await plugin.prompt_post_fetch(payload, context)
 
@@ -319,7 +322,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(global_context=GlobalContext(request_id="test-4"))
 
-        payload = PromptPrehookPayload(name="test_prompt", args={"input": "This text has no sensitive information"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "This text has no sensitive information"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -336,7 +339,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(global_context=GlobalContext(request_id="test-5"))
 
-        payload = PromptPrehookPayload(name="test_prompt", args={"input": "Employee ID: EMP123456"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Employee ID: EMP123456"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -354,7 +357,7 @@ class TestPIIFilterPlugin:
         plugin = PIIFilterPlugin(plugin_config)
         context = PluginContext(global_context=GlobalContext(request_id="test-6"))
 
-        payload = PromptPrehookPayload(name="test_prompt", args={"input": "SSN: 123-45-6789"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "SSN: 123-45-6789"})
 
         result = await plugin.prompt_pre_fetch(payload, context)
 
@@ -408,7 +411,7 @@ async def test_integration_with_manager():
         await manager.initialize()
 
         # Test with PII in prompt
-        payload = PromptPrehookPayload(name="test_prompt", args={"input": "Email: test@example.com, SSN: 123-45-6789"})
+        payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Email: test@example.com, SSN: 123-45-6789"})
 
         global_context = GlobalContext(request_id="test-manager")
         result, contexts = await manager.prompt_pre_fetch(payload, global_context)

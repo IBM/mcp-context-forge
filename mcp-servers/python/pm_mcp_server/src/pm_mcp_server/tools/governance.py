@@ -9,8 +9,6 @@ Governance-oriented tools (risks, change control, earned value).
 
 from __future__ import annotations
 
-from typing import Dict, List
-
 from pm_mcp_server.schemata import (
     ChangeRequest,
     EarnedValueInput,
@@ -21,7 +19,7 @@ from pm_mcp_server.schemata import (
 )
 
 
-def risk_register_manager(risks: List[RiskEntry]) -> RiskRegister:
+def risk_register_manager(risks: list[RiskEntry]) -> RiskRegister:
     """Return register metadata including high severity risks."""
 
     sorted_risks = sorted(risks, key=lambda risk: risk.severity, reverse=True)
@@ -35,7 +33,7 @@ def risk_register_manager(risks: List[RiskEntry]) -> RiskRegister:
     return RiskRegister(risks=sorted_risks, high_risk_ids=high_risks)
 
 
-def change_request_tracker(requests: List[ChangeRequest]) -> Dict[str, object]:
+def change_request_tracker(requests: list[ChangeRequest]) -> dict[str, object]:
     """Summarise change requests portfolio."""
 
     totals = {
@@ -50,13 +48,13 @@ def change_request_tracker(requests: List[ChangeRequest]) -> Dict[str, object]:
 
 
 def baseline_vs_actual(
-    planned: Dict[str, float],
-    actual: Dict[str, float],
+    planned: dict[str, float],
+    actual: dict[str, float],
     tolerance_percent: float = 10.0,
-) -> Dict[str, Dict[str, float | bool]]:
+) -> dict[str, dict[str, float | bool]]:
     """Compare planned vs actual metrics and flag variances."""
 
-    report: Dict[str, Dict[str, float | bool]] = {}
+    report: dict[str, dict[str, float | bool]] = {}
     for key, planned_value in planned.items():
         actual_value = actual.get(key)
         if actual_value is None:
@@ -74,12 +72,12 @@ def baseline_vs_actual(
 
 
 def earned_value_calculator(
-    values: List[EarnedValueInput],
+    values: list[EarnedValueInput],
     budget_at_completion: float,
 ) -> EarnedValueResult:
     """Compute CPI/SPI metrics and EAC/VAC."""
 
-    period_metrics: List[EarnedValuePeriodMetric] = []
+    period_metrics: list[EarnedValuePeriodMetric] = []
     cumulative_pv = 0.0
     cumulative_ev = 0.0
     cumulative_ac = 0.0

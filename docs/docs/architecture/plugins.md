@@ -150,22 +150,26 @@ Below is an example of a plugin configuration file. A plugin configuration file 
 ```yaml
 # plugins/config.yaml
 plugins:
+
   - name: "PIIFilterPlugin"                    # Unique plugin identifier
     kind: "plugins.pii_filter.pii_filter.PIIFilterPlugin"  # Plugin class path
     description: "Detects and masks PII"       # Human-readable description
     version: "1.0.0"                          # Plugin version
     author: "Security Team"                   # Plugin author
     hooks:                                    # Hook registration
+
       - "prompt_pre_fetch"
       - "tool_pre_invoke"
       - "tool_post_invoke"
     tags:                                     # Searchable tags
+
       - "security"
       - "pii"
       - "compliance"
     mode: "enforce"                           # enforce|enforce_ignore_error|permissive|disabled
     priority: 50                              # Execution priority (lower = higher)
     conditions:                               # Conditional execution
+
       - server_ids: ["prod-server"]
         tenant_ids: ["enterprise"]
         tools: ["sensitive-tool"]
@@ -295,6 +299,7 @@ repository: "https://github.com/company/advanced-pii-filter.git"
 
 # Plugin capabilities and hook registration
 available_hooks:
+
   - "prompt_pre_fetch"
   - "prompt_post_fetch"
   - "tool_pre_invoke"
@@ -303,6 +308,7 @@ available_hooks:
 
 # Categorization and discovery
 tags:
+
   - "security"
   - "pii"
   - "compliance"
@@ -319,6 +325,7 @@ default_config:
   detection_sensitivity: 0.8
   masking_strategy: "partial"             # partial | full | token
   pii_types:
+
     - "ssn"
     - "credit_card"
     - "email"
@@ -336,6 +343,7 @@ requirements:
 
 # Dependencies (for external plugins)
 dependencies:
+
   - "spacy>=3.4.0"
   - "presidio-analyzer>=2.2.0"
   - "pydantic>=2.0.0"
@@ -979,17 +987,43 @@ External plugins integrate with the gateway through standardized configuration:
 ```yaml
 # resources/plugins/config.yaml (in plugin project)
 plugins:
-  - name: "MySecurityFilter"
-    kind: "myfilter.plugin.MySecurityFilter"
-    hooks: ["prompt_pre_fetch", "tool_pre_invoke"]
-    mode: "enforce"
-    priority: 10
+
+  # TypeScript/Node.js plugin
+  - name: "OpenAIModerationTS"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://nodejs-plugin:3000/mcp"
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
+
+  # Go plugin
+  - name: "HighPerformanceFilter"
+    kind: "external"
+    mcp:
+      proto: "STDIO"
+      script: "/opt/plugins/go-filter"
+
+  # Rust plugin
+  - name: "CryptoValidator"
+    kind: "external"
+    mcp:
+      proto: "STREAMABLEHTTP"
+      url: "http://rust-plugin:8080/mcp"
+      # tls:
+      #   verify: true
+
+Gateway-wide defaults for these TLS options can be supplied via the
+`PLUGINS_MTLS_*` environment variables when you want every external
+plugin to share the same client certificate and CA bundle.
 ```
 
 **Gateway Configuration:**
 ```yaml
 # plugins/config.yaml (in gateway)
 plugins:
+
   - name: "MySecurityFilter"
     kind: "external"
     priority: 10
@@ -1056,6 +1090,7 @@ REQUIRED_TOOLS = [
 
 ```yaml
 plugins:
+
   - name: "OpenAIModerationPlugin"
     kind: "external"                    # Indicates external MCP server
     description: "OpenAI Content Moderation"
@@ -1230,8 +1265,10 @@ version: 1.0.0
 framework_compatibility: "mcp-plugin-framework>=1.0.0,<2.0.0"
 ...
 hooks:
+
   - prompt_pre_fetch
 capabilities:
+
   - hook:invoke:prompt_pre_fetch
   - read:context
 ```

@@ -129,6 +129,7 @@ It currently supports:
 
 * Federation across multiple MCP and REST services
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
+* **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring
@@ -169,6 +170,8 @@ For a list of upcoming features, check out the [ContextForge Roadmap](https://ib
 
 * Wraps non-MCP services as virtual MCP servers
 * Registers tools, prompts, and resources with minimal configuration
+* **gRPC-to-MCP translation** via server reflection protocol
+* Automatic service discovery and method introspection
 
 </details>
 
@@ -1182,6 +1185,85 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### LLM Chat MCP Client
+
+The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers. This feature enables natural language interaction with tools, resources, and prompts exposed by MCP servers.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLMCHAT_ENABLED`             | Enable LLM Chat functionality          | `false` | bool    |
+| `LLM_PROVIDER`                | LLM provider selection                 | `azure_openai` | `azure_openai`, `openai`, `anthropic`, `aws_bedrock`, `ollama` |
+
+**Azure OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AZURE_OPENAI_ENDPOINT`       | Azure OpenAI endpoint URL              | (none)  | string  |
+| `AZURE_OPENAI_API_KEY`        | Azure OpenAI API key                   | (none)  | string  |
+| `AZURE_OPENAI_DEPLOYMENT`     | Azure OpenAI deployment name           | (none)  | string  |
+| `AZURE_OPENAI_API_VERSION`    | Azure OpenAI API version               | `2024-02-15-preview` | string |
+| `AZURE_OPENAI_TEMPERATURE`    | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `AZURE_OPENAI_MAX_TOKENS`     | Maximum tokens to generate             | (none)  | int     |
+
+**OpenAI Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OPENAI_API_KEY`              | OpenAI API key                         | (none)  | string  |
+| `OPENAI_MODEL`                | OpenAI model name                      | `gpt-4o-mini` | string |
+| `OPENAI_BASE_URL`             | Base URL for OpenAI-compatible endpoints | (none) | string  |
+| `OPENAI_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+| `OPENAI_MAX_RETRIES`          | Maximum number of retries              | `2`     | int     |
+
+**Anthropic Claude Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `ANTHROPIC_API_KEY`           | Anthropic API key                      | (none)  | string  |
+| `ANTHROPIC_MODEL`             | Claude model name                      | `claude-3-5-sonnet-20241022` | string |
+| `ANTHROPIC_TEMPERATURE`       | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `ANTHROPIC_MAX_TOKENS`        | Maximum tokens to generate             | `4096`  | int     |
+| `ANTHROPIC_MAX_RETRIES`       | Maximum number of retries              | `2`     | int     |
+
+**AWS Bedrock Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `AWS_BEDROCK_MODEL_ID`        | Bedrock model ID                       | (none)  | string  |
+| `AWS_BEDROCK_REGION`          | AWS region name                        | `us-east-1` | string |
+| `AWS_BEDROCK_TEMPERATURE`     | Sampling temperature                   | `0.7`   | float (0.0-1.0) |
+| `AWS_BEDROCK_MAX_TOKENS`      | Maximum tokens to generate             | `4096`  | int     |
+| `AWS_ACCESS_KEY_ID`           | AWS access key ID (optional)           | (none)  | string  |
+| `AWS_SECRET_ACCESS_KEY`       | AWS secret access key (optional)       | (none)  | string  |
+| `AWS_SESSION_TOKEN`           | AWS session token (optional)           | (none)  | string  |
+
+**Ollama Configuration:**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `OLLAMA_BASE_URL`             | Ollama base URL                        | `http://localhost:11434` | string |
+| `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
+| `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
+
+> 🤖 **LLM Chat Integration**: Chat with MCP servers using natural language powered by Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, or Ollama
+> 🔧 **Flexible Providers**: Switch between different LLM providers without changing your MCP integration
+> 🔒 **Security**: API keys and credentials are securely stored and never exposed in responses
+> 🎛️ **Admin UI**: Dedicated LLM Chat tab in the admin interface for interactive conversations
+
+**LLM Chat Configuration Effects:**
+- `LLMCHAT_ENABLED=false` (default): Completely disables LLM Chat features (API endpoints return 404, admin tab hidden)
+- `LLMCHAT_ENABLED=true`: Enables LLM Chat functionality with the selected provider
+
+**Provider Requirements:**
+- **Azure OpenAI**: Requires `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_DEPLOYMENT`
+- **OpenAI**: Requires `OPENAI_API_KEY`
+- **Anthropic**: Requires `ANTHROPIC_API_KEY` and `pip install langchain-anthropic`
+- **AWS Bedrock**: Requires `AWS_BEDROCK_MODEL_ID` and `pip install langchain-aws boto3`. Uses AWS credential chain if explicit credentials not provided.
+- **Ollama**: Requires local Ollama instance running (default: `http://localhost:11434`)
+
+**Documentation:**
+- [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/manage/llm-chat/) - Complete LLM Chat setup and provider configuration
+
 ### Email-Based Authentication & User Management
 
 | Setting                        | Description                                      | Default               | Options |
@@ -1220,6 +1302,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
+| `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 
 **GitHub OAuth:**
 | Setting                        | Description                                      | Default               | Options |
@@ -1244,6 +1327,42 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 | `SSO_IBM_VERIFY_CLIENT_ID`    | IBM Security Verify client ID                    | (none)                | string  |
 | `SSO_IBM_VERIFY_CLIENT_SECRET` | IBM Security Verify client secret               | (none)                | string  |
 | `SSO_IBM_VERIFY_ISSUER`       | IBM Security Verify OIDC issuer URL             | (none)                | string  |
+
+**Keycloak OIDC:**
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_KEYCLOAK_ENABLED`              | Enable Keycloak OIDC authentication              | `false`                    | bool    |
+| `SSO_KEYCLOAK_BASE_URL`             | Keycloak base URL                                | (none)                     | string  |
+| `SSO_KEYCLOAK_REALM`                | Keycloak realm name                              | `master`                   | string  |
+| `SSO_KEYCLOAK_CLIENT_ID`            | Keycloak client ID                               | (none)                     | string  |
+| `SSO_KEYCLOAK_CLIENT_SECRET`        | Keycloak client secret                           | (none)                     | string  |
+| `SSO_KEYCLOAK_MAP_REALM_ROLES`      | Map Keycloak realm roles to gateway teams        | `true`                     | bool    |
+| `SSO_KEYCLOAK_MAP_CLIENT_ROLES`     | Map Keycloak client roles to gateway RBAC        | `false`                    | bool    |
+| `SSO_KEYCLOAK_USERNAME_CLAIM`       | JWT claim for username                           | `preferred_username`       | string  |
+| `SSO_KEYCLOAK_EMAIL_CLAIM`          | JWT claim for email                              | `email`                    | string  |
+| `SSO_KEYCLOAK_GROUPS_CLAIM`         | JWT claim for groups/roles                       | `groups`                   | string  |
+
+**Microsoft Entra ID OIDC:**
+| Setting                        | Description                                      | Default               | Options |
+| ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
+| `SSO_ENTRA_ENABLED`           | Enable Microsoft Entra ID OIDC authentication    | `false`               | bool    |
+| `SSO_ENTRA_CLIENT_ID`         | Microsoft Entra ID client ID                     | (none)                | string  |
+| `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
+| `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
+
+**Generic OIDC Provider (Auth0, Authentik, etc.):**
+| Setting                              | Description                                      | Default                    | Options |
+| ------------------------------------ | ------------------------------------------------ | -------------------------- | ------- |
+| `SSO_GENERIC_ENABLED`               | Enable generic OIDC provider authentication      | `false`                    | bool    |
+| `SSO_GENERIC_PROVIDER_ID`           | Provider ID (e.g., keycloak, auth0, authentik)   | (none)                     | string  |
+| `SSO_GENERIC_DISPLAY_NAME`          | Display name shown on login page                 | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_ID`             | Generic OIDC client ID                           | (none)                     | string  |
+| `SSO_GENERIC_CLIENT_SECRET`         | Generic OIDC client secret                       | (none)                     | string  |
+| `SSO_GENERIC_AUTHORIZATION_URL`     | Authorization endpoint URL                       | (none)                     | string  |
+| `SSO_GENERIC_TOKEN_URL`             | Token endpoint URL                               | (none)                     | string  |
+| `SSO_GENERIC_USERINFO_URL`          | Userinfo endpoint URL                            | (none)                     | string  |
+| `SSO_GENERIC_ISSUER`                | OIDC issuer URL                                  | (none)                     | string  |
+| `SSO_GENERIC_SCOPE`                 | OAuth scopes (space-separated)                   | `openid profile email`     | string  |
 
 **Okta OIDC:**
 | Setting                        | Description                                      | Default               | Options |
@@ -1270,18 +1389,18 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 - ✅ Encrypted credential storage with Fernet encryption
 - ✅ Configurable issuer allowlist for security
 
-| Setting                                                | Description                                                    | Default                        | Options       |
-|-------------------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
-| `MCPGATEWAY_DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
-| `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
-| `MCPGATEWAY_DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `mcp:read`                     | string        |
-| `MCPGATEWAY_DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
-| `MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
-| `MCPGATEWAY_DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
-| `MCPGATEWAY_DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
-| `MCPGATEWAY_OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
-| `MCPGATEWAY_OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
-| `JWT_AUDIENCE_VERIFICATION`                           | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
+| Setting                                     | Description                                                    | Default                        | Options       |
+|--------------------------------------------|----------------------------------------------------------------|--------------------------------|---------------|
+| `DCR_ENABLED`                              | Enable Dynamic Client Registration (RFC 7591)                  | `true`                         | bool          |
+| `DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Auto-register when gateway has issuer but no client_id         | `true`                         | bool          |
+| `DCR_DEFAULT_SCOPES`                       | Default OAuth scopes to request during DCR                     | `["mcp:read"]`                 | JSON array    |
+| `DCR_ALLOWED_ISSUERS`                      | Allowlist of trusted issuer URLs (empty = allow any)           | `[]`                           | JSON array    |
+| `DCR_TOKEN_ENDPOINT_AUTH_METHOD`           | Token endpoint auth method                                     | `client_secret_basic`          | `client_secret_basic`, `client_secret_post`, `none` |
+| `DCR_METADATA_CACHE_TTL`                   | AS metadata cache TTL in seconds                               | `3600`                         | int           |
+| `DCR_CLIENT_NAME_TEMPLATE`                 | Template for client_name in DCR requests                       | `MCP Gateway ({gateway_name})` | string        |
+| `OAUTH_DISCOVERY_ENABLED`                  | Enable AS metadata discovery (RFC 8414)                        | `true`                         | bool          |
+| `OAUTH_PREFERRED_CODE_CHALLENGE_METHOD`    | PKCE code challenge method                                     | `S256`                         | `S256`, `plain` |
+| `JWT_AUDIENCE_VERIFICATION`                | JWT audience verification (disable for DCR)                    | `true`                         | bool          |
 
 **Documentation:**
 - [DCR Configuration Guide](https://ibm.github.io/mcp-context-forge/manage/dcr/) - Complete DCR setup and troubleshooting
@@ -1364,6 +1483,59 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 > Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
 > By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
 
+### Response Compression
+
+MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS). Compression is negotiated automatically based on client `Accept-Encoding` headers with algorithm priority: **Brotli** (best compression) > **Zstd** (fastest) > **GZip** (universal fallback).
+
+| Setting                       | Description                                       | Default | Options              |
+| ----------------------------- | ------------------------------------------------- | ------- | -------------------- |
+| `COMPRESSION_ENABLED`         | Enable response compression                       | `true`  | bool                 |
+| `COMPRESSION_MINIMUM_SIZE`    | Minimum response size in bytes to compress        | `500`   | int (0=compress all) |
+| `COMPRESSION_GZIP_LEVEL`      | GZip compression level (1=fast, 9=best)          | `6`     | int (1-9)            |
+| `COMPRESSION_BROTLI_QUALITY`  | Brotli quality (0-3=fast, 4-9=balanced, 10-11=max) | `4`   | int (0-11)           |
+| `COMPRESSION_ZSTD_LEVEL`      | Zstd level (1-3=fast, 4-9=balanced, 10+=slow)    | `3`     | int (1-22)           |
+
+**Compression Behavior:**
+- Automatically negotiates algorithm based on client `Accept-Encoding` header
+- Only compresses responses larger than `COMPRESSION_MINIMUM_SIZE` bytes (small responses not worth compression overhead)
+- Adds `Vary: Accept-Encoding` header for proper cache behavior
+- No client changes required (browsers/clients handle decompression automatically)
+- Typical compression ratios: JSON responses 40-60%, HTML responses 50-70%
+
+**Performance Impact:**
+- CPU overhead: <5% (balanced settings)
+- Bandwidth reduction: 30-70% for text responses
+- Latency impact: <10ms for typical responses
+
+**Testing Compression:**
+```bash
+# Start server
+make dev
+
+# Test Brotli (best compression)
+curl -H "Accept-Encoding: br" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+
+# Test GZip (universal fallback)
+curl -H "Accept-Encoding: gzip" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+
+# Test Zstd (fastest)
+curl -H "Accept-Encoding: zstd" http://localhost:8000/openapi.json -v | grep -i "content-encoding"
+```
+
+**Tuning for Production:**
+```bash
+# High-traffic (optimize for speed)
+COMPRESSION_GZIP_LEVEL=4
+COMPRESSION_BROTLI_QUALITY=3
+COMPRESSION_ZSTD_LEVEL=1
+
+# Bandwidth-constrained (optimize for size)
+COMPRESSION_GZIP_LEVEL=9
+COMPRESSION_BROTLI_QUALITY=11
+COMPRESSION_ZSTD_LEVEL=9
+```
+
+> **Note**: See [Scaling Guide](https://ibm.github.io/mcp-context-forge/manage/scale/) for compression performance optimization at scale.
 
 ### Logging
 
@@ -1623,6 +1795,12 @@ MCP Gateway uses Alembic for database migrations. Common commands:
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `PLUGINS_ENABLED`             | Enable the plugin framework                      | `false`               | bool    |
 | `PLUGIN_CONFIG_FILE`          | Path to main plugin configuration file          | `plugins/config.yaml` | string  |
+| `PLUGINS_MTLS_CA_BUNDLE`      | (Optional) default CA bundle for external plugin mTLS | _(empty)_     | string  |
+| `PLUGINS_MTLS_CLIENT_CERT`    | (Optional) gateway client certificate for plugin mTLS | _(empty)_     | string  |
+| `PLUGINS_MTLS_CLIENT_KEY`     | (Optional) gateway client key for plugin mTLS | _(empty)_             | string  |
+| `PLUGINS_MTLS_CLIENT_KEY_PASSWORD` | (Optional) password for plugin client key | _(empty)_             | string  |
+| `PLUGINS_MTLS_VERIFY`         | (Optional) verify remote plugin certificates (`true`/`false`) | `true` | bool    |
+| `PLUGINS_MTLS_CHECK_HOSTNAME` | (Optional) enforce hostname verification for plugins | `true`      | bool    |
 | `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
 | `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
 

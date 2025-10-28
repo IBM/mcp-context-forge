@@ -134,6 +134,7 @@ make certs-all                   # Generates both TLS certificates and JWT RSA k
 ```
 
 **Security Requirements:**
+
 - [ ] **Never commit private keys** to version control
 - [ ] **Store private keys** in secure, encrypted storage
 - [ ] **Use strong file permissions** (600) on private keys
@@ -156,6 +157,7 @@ data:
 
 # In pod spec:
 volumes:
+
   - name: jwt-keys
     secret:
       secretName: jwt-keys
@@ -178,6 +180,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 ```
 
 **Security Features:**
+
 - Server-scoped tokens **cannot access `/admin`** endpoints (security hardening)
 - Only truly public endpoints (`/health`, `/metrics`, `/docs`) bypass server restrictions
 - RBAC permission checks still apply to all endpoints
@@ -194,6 +197,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 ```
 
 **Canonical Permissions Used:**
+
 - `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute`
 - `resources.create`, `resources.read`, `resources.update`, `resources.delete`
 - `admin.system_config`, `admin.user_management`, `admin.security_audit`
@@ -287,6 +291,7 @@ WELL_KNOWN_SECURITY_TXT="Contact: mailto:security@example.com\nExpires: 2025-12-
 ```
 
 Security considerations:
+
 - [ ] Configure security.txt with current contact information
 - [ ] Review robots.txt to prevent unauthorized crawler access
 - [ ] Monitor well-known endpoint access in logs

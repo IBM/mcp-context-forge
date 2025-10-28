@@ -12,17 +12,16 @@ Provides tools for workbook creation, data manipulation, formatting, formulas, a
 Powered by FastMCP for enhanced type safety and automatic validation.
 """
 
-import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import openpyxl
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 from fastmcp import FastMCP
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
 from pydantic import Field
 
 # Configure logging to stderr to avoid MCP protocol interference
@@ -41,7 +40,7 @@ class SpreadsheetOperation:
     """Handles spreadsheet operations."""
 
     @staticmethod
-    def create_workbook(file_path: str, sheet_names: Optional[List[str]] = None) -> Dict[str, Any]:
+    def create_workbook(file_path: str, sheet_names: list[str] | None = None) -> dict[str, Any]:
         """Create a new XLSX workbook."""
         try:
             # Create workbook
@@ -70,15 +69,21 @@ class SpreadsheetOperation:
                 "message": f"Workbook created at {file_path}",
                 "file_path": file_path,
                 "sheets": [sheet.title for sheet in wb.worksheets],
-                "total_sheets": len(wb.worksheets)
+                "total_sheets": len(wb.worksheets),
             }
         except Exception as e:
             logger.error(f"Error creating workbook: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def write_data(file_path: str, data: List[List[Any]], sheet_name: Optional[str] = None,
-                   start_row: int = 1, start_col: int = 1, headers: Optional[List[str]] = None) -> Dict[str, Any]:
+    def write_data(
+        file_path: str,
+        data: list[list[Any]],
+        sheet_name: str | None = None,
+        start_row: int = 1,
+        start_col: int = 1,
+        headers: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Write data to a worksheet."""
         try:
             if not Path(file_path).exists():
@@ -118,16 +123,21 @@ class SpreadsheetOperation:
                 "rows_written": len(data),
                 "cols_written": max(len(row) for row in data) if data else 0,
                 "start_cell": f"{get_column_letter(start_col)}{start_row}",
-                "has_headers": bool(headers)
+                "has_headers": bool(headers),
             }
         except Exception as e:
             logger.error(f"Error writing data: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def read_data(file_path: str, sheet_name: Optional[str] = None, start_row: Optional[int] = None,
-                  end_row: Optional[int] = None, start_col: Optional[int] = None,
-                  end_col: Optional[int] = None) -> Dict[str, Any]:
+    def read_data(
+        file_path: str,
+        sheet_name: str | None = None,
+        start_row: int | None = None,
+        end_row: int | None = None,
+        start_col: int | None = None,
+        end_col: int | None = None,
+    ) -> dict[str, Any]:
         """Read data from a worksheet."""
         try:
             if not Path(file_path).exists():
@@ -155,8 +165,13 @@ class SpreadsheetOperation:
 
             # Read data
             data = []
-            for row in ws.iter_rows(min_row=start_row, max_row=end_row,
-                                   min_col=start_col, max_col=end_col, values_only=True):
+            for row in ws.iter_rows(
+                min_row=start_row,
+                max_row=end_row,
+                min_col=start_col,
+                max_col=end_col,
+                values_only=True,
+            ):
                 data.append(list(row))
 
             return {
@@ -165,18 +180,25 @@ class SpreadsheetOperation:
                 "data": data,
                 "rows_read": len(data),
                 "cols_read": end_col - start_col + 1,
-                "range": f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
+                "range": f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}",
             }
         except Exception as e:
             logger.error(f"Error reading data: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def format_cells(file_path: str, cell_range: str, sheet_name: Optional[str] = None,
-                     font_name: Optional[str] = None, font_size: Optional[int] = None,
-                     font_bold: Optional[bool] = None, font_italic: Optional[bool] = None,
-                     font_color: Optional[str] = None, background_color: Optional[str] = None,
-                     alignment: Optional[str] = None) -> Dict[str, Any]:
+    def format_cells(
+        file_path: str,
+        cell_range: str,
+        sheet_name: str | None = None,
+        font_name: str | None = None,
+        font_size: int | None = None,
+        font_bold: bool | None = None,
+        font_italic: bool | None = None,
+        font_color: str | None = None,
+        background_color: str | None = None,
+        alignment: str | None = None,
+    ) -> dict[str, Any]:
         """Format cells in a worksheet."""
         try:
             if not Path(file_path).exists():
@@ -196,11 +218,13 @@ class SpreadsheetOperation:
             cell_range_obj = ws[cell_range]
 
             # Handle single cell vs range
-            if hasattr(cell_range_obj, '__iter__') and not isinstance(cell_range_obj, openpyxl.cell.Cell):
+            if hasattr(cell_range_obj, "__iter__") and not isinstance(
+                cell_range_obj, openpyxl.cell.Cell
+            ):
                 # Range of cells
                 cells = []
                 for row in cell_range_obj:
-                    if hasattr(row, '__iter__'):
+                    if hasattr(row, "__iter__"):
                         cells.extend(row)
                     else:
                         cells.append(row)
@@ -213,30 +237,36 @@ class SpreadsheetOperation:
                 # Font formatting
                 font_kwargs = {}
                 if font_name:
-                    font_kwargs['name'] = font_name
+                    font_kwargs["name"] = font_name
                 if font_size:
-                    font_kwargs['size'] = font_size
+                    font_kwargs["size"] = font_size
                 if font_bold is not None:
-                    font_kwargs['bold'] = font_bold
+                    font_kwargs["bold"] = font_bold
                 if font_italic is not None:
-                    font_kwargs['italic'] = font_italic
+                    font_kwargs["italic"] = font_italic
                 if font_color:
-                    font_kwargs['color'] = font_color.replace('#', '')
+                    font_kwargs["color"] = font_color.replace("#", "")
 
                 if font_kwargs:
                     cell.font = Font(**font_kwargs)
 
                 # Background color
                 if background_color:
-                    cell.fill = PatternFill(start_color=background_color.replace('#', ''),
-                                          end_color=background_color.replace('#', ''),
-                                          fill_type="solid")
+                    cell.fill = PatternFill(
+                        start_color=background_color.replace("#", ""),
+                        end_color=background_color.replace("#", ""),
+                        fill_type="solid",
+                    )
 
                 # Alignment
                 if alignment:
                     alignment_map = {
-                        'left': 'left', 'center': 'center', 'right': 'right',
-                        'top': 'top', 'middle': 'center', 'bottom': 'bottom'
+                        "left": "left",
+                        "center": "center",
+                        "right": "right",
+                        "top": "top",
+                        "middle": "center",
+                        "bottom": "bottom",
                     }
                     if alignment.lower() in alignment_map:
                         cell.alignment = Alignment(horizontal=alignment_map[alignment.lower()])
@@ -255,15 +285,17 @@ class SpreadsheetOperation:
                     "font_italic": font_italic,
                     "font_color": font_color,
                     "background_color": background_color,
-                    "alignment": alignment
-                }
+                    "alignment": alignment,
+                },
             }
         except Exception as e:
             logger.error(f"Error formatting cells: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def add_formula(file_path: str, cell: str, formula: str, sheet_name: Optional[str] = None) -> Dict[str, Any]:
+    def add_formula(
+        file_path: str, cell: str, formula: str, sheet_name: str | None = None
+    ) -> dict[str, Any]:
         """Add a formula to a cell."""
         try:
             if not Path(file_path).exists():
@@ -280,8 +312,8 @@ class SpreadsheetOperation:
                 ws = wb.active
 
             # Add formula
-            if not formula.startswith('='):
-                formula = '=' + formula
+            if not formula.startswith("="):
+                formula = "=" + formula
 
             ws[cell] = formula
 
@@ -292,16 +324,19 @@ class SpreadsheetOperation:
                 "message": f"Formula added to cell {cell}",
                 "sheet_name": ws.title,
                 "cell": cell,
-                "formula": formula
+                "formula": formula,
             }
         except Exception as e:
             logger.error(f"Error adding formula: {e}")
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def analyze_workbook(file_path: str, include_structure: bool = True,
-                        include_data_summary: bool = True,
-                        include_formulas: bool = True) -> Dict[str, Any]:
+    def analyze_workbook(
+        file_path: str,
+        include_structure: bool = True,
+        include_data_summary: bool = True,
+        include_formulas: bool = True,
+    ) -> dict[str, Any]:
         """Analyze workbook content and structure."""
         try:
             if not Path(file_path).exists():
@@ -315,7 +350,7 @@ class SpreadsheetOperation:
                     "total_sheets": len(wb.worksheets),
                     "sheet_names": [sheet.title for sheet in wb.worksheets],
                     "active_sheet": wb.active.title,
-                    "sheets_info": []
+                    "sheets_info": [],
                 }
 
                 for sheet in wb.worksheets:
@@ -324,7 +359,7 @@ class SpreadsheetOperation:
                         "max_row": sheet.max_row,
                         "max_column": sheet.max_column,
                         "data_range": f"A1:{get_column_letter(sheet.max_column)}{sheet.max_row}",
-                        "has_data": sheet.max_row > 0 and sheet.max_column > 0
+                        "has_data": sheet.max_row > 0 and sheet.max_column > 0,
                     }
                     structure["sheets_info"].append(sheet_info)
 
@@ -337,8 +372,14 @@ class SpreadsheetOperation:
                     sheet_summary = {
                         "total_cells": sheet.max_row * sheet.max_column,
                         "non_empty_cells": 0,
-                        "data_types": {"text": 0, "number": 0, "formula": 0, "date": 0, "boolean": 0},
-                        "sample_data": []
+                        "data_types": {
+                            "text": 0,
+                            "number": 0,
+                            "formula": 0,
+                            "date": 0,
+                            "boolean": 0,
+                        },
+                        "sample_data": [],
                     }
 
                     # Sample first 5 rows of data
@@ -352,14 +393,14 @@ class SpreadsheetOperation:
                             if cell.value is not None:
                                 sheet_summary["non_empty_cells"] += 1
 
-                                if hasattr(cell, 'data_type'):
-                                    if cell.data_type == 'f':
+                                if hasattr(cell, "data_type"):
+                                    if cell.data_type == "f":
                                         sheet_summary["data_types"]["formula"] += 1
-                                    elif cell.data_type == 'n':
+                                    elif cell.data_type == "n":
                                         sheet_summary["data_types"]["number"] += 1
-                                    elif cell.data_type == 'd':
+                                    elif cell.data_type == "d":
                                         sheet_summary["data_types"]["date"] += 1
-                                    elif cell.data_type == 'b':
+                                    elif cell.data_type == "b":
                                         sheet_summary["data_types"]["boolean"] += 1
                                     else:
                                         sheet_summary["data_types"]["text"] += 1
@@ -375,12 +416,20 @@ class SpreadsheetOperation:
                     sheet_formulas = []
                     for row in sheet.iter_rows():
                         for cell in row:
-                            if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
-                                sheet_formulas.append({
-                                    "cell": cell.coordinate,
-                                    "formula": cell.value,
-                                    "value": cell.displayed_value if hasattr(cell, 'displayed_value') else None
-                                })
+                            if (
+                                cell.value
+                                and isinstance(cell.value, str)
+                                and cell.value.startswith("=")
+                            ):
+                                sheet_formulas.append(
+                                    {
+                                        "cell": cell.coordinate,
+                                        "formula": cell.value,
+                                        "value": cell.displayed_value
+                                        if hasattr(cell, "displayed_value")
+                                        else None,
+                                    }
+                                )
 
                     if sheet_formulas:
                         formulas[sheet.title] = sheet_formulas
@@ -393,9 +442,15 @@ class SpreadsheetOperation:
             return {"success": False, "error": str(e)}
 
     @staticmethod
-    def create_chart(file_path: str, sheet_name: Optional[str] = None, chart_type: str = "column",
-                     data_range: str = "", title: str = "", x_axis_title: str = "",
-                     y_axis_title: str = "") -> Dict[str, Any]:
+    def create_chart(
+        file_path: str,
+        sheet_name: str | None = None,
+        chart_type: str = "column",
+        data_range: str = "",
+        title: str = "",
+        x_axis_title: str = "",
+        y_axis_title: str = "",
+    ) -> dict[str, Any]:
         """Create a chart in a worksheet."""
         try:
             if not Path(file_path).exists():
@@ -421,7 +476,7 @@ class SpreadsheetOperation:
                 "bar": BarChart,
                 "line": LineChart,
                 "pie": PieChart,
-                "scatter": ScatterChart
+                "scatter": ScatterChart,
             }
 
             if chart_type not in chart_classes:
@@ -432,9 +487,9 @@ class SpreadsheetOperation:
             # Set chart properties
             if title:
                 chart.title = title
-            if x_axis_title and hasattr(chart, 'x_axis'):
+            if x_axis_title and hasattr(chart, "x_axis"):
                 chart.x_axis.title = x_axis_title
-            if y_axis_title and hasattr(chart, 'y_axis'):
+            if y_axis_title and hasattr(chart, "y_axis"):
                 chart.y_axis.title = y_axis_title
 
             # Add data if range provided
@@ -453,7 +508,7 @@ class SpreadsheetOperation:
                 "sheet_name": ws.title,
                 "chart_type": chart_type,
                 "data_range": data_range,
-                "title": title
+                "title": title,
             }
         except Exception as e:
             logger.error(f"Error creating chart: {e}")
@@ -468,8 +523,8 @@ ops = SpreadsheetOperation()
 @mcp.tool(description="Create a new XLSX workbook")
 async def create_workbook(
     file_path: str = Field(..., description="Path where the workbook will be saved"),
-    sheet_names: Optional[List[str]] = Field(None, description="Names of sheets to create")
-) -> Dict[str, Any]:
+    sheet_names: list[str] | None = Field(None, description="Names of sheets to create"),
+) -> dict[str, Any]:
     """Create a new XLSX workbook."""
     return ops.create_workbook(file_path, sheet_names)
 
@@ -477,12 +532,12 @@ async def create_workbook(
 @mcp.tool(description="Write data to a worksheet")
 async def write_data(
     file_path: str = Field(..., description="Path to the XLSX file"),
-    data: List[List[Any]] = Field(..., description="Data to write (2D array)"),
-    sheet_name: Optional[str] = Field(None, description="Sheet name (uses active sheet if None)"),
+    data: list[list[Any]] = Field(..., description="Data to write (2D array)"),
+    sheet_name: str | None = Field(None, description="Sheet name (uses active sheet if None)"),
     start_row: int = Field(1, ge=1, description="Starting row (1-indexed)"),
     start_col: int = Field(1, ge=1, description="Starting column (1-indexed)"),
-    headers: Optional[List[str]] = Field(None, description="Column headers")
-) -> Dict[str, Any]:
+    headers: list[str] | None = Field(None, description="Column headers"),
+) -> dict[str, Any]:
     """Write data to a worksheet."""
     return ops.write_data(file_path, data, sheet_name, start_row, start_col, headers)
 
@@ -490,12 +545,12 @@ async def write_data(
 @mcp.tool(description="Read data from a worksheet")
 async def read_data(
     file_path: str = Field(..., description="Path to the XLSX file"),
-    sheet_name: Optional[str] = Field(None, description="Sheet name (uses active sheet if None)"),
-    start_row: Optional[int] = Field(None, ge=1, description="Starting row to read"),
-    end_row: Optional[int] = Field(None, ge=1, description="Ending row to read"),
-    start_col: Optional[int] = Field(None, ge=1, description="Starting column to read"),
-    end_col: Optional[int] = Field(None, ge=1, description="Ending column to read")
-) -> Dict[str, Any]:
+    sheet_name: str | None = Field(None, description="Sheet name (uses active sheet if None)"),
+    start_row: int | None = Field(None, ge=1, description="Starting row to read"),
+    end_row: int | None = Field(None, ge=1, description="Ending row to read"),
+    start_col: int | None = Field(None, ge=1, description="Starting column to read"),
+    end_col: int | None = Field(None, ge=1, description="Ending column to read"),
+) -> dict[str, Any]:
     """Read data from a worksheet."""
     return ops.read_data(file_path, sheet_name, start_row, end_row, start_col, end_col)
 
@@ -504,22 +559,34 @@ async def read_data(
 async def format_cells(
     file_path: str = Field(..., description="Path to the XLSX file"),
     cell_range: str = Field(..., description="Cell range to format (e.g., 'A1:C5')"),
-    sheet_name: Optional[str] = Field(None, description="Sheet name"),
-    font_name: Optional[str] = Field(None, description="Font name"),
-    font_size: Optional[int] = Field(None, ge=1, le=409, description="Font size"),
-    font_bold: Optional[bool] = Field(None, description="Bold font"),
-    font_italic: Optional[bool] = Field(None, description="Italic font"),
-    font_color: Optional[str] = Field(None, pattern="^#?[0-9A-Fa-f]{6}$",
-                                     description="Font color in hex format"),
-    background_color: Optional[str] = Field(None, pattern="^#?[0-9A-Fa-f]{6}$",
-                                           description="Background color in hex format"),
-    alignment: Optional[str] = Field(None,
-                                    pattern="^(left|center|right|top|middle|bottom)$",
-                                    description="Text alignment")
-) -> Dict[str, Any]:
+    sheet_name: str | None = Field(None, description="Sheet name"),
+    font_name: str | None = Field(None, description="Font name"),
+    font_size: int | None = Field(None, ge=1, le=409, description="Font size"),
+    font_bold: bool | None = Field(None, description="Bold font"),
+    font_italic: bool | None = Field(None, description="Italic font"),
+    font_color: str | None = Field(
+        None, pattern="^#?[0-9A-Fa-f]{6}$", description="Font color in hex format"
+    ),
+    background_color: str | None = Field(
+        None, pattern="^#?[0-9A-Fa-f]{6}$", description="Background color in hex format"
+    ),
+    alignment: str | None = Field(
+        None, pattern="^(left|center|right|top|middle|bottom)$", description="Text alignment"
+    ),
+) -> dict[str, Any]:
     """Format cells in a worksheet."""
-    return ops.format_cells(file_path, cell_range, sheet_name, font_name, font_size,
-                           font_bold, font_italic, font_color, background_color, alignment)
+    return ops.format_cells(
+        file_path,
+        cell_range,
+        sheet_name,
+        font_name,
+        font_size,
+        font_bold,
+        font_italic,
+        font_color,
+        background_color,
+        alignment,
+    )
 
 
 @mcp.tool(description="Add a formula to a cell")
@@ -527,8 +594,8 @@ async def add_formula(
     file_path: str = Field(..., description="Path to the XLSX file"),
     cell: str = Field(..., pattern="^[A-Z]+[0-9]+$", description="Cell reference (e.g., 'A1')"),
     formula: str = Field(..., description="Formula to add (with or without leading =)"),
-    sheet_name: Optional[str] = Field(None, description="Sheet name")
-) -> Dict[str, Any]:
+    sheet_name: str | None = Field(None, description="Sheet name"),
+) -> dict[str, Any]:
     """Add a formula to a cell."""
     return ops.add_formula(file_path, cell, formula, sheet_name)
 
@@ -538,27 +605,36 @@ async def analyze_workbook(
     file_path: str = Field(..., description="Path to the XLSX file"),
     include_structure: bool = Field(True, description="Include workbook structure analysis"),
     include_data_summary: bool = Field(True, description="Include data summary"),
-    include_formulas: bool = Field(True, description="Include formula analysis")
-) -> Dict[str, Any]:
+    include_formulas: bool = Field(True, description="Include formula analysis"),
+) -> dict[str, Any]:
     """Analyze workbook content and structure."""
-    return ops.analyze_workbook(file_path, include_structure, include_data_summary, include_formulas)
+    return ops.analyze_workbook(
+        file_path, include_structure, include_data_summary, include_formulas
+    )
 
 
 @mcp.tool(description="Create a chart in a worksheet")
 async def create_chart(
     file_path: str = Field(..., description="Path to the XLSX file"),
     data_range: str = Field(..., description="Data range for the chart"),
-    chart_type: str = Field("column",
-                          pattern="^(column|bar|line|pie|scatter)$",
-                          description="Type of chart to create"),
-    sheet_name: Optional[str] = Field(None, description="Sheet name"),
-    title: Optional[str] = Field(None, description="Chart title"),
-    x_axis_title: Optional[str] = Field(None, description="X-axis title"),
-    y_axis_title: Optional[str] = Field(None, description="Y-axis title")
-) -> Dict[str, Any]:
+    chart_type: str = Field(
+        "column", pattern="^(column|bar|line|pie|scatter)$", description="Type of chart to create"
+    ),
+    sheet_name: str | None = Field(None, description="Sheet name"),
+    title: str | None = Field(None, description="Chart title"),
+    x_axis_title: str | None = Field(None, description="X-axis title"),
+    y_axis_title: str | None = Field(None, description="Y-axis title"),
+) -> dict[str, Any]:
     """Create a chart in a worksheet."""
-    return ops.create_chart(file_path, sheet_name, chart_type, data_range,
-                           title or "", x_axis_title or "", y_axis_title or "")
+    return ops.create_chart(
+        file_path,
+        sheet_name,
+        chart_type,
+        data_range,
+        title or "",
+        x_axis_title or "",
+        y_axis_title or "",
+    )
 
 
 def main():
@@ -566,8 +642,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="XLSX FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9017, help="HTTP port")
 

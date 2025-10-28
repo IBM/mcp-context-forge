@@ -53,13 +53,13 @@ class TestHeaderMappingValidation:
         """Test invalid header names."""
         invalid_headers = [
             "Invalid Header!",  # Space
-            "Header@Invalid",   # Special character
-            "Header/Invalid",   # Forward slash
+            "Header@Invalid",  # Special character
+            "Header/Invalid",  # Forward slash
             "Header\\Invalid",  # Backslash
-            "Header:Invalid",   # Colon
-            "Header;Invalid",   # Semicolon
-            "",                 # Empty
-            "123Header",        # Starts with number
+            "Header:Invalid",  # Colon
+            "Header;Invalid",  # Semicolon
+            "",  # Empty
+            "123Header",  # Starts with number
         ]
 
         for invalid_header in invalid_headers:
@@ -69,13 +69,13 @@ class TestHeaderMappingValidation:
     def test_invalid_environment_variable_name(self):
         """Test invalid environment variable names."""
         invalid_env_vars = [
-            "123INVALID",       # Starts with number
-            "INVALID-VAR",      # Contains hyphen
-            "INVALID@VAR",      # Contains special character
-            "INVALID VAR",      # Contains space
-            "INVALID.VAR",      # Contains dot
-            "INVALID/VAR",      # Contains slash
-            "",                 # Empty
+            "123INVALID",  # Starts with number
+            "INVALID-VAR",  # Contains hyphen
+            "INVALID@VAR",  # Contains special character
+            "INVALID VAR",  # Contains space
+            "INVALID.VAR",  # Contains dot
+            "INVALID/VAR",  # Contains slash
+            "",  # Empty
             "var-with-hyphen",  # Contains hyphen
         ]
 
@@ -153,11 +153,13 @@ class TestHeaderMappingParsing:
 
     def test_valid_mappings(self):
         """Test parsing of valid header mappings."""
-        mappings = parse_header_mappings([
-            "Authorization=GITHUB_TOKEN",
-            "X-Tenant-Id=TENANT_ID",
-            "X-GitHub-Enterprise-Host=GITHUB_HOST",
-        ])
+        mappings = parse_header_mappings(
+            [
+                "Authorization=GITHUB_TOKEN",
+                "X-Tenant-Id=TENANT_ID",
+                "X-GitHub-Enterprise-Host=GITHUB_HOST",
+            ]
+        )
 
         expected = {
             "Authorization": "GITHUB_TOKEN",
@@ -168,11 +170,13 @@ class TestHeaderMappingParsing:
 
     def test_mappings_with_spaces(self):
         """Test parsing of mappings with spaces around equals sign."""
-        mappings = parse_header_mappings([
-            "Authorization = GITHUB_TOKEN",
-            " X-Tenant-Id = TENANT_ID ",
-            "Content-Type=CONTENT_TYPE",
-        ])
+        mappings = parse_header_mappings(
+            [
+                "Authorization = GITHUB_TOKEN",
+                " X-Tenant-Id = TENANT_ID ",
+                "Content-Type=CONTENT_TYPE",
+            ]
+        )
 
         expected = {
             "Authorization": "GITHUB_TOKEN",
@@ -184,18 +188,20 @@ class TestHeaderMappingParsing:
     def test_duplicate_header(self):
         """Test error handling for duplicate header mappings."""
         with pytest.raises(HeaderMappingError, match="Duplicate header mapping"):
-            parse_header_mappings([
-                "Authorization=GITHUB_TOKEN",
-                "Authorization=API_TOKEN",  # Duplicate
-            ])
+            parse_header_mappings(
+                [
+                    "Authorization=GITHUB_TOKEN",
+                    "Authorization=API_TOKEN",  # Duplicate
+                ]
+            )
 
     def test_invalid_format(self):
         """Test error handling for invalid mapping formats."""
         invalid_formats = [
-            "InvalidFormat",           # No equals sign
-            "Header=",                # Empty env var name
-            "=ENV_VAR",               # Empty header name
-            "Header=Env=Var",         # Multiple equals signs
+            "InvalidFormat",  # No equals sign
+            "Header=",  # Empty env var name
+            "=ENV_VAR",  # Empty header name
+            "Header=Env=Var",  # Multiple equals signs
         ]
 
         for invalid_format in invalid_formats:
@@ -412,7 +418,7 @@ class TestErrorHandling:
 
     def test_logging_in_sanitization(self):
         """Test that appropriate logging occurs during sanitization."""
-        with patch('mcpgateway.translate_header_utils.logger') as mock_logger:
+        with patch("mcpgateway.translate_header_utils.logger") as mock_logger:
             # Test long value truncation logging
             long_value = "x" * (MAX_HEADER_VALUE_LENGTH + 100)
             sanitize_header_value(long_value)
@@ -421,7 +427,7 @@ class TestErrorHandling:
 
     def test_logging_in_extraction(self):
         """Test that appropriate logging occurs during extraction."""
-        with patch('mcpgateway.translate_header_utils.logger') as mock_logger:
+        with patch("mcpgateway.translate_header_utils.logger") as mock_logger:
             headers = {"Authorization": "Bearer token123"}
             mappings = {"Authorization": "GITHUB_TOKEN"}
 
@@ -434,10 +440,10 @@ class TestErrorHandling:
 
     def test_exception_handling_in_extraction(self):
         """Test exception handling during header extraction."""
-        with patch('mcpgateway.translate_header_utils.sanitize_header_value') as mock_sanitize:
+        with patch("mcpgateway.translate_header_utils.sanitize_header_value") as mock_sanitize:
             mock_sanitize.side_effect = Exception("Sanitization failed")
 
-            with patch('mcpgateway.translate_header_utils.logger') as mock_logger:
+            with patch("mcpgateway.translate_header_utils.logger") as mock_logger:
                 headers = {"Authorization": "Bearer token123"}
                 mappings = {"Authorization": "GITHUB_TOKEN"}
 

@@ -5,6 +5,9 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://127.0.0.1:3000/mcp
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
 
   - name: "OPAPluginFilter"
     kind: "external"
@@ -12,6 +15,8 @@ plugins:
     mcp:
       proto: STREAMABLEHTTP
       url: http://127.0.0.1:8000/mcp
+      # tls:
+      #   verify: true
 
   - name: "LLMGuardPlugin"
     kind: "external"

@@ -578,7 +578,7 @@ def update_dependency_array(
         elif original == new_dep:
             print(f"{COLOR_SUCCESS}Up-to-date: Before: {original} | After: {new_dep}")
         else:
-            print(f"{COLOR_WARNING}Updated: Before: {original} {Style.RESET_ALL}--> " f"{COLOR_SUCCESS}{new_dep}")
+            print(f"{COLOR_WARNING}Updated: Before: {original} {Style.RESET_ALL}--> {COLOR_SUCCESS}{new_dep}")
             if verbose:
                 logger.info(f"📝 Updated dependency: {original} -> {new_dep}")
 
@@ -862,7 +862,7 @@ async def process_requirements(
             elif original == updated:
                 print(f"{COLOR_SUCCESS}Up-to-date: Before: {original} | After: {updated}")
             else:
-                print(f"{COLOR_WARNING}Updated: Before: {original} {Style.RESET_ALL}--> " f"{COLOR_SUCCESS}{updated}")
+                print(f"{COLOR_WARNING}Updated: Before: {original} {Style.RESET_ALL}--> {COLOR_SUCCESS}{updated}")
                 if verbose:
                     logger.info(f"📝 Updated dependency: {original} -> {updated}")
 
@@ -1335,7 +1335,7 @@ def main() -> int:
     # CLI argument parser
     parser = argparse.ArgumentParser(
         description=(
-            "Update dependency version constraints in pyproject.toml to use pinned (==), >=, or <= " "latest versions, preserving comments (unless removed) and optionally sorting dependencies."
+            "Update dependency version constraints in pyproject.toml to use pinned (==), >=, or <= latest versions, preserving comments (unless removed) and optionally sorting dependencies."
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -1359,7 +1359,7 @@ def main() -> int:
     parser.add_argument(
         "--backup",
         default=file_config.get("backup", None),
-        help=("Backup file name. If not specified, a timestamped backup (e.g. .depupdate.1678891234)" " will be created in the current directory."),
+        help=("Backup file name. If not specified, a timestamped backup (e.g. .depupdate.1678891234) will be created in the current directory."),
     )
     parser.add_argument(
         "--no-backup",
@@ -1441,7 +1441,7 @@ def main() -> int:
         "--version-spec",
         choices=["pinned", "gte", "lte"],
         default=file_config.get("version_spec", "gte"),
-        help=("How to update version constraints: 'pinned' uses '==latest', " "'gte' uses '>=latest', 'lte' uses '<=latest'. Default is 'gte'."),
+        help=("How to update version constraints: 'pinned' uses '==latest', 'gte' uses '>=latest', 'lte' uses '<=latest'. Default is 'gte'."),
     )
 
     # Ignore dependencies

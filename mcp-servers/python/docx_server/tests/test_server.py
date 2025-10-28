@@ -7,9 +7,9 @@ Authors: Mihai Criveti
 Tests for DOCX MCP Server (FastMCP).
 """
 
-import pytest
 import tempfile
 from pathlib import Path
+
 from docx_server.server_fastmcp import doc_ops
 
 
@@ -57,7 +57,7 @@ def test_add_table():
             rows=2,
             cols=3,
             data=[["A1", "B1", "C1"], ["A2", "B2", "C2"]],
-            headers=["Col1", "Col2", "Col3"]
+            headers=["Col1", "Col2", "Col3"],
         )
 
         assert result["success"] is True
@@ -101,11 +101,7 @@ def test_format_text():
         doc_ops.add_text(file_path, "Text to format")
 
         result = doc_ops.format_text(
-            file_path,
-            paragraph_index=0,
-            run_index=0,
-            bold=True,
-            italic=True
+            file_path, paragraph_index=0, run_index=0, bold=True, italic=True
         )
 
         assert result["success"] is True

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from typing import Dict, List
 
 from pm_mcp_server.resource_store import GLOBAL_RESOURCE_STORE
 from pm_mcp_server.schemata import (
@@ -22,7 +21,6 @@ from pm_mcp_server.schemata import (
     StakeholderMatrixResult,
 )
 
-
 _DECISION_PATTERN = re.compile(r"\b(decision|decided)[:\-]\s*(.+)", re.IGNORECASE)
 _ACTION_PATTERN = re.compile(r"\b(action|todo|ai)[:\-]\s*(.+)", re.IGNORECASE)
 _NOTE_PATTERN = re.compile(r"\b(note)[:\-]\s*(.+)", re.IGNORECASE)
@@ -31,9 +29,9 @@ _NOTE_PATTERN = re.compile(r"\b(note)[:\-]\s*(.+)", re.IGNORECASE)
 def meeting_minutes_summarizer(transcript: str) -> MeetingSummary:
     """Extract naive decisions/action items from raw transcript."""
 
-    decisions: List[str] = []
-    action_items: List[ActionItem] = []
-    notes: List[str] = []
+    decisions: list[str] = []
+    action_items: list[ActionItem] = []
+    notes: list[str] = []
 
     for idx, line in enumerate(transcript.splitlines(), start=1):
         line = line.strip()
@@ -55,19 +53,21 @@ def meeting_minutes_summarizer(transcript: str) -> MeetingSummary:
     )
 
 
-def action_item_tracker(current: ActionItemLog, updates: List[ActionItem]) -> ActionItemLog:
+def action_item_tracker(current: ActionItemLog, updates: list[ActionItem]) -> ActionItemLog:
     """Merge updates into current action item backlog by id."""
 
-    items: Dict[str, ActionItem] = {item.id: item for item in current.items}
+    items: dict[str, ActionItem] = {item.id: item for item in current.items}
     for update in updates:
         items[update.id] = update
     return ActionItemLog(items=list(items.values()))
 
 
-def resource_allocator(capacity: Dict[str, float], assignments: Dict[str, float]) -> Dict[str, Dict[str, float]]:
+def resource_allocator(
+    capacity: dict[str, float], assignments: dict[str, float]
+) -> dict[str, dict[str, float]]:
     """Highlight over/under allocations."""
 
-    report: Dict[str, Dict[str, float]] = {}
+    report: dict[str, dict[str, float]] = {}
     for team, cap in capacity.items():
         assigned = assignments.get(team, 0.0)
         variance = cap - assigned
@@ -75,15 +75,19 @@ def resource_allocator(capacity: Dict[str, float], assignments: Dict[str, float]
             "capacity": cap,
             "assigned": assigned,
             "variance": variance,
-            "status": "Overallocated" if variance < 0 else "Available" if variance > 0 else "Balanced",
+            "status": "Overallocated"
+            if variance < 0
+            else "Available"
+            if variance > 0
+            else "Balanced",
         }
     return report
 
 
-def stakeholder_matrix(stakeholders: List[Stakeholder]) -> StakeholderMatrixResult:
+def stakeholder_matrix(stakeholders: list[Stakeholder]) -> StakeholderMatrixResult:
     """Generate mermaid flowchart grouping stakeholders by power/interest."""
 
-    categories: Dict[str, List[str]] = {
+    categories: dict[str, list[str]] = {
         "Manage Closely": [],
         "Keep Satisfied": [],
         "Keep Informed": [],
@@ -117,11 +121,13 @@ def stakeholder_matrix(stakeholders: List[Stakeholder]) -> StakeholderMatrixResu
     return StakeholderMatrixResult(stakeholders=stakeholders, mermaid_resource=mermaid_resource)
 
 
-def communications_planner(stakeholders: List[Stakeholder], cadence_days: int = 7) -> List[Dict[str, str]]:
+def communications_planner(
+    stakeholders: list[Stakeholder], cadence_days: int = 7
+) -> list[dict[str, str]]:
     """Create simple communications schedule."""
 
     today = dt.date.today()
-    plan: List[Dict[str, str]] = []
+    plan: list[dict[str, str]] = []
     for stakeholder in stakeholders:
         cadence_multiplier = 1
         if stakeholder.influence.lower() == "high" or stakeholder.interest.lower() == "high":

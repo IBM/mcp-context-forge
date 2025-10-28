@@ -770,6 +770,7 @@ MCP follows JSON-RPC 2.0 error handling standards:
 #### 1. Authentication Problems
 
 **Symptoms:**
+
 - 401 Unauthorized responses
 - "Authentication required" errors
 
@@ -790,6 +791,7 @@ echo $MCPGATEWAY_BEARER_TOKEN | cut -d'.' -f2 | base64 -d | jq .exp
 #### 2. Connection Issues
 
 **Symptoms:**
+
 - Connection refused errors
 - Timeout errors
 
@@ -825,6 +827,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 #### 4. Empty Tool/Resource Lists
 
 **Symptoms:**
+
 - `tools/list` returns empty array
 - `resources/list` returns empty array
 
@@ -846,6 +849,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 #### 5. Tool Call Failures
 
 **Symptoms:**
+
 - Tool calls return `isError: true`
 - Timeout errors
 

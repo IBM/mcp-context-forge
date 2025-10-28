@@ -9,7 +9,7 @@ Basic tests for Email Authentication Service functionality.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -106,7 +106,7 @@ class TestEmailAuthBasic:
     def test_validate_password_with_requirements(self, service):
         """Test password validation with specific requirements."""
         # Test with settings patch to simulate strict requirements
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
             mock_settings.password_require_uppercase = True
             mock_settings.password_require_lowercase = True
@@ -144,9 +144,9 @@ class TestEmailAuthBasic:
     def test_password_service_integration(self, service):
         """Test integration with password service."""
         # Test that the service has a password service
-        assert hasattr(service, 'password_service')
-        assert hasattr(service.password_service, 'hash_password')
-        assert hasattr(service.password_service, 'verify_password')
+        assert hasattr(service, "password_service")
+        assert hasattr(service.password_service, "hash_password")
+        assert hasattr(service.password_service, "verify_password")
 
     # =========================================================================
     # Mock Database Integration Tests
@@ -222,10 +222,10 @@ class TestEmailAuthBasic:
     def test_service_has_required_methods(self, service):
         """Test that service has all required methods."""
         required_methods = [
-            'validate_email',
-            'validate_password',
-            'get_user_by_email',
-            'create_user',
+            "validate_email",
+            "validate_password",
+            "get_user_by_email",
+            "create_user",
         ]
 
         for method_name in required_methods:
@@ -237,8 +237,8 @@ class TestEmailAuthBasic:
         password_service = service.password_service
 
         # Test basic functionality exists
-        assert hasattr(password_service, 'hash_password')
-        assert hasattr(password_service, 'verify_password')
+        assert hasattr(password_service, "hash_password")
+        assert hasattr(password_service, "verify_password")
 
         # Test that it can hash a password (real functionality)
         test_password = "test_password_123"
@@ -299,7 +299,7 @@ class TestEmailAuthBasic:
 
     def test_validate_password_min_length(self, service):
         """Test password validation with minimum length requirement."""
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 12
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
@@ -315,7 +315,7 @@ class TestEmailAuthBasic:
 
     def test_validate_password_complex_requirements(self, service):
         """Test password validation with complex requirements."""
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 10
             mock_settings.password_require_uppercase = True
             mock_settings.password_require_lowercase = True
@@ -394,7 +394,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing user
 
         # Mock settings for personal team creation and password validation
-        with patch('mcpgateway.config.settings') as mock_settings:
+        with patch("mcpgateway.config.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False  # Disable for simplicity
             mock_settings.password_min_length = 8
             mock_settings.password_require_uppercase = False
@@ -403,15 +403,9 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             # Need to also patch where validate_password imports settings
-            with patch('mcpgateway.services.email_auth_service.settings', mock_settings):
+            with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 # Create user
-                result = await service.create_user(
-                    email="newuser@example.com",
-                    password="SecurePass123",
-                    full_name="New User",
-                    is_admin=False,
-                    auth_provider="local"
-                )
+                result = await service.create_user(email="newuser@example.com", password="SecurePass123", full_name="New User", is_admin=False, auth_provider="local")
 
                 # Verify user was added to database
                 mock_db.add.assert_called()
@@ -428,7 +422,7 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 7  # Pass123 is 7 chars
             mock_settings.password_require_uppercase = False
@@ -436,17 +430,13 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            with patch('mcpgateway.services.email_auth_service.PersonalTeamService') as MockPersonalTeamService:
+            with patch("mcpgateway.services.email_auth_service.PersonalTeamService") as MockPersonalTeamService:
                 mock_personal_team_service = MockPersonalTeamService.return_value
                 mock_team = MagicMock()
                 mock_team.name = "Personal Team"
                 mock_personal_team_service.create_personal_team = AsyncMock(return_value=mock_team)
 
-                result = await service.create_user(
-                    email="user@example.com",
-                    password="Pass123",
-                    full_name="User Name"
-                )
+                result = await service.create_user(email="user@example.com", password="Pass123", full_name="User Name")
 
                 # Verify personal team service was called
                 MockPersonalTeamService.assert_called_once_with(mock_db)
@@ -459,7 +449,7 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 7
             mock_settings.password_require_uppercase = False
@@ -467,16 +457,13 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            with patch('mcpgateway.services.email_auth_service.PersonalTeamService') as MockPersonalTeamService:
+            with patch("mcpgateway.services.email_auth_service.PersonalTeamService") as MockPersonalTeamService:
                 # Make personal team creation fail
                 mock_personal_team_service = MockPersonalTeamService.return_value
                 mock_personal_team_service.create_personal_team = AsyncMock(side_effect=Exception("Team creation failed"))
 
                 # User creation should still succeed
-                result = await service.create_user(
-                    email="user@example.com",
-                    password="Pass123"
-                )
+                result = await service.create_user(email="user@example.com", password="Pass123")
 
                 # User should have been created despite team failure
                 mock_db.add.assert_called()
@@ -489,10 +476,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(UserExistsError, match="already exists"):
-            await service.create_user(
-                email="test@example.com",
-                password="Password123"
-            )
+            await service.create_user(email="test@example.com", password="Password123")
 
     @pytest.mark.asyncio
     async def test_create_user_database_integrity_error(self, service, mock_db, mock_password_service):
@@ -503,7 +487,7 @@ class TestEmailAuthServiceUserManagement:
         # Make database add fail with IntegrityError
         mock_db.commit.side_effect = IntegrityError("Unique constraint", None, None)
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 7
             mock_settings.password_require_uppercase = False
@@ -512,10 +496,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with pytest.raises(UserExistsError):
-                await service.create_user(
-                    email="duplicate@example.com",
-                    password="Pass123"
-                )
+                await service.create_user(email="duplicate@example.com", password="Pass123")
 
             # Verify rollback was called
             mock_db.rollback.assert_called()
@@ -529,7 +510,7 @@ class TestEmailAuthServiceUserManagement:
         # Make database commit fail unexpectedly
         mock_db.commit.side_effect = Exception("Database connection lost")
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 7
             mock_settings.password_require_uppercase = False
@@ -538,10 +519,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with pytest.raises(Exception, match="Database connection lost"):
-                await service.create_user(
-                    email="user@example.com",
-                    password="Pass123"
-                )
+                await service.create_user(email="user@example.com", password="Pass123")
 
             # Verify rollback was called
             mock_db.rollback.assert_called()
@@ -552,7 +530,7 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 7
             mock_settings.password_require_uppercase = False
@@ -562,7 +540,7 @@ class TestEmailAuthServiceUserManagement:
 
             await service.create_user(
                 email="  User@EXAMPLE.Com  ",  # Mixed case with whitespace
-                password="Pass123"
+                password="Pass123",
             )
 
             # Verify the email was normalized when checking for existing user
@@ -580,12 +558,7 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        result = await service.authenticate_user(
-            email="test@example.com",
-            password="correct_password",
-            ip_address="192.168.1.1",
-            user_agent="TestAgent/1.0"
-        )
+        result = await service.authenticate_user(email="test@example.com", password="correct_password", ip_address="192.168.1.1", user_agent="TestAgent/1.0")
 
         assert result == mock_user
         mock_user.reset_failed_attempts.assert_called_once()
@@ -596,10 +569,7 @@ class TestEmailAuthServiceUserManagement:
         """Test authentication when user doesn't exist."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
-        result = await service.authenticate_user(
-            email="nonexistent@example.com",
-            password="password"
-        )
+        result = await service.authenticate_user(email="nonexistent@example.com", password="password")
 
         assert result is None
         # Should log auth event even for non-existent users
@@ -611,10 +581,7 @@ class TestEmailAuthServiceUserManagement:
         mock_user.is_active = False
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        result = await service.authenticate_user(
-            email="test@example.com",
-            password="password"
-        )
+        result = await service.authenticate_user(email="test@example.com", password="password")
 
         assert result is None
 
@@ -624,10 +591,7 @@ class TestEmailAuthServiceUserManagement:
         mock_user.is_account_locked.return_value = True
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        result = await service.authenticate_user(
-            email="test@example.com",
-            password="password"
-        )
+        result = await service.authenticate_user(email="test@example.com", password="password")
 
         assert result is None
 
@@ -638,14 +602,11 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.return_value = False
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.max_failed_login_attempts = 5
             mock_settings.account_lockout_duration_minutes = 30
 
-            result = await service.authenticate_user(
-                email="test@example.com",
-                password="wrong_password"
-            )
+            result = await service.authenticate_user(email="test@example.com", password="wrong_password")
 
             assert result is None
             mock_user.increment_failed_attempts.assert_called_once_with(5, 30)
@@ -658,14 +619,11 @@ class TestEmailAuthServiceUserManagement:
         mock_user.increment_failed_attempts.return_value = True  # Account gets locked
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.max_failed_login_attempts = 3
             mock_settings.account_lockout_duration_minutes = 15
 
-            result = await service.authenticate_user(
-                email="test@example.com",
-                password="wrong_password"
-            )
+            result = await service.authenticate_user(email="test@example.com", password="wrong_password")
 
             assert result is None
             mock_user.increment_failed_attempts.assert_called_once_with(3, 15)
@@ -684,12 +642,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.side_effect = [True, False]
         mock_password_service.hash_password.return_value = "new_hashed_password"
 
-        result = await service.change_password(
-            email="test@example.com",
-            old_password="old_password",
-            new_password="NewSecurePass123!",
-            ip_address="192.168.1.1"
-        )
+        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
 
         assert result is True
         assert mock_user.password_hash == "new_hashed_password"
@@ -703,11 +656,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(AuthenticationError, match="Current password is incorrect"):
-            await service.change_password(
-                email="test@example.com",
-                old_password="wrong_old_password",
-                new_password="NewPassword123"
-            )
+            await service.change_password(email="test@example.com", old_password="wrong_old_password", new_password="NewPassword123")
 
     @pytest.mark.asyncio
     async def test_change_password_same_as_old(self, service, mock_db, mock_user, mock_password_service):
@@ -719,11 +668,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.return_value = True
 
         with pytest.raises(PasswordValidationError, match="must be different"):
-            await service.change_password(
-                email="test@example.com",
-                old_password="password123",
-                new_password="password123"
-            )
+            await service.change_password(email="test@example.com", old_password="password123", new_password="password123")
 
     @pytest.mark.skip(reason="Complex mock interaction with finally block - core functionality covered by other tests")
     @pytest.mark.asyncio
@@ -734,7 +679,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.side_effect = [True, False]
 
         # Mock settings for password validation
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
@@ -743,6 +688,7 @@ class TestEmailAuthServiceUserManagement:
 
             # Make the password change commit fail (line 483 in the implementation)
             commit_call_count = 0
+
             def mock_commit():
                 nonlocal commit_call_count
                 commit_call_count += 1
@@ -753,11 +699,7 @@ class TestEmailAuthServiceUserManagement:
             mock_db.commit.side_effect = mock_commit
 
             with pytest.raises(Exception, match="Database error"):
-                await service.change_password(
-                    email="test@example.com",
-                    old_password="old_password",
-                    new_password="new_password"
-                )
+                await service.change_password(email="test@example.com", old_password="old_password", new_password="new_password")
 
             # Verify rollback was called after the first commit failed
             mock_db.rollback.assert_called_once()
@@ -772,7 +714,7 @@ class TestEmailAuthServiceUserManagement:
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing admin
 
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 8
             mock_settings.password_require_uppercase = False
@@ -780,11 +722,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            result = await service.create_platform_admin(
-                email="admin@example.com",
-                password="AdminPass123!",
-                full_name="Platform Admin"
-            )
+            result = await service.create_platform_admin(email="admin@example.com", password="AdminPass123!", full_name="Platform Admin")
 
             mock_db.add.assert_called()
             mock_db.commit.assert_called()
@@ -804,7 +742,7 @@ class TestEmailAuthServiceUserManagement:
         result = await service.create_platform_admin(
             email="test@example.com",
             password="NewAdminPass123!",
-            full_name="Admin"  # Same name
+            full_name="Admin",  # Same name
         )
 
         assert result == mock_user
@@ -823,11 +761,7 @@ class TestEmailAuthServiceUserManagement:
         # Password unchanged
         mock_password_service.verify_password.return_value = True
 
-        result = await service.create_platform_admin(
-            email="test@example.com",
-            password="SamePassword",
-            full_name="New Admin Name"
-        )
+        result = await service.create_platform_admin(email="test@example.com", password="SamePassword", full_name="New Admin Name")
 
         assert result == mock_user
         assert mock_user.full_name == "New Admin Name"
@@ -1038,10 +972,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(
-            email="test@example.com",
-            full_name="Updated Name"
-        )
+        result = await service.update_user(email="test@example.com", full_name="Updated Name")
 
         assert mock_user.full_name == "Updated Name"
         mock_db.commit.assert_called()
@@ -1053,10 +984,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(
-            email="test@example.com",
-            is_admin=True
-        )
+        result = await service.update_user(email="test@example.com", is_admin=True)
 
         assert mock_user.is_admin is True
         mock_db.commit.assert_called()
@@ -1069,10 +997,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(
-            email="test@example.com",
-            password="NewSecurePass123!"
-        )
+        result = await service.update_user(email="test@example.com", password="NewSecurePass123!")
 
         assert mock_user.password_hash == "new_hashed_password"
         mock_password_service.hash_password.assert_called_once_with("NewSecurePass123!")
@@ -1086,10 +1011,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(ValueError, match="not found"):
-            await service.update_user(
-                email="nonexistent@example.com",
-                full_name="Name"
-            )
+            await service.update_user(email="nonexistent@example.com", full_name="Name")
 
     @pytest.mark.asyncio
     async def test_update_user_database_error(self, service, mock_db, mock_user):
@@ -1100,10 +1022,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(Exception, match="Database error"):
-            await service.update_user(
-                email="test@example.com",
-                full_name="Name"
-            )
+            await service.update_user(email="test@example.com", full_name="Name")
 
         mock_db.rollback.assert_called()
 
@@ -1264,13 +1183,7 @@ class TestEmailAuthServiceUserDeletion:
         # Fifth execute: team members (empty)
         mock_empty_result = MagicMock()
 
-        mock_db.execute.side_effect = [
-            mock_user_result,
-            mock_teams_result,
-            mock_members_result,
-            mock_empty_result,
-            mock_empty_result
-        ]
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
 
         result = await service.delete_user("test@example.com")
 
@@ -1311,7 +1224,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,  # Just the user as member
             mock_empty,  # Delete team members
             mock_empty,  # Delete auth events
-            mock_empty   # Delete user team members
+            mock_empty,  # Delete user team members
         ]
 
         result = await service.delete_user("test@example.com")
@@ -1325,11 +1238,7 @@ class TestEmailAuthServiceUserDeletion:
     async def test_delete_user_with_team_no_transfer_possible(self, service, mock_db, mock_user, mock_team):
         """Test deleting user who owns team with members but no other owners."""
         # Setup multiple members but no other owners
-        members = [
-            MagicMock(user_email="test@example.com", role="owner"),
-            MagicMock(user_email="member1@example.com", role="member"),
-            MagicMock(user_email="member2@example.com", role="member")
-        ]
+        members = [MagicMock(user_email="test@example.com", role="owner"), MagicMock(user_email="member1@example.com", role="member"), MagicMock(user_email="member2@example.com", role="member")]
 
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = mock_user
@@ -1343,12 +1252,7 @@ class TestEmailAuthServiceUserDeletion:
         mock_members_result = MagicMock()
         mock_members_result.scalars.return_value.all.return_value = members
 
-        mock_db.execute.side_effect = [
-            mock_user_result,
-            mock_teams_result,
-            mock_no_owners,
-            mock_members_result
-        ]
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_no_owners, mock_members_result]
 
         with pytest.raises(ValueError, match="no other owners to transfer"):
             await service.delete_user("test@example.com")

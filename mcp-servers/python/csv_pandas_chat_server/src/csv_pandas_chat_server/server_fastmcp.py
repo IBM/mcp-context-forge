@@ -27,7 +27,7 @@ import sys
 import textwrap
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 from uuid import uuid4
 
 import numpy as np
@@ -61,9 +61,9 @@ class CSVProcessor:
 
     async def load_dataframe(
         self,
-        csv_content: Optional[str] = None,
-        file_url: Optional[str] = None,
-        file_path: Optional[str] = None,
+        csv_content: str | None = None,
+        file_url: str | None = None,
+        file_path: str | None = None,
     ) -> pd.DataFrame:
         """Load a dataframe from various input sources."""
         logger.debug("Loading dataframe from input source")
@@ -87,7 +87,9 @@ class CSVProcessor:
             for chunk in response.iter_content(chunk_size=8192):
                 content += chunk
                 if len(content) > MAX_FILE_SIZE:
-                    raise ValueError(f"File size exceeds maximum allowed size of {MAX_FILE_SIZE} bytes")
+                    raise ValueError(
+                        f"File size exceeds maximum allowed size of {MAX_FILE_SIZE} bytes"
+                    )
 
             if str(file_url).endswith(".csv"):
                 df = pd.read_csv(BytesIO(content))
@@ -101,7 +103,9 @@ class CSVProcessor:
                     try:
                         df = pd.read_excel(BytesIO(content))
                     except:
-                        raise ValueError("Unsupported file format. Only CSV and XLSX are supported.")
+                        raise ValueError(
+                            "Unsupported file format. Only CSV and XLSX are supported."
+                        )
         elif file_path:
             logger.debug(f"Loading dataframe from file path: {file_path}")
             file_path_obj = Path(file_path)
@@ -126,10 +130,14 @@ class CSVProcessor:
     def _validate_dataframe(self, df: pd.DataFrame) -> None:
         """Validate dataframe against security constraints."""
         if df.shape[0] > MAX_DATAFRAME_ROWS:
-            raise ValueError(f"Dataframe has {df.shape[0]} rows, exceeding maximum of {MAX_DATAFRAME_ROWS}")
+            raise ValueError(
+                f"Dataframe has {df.shape[0]} rows, exceeding maximum of {MAX_DATAFRAME_ROWS}"
+            )
 
         if df.shape[1] > MAX_DATAFRAME_COLS:
-            raise ValueError(f"Dataframe has {df.shape[1]} columns, exceeding maximum of {MAX_DATAFRAME_COLS}")
+            raise ValueError(
+                f"Dataframe has {df.shape[1]} columns, exceeding maximum of {MAX_DATAFRAME_COLS}"
+            )
 
         # Check memory usage
         memory_usage = df.memory_usage(deep=True).sum()
@@ -151,7 +159,7 @@ class CSVProcessor:
             "open(",
             "file(",
             "input(",
-            "raw_input("
+            "raw_input(",
         ]
 
         input_lower = input_str.lower()
@@ -161,7 +169,7 @@ class CSVProcessor:
                 raise ValueError(f"Input contains potentially unsafe content: {blocked}")
 
         # Remove potentially harmful characters while preserving useful ones
-        sanitized = re.sub(r'[^\w\s.,?!;:()\[\]{}+=\-*/<>%"\']', '', input_str)
+        sanitized = re.sub(r'[^\w\s.,?!;:()\[\]{}+=\-*/<>%"\']', "", input_str)
         return sanitized.strip()[:MAX_INPUT_LENGTH]
 
     def sanitize_code(self, code: str) -> str:
@@ -169,32 +177,32 @@ class CSVProcessor:
         logger.debug(f"Sanitizing code: {code[:200]}...")
 
         # Remove code block markers
-        code = re.sub(r'```python\s*', '', code)
-        code = re.sub(r'```\s*', '', code)
+        code = re.sub(r"```python\s*", "", code)
+        code = re.sub(r"```\s*", "", code)
         code = code.strip()
 
         # Blocklist of dangerous operations
         blocklist = [
-            r'\bimport\s+os\b',
-            r'\bimport\s+sys\b',
-            r'\bimport\s+subprocess\b',
-            r'\bfrom\s+os\b',
-            r'\bfrom\s+sys\b',
-            r'\b__import__\b',
-            r'\beval\s*\(',
-            r'\bexec\s*\(',
-            r'\bopen\s*\(',
-            r'\bfile\s*\(',
-            r'\binput\s*\(',
-            r'\braw_input\s*\(',
-            r'\bcompile\s*\(',
-            r'\bglobals\s*\(',
-            r'\blocals\s*\(',
-            r'\bsetattr\s*\(',
-            r'\bgetattr\s*\(',
-            r'\bdelattr\s*\(',
-            r'\b__.*__\b',  # Dunder methods
-            r'\bwhile\s+True\b',  # Infinite loops
+            r"\bimport\s+os\b",
+            r"\bimport\s+sys\b",
+            r"\bimport\s+subprocess\b",
+            r"\bfrom\s+os\b",
+            r"\bfrom\s+sys\b",
+            r"\b__import__\b",
+            r"\beval\s*\(",
+            r"\bexec\s*\(",
+            r"\bopen\s*\(",
+            r"\bfile\s*\(",
+            r"\binput\s*\(",
+            r"\braw_input\s*\(",
+            r"\bcompile\s*\(",
+            r"\bglobals\s*\(",
+            r"\blocals\s*\(",
+            r"\bsetattr\s*\(",
+            r"\bgetattr\s*\(",
+            r"\bdelattr\s*\(",
+            r"\b__.*__\b",  # Dunder methods
+            r"\bwhile\s+True\b",  # Infinite loops
         ]
 
         for pattern in blocklist:
@@ -205,18 +213,18 @@ class CSVProcessor:
 
     def fix_syntax_errors(self, code: str) -> str:
         """Attempt to fix common syntax errors in generated code."""
-        lines = code.strip().split('\n')
+        lines = code.strip().split("\n")
 
         # Ensure the last line assigns to result variable
-        if lines and not any('result =' in line for line in lines):
+        if lines and not any("result =" in line for line in lines):
             # If the last line is an expression, assign it to result
             last_line = lines[-1].strip()
-            if last_line and not last_line.startswith(('print', 'result')):
+            if last_line and not last_line.startswith(("print", "result")):
                 lines[-1] = f"result = {last_line}"
             else:
                 lines.append("result = df.head()")  # Default fallback
 
-        return '\n'.join(lines)
+        return "\n".join(lines)
 
     async def execute_code_with_timeout(self, code: str, df: pd.DataFrame) -> Any:
         """Execute code with timeout and restricted environment."""
@@ -225,17 +233,34 @@ class CSVProcessor:
         async def run_code():
             # Create safe execution environment
             safe_globals = {
-                '__builtins__': {
-                    'len': len, 'str': str, 'int': int, 'float': float, 'bool': bool,
-                    'list': list, 'dict': dict, 'set': set, 'tuple': tuple,
-                    'sum': sum, 'min': min, 'max': max, 'abs': abs, 'round': round,
-                    'sorted': sorted, 'any': any, 'all': all, 'zip': zip,
-                    'map': map, 'filter': filter, 'range': range, 'enumerate': enumerate,
-                    'print': print,
+                "__builtins__": {
+                    "len": len,
+                    "str": str,
+                    "int": int,
+                    "float": float,
+                    "bool": bool,
+                    "list": list,
+                    "dict": dict,
+                    "set": set,
+                    "tuple": tuple,
+                    "sum": sum,
+                    "min": min,
+                    "max": max,
+                    "abs": abs,
+                    "round": round,
+                    "sorted": sorted,
+                    "any": any,
+                    "all": all,
+                    "zip": zip,
+                    "map": map,
+                    "filter": filter,
+                    "range": range,
+                    "enumerate": enumerate,
+                    "print": print,
                 },
-                'pd': pd,
-                'np': np,
-                'df': df.copy(),  # Work with a copy to prevent modification
+                "pd": pd,
+                "np": np,
+                "df": df.copy(),  # Work with a copy to prevent modification
             }
 
             # Prepare code with proper indentation
@@ -253,13 +278,13 @@ def execute_user_code():
             # Execute the code
             local_vars = {}
             exec(full_func, safe_globals, local_vars)
-            return local_vars['execute_user_code']()
+            return local_vars["execute_user_code"]()
 
         try:
             result = await asyncio.wait_for(run_code(), timeout=EXECUTION_TIMEOUT)
-            logger.debug(f"Code execution completed successfully")
+            logger.debug("Code execution completed successfully")
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise TimeoutError(f"Code execution timed out after {EXECUTION_TIMEOUT} seconds")
         except Exception as e:
             logger.error(f"Error executing code: {str(e)}")
@@ -277,26 +302,23 @@ def execute_user_code():
                 sample_values = unique_values[:max_unique_values]
                 values_str = f"{', '.join(map(str, sample_values))} (and {len(unique_values) - max_unique_values} more)"
             else:
-                values_str = ', '.join(map(str, unique_values))
+                values_str = ", ".join(map(str, unique_values))
 
             column_info.append(f"{column} ({dtype}): {values_str}")
 
-        return '\n'.join(column_info)
+        return "\n".join(column_info)
 
     async def _generate_code_with_openai(
-        self,
-        df_head: str,
-        column_info: str,
-        query: str,
-        api_key: Optional[str],
-        model: str
-    ) -> Dict[str, Any]:
+        self, df_head: str, column_info: str, query: str, api_key: str | None, model: str
+    ) -> dict[str, Any]:
         """Generate code using OpenAI API."""
         if not api_key:
             # Fallback to environment variable
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
-                raise ValueError("OpenAI API key is required. Provide it in the request or set OPENAI_API_KEY environment variable.")
+                raise ValueError(
+                    "OpenAI API key is required. Provide it in the request or set OPENAI_API_KEY environment variable."
+                )
 
         prompt = self._create_prompt(df_head, column_info, query)
 
@@ -309,11 +331,14 @@ def execute_user_code():
             response = await client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates safe Python pandas code to analyze CSV data. Always respond with valid JSON containing 'code' and 'explanation' fields."},
-                    {"role": "user", "content": prompt}
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant that generates safe Python pandas code to analyze CSV data. Always respond with valid JSON containing 'code' and 'explanation' fields.",
+                    },
+                    {"role": "user", "content": prompt},
                 ],
                 temperature=0.1,
-                max_tokens=1000
+                max_tokens=1000,
             )
 
             content = response.choices[0].message.content
@@ -373,13 +398,15 @@ processor = CSVProcessor()
 
 @mcp.tool(description="Chat with CSV data using natural language queries")
 async def chat_with_csv(
-    query: str = Field(..., description="Natural language query about the data", max_length=MAX_INPUT_LENGTH),
-    csv_content: Optional[str] = Field(None, description="CSV content as string"),
-    file_url: Optional[str] = Field(None, description="URL to CSV or XLSX file"),
-    file_path: Optional[str] = Field(None, description="Path to local CSV file"),
-    openai_api_key: Optional[str] = Field(None, description="OpenAI API key"),
+    query: str = Field(
+        ..., description="Natural language query about the data", max_length=MAX_INPUT_LENGTH
+    ),
+    csv_content: str | None = Field(None, description="CSV content as string"),
+    file_url: str | None = Field(None, description="URL to CSV or XLSX file"),
+    file_path: str | None = Field(None, description="Path to local CSV file"),
+    openai_api_key: str | None = Field(None, description="OpenAI API key"),
     model: str = Field("gpt-3.5-turbo", description="OpenAI model to use"),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Process a chat query against CSV data using AI-generated pandas code."""
     invocation_id = str(uuid4())
     logger.info(f"Processing chat request {invocation_id}")
@@ -416,7 +443,7 @@ async def chat_with_csv(
                 else:
                     display_result = result.to_string()
             elif isinstance(result, (list, np.ndarray)):
-                display_result = ', '.join(map(str, result[:100]))
+                display_result = ", ".join(map(str, result[:100]))
                 if len(result) > 100:
                     display_result += f" ... (showing first 100 of {len(result)} items)"
             else:
@@ -429,30 +456,26 @@ async def chat_with_csv(
                 "explanation": llm_response.get("explanation", "No explanation provided"),
                 "generated_code": code,
                 "result": display_result,
-                "dataframe_shape": df.shape
+                "dataframe_shape": df.shape,
             }
         else:
             return {
                 "success": False,
                 "invocation_id": invocation_id,
-                "error": "No executable code was generated by the AI model"
+                "error": "No executable code was generated by the AI model",
             }
 
     except Exception as e:
         logger.error(f"Error in chat_with_csv: {str(e)}")
-        return {
-            "success": False,
-            "invocation_id": invocation_id,
-            "error": str(e)
-        }
+        return {"success": False, "invocation_id": invocation_id, "error": str(e)}
 
 
 @mcp.tool(description="Get comprehensive information about CSV data structure")
 async def get_csv_info(
-    csv_content: Optional[str] = Field(None, description="CSV content as string"),
-    file_url: Optional[str] = Field(None, description="URL to CSV or XLSX file"),
-    file_path: Optional[str] = Field(None, description="Path to local CSV file"),
-) -> Dict[str, Any]:
+    csv_content: str | None = Field(None, description="CSV content as string"),
+    file_url: str | None = Field(None, description="URL to CSV or XLSX file"),
+    file_path: str | None = Field(None, description="Path to local CSV file"),
+) -> dict[str, Any]:
     """Get comprehensive information about CSV data."""
     try:
         df = await processor.load_dataframe(csv_content, file_url, file_path)
@@ -465,7 +488,7 @@ async def get_csv_info(
             "dtypes": df.dtypes.astype(str).to_dict(),
             "memory_usage": df.memory_usage(deep=True).sum(),
             "missing_values": df.isnull().sum().to_dict(),
-            "sample_data": df.head(5).to_dict(orient="records")
+            "sample_data": df.head(5).to_dict(orient="records"),
         }
 
         # Add basic statistics for numeric columns
@@ -474,7 +497,7 @@ async def get_csv_info(
             info["numeric_summary"] = df[numeric_cols].describe().to_dict()
 
         # Add unique value counts for categorical columns
-        categorical_cols = df.select_dtypes(include=['object']).columns
+        categorical_cols = df.select_dtypes(include=["object"]).columns
         unique_counts = {}
         for col in categorical_cols:
             unique_counts[col] = df[col].nunique()
@@ -484,20 +507,20 @@ async def get_csv_info(
 
     except Exception as e:
         logger.error(f"Error getting CSV info: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @mcp.tool(description="Perform automated analysis of CSV data")
 async def analyze_csv(
-    csv_content: Optional[str] = Field(None, description="CSV content as string"),
-    file_url: Optional[str] = Field(None, description="URL to CSV or XLSX file"),
-    file_path: Optional[str] = Field(None, description="Path to local CSV file"),
-    analysis_type: str = Field("basic", pattern="^(basic|detailed|statistical)$",
-                               description="Type of analysis (basic, detailed, statistical)"),
-) -> Dict[str, Any]:
+    csv_content: str | None = Field(None, description="CSV content as string"),
+    file_url: str | None = Field(None, description="URL to CSV or XLSX file"),
+    file_path: str | None = Field(None, description="Path to local CSV file"),
+    analysis_type: str = Field(
+        "basic",
+        pattern="^(basic|detailed|statistical)$",
+        description="Type of analysis (basic, detailed, statistical)",
+    ),
+) -> dict[str, Any]:
     """Perform automated analysis of CSV data."""
     try:
         df = await processor.load_dataframe(csv_content, file_url, file_path)
@@ -506,7 +529,7 @@ async def analyze_csv(
             "success": True,
             "analysis_type": analysis_type,
             "shape": df.shape,
-            "columns": df.columns.tolist()
+            "columns": df.columns.tolist(),
         }
 
         if analysis_type in ["basic", "detailed", "statistical"]:
@@ -514,14 +537,14 @@ async def analyze_csv(
             analysis["data_quality"] = {
                 "missing_values": df.isnull().sum().to_dict(),
                 "duplicate_rows": df.duplicated().sum(),
-                "memory_usage_mb": df.memory_usage(deep=True).sum() / 1024 / 1024
+                "memory_usage_mb": df.memory_usage(deep=True).sum() / 1024 / 1024,
             }
 
             # Column type analysis
             analysis["column_types"] = {
                 "numeric": df.select_dtypes(include=[np.number]).columns.tolist(),
-                "categorical": df.select_dtypes(include=['object']).columns.tolist(),
-                "datetime": df.select_dtypes(include=['datetime']).columns.tolist()
+                "categorical": df.select_dtypes(include=["object"]).columns.tolist(),
+                "datetime": df.select_dtypes(include=["datetime"]).columns.tolist(),
             }
 
         if analysis_type in ["detailed", "statistical"]:
@@ -544,7 +567,7 @@ async def analyze_csv(
                     "skewness": float(df[col].skew()),
                     "kurtosis": float(df[col].kurtosis()),
                     "variance": float(df[col].var()),
-                    "std_dev": float(df[col].std())
+                    "std_dev": float(df[col].std()),
                 }
                 analysis["advanced_stats"][col] = col_stats
 
@@ -552,10 +575,7 @@ async def analyze_csv(
 
     except Exception as e:
         logger.error(f"Error analyzing CSV: {str(e)}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 def main():
@@ -563,8 +583,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="CSV Pandas Chat FastMCP Server")
-    parser.add_argument("--transport", choices=["stdio", "http"], default="stdio",
-                        help="Transport mode (stdio or http)")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
     parser.add_argument("--port", type=int, default=9003, help="HTTP port")
 

@@ -180,7 +180,6 @@ class TestPassthroughHeaders:
 
         mock_db.commit.assert_called_once()
 
-
     @pytest.mark.asyncio
     @patch("mcpgateway.utils.passthrough_headers.settings")
     async def test_set_global_passthrough_headers_invalid_config(self, mock_settings):

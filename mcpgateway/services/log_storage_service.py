@@ -14,12 +14,27 @@ import asyncio
 from collections import deque
 from datetime import datetime, timezone
 import sys
-from typing import Any, AsyncGenerator, Deque, Dict, List, Optional
+from typing import Any, AsyncGenerator, Deque, Dict, List, Optional, TypedDict
 import uuid
 
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.models import LogLevel
+
+
+class LogEntryDict(TypedDict, total=False):
+    """TypedDict for LogEntry serialization."""
+
+    id: str
+    timestamp: str
+    level: LogLevel
+    entity_type: Optional[str]
+    entity_id: Optional[str]
+    entity_name: Optional[str]
+    message: str
+    logger: Optional[str]
+    data: Optional[Dict[str, Any]]
+    request_id: Optional[str]
 
 
 class LogEntry:
@@ -86,7 +101,7 @@ class LogEntry:
         self._size += sys.getsizeof(self.data) if self.data else 0
         self._size += sys.getsizeof(self.request_id) if self.request_id else 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> LogEntryDict:
         """Convert to dictionary for JSON serialization.
 
         Returns:
@@ -123,6 +138,13 @@ class LogEntry:
         }
 
 
+class LogStorageMessage(TypedDict):
+    """TypedDict for messages sent to subscribers."""
+
+    type: str
+    data: LogEntryDict
+
+
 class LogStorageService:
     """Service for storing and retrieving log entries in memory.
 
@@ -133,7 +155,7 @@ class LogStorageService:
     - Filtering and pagination
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize log storage service."""
         # Calculate max buffer size in bytes
         self._max_size_bytes = int(settings.log_buffer_size_mb * 1024 * 1024)
@@ -141,7 +163,7 @@ class LogStorageService:
 
         # Use deque for efficient append/pop operations
         self._buffer: Deque[LogEntry] = deque()
-        self._subscribers: List[asyncio.Queue] = []
+        self._subscribers: List[asyncio.Queue[LogStorageMessage]] = []
 
         # Indices for efficient filtering
         self._entity_index: Dict[str, List[str]] = {}  # entity_key -> [log_ids]
@@ -243,7 +265,7 @@ class LogStorageService:
         Args:
             log_entry: New log entry
         """
-        message = {
+        message: LogStorageMessage = {
             "type": "log_entry",
             "data": log_entry.to_dict(),
         }
@@ -277,7 +299,7 @@ class LogStorageService:
         limit: int = 100,
         offset: int = 0,
         order: str = "desc",
-    ) -> List[Dict[str, Any]]:
+    ) -> List[LogEntryDict]:
         """Get filtered log entries.
 
         Args:
@@ -373,13 +395,13 @@ class LogStorageService:
 
         return level_values.get(log_level, 0) >= level_values.get(min_level, 0)
 
-    async def subscribe(self) -> AsyncGenerator[Dict[str, Any], None]:
+    async def subscribe(self) -> AsyncGenerator[LogStorageMessage, None]:
         """Subscribe to real-time log updates.
 
         Yields:
             Log entry events as they occur
         """
-        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        queue: asyncio.Queue[LogStorageMessage] = asyncio.Queue(maxsize=100)
         self._subscribers.append(queue)
         try:
             while True:
@@ -410,8 +432,8 @@ class LogStorageService:
             >>> stats['unique_requests']
             0
         """
-        level_counts = {}
-        entity_counts = {}
+        level_counts: Dict[LogLevel, int] = {}
+        entity_counts: Dict[str, int] = {}
 
         for log in self._buffer:
             # Count by level

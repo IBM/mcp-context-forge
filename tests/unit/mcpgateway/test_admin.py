@@ -77,7 +77,6 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_global_passthrough_headers,
     update_global_passthrough_headers,
 )
-from mcpgateway.db import GlobalConfig
 from mcpgateway.schemas import (
     GatewayTestRequest,
     GlobalConfigRead,
@@ -87,10 +86,9 @@ from mcpgateway.schemas import (
     ServerMetrics,
     ToolMetrics,
 )
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentService
+from mcpgateway.services.a2a_service import A2AAgentNameConflictError, A2AAgentService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
-from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -103,8 +101,6 @@ from mcpgateway.services.tool_service import (
     ToolNotFoundError,
     ToolService,
 )
-from mcpgateway.utils.error_formatter import ErrorFormatter
-from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 
 
@@ -368,15 +364,25 @@ class TestAdminToolRoutes:
     async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
         """Test listing tools with empty results and exceptions."""
         # Test empty list
-        mock_list_tools.return_value = []
-        result = await admin_list_tools(False, mock_db, "test-user")
-        assert result == []
+        # Arrange: make db.execute return an object whose scalar() -> 0 and scalars().all() -> []
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 0
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        # Call the function with explicit pagination params
+        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
+
+        # Expect structure with 'data' key and empty list
+        assert isinstance(result, dict)
+        assert result["data"] == []
 
         # Test with exception
-        mock_list_tools.side_effect = RuntimeError("Service unavailable")
+        # Simulate DB execution error
+        mock_db.execute.side_effect = RuntimeError("Service unavailable")
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(False, mock_db, "test-user")
+            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user="test-user")
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):
@@ -464,7 +470,9 @@ class TestAdminToolRoutes:
         from starlette.datastructures import FormData
 
         mock_request.form = AsyncMock(
-            return_value=FormData([("name", "Tool_Name_1"),("customName", "Tool_Name_1"), ("url", "http://example.com"), ("requestType", "GET"), ("integrationType", "REST"), ("headers", "{}"), ("input_schema", "{}")])
+            return_value=FormData(
+                [("name", "Tool_Name_1"), ("customName", "Tool_Name_1"), ("url", "http://example.com"), ("requestType", "GET"), ("integrationType", "REST"), ("headers", "{}"), ("input_schema", "{}")]
+            )
         )
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
         result = await admin_edit_tool(tool_id, mock_request, mock_db, "test-user")
@@ -485,7 +493,6 @@ class TestAdminToolRoutes:
         assert b"Unexpected error" in result.body
 
     @patch.object(ToolService, "update_tool")
-
     # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
         """Test editing tool with empty optional fields."""
@@ -531,21 +538,21 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True)
+        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
 
 
 class TestAdminBulkImportRoutes:
@@ -555,6 +562,7 @@ class TestAdminBulkImportRoutes:
         """Clear rate limit storage before each test."""
         # First-Party
         from mcpgateway.admin import rate_limit_storage
+
         rate_limit_storage.clear()
 
     @patch.object(ToolService, "register_tool")
@@ -564,19 +572,14 @@ class TestAdminBulkImportRoutes:
 
         # Prepare valid JSON payload
         tools_data = [
-            {
-                "name": "tool1",
-                "url": "http://api.example.com/tool1",
-                "integration_type": "REST",
-                "request_type": "GET"
-            },
+            {"name": "tool1", "url": "http://api.example.com/tool1", "integration_type": "REST", "request_type": "GET"},
             {
                 "name": "tool2",
                 "url": "http://api.example.com/tool2",
                 "integration_type": "REST",
                 "request_type": "POST",
-                "input_schema": {"type": "object", "properties": {"data": {"type": "string"}}}
-            }
+                "input_schema": {"type": "object", "properties": {"data": {"type": "string"}}},
+            },
         ]
 
         mock_request.headers = {"content-type": "application/json"}
@@ -605,13 +608,13 @@ class TestAdminBulkImportRoutes:
         mock_register_tool.side_effect = [
             None,  # First tool succeeds
             IntegrityError("Duplicate entry", None, None),  # Second fails
-            ToolError("Invalid configuration")  # Third fails
+            ToolError("Invalid configuration"),  # Third fails
         ]
 
         tools_data = [
             {"name": "success_tool", "url": "http://api.example.com/1", "integration_type": "REST", "request_type": "GET"},
             {"name": "duplicate_tool", "url": "http://api.example.com/2", "integration_type": "REST", "request_type": "GET"},
-            {"name": "invalid_tool", "url": "http://api.example.com/3", "integration_type": "REST", "request_type": "GET"}
+            {"name": "invalid_tool", "url": "http://api.example.com/3", "integration_type": "REST", "request_type": "GET"},
         ]
 
         mock_request.headers = {"content-type": "application/json"}
@@ -632,7 +635,7 @@ class TestAdminBulkImportRoutes:
             {"name": "valid_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"},
             {"missing_name": True},  # Missing required field
             {"name": "invalid_request", "url": "http://api.example.com", "integration_type": "REST", "request_type": "INVALID"},  # Invalid enum
-            {"name": None, "url": "http://api.example.com"}  # None for required field
+            {"name": None, "url": "http://api.example.com"},  # None for required field
         ]
 
         mock_request.headers = {"content-type": "application/json"}
@@ -680,10 +683,7 @@ class TestAdminBulkImportRoutes:
     async def test_bulk_import_exceeds_max_batch(self, mock_request, mock_db):
         """Test bulk import exceeding maximum batch size."""
         # Create 201 tools (exceeds max_batch of 200)
-        tools_data = [
-            {"name": f"tool_{i}", "url": f"http://api.example.com/{i}", "integration_type": "REST", "request_type": "GET"}
-            for i in range(201)
-        ]
+        tools_data = [{"name": f"tool_{i}", "url": f"http://api.example.com/{i}", "integration_type": "REST", "request_type": "GET"} for i in range(201)]
 
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
@@ -697,9 +697,7 @@ class TestAdminBulkImportRoutes:
 
     async def test_bulk_import_form_data(self, mock_request, mock_db):
         """Test bulk import via form data instead of JSON."""
-        tools_json = json.dumps([
-            {"name": "form_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}
-        ])
+        tools_json = json.dumps([{"name": "form_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}])
 
         form_data = FakeForm({"tools_json": tools_json})
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
@@ -757,9 +755,7 @@ class TestAdminBulkImportRoutes:
         """Test bulk import handling unexpected exceptions."""
         mock_register_tool.side_effect = RuntimeError("Unexpected error")
 
-        tools_data = [
-            {"name": "error_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}
-        ]
+        tools_data = [{"name": "error_tool", "url": "http://api.example.com", "integration_type": "REST", "request_type": "GET"}]
 
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
@@ -804,7 +800,7 @@ class TestAdminResourceRoutes:
         assert len(result) == 1
         assert result[0]["uri"] == "complex://resource"
 
-    @patch.object(ResourceService, "get_resource_by_uri")
+    @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
     async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
         """Test getting resource when content read fails."""
@@ -817,7 +813,7 @@ class TestAdminResourceRoutes:
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
         with pytest.raises(IOError):
-            await admin_get_resource("/test/resource", mock_db, "test-user")
+            await admin_get_resource("1", mock_db, "test-user")
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -882,11 +878,11 @@ class TestAdminResourceRoutes:
         """Test toggling resource with numeric ID."""
         # Test with integer ID
         await admin_toggle_resource(123, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, 123, True)
+        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
 
         # Test with string number
         await admin_toggle_resource("456", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "456", True)
+        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
 
 
 class TestAdminPromptRoutes:
@@ -1038,17 +1034,17 @@ class TestAdminPromptRoutes:
         """Test toggling prompt with edge cases."""
         # Test with string ID that looks like number
         await admin_toggle_prompt("123", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "123", True)
+        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
 
         # Test with negative number
         await admin_toggle_prompt(-1, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, -1, True)
+        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
 
 
 class TestAdminGatewayRoutes:
     """Test admin routes for gateway management with enhanced coverage."""
 
-    @patch.object(GatewayService, "list_gateways")
+    @patch.object(GatewayService, "list_gateways_for_user")
     async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_db):
         """Test listing gateways with authentication information."""
         mock_gateway = MagicMock()
@@ -1266,7 +1262,9 @@ class TestAdminMetricsRoutes:
     @patch.object(ResourceService, "get_top_resources", new_callable=AsyncMock)
     @patch.object(ServerService, "get_top_servers", new_callable=AsyncMock)
     @patch.object(PromptService, "get_top_prompts", new_callable=AsyncMock)
-    async def test_admin_get_metrics_with_nulls(self, mock_prompt_top, mock_server_top, mock_resource_top, mock_tool_top, mock_prompt_metrics, mock_server_metrics, mock_resource_metrics, mock_tool_metrics, mock_db):
+    async def test_admin_get_metrics_with_nulls(
+        self, mock_prompt_top, mock_server_top, mock_resource_top, mock_tool_top, mock_prompt_metrics, mock_server_metrics, mock_resource_metrics, mock_tool_metrics, mock_db
+    ):
         """Test getting metrics with null values."""
         # Some services return metrics with null values
         mock_tool_metrics.return_value = ToolMetrics(
@@ -1514,11 +1512,7 @@ class TestAdminUIRoute:
 
             # Check that the exception was logged
             mock_log.assert_called()
-            assert any(
-                "Failed to load resources" in str(call.args[0])
-                for call in mock_log.call_args_list
-            )
-
+            assert any("Failed to load resources" in str(call.args[0]) for call in mock_log.call_args_list)
 
     @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
@@ -1586,6 +1580,7 @@ class TestRateLimiting:
         """Clear rate limit storage before each test."""
         # First-Party
         from mcpgateway.admin import rate_limit_storage
+
         rate_limit_storage.clear()
 
     async def test_rate_limit_exceeded(self, mock_request, mock_db):
@@ -1674,7 +1669,6 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = mock_config
 
         # First-Party
-        from mcpgateway.admin import get_global_passthrough_headers
         result = await get_global_passthrough_headers(db=mock_db, _user="test-user")
 
         assert isinstance(result, GlobalConfigRead)
@@ -1687,7 +1681,6 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = None
 
         # First-Party
-        from mcpgateway.admin import get_global_passthrough_headers
         result = await get_global_passthrough_headers(db=mock_db, _user="test-user")
 
         assert isinstance(result, GlobalConfigRead)
@@ -1702,7 +1695,6 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-New-Header"])
 
         # First-Party
-        from mcpgateway.admin import update_global_passthrough_headers
         result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
 
         # Should create new config
@@ -1722,7 +1714,6 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Updated-Header"])
 
         # First-Party
-        from mcpgateway.admin import update_global_passthrough_headers
         result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
 
         # Should update existing config
@@ -1740,7 +1731,6 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Header"])
 
         # First-Party
-        from mcpgateway.admin import update_global_passthrough_headers
         with pytest.raises(HTTPException) as excinfo:
             await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
 
@@ -1757,7 +1747,6 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Header"])
 
         # First-Party
-        from mcpgateway.admin import update_global_passthrough_headers
         with pytest.raises(HTTPException) as excinfo:
             await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
 
@@ -1774,7 +1763,6 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Header"])
 
         # First-Party
-        from mcpgateway.admin import update_global_passthrough_headers
         with pytest.raises(HTTPException) as excinfo:
             await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user="test-user")
 
@@ -1790,16 +1778,10 @@ class TestA2AAgentManagement:
     async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
         """Test listing A2A agents when A2A is enabled."""
         # First-Party
-        from mcpgateway.admin import admin_list_a2a_agents
 
         # Mock agent data
         mock_agent = MagicMock()
-        mock_agent.model_dump.return_value = {
-            "id": "agent-1",
-            "name": "Test Agent",
-            "description": "Test A2A agent",
-            "is_active": True
-        }
+        mock_agent.model_dump.return_value = {"id": "agent-1", "name": "Test Agent", "description": "Test A2A agent", "is_active": True}
         mock_list_agents.return_value = [mock_agent]
 
         result = await admin_list_a2a_agents(False, [], mock_db, "test-user")
@@ -1813,7 +1795,6 @@ class TestA2AAgentManagement:
     async def test_admin_list_a2a_agents_disabled(self, mock_db):
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
-        from mcpgateway.admin import admin_list_a2a_agents
 
         result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user="test-user")
 
@@ -1824,16 +1805,9 @@ class TestA2AAgentManagement:
     async def _test_admin_add_a2a_agent_success(self, mock_a2a_service, mock_request, mock_db):
         """Test successfully adding A2A agent."""
         # First-Party
-        from mcpgateway.admin import admin_add_a2a_agent
 
         # Mock form data
-        form_data = FakeForm({
-            "name": "Test_Agent",
-            "description": "Test agent description",
-            "base_url": "https://api.example.com",
-            "api_key": "test-key",
-            "model": "gpt-4"
-        })
+        form_data = FakeForm({"name": "Test_Agent", "description": "Test agent description", "base_url": "https://api.example.com", "api_key": "test-key", "model": "gpt-4"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
@@ -1847,15 +1821,16 @@ class TestA2AAgentManagement:
     @patch.object(A2AAgentService, "register_agent")
     async def test_admin_add_a2a_agent_validation_error(self, mock_register_agent, mock_request, mock_db):
         """Test adding A2A agent with validation error."""
-        from mcpgateway.admin import admin_add_a2a_agent
 
         mock_register_agent.side_effect = ValidationError.from_exception_data("test", [])
 
         # ✅ include required keys so agent_data can be built
-        form_data = FakeForm({
-            "name": "Invalid Agent",
-            "endpoint_url": "http://example.com",
-        })
+        form_data = FakeForm(
+            {
+                "name": "Invalid Agent",
+                "endpoint_url": "http://example.com",
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
@@ -1870,17 +1845,17 @@ class TestA2AAgentManagement:
     async def test_admin_add_a2a_agent_name_conflict_error(self, mock_register_agent, mock_request, mock_db):
         """Test adding A2A agent with name conflict."""
         # First-Party
-        from mcpgateway.admin import admin_add_a2a_agent
 
         mock_register_agent.side_effect = A2AAgentNameConflictError("Agent name already exists")
 
-        form_data = FakeForm({"name": "Duplicate_Agent","endpoint_url": "http://example.com"})
+        form_data = FakeForm({"name": "Duplicate_Agent", "endpoint_url": "http://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
         result = await admin_add_a2a_agent(mock_request, mock_db, "test-user")
 
         from starlette.responses import JSONResponse
+
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
         payload = result.body.decode()
@@ -1888,12 +1863,10 @@ class TestA2AAgentManagement:
         assert data["success"] is False
         assert "agent name already exists" in data["message"].lower()
 
-
     @patch.object(A2AAgentService, "toggle_agent_status")
     async def test_admin_toggle_a2a_agent_success(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling A2A agent status."""
         # First-Party
-        from mcpgateway.admin import admin_toggle_a2a_agent
 
         form_data = FakeForm({"activate": "true"})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -1904,13 +1877,12 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True)
+        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
         """Test deleting A2A agent."""
         # First-Party
-        from mcpgateway.admin import admin_delete_a2a_agent
 
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
@@ -1921,14 +1893,13 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1")
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user")
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
     async def test_admin_test_a2a_agent_success(self, mock_invoke_agent, mock_get_agent, mock_request, mock_db):
         """Test testing A2A agent."""
         # First-Party
-        from mcpgateway.admin import admin_test_a2a_agent
 
         # Mock agent and invocation
         mock_agent = MagicMock()
@@ -1957,26 +1928,15 @@ class TestExportImportEndpoints:
     async def _test_admin_export_logs_json(self, mock_get_storage, mock_db):
         """Test exporting logs in JSON format."""
         # First-Party
-        from mcpgateway.admin import admin_export_logs
 
         # Mock log storage
         mock_storage = MagicMock()
         mock_log_entry = MagicMock()
-        mock_log_entry.model_dump.return_value = {
-            "timestamp": "2023-01-01T00:00:00Z",
-            "level": "INFO",
-            "message": "Test log message"
-        }
+        mock_log_entry.model_dump.return_value = {"timestamp": "2023-01-01T00:00:00Z", "level": "INFO", "message": "Test log message"}
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(
-            export_format="json",
-            level=None,
-            start_time=None,
-            end_time=None,
-            user="test-user"
-        )
+        result = await admin_export_logs(export_format="json", level=None, start_time=None, end_time=None, user="test-user")
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -1987,26 +1947,15 @@ class TestExportImportEndpoints:
     async def _test_admin_export_logs_csv(self, mock_get_storage, mock_db):
         """Test exporting logs in CSV format."""
         # First-Party
-        from mcpgateway.admin import admin_export_logs
 
         # Mock log storage
         mock_storage = MagicMock()
         mock_log_entry = MagicMock()
-        mock_log_entry.model_dump.return_value = {
-            "timestamp": "2023-01-01T00:00:00Z",
-            "level": "INFO",
-            "message": "Test log message"
-        }
+        mock_log_entry.model_dump.return_value = {"timestamp": "2023-01-01T00:00:00Z", "level": "INFO", "message": "Test log message"}
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(
-            export_format="csv",
-            level=None,
-            start_time=None,
-            end_time=None,
-            user="test-user"
-        )
+        result = await admin_export_logs(export_format="csv", level=None, start_time=None, end_time=None, user="test-user")
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "text/csv"
@@ -2016,16 +1965,9 @@ class TestExportImportEndpoints:
     async def test_admin_export_logs_invalid_format(self, mock_db):
         """Test exporting logs with invalid format."""
         # First-Party
-        from mcpgateway.admin import admin_export_logs
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_logs(
-                export_format="xml",
-                level=None,
-                start_time=None,
-                end_time=None,
-                user="test-user"
-            )
+            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user="test-user")
 
         assert excinfo.value.status_code == 400
         assert "Invalid format: xml" in str(excinfo.value.detail)
@@ -2035,25 +1977,10 @@ class TestExportImportEndpoints:
     async def _test_admin_export_configuration_success(self, mock_export_config, mock_db):
         """Test successful configuration export."""
         # First-Party
-        from mcpgateway.admin import admin_export_configuration
 
-        mock_export_config.return_value = {
-            "version": "1.0",
-            "servers": [],
-            "tools": [],
-            "resources": [],
-            "prompts": []
-        }
+        mock_export_config.return_value = {"version": "1.0", "servers": [], "tools": [], "resources": [], "prompts": []}
 
-        result = await admin_export_configuration(
-            include_inactive=False,
-            include_dependencies=True,
-            types="servers,tools",
-            exclude_types="",
-            tags="",
-            db=mock_db,
-            user="test-user"
-        )
+        result = await admin_export_configuration(include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", db=mock_db, user="test-user")
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -2065,20 +1992,11 @@ class TestExportImportEndpoints:
     async def _test_admin_export_configuration_export_error(self, mock_export_config, mock_db):
         """Test configuration export with ExportError."""
         # First-Party
-        from mcpgateway.admin import admin_export_configuration
 
         mock_export_config.side_effect = ExportError("Export failed")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_configuration(
-                include_inactive=False,
-                include_dependencies=True,
-                types="",
-                exclude_types="",
-                tags="",
-                db=mock_db,
-                user="test-user"
-            )
+            await admin_export_configuration(include_inactive=False, include_dependencies=True, types="", exclude_types="", tags="", db=mock_db, user="test-user")
 
         assert excinfo.value.status_code == 500
         assert "Export failed" in str(excinfo.value.detail)
@@ -2087,20 +2005,10 @@ class TestExportImportEndpoints:
     async def _test_admin_export_selective_success(self, mock_export_selective, mock_request, mock_db):
         """Test successful selective export."""
         # First-Party
-        from mcpgateway.admin import admin_export_selective
 
-        mock_export_selective.return_value = {
-            "version": "1.0",
-            "selected_items": []
-        }
+        mock_export_selective.return_value = {"version": "1.0", "selected_items": []}
 
-        form_data = FakeForm({
-            "entity_selections": json.dumps({
-                "servers": ["server-1"],
-                "tools": ["tool-1", "tool-2"]
-            }),
-            "include_dependencies": "true"
-        })
+        form_data = FakeForm({"entity_selections": json.dumps({"servers": ["server-1"], "tools": ["tool-1", "tool-2"]}), "include_dependencies": "true"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_export_selective(mock_request, mock_db, "test-user")
@@ -2118,28 +2026,16 @@ class TestLoggingEndpoints:
     async def _test_admin_get_logs_success(self, mock_get_storage, mock_db):
         """Test getting logs successfully."""
         # First-Party
-        from mcpgateway.admin import admin_get_logs
 
         # Mock log storage
         mock_storage = MagicMock()
         mock_log_entry = MagicMock()
-        mock_log_entry.model_dump.return_value = {
-            "timestamp": "2023-01-01T00:00:00Z",
-            "level": "INFO",
-            "message": "Test log message"
-        }
+        mock_log_entry.model_dump.return_value = {"timestamp": "2023-01-01T00:00:00Z", "level": "INFO", "message": "Test log message"}
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_storage.get_total_count.return_value = 1
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_get_logs(
-            level=None,
-            start_time=None,
-            end_time=None,
-            limit=50,
-            offset=0,
-            user="test-user"
-        )
+        result = await admin_get_logs(level=None, start_time=None, end_time=None, limit=50, offset=0, user="test-user")
 
         assert isinstance(result, dict)
         assert "logs" in result
@@ -2151,34 +2047,24 @@ class TestLoggingEndpoints:
     async def _test_admin_get_logs_stream(self, mock_get_storage, mock_db):
         """Test getting log stream."""
         # First-Party
-        from mcpgateway.admin import admin_stream_logs
 
         # Mock log storage
         mock_storage = MagicMock()
         mock_log_entry = MagicMock()
-        mock_log_entry.model_dump.return_value = {
-            "timestamp": "2023-01-01T00:00:00Z",
-            "level": "INFO",
-            "message": "Test log message"
-        }
+        mock_log_entry.model_dump.return_value = {"timestamp": "2023-01-01T00:00:00Z", "level": "INFO", "message": "Test log message"}
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_stream_logs(
-            request=MagicMock(),
-            level=None,
-            user="test-user"
-        )
+        result = await admin_stream_logs(request=MagicMock(), level=None, user="test-user")
 
         assert isinstance(result, list)
         assert len(result) == 1
         assert result[0]["message"] == "Test log message"
 
-    @patch('mcpgateway.admin.settings')
+    @patch("mcpgateway.admin.settings")
     async def _test_admin_get_logs_file_enabled(self, mock_settings, mock_db):
         """Test getting log file when file logging is enabled."""
         # First-Party
-        from mcpgateway.admin import admin_get_log_file
 
         # Mock settings to enable file logging
         mock_settings.log_to_file = True
@@ -2186,10 +2072,7 @@ class TestLoggingEndpoints:
         mock_settings.log_folder = "logs"
 
         # Mock file exists and reading
-        with patch('pathlib.Path.exists', return_value=True), \
-             patch('pathlib.Path.stat') as mock_stat, \
-             patch('builtins.open', mock_open(read_data=b"test log content")):
-
+        with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat, patch("builtins.open", mock_open(read_data=b"test log content")):
             mock_stat.return_value.st_size = 16
             result = await admin_get_log_file(filename=None, user="test-user")
 
@@ -2197,11 +2080,10 @@ class TestLoggingEndpoints:
             assert result.media_type == "application/octet-stream"
             assert "test.log" in result.headers["content-disposition"]
 
-    @patch('mcpgateway.admin.settings')
+    @patch("mcpgateway.admin.settings")
     async def test_admin_get_logs_file_disabled(self, mock_settings, mock_db):
         """Test getting log file when file logging is disabled."""
         # First-Party
-        from mcpgateway.admin import admin_get_log_file
 
         # Mock settings to disable file logging
         mock_settings.log_to_file = False
@@ -2225,18 +2107,14 @@ class TestOAuthFunctionality:
             "client_id": "test-client-id",
             "client_secret": "test-secret",
             "auth_url": "https://auth.example.com/oauth/authorize",
-            "token_url": "https://auth.example.com/oauth/token"
+            "token_url": "https://auth.example.com/oauth/token",
         }
 
-        form_data = FakeForm({
-            "name": "OAuth_Gateway",
-            "url": "https://oauth.example.com",
-            "oauth_config": json.dumps(oauth_config)
-        })
+        form_data = FakeForm({"name": "OAuth_Gateway", "url": "https://oauth.example.com", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption
-        with patch('mcpgateway.admin.get_oauth_encryption') as mock_get_encryption:
+        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret.return_value = "encrypted-secret"
             mock_get_encryption.return_value = mock_encryption
@@ -2256,11 +2134,7 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_with_invalid_oauth_json(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with invalid OAuth JSON."""
-        form_data = FakeForm({
-            "name": "Invalid_OAuth_Gateway",
-            "url": "https://example.com",
-            "oauth_config": "invalid-json{"
-        })
+        form_data = FakeForm({"name": "Invalid_OAuth_Gateway", "url": "https://example.com", "oauth_config": "invalid-json{"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2278,11 +2152,7 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_config_none_string(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with oauth_config as 'None' string."""
-        form_data = FakeForm({
-            "name": "No_OAuth_Gateway",
-            "url": "https://example.com",
-            "oauth_config": "None"
-        })
+        form_data = FakeForm({"name": "No_OAuth_Gateway", "url": "https://example.com", "oauth_config": "None"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2299,22 +2169,13 @@ class TestOAuthFunctionality:
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_edit_gateway_with_oauth_config(self, mock_update_gateway, mock_request, mock_db):
         """Test editing gateway with OAuth configuration."""
-        oauth_config = {
-            "grant_type": "client_credentials",
-            "client_id": "edit-client-id",
-            "client_secret": "edit-secret",
-            "token_url": "https://auth.example.com/oauth/token"
-        }
+        oauth_config = {"grant_type": "client_credentials", "client_id": "edit-client-id", "client_secret": "edit-secret", "token_url": "https://auth.example.com/oauth/token"}
 
-        form_data = FakeForm({
-            "name": "Edited_OAuth_Gateway",
-            "url": "https://edited-oauth.example.com",
-            "oauth_config": json.dumps(oauth_config)
-        })
+        form_data = FakeForm({"name": "Edited_OAuth_Gateway", "url": "https://edited-oauth.example.com", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption
-        with patch('mcpgateway.admin.get_oauth_encryption') as mock_get_encryption:
+        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret.return_value = "encrypted-edit-secret"
             mock_get_encryption.return_value = mock_encryption
@@ -2336,18 +2197,14 @@ class TestOAuthFunctionality:
             "grant_type": "client_credentials",
             "client_id": "edit-client-id",
             "client_secret": "",  # Empty secret
-            "token_url": "https://auth.example.com/oauth/token"
+            "token_url": "https://auth.example.com/oauth/token",
         }
 
-        form_data = FakeForm({
-            "name": "Edited_Gateway",
-            "url": "https://edited.example.com",
-            "oauth_config": json.dumps(oauth_config)
-        })
+        form_data = FakeForm({"name": "Edited_Gateway", "url": "https://edited.example.com", "oauth_config": json.dumps(oauth_config)})
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption - should not be called for empty secret
-        with patch('mcpgateway.admin.get_oauth_encryption') as mock_get_encryption:
+        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_get_encryption.return_value = mock_encryption
 
@@ -2368,11 +2225,7 @@ class TestPassthroughHeadersParsing:
         """Test adding gateway with JSON passthrough headers."""
         passthrough_headers = ["X-Custom-Header", "X-Auth-Token"]
 
-        form_data = FakeForm({
-            "name": "Gateway_With_Headers",
-            "url": "https://example.com",
-            "passthrough_headers": json.dumps(passthrough_headers)
-        })
+        form_data = FakeForm({"name": "Gateway_With_Headers", "url": "https://example.com", "passthrough_headers": json.dumps(passthrough_headers)})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2389,11 +2242,7 @@ class TestPassthroughHeadersParsing:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_passthrough_headers_csv(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with comma-separated passthrough headers."""
-        form_data = FakeForm({
-            "name": "Gateway_With_CSV_Headers",
-            "url": "https://example.com",
-            "passthrough_headers": "X-Header-1, X-Header-2 , X-Header-3"
-        })
+        form_data = FakeForm({"name": "Gateway_With_CSV_Headers", "url": "https://example.com", "passthrough_headers": "X-Header-1, X-Header-2 , X-Header-3"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2411,11 +2260,13 @@ class TestPassthroughHeadersParsing:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_passthrough_headers_empty(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with empty passthrough headers."""
-        form_data = FakeForm({
-            "name": "Gateway_No_Headers",
-            "url": "https://example.com",
-            "passthrough_headers": ""  # Empty string
-        })
+        form_data = FakeForm(
+            {
+                "name": "Gateway_No_Headers",
+                "url": "https://example.com",
+                "passthrough_headers": "",  # Empty string
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2436,10 +2287,12 @@ class TestErrorHandlingPaths:
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_missing_required_field(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with missing required field."""
-        form_data = FakeForm({
-            # Missing 'name' field
-            "url": "https://example.com"
-        })
+        form_data = FakeForm(
+            {
+                # Missing 'name' field
+                "url": "https://example.com"
+            }
+        )
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2455,10 +2308,7 @@ class TestErrorHandlingPaths:
         """Test adding gateway with RuntimeError."""
         mock_register_gateway.side_effect = RuntimeError("Service unavailable")
 
-        form_data = FakeForm({
-            "name": "Runtime_Error_Gateway",
-            "url": "https://example.com"
-        })
+        form_data = FakeForm({"name": "Runtime_Error_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2474,10 +2324,7 @@ class TestErrorHandlingPaths:
         """Test adding gateway with ValueError."""
         mock_register_gateway.side_effect = ValueError("Invalid URL format")
 
-        form_data = FakeForm({
-            "name": "Value_Error_Gateway",
-            "url": "invalid-url"
-        })
+        form_data = FakeForm({"name": "Value_Error_Gateway", "url": "invalid-url"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2493,10 +2340,7 @@ class TestErrorHandlingPaths:
         """Test adding gateway with generic exception."""
         mock_register_gateway.side_effect = Exception("Unexpected error")
 
-        form_data = FakeForm({
-            "name": "Exception_Gateway",
-            "url": "https://example.com"
-        })
+        form_data = FakeForm({"name": "Exception_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2513,12 +2357,8 @@ class TestErrorHandlingPaths:
         # Create a ValidationError with context
         # Third-Party
         from pydantic_core import InitErrorDetails
-        error_details = [InitErrorDetails(
-            type="value_error",
-            loc=("name",),
-            input={},
-            ctx={"error": ValueError("Name cannot be empty")}
-        )]
+
+        error_details = [InitErrorDetails(type="value_error", loc=("name",), input={}, ctx={"error": ValueError("Name cannot be empty")})]
         validation_error = CoreValidationError.from_exception_data("GatewayCreate", error_details)
 
         # Mock form parsing to raise ValidationError
@@ -2526,7 +2366,7 @@ class TestErrorHandlingPaths:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock the GatewayCreate validation to raise the error
-        with patch('mcpgateway.admin.GatewayCreate') as mock_gateway_create:
+        with patch("mcpgateway.admin.GatewayCreate") as mock_gateway_create:
             mock_gateway_create.side_effect = validation_error
 
             result = await admin_add_gateway(mock_request, mock_db, "test-user")
@@ -2545,29 +2385,15 @@ class TestImportConfigurationEndpoints:
     async def test_admin_import_configuration_success(self, mock_import_config, mock_request, mock_db):
         """Test successful configuration import."""
         # First-Party
-        from mcpgateway.admin import admin_import_configuration
 
         # Mock import status
         mock_status = MagicMock()
-        mock_status.to_dict.return_value = {
-            "import_id": "import-123",
-            "status": "completed",
-            "progress": {"total": 10, "completed": 10, "errors": 0}
-        }
+        mock_status.to_dict.return_value = {"import_id": "import-123", "status": "completed", "progress": {"total": 10, "completed": 10, "errors": 0}}
         mock_import_config.return_value = mock_status
 
         # Mock request body
-        import_data = {
-            "version": "1.0",
-            "servers": [{"name": "test-server", "url": "https://example.com"}],
-            "tools": []
-        }
-        request_body = {
-            "import_data": import_data,
-            "conflict_strategy": "update",
-            "dry_run": False,
-            "selected_entities": {"servers": True, "tools": True}
-        }
+        import_data = {"version": "1.0", "servers": [{"name": "test-server", "url": "https://example.com"}], "tools": []}
+        request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": {"servers": True, "tools": True}}
         mock_request.json = AsyncMock(return_value=request_body)
 
         result = await admin_import_configuration(mock_request, mock_db, "test-user")
@@ -2581,13 +2407,9 @@ class TestImportConfigurationEndpoints:
     async def test_admin_import_configuration_missing_import_data(self, mock_request, mock_db):
         """Test import configuration with missing import_data."""
         # First-Party
-        from mcpgateway.admin import admin_import_configuration
 
         # Mock request body without import_data
-        request_body = {
-            "conflict_strategy": "update",
-            "dry_run": False
-        }
+        request_body = {"conflict_strategy": "update", "dry_run": False}
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
@@ -2599,12 +2421,8 @@ class TestImportConfigurationEndpoints:
     async def test_admin_import_configuration_invalid_conflict_strategy(self, mock_request, mock_db):
         """Test import configuration with invalid conflict strategy."""
         # First-Party
-        from mcpgateway.admin import admin_import_configuration
 
-        request_body = {
-            "import_data": {"version": "1.0"},
-            "conflict_strategy": "invalid_strategy"
-        }
+        request_body = {"import_data": {"version": "1.0"}, "conflict_strategy": "invalid_strategy"}
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
@@ -2617,14 +2435,10 @@ class TestImportConfigurationEndpoints:
     async def test_admin_import_configuration_import_service_error(self, mock_import_config, mock_request, mock_db):
         """Test import configuration with ImportServiceError."""
         # First-Party
-        from mcpgateway.admin import admin_import_configuration
 
         mock_import_config.side_effect = ImportServiceError("Import validation failed")
 
-        request_body = {
-            "import_data": {"version": "1.0"},
-            "conflict_strategy": "update"
-        }
+        request_body = {"import_data": {"version": "1.0"}, "conflict_strategy": "update"}
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
@@ -2637,16 +2451,12 @@ class TestImportConfigurationEndpoints:
     async def test_admin_import_configuration_with_user_dict(self, mock_import_config, mock_request, mock_db):
         """Test import configuration with user as dict."""
         # First-Party
-        from mcpgateway.admin import admin_import_configuration
 
         mock_status = MagicMock()
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "completed"}
         mock_import_config.return_value = mock_status
 
-        request_body = {
-            "import_data": {"version": "1.0"},
-            "conflict_strategy": "update"
-        }
+        request_body = {"import_data": {"version": "1.0"}, "conflict_strategy": "update"}
         mock_request.json = AsyncMock(return_value=request_body)
 
         # User as dict instead of string
@@ -2664,14 +2474,9 @@ class TestImportConfigurationEndpoints:
     async def test_admin_get_import_status_success(self, mock_get_status, mock_db):
         """Test getting import status successfully."""
         # First-Party
-        from mcpgateway.admin import admin_get_import_status
 
         mock_status = MagicMock()
-        mock_status.to_dict.return_value = {
-            "import_id": "import-123",
-            "status": "in_progress",
-            "progress": {"total": 10, "completed": 5, "errors": 0}
-        }
+        mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
         result = await admin_get_import_status("import-123", "test-user")
@@ -2686,7 +2491,6 @@ class TestImportConfigurationEndpoints:
     async def test_admin_get_import_status_not_found(self, mock_get_status, mock_db):
         """Test getting import status when not found."""
         # First-Party
-        from mcpgateway.admin import admin_get_import_status
 
         mock_get_status.return_value = None
 
@@ -2700,7 +2504,6 @@ class TestImportConfigurationEndpoints:
     async def test_admin_list_import_statuses(self, mock_list_statuses, mock_db):
         """Test listing all import statuses."""
         # First-Party
-        from mcpgateway.admin import admin_list_import_statuses
 
         mock_status1 = MagicMock()
         mock_status1.to_dict.return_value = {"import_id": "import-1", "status": "completed"}
@@ -2721,7 +2524,7 @@ class TestImportConfigurationEndpoints:
 class TestAdminUIMainEndpoint:
     """Test the main admin UI endpoint and its edge cases."""
 
-    @patch('mcpgateway.admin.a2a_service', None)  # Mock A2A disabled
+    @patch("mcpgateway.admin.a2a_service", None)  # Mock A2A disabled
     @patch.object(ServerService, "list_servers_for_user", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools_for_user", new_callable=AsyncMock)
     @patch.object(ResourceService, "list_resources_for_user", new_callable=AsyncMock)
@@ -2749,7 +2552,7 @@ class TestSetLoggingService:
     def test_set_logging_service(self):
         """Test setting the logging service."""
         # First-Party
-        from mcpgateway.admin import LOGGER, logging_service, set_logging_service
+        from mcpgateway.admin import set_logging_service
 
         # Create mock logging service
         mock_service = MagicMock(spec=LoggingService)
@@ -2762,6 +2565,7 @@ class TestSetLoggingService:
         # Verify global variables were updated
         # First-Party
         from mcpgateway import admin
+
         assert admin.logging_service == mock_service
         assert admin.LOGGER == mock_logger
         mock_service.get_logger.assert_called_with("mcpgateway.admin")
@@ -2794,7 +2598,7 @@ class TestEdgeCasesAndErrorHandling:
             if form_field == "activate":
                 # Only "true" (case-insensitive) should be True
                 expected = value.lower() == "true"
-                mock_toggle.assert_called_with(mock_db, "server-1", expected)
+                mock_toggle.assert_called_with(mock_db, "server-1", expected, user_email="test-user")
 
     async def test_json_field_valid_cases(self, mock_request, mock_db):
         """Test JSON field parsing with valid cases."""

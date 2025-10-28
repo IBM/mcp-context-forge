@@ -53,7 +53,7 @@ def test_client() -> TestClient:
         return MagicMock()  # Simple mock for tags endpoints
 
     # Patch the PermissionService class to always return our mock
-    with patch('mcpgateway.middleware.rbac.PermissionService', MockPermissionService):
+    with patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService):
         app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
         app.dependency_overrides[get_permission_service] = mock_get_permission_service
         app.dependency_overrides[rbac_get_db] = override_get_db

@@ -139,13 +139,15 @@ class ResourceContent(BaseModel):
 
     Attributes:
         type (Literal["resource"]): The fixed content type identifier for resources.
-        uri (str): The URI identifying the resource.
+        id (str): The ID identifying the resource.
+        uri (str): The URI of the resource.
         mime_type (Optional[str]): The MIME type of the resource, if known.
         text (Optional[str]): A textual representation of the resource, if applicable.
         blob (Optional[bytes]): Binary data of the resource, if applicable.
     """
 
     type: Literal["resource"]
+    id: str
     uri: str
     mime_type: Optional[str] = None
     text: Optional[str] = None
@@ -468,6 +470,7 @@ class Tool(CommonAttributes):
         requestType (str): The HTTP method used to invoke the tool (GET, POST, PUT, DELETE, SSE, STDIO).
         headers (Dict[str, Any]): A JSON object representing HTTP headers.
         input_schema (Dict[str, Any]): A JSON Schema for validating the tool's input.
+        output_schema (Optional[Dict[str, Any]]): A JSON Schema for validating the tool's output.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints.
         auth_username (Optional[str]): The username for basic authentication.
         auth_password (Optional[str]): The password for basic authentication.
@@ -485,6 +488,7 @@ class Tool(CommonAttributes):
     request_type: str = "SSE"
     headers: Optional[Dict[str, Any]] = Field(default_factory=dict)
     input_schema: Dict[str, Any] = Field(default_factory=lambda: {"type": "object", "properties": {}})
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating the tool's output")
     annotations: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Tool annotations for behavior hints")
     auth_username: Optional[str] = None
     auth_password: Optional[str] = None

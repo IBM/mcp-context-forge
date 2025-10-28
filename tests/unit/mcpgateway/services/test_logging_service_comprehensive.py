@@ -497,15 +497,7 @@ async def test_storage_handler_emit():
     handler = StorageHandler(mock_storage)
 
     # Create a log record
-    record = logging.LogRecord(
-        name="test.logger",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
+    record = logging.LogRecord(name="test.logger", level=logging.INFO, pathname="test.py", lineno=1, msg="Test message", args=(), exc_info=None)
 
     # Add extra attributes
     record.entity_type = "tool"
@@ -534,15 +526,7 @@ async def test_storage_handler_emit_no_storage():
     handler = StorageHandler(None)
 
     # Create a log record
-    record = logging.LogRecord(
-        name="test.logger",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
+    record = logging.LogRecord(name="test.logger", level=logging.INFO, pathname="test.py", lineno=1, msg="Test message", args=(), exc_info=None)
 
     # Should not raise
     handler.emit(record)
@@ -561,15 +545,7 @@ async def test_storage_handler_emit_no_loop():
     handler = StorageHandler(mock_storage)
 
     # Create a log record
-    record = logging.LogRecord(
-        name="test.logger",
-        level=logging.INFO,
-        pathname="test.py",
-        lineno=1,
-        msg="Test message",
-        args=(),
-        exc_info=None
-    )
+    record = logging.LogRecord(name="test.logger", level=logging.INFO, pathname="test.py", lineno=1, msg="Test message", args=(), exc_info=None)
 
     # Mock no running loop
     with patch("asyncio.get_running_loop", side_effect=RuntimeError("No loop")):
@@ -597,7 +573,7 @@ async def test_storage_handler_emit_format_error():
         lineno=1,
         msg="Test %s",  # Format string
         args=None,  # Invalid args for format
-        exc_info=None
+        exc_info=None,
     )
 
     # Mock format to raise
@@ -605,6 +581,7 @@ async def test_storage_handler_emit_format_error():
 
     # Mock the event loop
     mock_loop = MagicMock()
+    mock_loop.call_soon_threadsafe = MagicMock()  # Ensure call_soon_threadsafe is sync
     handler.loop = mock_loop
 
     # Should not raise
@@ -674,25 +651,9 @@ async def test_notify_with_storage():
     mock_storage = AsyncMock()
     service._storage = mock_storage
 
-    await service.notify(
-        "Test message",
-        LogLevel.INFO,
-        logger_name="test.logger",
-        entity_type="tool",
-        entity_id="tool-1",
-        entity_name="Test Tool",
-        request_id="req-123",
-        extra_data={"key": "value"}
-    )
+    await service.notify("Test message", LogLevel.INFO, logger_name="test.logger", entity_type="tool", entity_id="tool-1", entity_name="Test Tool", request_id="req-123", extra_data={"key": "value"})
 
     # Check storage was called
     mock_storage.add_log.assert_called_once_with(
-        level=LogLevel.INFO,
-        message="Test message",
-        entity_type="tool",
-        entity_id="tool-1",
-        entity_name="Test Tool",
-        logger="test.logger",
-        data={"key": "value"},
-        request_id="req-123"
+        level=LogLevel.INFO, message="Test message", entity_type="tool", entity_id="tool-1", entity_name="Test Tool", logger="test.logger", data={"key": "value"}, request_id="req-123"
     )

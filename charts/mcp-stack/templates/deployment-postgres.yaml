@@ -62,6 +62,11 @@ spec:
             - secretRef:
                 name: {{ include "mcp-stack.postgresSecretName" . | trim | quote }}
 
+          # Set PGDATA to a subdirectory to avoid mount point issues
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+
           # Mount PVC for data durability
           volumeMounts:
             - name: postgredb
@@ -73,6 +78,10 @@ spec:
 
       volumes:
         - name: postgredb
+          {{- if .Values.postgres.persistence.enabled }}
           persistentVolumeClaim:
-            claimName: postgres-pv-claim   # keep aligned with templates/postgres-pvc.yaml
+            claimName: {{ include "mcp-stack.fullname" . }}-postgres-pvc
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
 {{- end }}

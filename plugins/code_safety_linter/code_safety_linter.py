@@ -31,6 +31,12 @@ from mcpgateway.plugins.framework import (
 
 
 class CodeSafetyConfig(BaseModel):
+    """Configuration for code safety linter plugin.
+
+    Attributes:
+        blocked_patterns: List of regex patterns for dangerous code constructs.
+    """
+
     blocked_patterns: List[str] = Field(
         default_factory=lambda: [
             r"\beval\s*\(",
@@ -46,10 +52,24 @@ class CodeSafetyLinterPlugin(Plugin):
     """Scan text outputs for dangerous code patterns."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the code safety linter plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = CodeSafetyConfig(**(config.config or {}))
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
+        """Scan tool output for dangerous code patterns.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if dangerous patterns found, or allowing.
+        """
         text: str | None = None
         if isinstance(payload.result, str):
             text = payload.result

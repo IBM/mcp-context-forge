@@ -7,7 +7,6 @@ Authors: Mihai Criveti
 Tests for PowerPoint MCP Server (FastMCP).
 """
 
-import pytest
 from pptx_server.server_fastmcp import manager
 
 
@@ -26,9 +25,7 @@ def test_add_slide():
     presentation_id = pres_result["presentation_id"]
 
     result = manager.add_slide(
-        presentation_id=presentation_id,
-        layout="Title and Content",
-        title="Test Slide"
+        presentation_id=presentation_id, layout="Title and Content", title="Test Slide"
     )
 
     assert result["success"] is True
@@ -41,16 +38,10 @@ def test_add_text_to_slide():
     pres_result = manager.create_presentation()
     presentation_id = pres_result["presentation_id"]
 
-    slide_result = manager.add_slide(
-        presentation_id=presentation_id,
-        layout="Title and Content"
-    )
+    slide_result = manager.add_slide(presentation_id=presentation_id, layout="Title and Content")
 
     result = manager.add_text_to_slide(
-        presentation_id=presentation_id,
-        slide_number=1,
-        text="Test content",
-        placeholder_index=1
+        presentation_id=presentation_id, slide_number=1, text="Test content", placeholder_index=1
     )
 
     assert result["success"] is True
@@ -73,8 +64,8 @@ def test_get_presentation_info():
 
 def test_save_presentation():
     """Test saving a presentation."""
-    import tempfile
     import os
+    import tempfile
 
     # Create a presentation
     pres_result = manager.create_presentation()
@@ -92,10 +83,7 @@ def test_save_presentation():
 
 def test_invalid_presentation_id():
     """Test operations with invalid presentation ID."""
-    result = manager.add_slide(
-        presentation_id="invalid_id",
-        layout="Title Slide"
-    )
+    result = manager.add_slide(presentation_id="invalid_id", layout="Title Slide")
 
     assert result["success"] is False
     assert "error" in result

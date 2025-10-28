@@ -10,8 +10,6 @@ This suite provides complete test coverage for:
 - json_contains_expr
 """
 
-import uuid
-import json
 from unittest.mock import MagicMock
 
 import pytest

@@ -40,12 +40,10 @@ class ColumnBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     description: Optional[str] = Field(
         default=None,
-        description="Optional human friendly description of the column." ,
+        description="Optional human friendly description of the column.",
         max_length=500,
     )
-    nullable: bool = Field(
-        default=False, description="Allow null values to be generated for this column."
-    )
+    nullable: bool = Field(default=False, description="Allow null values to be generated for this column.")
     null_probability: float = Field(
         default=0.0,
         ge=0.0,
@@ -103,9 +101,7 @@ class CategoricalColumn(ColumnBase):
 
     type: Literal[ColumnKind.CATEGORICAL.value] = ColumnKind.CATEGORICAL.value
     categories: list[str] = Field(..., min_length=1)
-    weights: Optional[list[float]] = Field(
-        default=None, description="Optional sampling weights matching the categories list."
-    )
+    weights: Optional[list[float]] = Field(default=None, description="Optional sampling weights matching the categories list.")
 
     @model_validator(mode="after")
     def validate_weights(self) -> "CategoricalColumn":
@@ -249,9 +245,7 @@ class DatasetRequest(BaseModel):
         default=None,
         description="Explicit column definitions. Required when preset is not provided.",
     )
-    seed: Optional[int] = Field(
-        default=None, description="Seed ensuring deterministic generation."
-    )
+    seed: Optional[int] = Field(default=None, description="Seed ensuring deterministic generation.")
     locale: Optional[str] = Field(
         default=None,
         description="Optional locale code passed to Faker providers (overrides per-column locale).",

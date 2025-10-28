@@ -16,10 +16,8 @@ import json
 import logging
 from pathlib import Path
 import random
-import string
 import time
-from typing import Any, Dict, List, Optional, Union
-from uuid import uuid4
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +25,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DataGenerationConfig:
     """Configuration for test data generation."""
+
     tools_count: int = 10
     servers_count: int = 5
     gateways_count: int = 3
@@ -61,57 +60,32 @@ class DataSeeder:
         logger.info(f"🌱 Initialized DataSeeder with seed={self.seed}")
 
         # Load schema information for realistic data generation
-        self.tool_categories = [
-            "database", "filesystem", "network", "system", "ai", "web",
-            "development", "monitoring", "security", "communication"
-        ]
+        self.tool_categories = ["database", "filesystem", "network", "system", "ai", "web", "development", "monitoring", "security", "communication"]
 
         self.server_types = ["sse", "websocket", "stdio", "http"]
         self.transport_types = ["sse", "websocket", "stdio"]
 
         # Sample schemas for different tool types
         self.tool_schemas = {
-            "simple": {
-                "type": "object",
-                "properties": {
-                    "input": {"type": "string", "description": "Input parameter"}
-                },
-                "required": ["input"]
-            },
+            "simple": {"type": "object", "properties": {"input": {"type": "string", "description": "Input parameter"}}, "required": ["input"]},
             "complex": {
                 "type": "object",
                 "properties": {
                     "config": {
                         "type": "object",
-                        "properties": {
-                            "enabled": {"type": "boolean"},
-                            "timeout": {"type": "integer", "minimum": 0},
-                            "retries": {"type": "integer", "minimum": 1, "maximum": 10}
-                        }
+                        "properties": {"enabled": {"type": "boolean"}, "timeout": {"type": "integer", "minimum": 0}, "retries": {"type": "integer", "minimum": 1, "maximum": 10}},
                     },
-                    "data": {
-                        "type": "array",
-                        "items": {"type": "string"}
-                    }
-                }
+                    "data": {"type": "array", "items": {"type": "string"}},
+                },
             },
             "advanced": {
                 "type": "object",
                 "properties": {
                     "query": {"type": "string"},
-                    "filters": {
-                        "type": "object",
-                        "additionalProperties": {"type": "string"}
-                    },
-                    "pagination": {
-                        "type": "object",
-                        "properties": {
-                            "page": {"type": "integer", "minimum": 1},
-                            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
-                        }
-                    }
-                }
-            }
+                    "filters": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "pagination": {"type": "object", "properties": {"page": {"type": "integer", "minimum": 1}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}},
+                },
+            },
         }
 
     def generate_realistic_dataset(self, config: DataGenerationConfig) -> Dict[str, List[Dict]]:
@@ -130,7 +104,7 @@ class DataSeeder:
             "servers": self._generate_servers(config.servers_count),
             "gateways": self._generate_gateways(config.gateways_count),
             "resources": self._generate_resources(config.resources_count),
-            "prompts": self._generate_prompts(config.prompts_count)
+            "prompts": self._generate_prompts(config.prompts_count),
         }
 
         # Add A2A agents if specified
@@ -167,8 +141,8 @@ class DataSeeder:
                     "complexity": schema_type,
                     "version": f"{random.randint(1, 3)}.{random.randint(0, 9)}.{random.randint(0, 9)}",
                     "author": f"team_{random.choice(['alpha', 'beta', 'gamma', 'delta'])}",
-                    "created_by": "migration_test"
-                }
+                    "created_by": "migration_test",
+                },
             }
 
             # Add random metadata
@@ -198,8 +172,8 @@ class DataSeeder:
                     "environment": random.choice(["development", "testing", "staging"]),
                     "region": random.choice(["us-east-1", "eu-west-1", "ap-southeast-1"]),
                     "transport": transport,
-                    "created_by": "migration_test"
-                }
+                    "created_by": "migration_test",
+                },
             }
 
             # Add transport-specific configuration
@@ -228,8 +202,8 @@ class DataSeeder:
                     "type": random.choice(["federation", "proxy", "load_balancer"]),
                     "region": random.choice(["us", "eu", "asia"]),
                     "capacity": str(random.randint(100, 1000)),
-                    "created_by": "migration_test"
-                }
+                    "created_by": "migration_test",
+                },
             }
 
             # Add health check configuration
@@ -245,11 +219,7 @@ class DataSeeder:
         """Generate realistic resource test data."""
         logger.debug(f"📄 Generating {count} resources")
 
-        resource_types = [
-            ("text/plain", "txt"), ("application/json", "json"),
-            ("text/csv", "csv"), ("application/yaml", "yaml"),
-            ("text/markdown", "md"), ("application/xml", "xml")
-        ]
+        resource_types = [("text/plain", "txt"), ("application/json", "json"), ("text/csv", "csv"), ("application/yaml", "yaml"), ("text/markdown", "md"), ("application/xml", "xml")]
 
         resources = []
         for i in range(count):
@@ -262,10 +232,10 @@ class DataSeeder:
                 "mimeType": mime_type,
                 "annotations": {
                     "category": random.choice(["config", "data", "template", "schema"]),
-                    "size": str(random.randint(1024, 1024*1024)),  # 1KB to 1MB
+                    "size": str(random.randint(1024, 1024 * 1024)),  # 1KB to 1MB
                     "encoding": "utf-8" if "text" in mime_type else "binary",
-                    "created_by": "migration_test"
-                }
+                    "created_by": "migration_test",
+                },
             }
 
             # Add optional metadata
@@ -288,7 +258,7 @@ class DataSeeder:
             "Please analyze the following {{data_type}}: {{content}}",
             "Generate a {{format}} report for {{subject}} with details about {{aspects}}",
             "Explain {{concept}} in {{complexity}} terms for {{audience}}",
-            "Create a {{item_type}} that {{requirements}} and follows {{standards}}"
+            "Create a {{item_type}} that {{requirements}} and follows {{standards}}",
         ]
 
         prompts = []
@@ -302,9 +272,9 @@ class DataSeeder:
                 "annotations": {
                     "category": random.choice(["greeting", "analysis", "generation", "explanation"]),
                     "complexity": random.choice(["simple", "medium", "complex"]),
-                    "variables": str(len([t for t in template.split('{{') if '}}' in t])),
-                    "created_by": "migration_test"
-                }
+                    "variables": str(len([t for t in template.split("{{") if "}}" in t])),
+                    "created_by": "migration_test",
+                },
             }
 
             prompts.append(prompt)
@@ -316,12 +286,7 @@ class DataSeeder:
         logger.debug(f"🤖 Generating {count} A2A agents")
 
         agent_providers = ["openai", "anthropic", "azure", "local"]
-        agent_models = {
-            "openai": ["gpt-4", "gpt-3.5-turbo"],
-            "anthropic": ["claude-3-opus", "claude-3-sonnet"],
-            "azure": ["gpt-4-azure", "gpt-35-turbo-azure"],
-            "local": ["llama-2", "mistral-7b"]
-        }
+        agent_models = {"openai": ["gpt-4", "gpt-3.5-turbo"], "anthropic": ["claude-3-opus", "claude-3-sonnet"], "azure": ["gpt-4-azure", "gpt-35-turbo-azure"], "local": ["llama-2", "mistral-7b"]}
 
         agents = []
         for i in range(count):
@@ -336,11 +301,11 @@ class DataSeeder:
                 "endpoint_url": f"https://api.{provider}.example.com/v1/chat",
                 "annotations": {
                     "provider": provider,
-                    "model_family": model.split('-')[0],
+                    "model_family": model.split("-")[0],
                     "capabilities": json.dumps(["text", "analysis", "generation"]),
                     "max_tokens": str(random.choice([2048, 4096, 8192])),
-                    "created_by": "migration_test"
-                }
+                    "created_by": "migration_test",
+                },
             }
 
             # Add provider-specific configuration
@@ -391,7 +356,7 @@ class DataSeeder:
                 if random.random() < 0.4:  # 40% chance
                     num_agents = min(random.randint(1, 2), len(dataset["a2a_agents"]))
                     selected_agents = random.sample(dataset["a2a_agents"], num_agents)
-                    agent_ids = [str(i+1) for i, _ in enumerate(selected_agents)]
+                    agent_ids = [str(i + 1) for i, _ in enumerate(selected_agents)]
 
                     if "annotations" not in server:
                         server["annotations"] = {}
@@ -411,7 +376,7 @@ class DataSeeder:
             "performance optimization",
             "security scanning and validation",
             "content generation tasks",
-            "workflow automation"
+            "workflow automation",
         ]
         return random.choice(fragments)
 
@@ -434,7 +399,7 @@ class DataSeeder:
             prompts_count=30 * scale_factor,
             a2a_agents_count=5 * scale_factor,
             include_relationships=True,
-            randomize_data=True
+            randomize_data=True,
         )
 
         dataset = self.generate_realistic_dataset(config)
@@ -467,16 +432,11 @@ class DataSeeder:
 
         # Add metadata
         dataset_with_metadata = {
-            "metadata": {
-                "generator": "DataSeeder",
-                "seed": self.seed,
-                "timestamp": time.time(),
-                "total_records": sum(len(entities) for entities in dataset.values())
-            },
-            "data": dataset
+            "metadata": {"generator": "DataSeeder", "seed": self.seed, "timestamp": time.time(), "total_records": sum(len(entities) for entities in dataset.values())},
+            "data": dataset,
         }
 
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(dataset_with_metadata, f, indent=2)
 
         logger.info(f"💾 Saved dataset to {output_path}")
@@ -493,7 +453,7 @@ class DataSeeder:
         """
         logger.info(f"📂 Loading dataset from {input_file}")
 
-        with open(input_file, 'r') as f:
+        with open(input_file, "r") as f:
             data = json.load(f)
 
         if "data" in data:
@@ -506,8 +466,7 @@ class DataSeeder:
 
         return dataset
 
-    def create_version_specific_datasets(self, base_dataset: Dict[str, List[Dict]],
-                                       versions: List[str]) -> Dict[str, Dict[str, List[Dict]]]:
+    def create_version_specific_datasets(self, base_dataset: Dict[str, List[Dict]], versions: List[str]) -> Dict[str, Dict[str, List[Dict]]]:
         """Create version-specific datasets for migration testing.
 
         Args:
@@ -525,6 +484,7 @@ class DataSeeder:
             # Create a copy of the base dataset
             # Standard
             import copy
+
             dataset = copy.deepcopy(base_dataset)
 
             # Modify dataset based on version-specific features
@@ -537,8 +497,7 @@ class DataSeeder:
 
         return version_datasets
 
-    def _apply_version_modifications(self, dataset: Dict[str, List[Dict]],
-                                   version: str) -> Dict[str, List[Dict]]:
+    def _apply_version_modifications(self, dataset: Dict[str, List[Dict]], version: str) -> Dict[str, List[Dict]]:
         """Apply version-specific modifications to dataset."""
 
         # Version 0.2.0 and earlier - simpler schemas
@@ -548,10 +507,7 @@ class DataSeeder:
                 for entity in entities:
                     if "annotations" in entity:
                         # Keep only basic annotations
-                        basic_annotations = {
-                            "created_by": entity["annotations"].get("created_by"),
-                            "category": entity["annotations"].get("category")
-                        }
+                        basic_annotations = {"created_by": entity["annotations"].get("created_by"), "category": entity["annotations"].get("category")}
                         entity["annotations"] = {k: v for k, v in basic_annotations.items() if v}
 
         # Version 0.3.0 - added display names
@@ -567,8 +523,7 @@ class DataSeeder:
 
         return dataset
 
-    def validate_data_integrity(self, dataset_before: Dict[str, List[Dict]],
-                               dataset_after: Dict[str, List[Dict]]) -> Dict[str, Any]:
+    def validate_data_integrity(self, dataset_before: Dict[str, List[Dict]], dataset_after: Dict[str, List[Dict]]) -> Dict[str, Any]:
         """Validate data integrity between two datasets.
 
         Args:
@@ -580,23 +535,14 @@ class DataSeeder:
         """
         logger.info("🔍 Validating data integrity between datasets")
 
-        results = {
-            "valid": True,
-            "errors": [],
-            "warnings": [],
-            "statistics": {}
-        }
+        results = {"valid": True, "errors": [], "warnings": [], "statistics": {}}
 
         # Compare record counts
         for entity_type in dataset_before.keys():
             count_before = len(dataset_before[entity_type])
             count_after = len(dataset_after.get(entity_type, []))
 
-            results["statistics"][entity_type] = {
-                "before": count_before,
-                "after": count_after,
-                "delta": count_after - count_before
-            }
+            results["statistics"][entity_type] = {"before": count_before, "after": count_after, "delta": count_after - count_before}
 
             if count_after < count_before:
                 results["errors"].append(f"Data loss in {entity_type}: {count_before} → {count_after}")
@@ -616,11 +562,7 @@ class DataSeeder:
 
         # Validate specific entity integrity
         for entity_type in set(dataset_before.keys()) & set(dataset_after.keys()):
-            entity_validation = self._validate_entity_integrity(
-                dataset_before[entity_type],
-                dataset_after[entity_type],
-                entity_type
-            )
+            entity_validation = self._validate_entity_integrity(dataset_before[entity_type], dataset_after[entity_type], entity_type)
 
             if not entity_validation["valid"]:
                 results["valid"] = False
@@ -631,16 +573,10 @@ class DataSeeder:
         logger.info(f"✅ Data integrity validation completed: valid={results['valid']}")
         return results
 
-    def _validate_entity_integrity(self, entities_before: List[Dict],
-                                  entities_after: List[Dict],
-                                  entity_type: str) -> Dict[str, Any]:
+    def _validate_entity_integrity(self, entities_before: List[Dict], entities_after: List[Dict], entity_type: str) -> Dict[str, Any]:
         """Validate integrity of specific entity type."""
 
-        validation = {
-            "valid": True,
-            "errors": [],
-            "warnings": []
-        }
+        validation = {"valid": True, "errors": [], "warnings": []}
 
         # Create lookup by name
         before_by_name = {e["name"]: e for e in entities_before}

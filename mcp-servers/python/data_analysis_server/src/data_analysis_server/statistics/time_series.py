@@ -5,8 +5,8 @@ Time series analysis functionality.
 
 # Standard
 import logging
-from typing import Any
 import warnings
+from typing import Any
 
 # Third-Party
 import numpy as np
@@ -51,7 +51,9 @@ class TimeSeriesAnalyzer:
         logger.info(f"Analyzing time series for columns {value_columns}")
 
         # Prepare data
-        ts_df = self._prepare_time_series_data(df, time_column, value_columns, frequency)
+        ts_df = self._prepare_time_series_data(
+            df, time_column, value_columns, frequency
+        )
 
         operations = operations or ["trend", "seasonal"]
         results = {}
@@ -62,7 +64,9 @@ class TimeSeriesAnalyzer:
 
             series = ts_df[column].dropna()
             if len(series) < 4:
-                logger.warning(f"Insufficient data for time series analysis of {column}")
+                logger.warning(
+                    f"Insufficient data for time series analysis of {column}"
+                )
                 continue
 
             column_results = {
@@ -94,7 +98,9 @@ class TimeSeriesAnalyzer:
 
             # Forecasting
             if "forecast" in operations:
-                column_results["forecast"] = self._forecast_series(series, forecast_periods, confidence_intervals)
+                column_results["forecast"] = self._forecast_series(
+                    series, forecast_periods, confidence_intervals
+                )
 
             results[column] = column_results
 
@@ -151,7 +157,11 @@ class TimeSeriesAnalyzer:
             "first_value": float(series.iloc[0]),
             "last_value": float(series.iloc[-1]),
             "total_change": float(series.iloc[-1] - series.iloc[0]),
-            "percentage_change": (float((series.iloc[-1] - series.iloc[0]) / series.iloc[0] * 100) if series.iloc[0] != 0 else 0),
+            "percentage_change": (
+                float((series.iloc[-1] - series.iloc[0]) / series.iloc[0] * 100)
+                if series.iloc[0] != 0
+                else 0
+            ),
             "missing_values": int(series.isnull().sum()),
         }
 
@@ -170,7 +180,9 @@ class TimeSeriesAnalyzer:
             if len(x_clean) < 2:
                 return {"error": "Insufficient data for trend analysis"}
 
-            slope, intercept, r_value, p_value, std_err = stats.linregress(x_clean, y_clean)
+            slope, intercept, r_value, p_value, std_err = stats.linregress(
+                x_clean, y_clean
+            )
 
             # Trend direction
             if abs(slope) < std_err:
@@ -227,7 +239,9 @@ class TimeSeriesAnalyzer:
                                 {
                                     "period": period,
                                     "autocorrelation": float(autocorr),
-                                    "strength": ("strong" if abs(autocorr) > 0.6 else "moderate"),
+                                    "strength": (
+                                        "strong" if abs(autocorr) > 0.6 else "moderate"
+                                    ),
                                 }
                             )
                     except Exception:
@@ -259,16 +273,24 @@ class TimeSeriesAnalyzer:
             detrended = series - trend
 
             # Seasonal component (average for each period)
-            seasonal = detrended.groupby(detrended.index.dayofyear % period).transform("mean")
+            seasonal = detrended.groupby(detrended.index.dayofyear % period).transform(
+                "mean"
+            )
 
             # Residual component
             residual = series - trend - seasonal
 
             return {
                 "trend_variance": float(trend.var()) if not trend.isna().all() else 0,
-                "seasonal_variance": (float(seasonal.var()) if not seasonal.isna().all() else 0),
-                "residual_variance": (float(residual.var()) if not residual.isna().all() else 0),
-                "seasonal_strength": (float(seasonal.var() / series.var()) if series.var() > 0 else 0),
+                "seasonal_variance": (
+                    float(seasonal.var()) if not seasonal.isna().all() else 0
+                ),
+                "residual_variance": (
+                    float(residual.var()) if not residual.isna().all() else 0
+                ),
+                "seasonal_strength": (
+                    float(seasonal.var() / series.var()) if series.var() > 0 else 0
+                ),
             }
         except Exception as e:
             return {"error": str(e)}
@@ -285,8 +307,12 @@ class TimeSeriesAnalyzer:
                 rolling_std = series.rolling(window=window_size).std()
 
                 # Check if rolling statistics are roughly constant
-                mean_stability = rolling_mean.std() / series.std() if series.std() > 0 else 0
-                std_stability = rolling_std.std() / series.std() if series.std() > 0 else 0
+                mean_stability = (
+                    rolling_mean.std() / series.std() if series.std() > 0 else 0
+                )
+                std_stability = (
+                    rolling_std.std() / series.std() if series.std() > 0 else 0
+                )
 
                 results["rolling_stats"] = {
                     "mean_stability": float(mean_stability),
@@ -298,7 +324,11 @@ class TimeSeriesAnalyzer:
             if len(series) > 1:
                 diff_series = series.diff().dropna()
                 results["first_difference"] = {
-                    "variance_reduction": (float((series.var() - diff_series.var()) / series.var()) if series.var() > 0 else 0),
+                    "variance_reduction": (
+                        float((series.var() - diff_series.var()) / series.var())
+                        if series.var() > 0
+                        else 0
+                    ),
                     "mean_diff": float(diff_series.mean()),
                     "std_diff": float(diff_series.std()),
                 }
@@ -317,22 +347,32 @@ class TimeSeriesAnalyzer:
                 try:
                     autocorr = series.autocorr(lag=lag)
                     if not np.isnan(autocorr):
-                        autocorrelations.append({"lag": lag, "autocorrelation": float(autocorr)})
+                        autocorrelations.append(
+                            {"lag": lag, "autocorrelation": float(autocorr)}
+                        )
                 except Exception:
                     continue
 
             # Find significant autocorrelations
-            significant_lags = [item for item in autocorrelations if abs(item["autocorrelation"]) > 0.2]
+            significant_lags = [
+                item for item in autocorrelations if abs(item["autocorrelation"]) > 0.2
+            ]
 
             return {
                 "autocorrelations": autocorrelations,
                 "significant_lags": significant_lags,
-                "max_autocorr": (max([abs(item["autocorrelation"]) for item in autocorrelations]) if autocorrelations else 0),
+                "max_autocorr": (
+                    max([abs(item["autocorrelation"]) for item in autocorrelations])
+                    if autocorrelations
+                    else 0
+                ),
             }
         except Exception as e:
             return {"error": str(e)}
 
-    def _forecast_series(self, series: pd.Series, forecast_periods: int, confidence_intervals: bool) -> dict[str, Any]:
+    def _forecast_series(
+        self, series: pd.Series, forecast_periods: int, confidence_intervals: bool
+    ) -> dict[str, Any]:
         """Simple forecasting using trend and seasonal components."""
         try:
             if len(series) < 4:
@@ -351,7 +391,9 @@ class TimeSeriesAnalyzer:
                 return {"error": "Insufficient clean data for forecasting"}
 
             # Fit linear trend
-            slope, intercept, r_value, p_value, std_err = stats.linregress(x_clean, y_clean)
+            slope, intercept, r_value, p_value, std_err = stats.linregress(
+                x_clean, y_clean
+            )
 
             # Generate future time points
             future_x = np.arange(len(series), len(series) + forecast_periods)
@@ -363,7 +405,9 @@ class TimeSeriesAnalyzer:
             try:
                 seasonal_pattern = self._extract_seasonal_pattern(series)
                 if seasonal_pattern is not None:
-                    seasonal_component = np.tile(seasonal_pattern, forecast_periods // len(seasonal_pattern) + 1)[:forecast_periods]
+                    seasonal_component = np.tile(
+                        seasonal_pattern, forecast_periods // len(seasonal_pattern) + 1
+                    )[:forecast_periods]
                     forecast = trend_forecast + seasonal_component
                 else:
                     forecast = trend_forecast
@@ -373,7 +417,9 @@ class TimeSeriesAnalyzer:
             # Create forecast index
             freq = self._infer_frequency(series.index)
             if freq and freq != "irregular":
-                forecast_index = pd.date_range(start=series.index[-1], periods=forecast_periods + 1, freq=freq)[1:]  # Exclude the last historical point
+                forecast_index = pd.date_range(
+                    start=series.index[-1], periods=forecast_periods + 1, freq=freq
+                )[1:]  # Exclude the last historical point
             else:
                 # Create a simple numeric index
                 forecast_index = range(len(series), len(series) + forecast_periods)
@@ -409,7 +455,9 @@ class TimeSeriesAnalyzer:
         except Exception as e:
             return {"error": str(e)}
 
-    def _extract_seasonal_pattern(self, series: pd.Series, period: int = 12) -> np.ndarray | None:
+    def _extract_seasonal_pattern(
+        self, series: pd.Series, period: int = 12
+    ) -> np.ndarray | None:
         """Extract a simple seasonal pattern from the series."""
         try:
             if len(series) < 2 * period:

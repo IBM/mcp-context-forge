@@ -1,3 +1,4 @@
+spec/
 stats/
 .env.bak
 *cookies*txt
@@ -223,8 +224,6 @@ dmypy.json
 # Mac junk
 .DS_Store
 
-# MYPY cache
-.mypy_cache
 .idea/
 
 # Sonar
@@ -250,3 +249,10 @@ db_path/
 tmp/
 
 .continue
+
+.ruff_cache/
+
+# Rust build artifacts
+plugins_rust/target/
+plugins_rust/**/*.rs.bk
+plugins_rust/Cargo.lock

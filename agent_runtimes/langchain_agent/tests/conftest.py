@@ -5,9 +5,9 @@
 import os
 from unittest.mock import AsyncMock, Mock
 
-# Third-Party
-from fastapi.testclient import TestClient
 import pytest
+
+# Third-Party
 
 # Set test environment variables before any imports
 os.environ["OPENAI_API_KEY"] = "test-key"
@@ -71,24 +71,14 @@ def sample_tools():
             "id": "test-tool-1",
             "name": "test_tool",
             "description": "A test tool",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "param": {"type": "string"}
-                }
-            }
+            "input_schema": {"type": "object", "properties": {"param": {"type": "string"}}},
         },
         {
             "id": "test-tool-2",
             "name": "another_tool",
             "description": "Another test tool",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "value": {"type": "number"}
-                }
-            }
-        }
+            "input_schema": {"type": "object", "properties": {"value": {"type": "number"}}},
+        },
     ]
 
 
@@ -97,11 +87,9 @@ def sample_chat_request():
     """Sample chat completion request."""
     return {
         "model": "gpt-4o-mini",
-        "messages": [
-            {"role": "user", "content": "Hello, how are you?"}
-        ],
+        "messages": [{"role": "user", "content": "Hello, how are you?"}],
         "temperature": 0.7,
-        "max_tokens": 150
+        "max_tokens": 150,
     }
 
 
@@ -112,8 +100,5 @@ def sample_a2a_request():
         "jsonrpc": "2.0",
         "id": "test-id",
         "method": "invoke",
-        "params": {
-            "tool": "test_tool",
-            "args": {"param": "test_value"}
-        }
+        "params": {"tool": "test_tool", "args": {"param": "test_value"}},
     }

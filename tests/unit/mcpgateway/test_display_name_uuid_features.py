@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from mcpgateway.db import Base
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate, ToolCreate, ToolUpdate
 from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.tool_service import ToolService
 
@@ -55,14 +55,7 @@ class TestDisplayNameFeature:
     def test_tool_create_with_display_name(self, db_session, tool_service):
         """Test creating a tool with displayName field."""
         # Create tool with displayName
-        tool_data = ToolCreate(
-            name="test_tool",
-            displayName="My Custom Tool",
-            url="https://example.com/api",
-            description="Test tool",
-            integration_type="REST",
-            request_type="POST"
-        )
+        tool_data = ToolCreate(name="test_tool", displayName="My Custom Tool", url="https://example.com/api", description="Test tool", integration_type="REST", request_type="POST")
 
         # This would be called in the real service
         db_tool = DbTool(
@@ -74,7 +67,7 @@ class TestDisplayNameFeature:
             description=tool_data.description,
             integration_type=tool_data.integration_type,
             request_type=tool_data.request_type,
-            input_schema={"type": "object", "properties": {}}
+            input_schema={"type": "object", "properties": {}},
         )
 
         db_session.add(db_tool)
@@ -97,7 +90,7 @@ class TestDisplayNameFeature:
             description="Test tool 2",
             integration_type="REST",
             request_type="GET",
-            input_schema={"type": "object", "properties": {}}
+            input_schema={"type": "object", "properties": {}},
         )
 
         db_session.add(db_tool)
@@ -120,7 +113,7 @@ class TestDisplayNameFeature:
             description="Test tool",
             integration_type="REST",
             request_type="POST",
-            input_schema={"type": "object", "properties": {}}
+            input_schema={"type": "object", "properties": {}},
         )
 
         db_session.add(db_tool)
@@ -146,7 +139,7 @@ class TestDisplayNameFeature:
             description="Test tool",
             integration_type="REST",
             request_type="POST",
-            input_schema={"type": "object", "properties": {}}
+            input_schema={"type": "object", "properties": {}},
         )
 
         db_session.add(db_tool)
@@ -167,12 +160,7 @@ class TestServerUUIDFeature:
         custom_uuid = "12345678-1234-1234-1234-123456789abc"
 
         # Create server with custom UUID
-        db_server = DbServer(
-            id=custom_uuid,
-            name="Test Server",
-            description="Test server with custom UUID",
-            is_active=True
-        )
+        db_server = DbServer(id=custom_uuid, name="Test Server", description="Test server with custom UUID", is_active=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -185,11 +173,7 @@ class TestServerUUIDFeature:
     def test_server_create_without_uuid(self, db_session):
         """Test creating a server without specifying UUID (auto-generated)."""
         # Create server without specifying UUID
-        db_server = DbServer(
-            name="Auto UUID Server",
-            description="Test server with auto UUID",
-            is_active=True
-        )
+        db_server = DbServer(name="Auto UUID Server", description="Test server with auto UUID", is_active=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -206,12 +190,7 @@ class TestServerUUIDFeature:
         new_uuid = "new-uuid-5678"
 
         # Create server with original UUID
-        db_server = DbServer(
-            id=original_uuid,
-            name="UUID Update Server",
-            description="Test server for UUID update",
-            is_active=True
-        )
+        db_server = DbServer(id=original_uuid, name="UUID Update Server", description="Test server for UUID update", is_active=True)
 
         db_session.add(db_server)
         db_session.commit()
@@ -229,22 +208,12 @@ class TestServerUUIDFeature:
         duplicate_uuid = "duplicate-uuid-1234"
 
         # Create first server with UUID
-        db_server1 = DbServer(
-            id=duplicate_uuid,
-            name="First Server",
-            description="First server",
-            is_active=True
-        )
+        db_server1 = DbServer(id=duplicate_uuid, name="First Server", description="First server", is_active=True)
         db_session.add(db_server1)
         db_session.commit()
 
         # Try to create second server with same UUID
-        db_server2 = DbServer(
-            id=duplicate_uuid,
-            name="Second Server",
-            description="Second server",
-            is_active=True
-        )
+        db_server2 = DbServer(id=duplicate_uuid, name="Second Server", description="Second server", is_active=True)
 
         db_session.add(db_server2)
 
@@ -264,7 +233,7 @@ class TestSchemaValidation:
             "url": "https://example.com/api",
             "description": "Test tool",
             "integration_type": "REST",
-            "request_type": "POST"
+            "request_type": "POST",
         }
 
         tool_create = ToolCreate(**tool_data)
@@ -273,10 +242,7 @@ class TestSchemaValidation:
 
     def test_tool_update_schema_with_display_name(self):
         """Test ToolUpdate schema with displayName."""
-        update_data = {
-            "displayName": "Updated Display Name",
-            "description": "Updated description"
-        }
+        update_data = {"displayName": "Updated Display Name", "description": "Updated description"}
 
         tool_update = ToolUpdate(**update_data)
         assert tool_update.displayName == "Updated Display Name"
@@ -284,11 +250,7 @@ class TestSchemaValidation:
 
     def test_server_create_schema_with_uuid(self):
         """Test ServerCreate schema with custom UUID."""
-        server_data = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "name": "Test Server",
-            "description": "Test server with custom UUID"
-        }
+        server_data = {"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Test Server", "description": "Test server with custom UUID"}
 
         server_create = ServerCreate(**server_data)
         assert server_create.id == "550e8400e29b41d4a716446655440000"
@@ -296,10 +258,7 @@ class TestSchemaValidation:
 
     def test_server_update_schema_with_uuid(self):
         """Test ServerUpdate schema with UUID."""
-        update_data = {
-            "id": "123e4567-e89b-12d3-a456-426614174000",
-            "name": "Updated Server Name"
-        }
+        update_data = {"id": "123e4567-e89b-12d3-a456-426614174000", "name": "Updated Server Name"}
 
         server_update = ServerUpdate(**update_data)
         assert server_update.id == "123e4567e89b12d3a456426614174000"
@@ -311,18 +270,12 @@ class TestSchemaValidation:
         from mcpgateway.schemas import ServerCreate, ServerUpdate
 
         # Test valid UUID
-        server_create = ServerCreate(
-            id="550e8400-e29b-41d4-a716-446655440000",
-            name="Test Server"
-        )
+        server_create = ServerCreate(id="550e8400-e29b-41d4-a716-446655440000", name="Test Server")
         assert server_create.id == "550e8400e29b41d4a716446655440000"
 
         # Test invalid UUID should raise validation error
         with pytest.raises(Exception):  # Pydantic ValidationError
-            ServerCreate(
-                id="invalid-uuid-format",
-                name="Test Server"
-            )
+            ServerCreate(id="invalid-uuid-format", name="Test Server")
 
         # Test ServerUpdate UUID validation
         server_update = ServerUpdate(id="123e4567-e89b-12d3-a456-426614174000")
@@ -343,21 +296,21 @@ class TestServerUUIDNormalization:
         import uuid as uuid_module
 
         # First-Party
-        from mcpgateway.db import Server as DbServer
         from mcpgateway.schemas import ServerCreate
 
         # Standard UUID format (with dashes)
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+        expected_hex_uuid = str(uuid_module.UUID(standard_uuid)).replace("-", "")
 
         # Mock database operations
         mock_db_server = None
+
         def capture_add(server):
             nonlocal mock_db_server
             mock_db_server = server
             # Simulate the UUID normalization that happens in the service
-            if hasattr(server, 'id') and server.id:
-                server.id = str(uuid_module.UUID(server.id)).replace('-', '')
+            if hasattr(server, "id") and server.id:
+                server.id = str(uuid_module.UUID(server.id)).replace("-", "")
 
         db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
         db_session.add = Mock(side_effect=capture_add)
@@ -392,11 +345,7 @@ class TestServerUUIDNormalization:
             )
         )
 
-        server_create = ServerCreate(
-            id=standard_uuid,
-            name="Test Server",
-            description="Test server with UUID normalization"
-        )
+        server_create = ServerCreate(id=standard_uuid, name="Test Server", description="Test server with UUID normalization")
 
         # Call the service method
         result = await server_service.register_server(db_session, server_create)
@@ -423,12 +372,13 @@ class TestServerUUIDNormalization:
 
         # Mock database operations
         mock_db_server = None
+
         def capture_add(server):
             nonlocal mock_db_server
             mock_db_server = server
             # Simulate the UUID normalization that happens in the service
-            if hasattr(server, 'id') and server.id:
-                server.id = str(uuid_module.UUID(server.id)).replace('-', '')
+            if hasattr(server, "id") and server.id:
+                server.id = str(uuid_module.UUID(server.id)).replace("-", "")
 
         db_session.execute = Mock(return_value=Mock(scalar_one_or_none=Mock(return_value=None)))
         db_session.add = Mock(side_effect=capture_add)
@@ -467,7 +417,7 @@ class TestServerUUIDNormalization:
         server_create = ServerCreate(
             id=standard_uuid,  # Valid UUID format for schema validation
             name="Test Server Hex",
-            description="Test server with hex UUID"
+            description="Test server with hex UUID",
         )
 
         # Call the service method
@@ -488,6 +438,7 @@ class TestServerUUIDNormalization:
 
         # Mock database operations
         mock_db_server = None
+
         def capture_add(server):
             nonlocal mock_db_server
             mock_db_server = server
@@ -526,10 +477,7 @@ class TestServerUUIDNormalization:
             )
         )
 
-        server_create = ServerCreate(
-            name="Auto UUID Server",
-            description="Test server with auto UUID"
-        )
+        server_create = ServerCreate(name="Auto UUID Server", description="Test server with auto UUID")
         # id should be None for auto-generation
         assert server_create.id is None
 
@@ -562,29 +510,17 @@ class TestServerUUIDNormalization:
 
         for invalid_uuid in invalid_uuids:
             with pytest.raises(ValidationError) as exc_info:
-                ServerCreate(
-                    id=invalid_uuid,
-                    name="Test Server",
-                    description="Test server with invalid UUID"
-                )
+                ServerCreate(id=invalid_uuid, name="Test Server", description="Test server with invalid UUID")
             # Verify the error message mentions UUID validation
             assert "UUID" in str(exc_info.value) or "invalid" in str(exc_info.value).lower()
 
         # Test empty and whitespace strings separately - these are handled differently
         # Empty string should be allowed (treated as None)
-        server_empty_id = ServerCreate(
-            id="",
-            name="Test Server Empty",
-            description="Test server with empty ID"
-        )
+        server_empty_id = ServerCreate(id="", name="Test Server Empty", description="Test server with empty ID")
         assert server_empty_id.id == ""  # Empty string is preserved but treated as no custom ID
 
         # Whitespace-only string should be stripped to empty
-        server_whitespace_id = ServerCreate(
-            id="   ",
-            name="Test Server Whitespace",
-            description="Test server with whitespace ID"
-        )
+        server_whitespace_id = ServerCreate(id="   ", name="Test Server Whitespace", description="Test server with whitespace ID")
         assert server_whitespace_id.id == ""  # Whitespace stripped by str_strip_whitespace=True
 
     def test_uuid_normalization_logic(self):
@@ -594,26 +530,14 @@ class TestServerUUIDNormalization:
 
         # Test cases for UUID normalization
         test_cases = [
-            {
-                "input": "550e8400-e29b-41d4-a716-446655440000",
-                "expected": "550e8400e29b41d4a716446655440000",
-                "description": "Standard UUID with dashes"
-            },
-            {
-                "input": "123e4567-e89b-12d3-a456-426614174000",
-                "expected": "123e4567e89b12d3a456426614174000",
-                "description": "Another standard UUID with dashes"
-            },
-            {
-                "input": "00000000-0000-0000-0000-000000000000",
-                "expected": "00000000000000000000000000000000",
-                "description": "Nil UUID"
-            },
+            {"input": "550e8400-e29b-41d4-a716-446655440000", "expected": "550e8400e29b41d4a716446655440000", "description": "Standard UUID with dashes"},
+            {"input": "123e4567-e89b-12d3-a456-426614174000", "expected": "123e4567e89b12d3a456426614174000", "description": "Another standard UUID with dashes"},
+            {"input": "00000000-0000-0000-0000-000000000000", "expected": "00000000000000000000000000000000", "description": "Nil UUID"},
         ]
 
         for case in test_cases:
             # Simulate the normalization logic from server_service.py
-            normalized = str(uuid_module.UUID(case["input"])).replace('-', '')
+            normalized = str(uuid_module.UUID(case["input"])).replace("-", "")
             assert normalized == case["expected"], f"Failed for {case['description']}: expected {case['expected']}, got {normalized}"
             assert len(normalized) == 32, f"Normalized UUID should be 32 characters, got {len(normalized)}"
             assert "-" not in normalized, "Normalized UUID should not contain dashes"
@@ -625,14 +549,14 @@ class TestServerUUIDNormalization:
 
         # Create a server with standard UUID format
         standard_uuid = "550e8400-e29b-41d4-a716-446655440000"
-        expected_hex = str(uuid_module.UUID(standard_uuid)).replace('-', '')
+        expected_hex = str(uuid_module.UUID(standard_uuid)).replace("-", "")
 
         # Simulate what the service does - normalize the UUID before storing
         db_server = DbServer(
             id=expected_hex,  # Simulate the normalized UUID
             name="Storage Test Server",
             description="Test UUID storage format",
-            is_active=True
+            is_active=True,
         )
 
         db_session.add(db_server)
@@ -655,29 +579,18 @@ class TestServerUUIDNormalization:
         from mcpgateway.schemas import ServerCreate
 
         test_scenarios = [
-            {
-                "name": "Lowercase UUID with dashes",
-                "input": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-                "description": "Standard lowercase UUID format"
-            },
-            {
-                "name": "Uppercase UUID with dashes",
-                "input": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890",
-                "description": "Uppercase UUID format"
-            },
-            {
-                "name": "Mixed case UUID with dashes",
-                "input": "A1b2C3d4-E5f6-7890-AbCd-Ef1234567890",
-                "description": "Mixed case UUID format"
-            }
+            {"name": "Lowercase UUID with dashes", "input": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "description": "Standard lowercase UUID format"},
+            {"name": "Uppercase UUID with dashes", "input": "A1B2C3D4-E5F6-7890-ABCD-EF1234567890", "description": "Uppercase UUID format"},
+            {"name": "Mixed case UUID with dashes", "input": "A1b2C3d4-E5f6-7890-AbCd-Ef1234567890", "description": "Mixed case UUID format"},
         ]
 
         for i, scenario in enumerate(test_scenarios):
             # Calculate expected normalized UUID
-            expected_hex = str(uuid_module.UUID(scenario["input"])).replace('-', '')
+            expected_hex = str(uuid_module.UUID(scenario["input"])).replace("-", "")
 
             # Mock database operations for this test
             captured_server = None
+
             def capture_add(server):
                 nonlocal captured_server
                 captured_server = server
@@ -715,11 +628,7 @@ class TestServerUUIDNormalization:
                 )
             )
 
-            server_create = ServerCreate(
-                id=scenario["input"],
-                name=scenario["name"],
-                description=scenario["description"]
-            )
+            server_create = ServerCreate(id=scenario["input"], name=scenario["name"], description=scenario["description"])
 
             # Call the service method
             result = await server_service.register_server(db_session, server_create)
@@ -750,7 +659,7 @@ class TestServiceIntegration:
             description="Test tool",
             integration_type="REST",
             request_type="POST",
-            input_schema={"type": "object", "properties": {}}
+            input_schema={"type": "object", "properties": {}},
         )
 
         # Simulate the service method that converts DB model to response
@@ -778,11 +687,11 @@ class TestServiceIntegration:
                 "min_response_time": None,
                 "max_response_time": None,
                 "avg_response_time": None,
-                "last_execution_time": None
+                "last_execution_time": None,
             },
             "gateway_slug": "",
             "custom_name_slug": "service-test-tool",
-            "tags": []
+            "tags": [],
         }
 
         # Validate that the response includes displayName
@@ -820,13 +729,7 @@ class TestSmartDisplayNameGeneration:
         from mcpgateway.schemas import ToolCreate
 
         # Manual tool with explicit displayName should keep it
-        tool = ToolCreate(
-            name="manual_api_tool",
-            displayName="My Custom API Tool",
-            url="https://example.com/api",
-            integration_type="REST",
-            request_type="POST"
-        )
+        tool = ToolCreate(name="manual_api_tool", displayName="My Custom API Tool", url="https://example.com/api", integration_type="REST", request_type="POST")
 
         assert tool.displayName == "My Custom API Tool"
         assert tool.name == "manual_api_tool"
@@ -837,12 +740,7 @@ class TestSmartDisplayNameGeneration:
         from mcpgateway.schemas import ToolCreate
 
         # Manual tool without displayName (service layer will set default)
-        tool = ToolCreate(
-            name="manual_webhook",
-            url="https://example.com/webhook",
-            integration_type="REST",
-            request_type="POST"
-        )
+        tool = ToolCreate(name="manual_webhook", url="https://example.com/webhook", integration_type="REST", request_type="POST")
 
         # Schema doesn't set default, service layer does
         assert tool.displayName is None

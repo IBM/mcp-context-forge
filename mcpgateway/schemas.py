@@ -27,6 +27,7 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Self, Union
+from urllib.parse import urlparse
 
 # Third-Party
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
@@ -389,6 +390,7 @@ class ToolCreate(BaseModel):
         request_type (Literal["GET", "POST", "PUT", "DELETE", "PATCH"]): HTTP method to be used for invoking the tool.
         headers (Optional[Dict[str, str]]): Additional headers to send when invoking the tool.
         input_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool parameters. Alias 'inputSchema'.
+        output_schema (Optional[Dict[str, Any]]): JSON Schema for validating tool output. Alias 'outputSchema'.
         annotations (Optional[Dict[str, Any]]): Tool annotations for behavior hints such as title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint.
         jsonpath_filter (Optional[str]): JSON modification filter.
         auth (Optional[AuthenticationValues]): Authentication credentials (Basic or Bearer Token or custom headers) if required.
@@ -406,6 +408,7 @@ class ToolCreate(BaseModel):
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
+    output_schema: Optional[Dict[str, Any]] = Field(default=None, description="JSON Schema for validating tool output", alias="outputSchema")
     annotations: Optional[Dict[str, Any]] = Field(
         default_factory=dict,
         description="Tool annotations for behavior hints (title, readOnlyHint, destructiveHint, idempotentHint, openWorldHint)",
@@ -419,6 +422,17 @@ class ToolCreate(BaseModel):
     team_id: Optional[str] = Field(None, description="Team ID for resource organization")
     owner_email: Optional[str] = Field(None, description="Email of the tool owner")
     visibility: Optional[str] = Field(default="public", description="Visibility level (private, team, public)")
+
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
     @field_validator("tags")
     @classmethod
@@ -751,6 +765,184 @@ class ToolCreate(BaseModel):
             raise ValueError("Cannot manually create A2A tools. Add A2A agents via the A2A interface - tools will be auto-created when agents are associated with servers.")
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def enforce_passthrough_fields_for_rest(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enforce that passthrough REST fields are only set for integration_type 'REST'.
+        If any passthrough field is set for non-REST, raise ValueError.
+
+        Args:
+            values (Dict[str, Any]): The input values to validate.
+
+        Returns:
+            Dict[str, Any]: The validated values.
+
+        Raises:
+            ValueError: If passthrough fields are set for non-REST integration_type.
+        """
+        passthrough_fields = ["base_url", "path_template", "query_mapping", "header_mapping", "timeout_ms", "expose_passthrough", "allowlist", "plugin_chain_pre", "plugin_chain_post"]
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            for field in passthrough_fields:
+                if field in values and values[field] not in (None, [], {}):
+                    raise ValueError(f"Field '{field}' is only allowed for integration_type 'REST'.")
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """
+        Only for integration_type 'REST':
+        If 'url' is provided, extract 'base_url' and 'path_template'.
+        Ensures path_template starts with a single '/'.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template if applicable.
+        """
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            # Only process for REST, skip for others
+            return values
+        url = values.get("url")
+        if url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            # Ensure path_template starts with a single '/'
+            if path_template:
+                path_template = "/" + path_template.lstrip("/")
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+        return values
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v):
+        """
+        Validate that base_url is a valid URL with scheme and netloc.
+
+        Args:
+            v (str): The base_url value to validate.
+
+        Returns:
+            str: The validated base_url value.
+
+        Raises:
+            ValueError: If base_url is not a valid URL.
+        """
+        if v is None:
+            return v
+        parsed = urlparse(str(v))
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("base_url must be a valid URL with scheme and netloc")
+        return v
+
+    @field_validator("path_template")
+    @classmethod
+    def validate_path_template(cls, v):
+        """
+        Validate that path_template starts with '/'.
+
+        Args:
+            v (str): The path_template value to validate.
+
+        Returns:
+            str: The validated path_template value.
+
+        Raises:
+            ValueError: If path_template does not start with '/'.
+        """
+        if v and not str(v).startswith("/"):
+            raise ValueError("path_template must start with '/'")
+        return v
+
+    @field_validator("timeout_ms")
+    @classmethod
+    def validate_timeout_ms(cls, v):
+        """
+        Validate that timeout_ms is a positive integer.
+
+        Args:
+            v (int): The timeout_ms value to validate.
+
+        Returns:
+            int: The validated timeout_ms value.
+
+        Raises:
+            ValueError: If timeout_ms is not a positive integer.
+        """
+        if v is not None and v <= 0:
+            raise ValueError("timeout_ms must be a positive integer")
+        return v
+
+    @field_validator("allowlist")
+    @classmethod
+    def validate_allowlist(cls, v):
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
+
+        Args:
+            v (List[str]): The allowlist to validate.
+
+        Returns:
+            List[str]: The validated allowlist.
+
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
+
+    @field_validator("plugin_chain_pre", "plugin_chain_post")
+    @classmethod
+    def validate_plugin_chain(cls, v):
+        """
+        Validate that each plugin in the chain is allowed.
+
+        Args:
+            v (List[str]): The plugin chain to validate.
+
+        Returns:
+            List[str]: The validated plugin chain.
+
+        Raises:
+            ValueError: If any plugin is not in the allowed set.
+        """
+        allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
+        if v is None:
+            return v
+        for plugin in v:
+            if plugin not in allowed_plugins:
+                raise ValueError(f"Unknown plugin: {plugin}")
+        return v
+
+    @model_validator(mode="after")
+    def handle_timeout_ms_defaults(self):
+        """Handle timeout_ms defaults based on integration_type and expose_passthrough.
+
+        Returns:
+            self: The validated model instance with timeout_ms potentially set to default.
+        """
+        # If timeout_ms is None and we have REST with passthrough, set default
+        if self.timeout_ms is None and self.integration_type == "REST" and getattr(self, "expose_passthrough", True):
+            self.timeout_ms = 20000
+        return self
+
 
 class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
@@ -767,12 +959,24 @@ class ToolUpdate(BaseModelWithConfigDict):
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
+    output_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool output")
     annotations: Optional[Dict[str, Any]] = Field(None, description="Tool annotations for behavior hints")
     jsonpath_filter: Optional[str] = Field(None, description="JSON path filter for rpc tool calls")
     auth: Optional[AuthenticationValues] = Field(None, description="Authentication credentials (Basic or Bearer Token or custom headers) if required")
     gateway_id: Optional[str] = Field(None, description="id of gateway for the tool")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the tool")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
     @field_validator("tags")
     @classmethod
@@ -1009,6 +1213,146 @@ class ToolUpdate(BaseModelWithConfigDict):
             raise ValueError("Cannot update tools to A2A integration type. A2A tools are managed by the A2A service.")
         return values
 
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_path_template(cls, values: dict) -> dict:
+        """
+        If 'integration_type' is 'REST' and 'url' is provided, extract 'base_url' and 'path_template'.
+        Ensures path_template starts with a single '/'.
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url and path_template if applicable.
+        """
+        integration_type = values.get("integration_type")
+        url = values.get("url")
+        if integration_type == "REST" and url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            # Ensure path_template starts with a single '/'
+            if path_template and not path_template.startswith("/"):
+                path_template = "/" + path_template.lstrip("/")
+            elif path_template:
+                path_template = "/" + path_template.lstrip("/")
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+        return values
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v):
+        """
+        Validate that base_url is a valid URL with scheme and netloc.
+
+        Args:
+            v (str): The base_url value to validate.
+
+        Returns:
+            str: The validated base_url value.
+
+        Raises:
+            ValueError: If base_url is not a valid URL.
+        """
+        if v is None:
+            return v
+        parsed = urlparse(str(v))
+        if not parsed.scheme or not parsed.netloc:
+            raise ValueError("base_url must be a valid URL with scheme and netloc")
+        return v
+
+    @field_validator("path_template")
+    @classmethod
+    def validate_path_template(cls, v):
+        """
+        Validate that path_template starts with '/'.
+
+        Args:
+            v (str): The path_template value to validate.
+
+        Returns:
+            str: The validated path_template value.
+
+        Raises:
+            ValueError: If path_template does not start with '/'.
+        """
+        if v and not str(v).startswith("/"):
+            raise ValueError("path_template must start with '/'")
+        return v
+
+    @field_validator("timeout_ms")
+    @classmethod
+    def validate_timeout_ms(cls, v):
+        """
+        Validate that timeout_ms is a positive integer.
+
+        Args:
+            v (int): The timeout_ms value to validate.
+
+        Returns:
+            int: The validated timeout_ms value.
+
+        Raises:
+            ValueError: If timeout_ms is not a positive integer.
+        """
+        if v is not None and v <= 0:
+            raise ValueError("timeout_ms must be a positive integer")
+        return v
+
+    @field_validator("allowlist")
+    @classmethod
+    def validate_allowlist(cls, v):
+        """
+        Validate that allowlist is a list and each entry is a valid host or scheme string.
+
+        Args:
+            v (List[str]): The allowlist to validate.
+
+        Returns:
+            List[str]: The validated allowlist.
+
+        Raises:
+            ValueError: If allowlist is not a list or any entry is not a valid host/scheme string.
+        """
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("allowlist must be a list of host/scheme strings")
+        hostname_regex = re.compile(r"^(https?://)?([a-zA-Z0-9.-]+)(:[0-9]+)?$")
+        for host in v:
+            if not isinstance(host, str):
+                raise ValueError(f"Invalid type in allowlist: {host} (must be str)")
+            if not hostname_regex.match(host):
+                raise ValueError(f"Invalid host/scheme in allowlist: {host}")
+        return v
+
+    @field_validator("plugin_chain_pre", "plugin_chain_post")
+    @classmethod
+    def validate_plugin_chain(cls, v):
+        """
+        Validate that each plugin in the chain is allowed.
+
+        Args:
+            v (List[str]): The plugin chain to validate.
+
+        Returns:
+            List[str]: The validated plugin chain.
+
+        Raises:
+            ValueError: If any plugin is not in the allowed set.
+        """
+        allowed_plugins = {"deny_filter", "rate_limit", "pii_filter", "response_shape", "regex_filter", "resource_filter"}
+        if v is None:
+            return v
+        for plugin in v:
+            if plugin not in allowed_plugins:
+                raise ValueError(f"Unknown plugin: {plugin}")
+        return v
+
 
 class ToolRead(BaseModelWithConfigDict):
     """Schema for reading tool information.
@@ -1032,6 +1376,7 @@ class ToolRead(BaseModelWithConfigDict):
     integration_type: str
     headers: Optional[Dict[str, str]]
     input_schema: Dict[str, Any]
+    output_schema: Optional[Dict[str, Any]] = Field(None)
     annotations: Optional[Dict[str, Any]]
     jsonpath_filter: Optional[str]
     auth: Optional[AuthenticationValues]
@@ -1069,6 +1414,17 @@ class ToolRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # Passthrough REST fields
+    base_url: Optional[str] = Field(None, description="Base URL for REST passthrough")
+    path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
+    query_mapping: Optional[Dict[str, Any]] = Field(None, description="Query mapping for REST passthrough")
+    header_mapping: Optional[Dict[str, Any]] = Field(None, description="Header mapping for REST passthrough")
+    timeout_ms: Optional[int] = Field(20000, description="Timeout in milliseconds for REST passthrough")
+    expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
+    allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
+    plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
+    plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
 
 class ToolInvocation(BaseModelWithConfigDict):
@@ -1386,6 +1742,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     Similar to ResourceCreate but URI is not required and all fields are optional.
     """
 
+    uri: Optional[str] = Field(None, description="Unique URI for the resource")
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
@@ -3572,6 +3929,7 @@ class A2AAgentCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     name: str = Field(..., description="Unique name for the agent")
+    slug: Optional[str] = Field(None, description="Optional slug for the agent (auto-generated if not provided)")
     description: Optional[str] = Field(None, description="Agent description")
     endpoint_url: str = Field(..., description="URL endpoint for the agent")
     agent_type: str = Field(default="generic", description="Type of agent (e.g., 'openai', 'anthropic', 'custom')")
@@ -5318,6 +5676,188 @@ class SSOCallbackResponse(BaseModelWithConfigDict):
     user: Dict[str, Any] = Field(..., description="User information")
 
 
+# gRPC Service schemas
+
+
+class GrpcServiceCreate(BaseModel):
+    """Schema for creating a new gRPC service."""
+
+    name: str = Field(..., min_length=1, max_length=255, description="Unique name for the gRPC service")
+    target: str = Field(..., description="gRPC server target address (host:port)")
+    description: Optional[str] = Field(None, description="Description of the gRPC service")
+    reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection")
+    tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connection")
+    tls_cert_path: Optional[str] = Field(None, description="Path to TLS certificate file")
+    tls_key_path: Optional[str] = Field(None, description="Path to TLS key file")
+    grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
+    tags: List[str] = Field(default_factory=list, description="Tags for categorization")
+
+    # Team scoping fields
+    team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
+    visibility: str = Field(default="public", description="Visibility level: private, team, or public")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name
+        """
+        return SecurityValidator.validate_name(v, "gRPC service name")
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: str) -> str:
+        """Validate target address format (host:port).
+
+        Args:
+            v: Target address to validate
+
+        Returns:
+            Validated target address
+
+        Raises:
+            ValueError: If target is not in host:port format
+        """
+        if not v or ":" not in v:
+            raise ValueError("Target must be in host:port format")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class GrpcServiceUpdate(BaseModel):
+    """Schema for updating an existing gRPC service."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255, description="Service name")
+    target: Optional[str] = Field(None, description="gRPC server target address")
+    description: Optional[str] = Field(None, description="Service description")
+    reflection_enabled: Optional[bool] = Field(None, description="Enable server reflection")
+    tls_enabled: Optional[bool] = Field(None, description="Enable TLS")
+    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
+    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
+    tags: Optional[List[str]] = Field(None, description="Service tags")
+    visibility: Optional[str] = Field(None, description="Visibility level")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: Optional[str]) -> Optional[str]:
+        """Validate service name.
+
+        Args:
+            v: Service name to validate
+
+        Returns:
+            Validated service name or None
+        """
+        if v is None:
+            return None
+        return SecurityValidator.validate_name(v, "gRPC service name")
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, v: Optional[str]) -> Optional[str]:
+        """Validate target address.
+
+        Args:
+            v: Target address to validate
+
+        Returns:
+            Validated target address or None
+
+        Raises:
+            ValueError: If target is not in host:port format
+        """
+        if v is None:
+            return None
+        if ":" not in v:
+            raise ValueError("Target must be in host:port format")
+        return v
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v: Optional[str]) -> Optional[str]:
+        """Validate description.
+
+        Args:
+            v: Description to validate
+
+        Returns:
+            Validated and sanitized description
+        """
+        if v is None:
+            return None
+        if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
+            truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]
+            logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
+            return SecurityValidator.sanitize_display_text(truncated, "Description")
+        return SecurityValidator.sanitize_display_text(v, "Description")
+
+
+class GrpcServiceRead(BaseModel):
+    """Schema for reading gRPC service information."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str = Field(..., description="Unique service identifier")
+    name: str = Field(..., description="Service name")
+    slug: str = Field(..., description="URL-safe slug")
+    target: str = Field(..., description="gRPC server target (host:port)")
+    description: Optional[str] = Field(None, description="Service description")
+
+    # Configuration
+    reflection_enabled: bool = Field(..., description="Reflection enabled")
+    tls_enabled: bool = Field(..., description="TLS enabled")
+    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
+    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
+
+    # Status
+    enabled: bool = Field(..., description="Service enabled")
+    reachable: bool = Field(..., description="Service reachable")
+
+    # Discovery
+    service_count: int = Field(default=0, description="Number of gRPC services discovered")
+    method_count: int = Field(default=0, description="Number of methods discovered")
+    discovered_services: Dict[str, Any] = Field(default_factory=dict, description="Discovered service descriptors")
+    last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
+
+    # Tags
+    tags: List[str] = Field(default_factory=list, description="Service tags")
+
+    # Timestamps
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+
+    # Team scoping
+    team_id: Optional[str] = Field(None, description="Team ID")
+    owner_email: Optional[str] = Field(None, description="Owner email")
+    visibility: str = Field(default="public", description="Visibility level")
+
+
 # Plugin-related schemas
 
 
@@ -5462,3 +6002,130 @@ class CatalogBulkRegisterResponse(BaseModel):
     failed: List[Dict[str, str]] = Field(..., description="Failed registrations with error messages")
     total_attempted: int = Field(..., description="Total servers attempted")
     total_successful: int = Field(..., description="Total successful registrations")
+
+
+# ===================================
+# Pagination Schemas
+# ===================================
+
+
+class PaginationMeta(BaseModel):
+    """Pagination metadata.
+
+    Attributes:
+        page: Current page number (1-indexed)
+        per_page: Items per page
+        total_items: Total number of items across all pages
+        total_pages: Total number of pages
+        has_next: Whether there is a next page
+        has_prev: Whether there is a previous page
+        next_cursor: Cursor for next page (cursor-based only)
+        prev_cursor: Cursor for previous page (cursor-based only)
+
+    Examples:
+        >>> meta = PaginationMeta(
+        ...     page=2,
+        ...     per_page=50,
+        ...     total_items=250,
+        ...     total_pages=5,
+        ...     has_next=True,
+        ...     has_prev=True
+        ... )
+        >>> meta.page
+        2
+        >>> meta.total_pages
+        5
+    """
+
+    page: int = Field(..., description="Current page number (1-indexed)", ge=1)
+    per_page: int = Field(..., description="Items per page", ge=1)
+    total_items: int = Field(..., description="Total number of items", ge=0)
+    total_pages: int = Field(..., description="Total number of pages", ge=0)
+    has_next: bool = Field(..., description="Whether there is a next page")
+    has_prev: bool = Field(..., description="Whether there is a previous page")
+    next_cursor: Optional[str] = Field(None, description="Cursor for next page (cursor-based only)")
+    prev_cursor: Optional[str] = Field(None, description="Cursor for previous page (cursor-based only)")
+
+
+class PaginationLinks(BaseModel):
+    """Pagination navigation links.
+
+    Attributes:
+        self: Current page URL
+        first: First page URL
+        last: Last page URL
+        next: Next page URL (None if no next page)
+        prev: Previous page URL (None if no previous page)
+
+    Examples:
+        >>> links = PaginationLinks(
+        ...     self="/admin/tools?page=2&per_page=50",
+        ...     first="/admin/tools?page=1&per_page=50",
+        ...     last="/admin/tools?page=5&per_page=50",
+        ...     next="/admin/tools?page=3&per_page=50",
+        ...     prev="/admin/tools?page=1&per_page=50"
+        ... )
+        >>> links.self
+        '/admin/tools?page=2&per_page=50'
+    """
+
+    self: str = Field(..., description="Current page URL")
+    first: str = Field(..., description="First page URL")
+    last: str = Field(..., description="Last page URL")
+    next: Optional[str] = Field(None, description="Next page URL")
+    prev: Optional[str] = Field(None, description="Previous page URL")
+
+
+class PaginatedResponse(BaseModel):
+    """Generic paginated response wrapper.
+
+    This is a container for paginated data with metadata and navigation links.
+    The actual data is stored in the 'data' field as a list of items.
+
+    Attributes:
+        data: List of items for the current page
+        pagination: Pagination metadata (counts, page info)
+        links: Navigation links (optional)
+
+    Examples:
+        >>> from mcpgateway.schemas import ToolRead
+        >>> response = PaginatedResponse(
+        ...     data=[],
+        ...     pagination=PaginationMeta(
+        ...         page=1, per_page=50, total_items=0,
+        ...         total_pages=0, has_next=False, has_prev=False
+        ...     ),
+        ...     links=None
+        ... )
+        >>> response.pagination.page
+        1
+    """
+
+    data: List[Any] = Field(..., description="List of items")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata")
+    links: Optional[PaginationLinks] = Field(None, description="Navigation links")
+
+
+class PaginationParams(BaseModel):
+    """Common pagination query parameters.
+
+    Attributes:
+        page: Page number (1-indexed)
+        per_page: Items per page
+        cursor: Cursor for cursor-based pagination
+        sort_by: Field to sort by
+        sort_order: Sort order (asc/desc)
+
+    Examples:
+        >>> params = PaginationParams(page=1, per_page=50)
+        >>> params.page
+        1
+        >>> params.sort_order
+        'desc'
+    """
+
+    page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
+    per_page: int = Field(default=50, ge=1, le=500, description="Items per page (max 500)")
+    cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
+    sort_by: Optional[str] = Field("created_at", description="Sort field")
+    sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")

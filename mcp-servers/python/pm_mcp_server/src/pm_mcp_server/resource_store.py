@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Tuple
 
 
 @dataclass
@@ -24,18 +23,18 @@ class ResourceStore:
     """Simple namespaced in-memory resource store."""
 
     def __init__(self) -> None:
-        self._registry: Dict[str, Resource] = {}
+        self._registry: dict[str, Resource] = {}
 
     def add(self, content: bytes, mime_type: str, prefix: str = "resource") -> str:
         resource_id = f"resource://{prefix}/{uuid.uuid4().hex}"
         self._registry[resource_id] = Resource(mime_type=mime_type, content=content)
         return resource_id
 
-    def get(self, resource_id: str) -> Tuple[str, bytes]:
+    def get(self, resource_id: str) -> tuple[str, bytes]:
         resource = self._registry[resource_id]
         return resource.mime_type, resource.content
 
-    def list_ids(self) -> Dict[str, str]:
+    def list_ids(self) -> dict[str, str]:
         return {resource_id: res.mime_type for resource_id, res in self._registry.items()}
 
 

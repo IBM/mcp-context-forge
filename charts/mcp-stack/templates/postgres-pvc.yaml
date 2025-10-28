@@ -2,9 +2,15 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: postgres-pv-claim
+  name: {{ include "mcp-stack.fullname" . }}-postgres-pvc
   labels:
-    app: postgres
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-postgres
+    component: storage
+  {{- if .Values.postgres.persistence.annotations }}
+  annotations:
+    {{- toYaml .Values.postgres.persistence.annotations | nindent 4 }}
+  {{- end }}
 spec:
   storageClassName: {{ .Values.postgres.persistence.storageClassName }}
   accessModes: {{- toYaml .Values.postgres.persistence.accessModes | nindent 4 }}

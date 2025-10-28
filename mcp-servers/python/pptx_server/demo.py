@@ -14,8 +14,8 @@ by creating a comprehensive presentation with all supported features.
 # Standard
 import asyncio
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -69,10 +69,38 @@ async def create_demo_presentation():
         await set_slide_title(demo_file, 2, "Text Formatting Showcase")
 
         # Add various formatted text boxes
-        await add_text_box(demo_file, 2, "BOLD RED HEADING", 1.0, 2.0, 8.0, 0.8, 28, "#FF0000", True, False)
-        await add_text_box(demo_file, 2, "Italic blue subtitle", 1.0, 3.0, 8.0, 0.6, 20, "#0066CC", False, True)
-        await add_text_box(demo_file, 2, "Regular black body text for detailed content", 1.0, 3.8, 8.0, 0.6, 16, "#000000", False, False)
-        await add_text_box(demo_file, 2, "Bold italic green highlight", 1.0, 4.6, 8.0, 0.6, 18, "#00AA00", True, True)
+        await add_text_box(
+            demo_file, 2, "BOLD RED HEADING", 1.0, 2.0, 8.0, 0.8, 28, "#FF0000", True, False
+        )
+        await add_text_box(
+            demo_file, 2, "Italic blue subtitle", 1.0, 3.0, 8.0, 0.6, 20, "#0066CC", False, True
+        )
+        await add_text_box(
+            demo_file,
+            2,
+            "Regular black body text for detailed content",
+            1.0,
+            3.8,
+            8.0,
+            0.6,
+            16,
+            "#000000",
+            False,
+            False,
+        )
+        await add_text_box(
+            demo_file,
+            2,
+            "Bold italic green highlight",
+            1.0,
+            4.6,
+            8.0,
+            0.6,
+            18,
+            "#00AA00",
+            True,
+            True,
+        )
         print("✅ Added text formatting slide")
 
         # 4. Shape gallery
@@ -90,7 +118,19 @@ async def create_demo_presentation():
         for i, (shape_type, color, x_pos) in enumerate(shapes_data):
             await add_shape(demo_file, 3, shape_type, x_pos, 2.5, 1.6, 1.8, color, "#000000", 2.0)
 
-        await add_text_box(demo_file, 3, "Geometric shapes with custom colors and borders", 1.0, 4.8, 8.0, 0.5, 14, "#666666", False, False)
+        await add_text_box(
+            demo_file,
+            3,
+            "Geometric shapes with custom colors and borders",
+            1.0,
+            4.8,
+            8.0,
+            0.5,
+            14,
+            "#666666",
+            False,
+            False,
+        )
         print("✅ Added shape gallery slide")
 
         # 5. Data table
@@ -131,7 +171,9 @@ async def create_demo_presentation():
                 {"name": "Target", "values": [120, 140, 155, 175]},
             ],
         }
-        await add_chart(demo_file, 5, chart_data, "column", 0.5, 2.0, 4.5, 3.0, "Quarterly Performance")
+        await add_chart(
+            demo_file, 5, chart_data, "column", 0.5, 2.0, 4.5, 3.0, "Quarterly Performance"
+        )
 
         # Pie chart data for second chart
         pie_data = {
@@ -156,7 +198,19 @@ async def create_demo_presentation():
             "✅ Model Context Protocol integration",
         )
 
-        await add_text_box(demo_file, 6, "Ready for Claude Desktop, VS Code, and any MCP client!", 1.0, 5.5, 8.0, 0.8, 16, "#0066CC", True, False)
+        await add_text_box(
+            demo_file,
+            6,
+            "Ready for Claude Desktop, VS Code, and any MCP client!",
+            1.0,
+            5.5,
+            8.0,
+            0.8,
+            16,
+            "#0066CC",
+            True,
+            False,
+        )
         print("✅ Added summary slide")
 
         # 8. Save and get final stats
@@ -166,17 +220,19 @@ async def create_demo_presentation():
         info = await get_presentation_info(demo_file)
         slides_info = await list_slides(demo_file)
 
-        print(f"\n🎉 DEMO COMPLETE!")
+        print("\n🎉 DEMO COMPLETE!")
         print(f"📄 Created: {demo_file}")
         print(f"📊 Slides: {info['slide_count']}")
         print(f"💾 Size: {os.path.getsize(demo_file):,} bytes")
 
-        print(f"\n📋 Slide Summary:")
+        print("\n📋 Slide Summary:")
         for slide in slides_info["slides"]:
             shapes_info = await list_shapes(demo_file, slide["index"])
             print(f"   {slide['index']}: {slide['title']} ({shapes_info['total_count']} elements)")
 
-        print(f"\n✨ The demo presentation showcases all major features of the PowerPoint MCP Server!")
+        print(
+            "\n✨ The demo presentation showcases all major features of the PowerPoint MCP Server!"
+        )
         print(f"   Open '{demo_file}' to see the results.")
 
         return demo_file
@@ -204,8 +260,8 @@ async def main():
 
             prs = Presentation(demo_file)
 
-            print(f"\n🔍 Verification:")
-            print(f"   Valid PowerPoint file: ✅")
+            print("\n🔍 Verification:")
+            print("   Valid PowerPoint file: ✅")
             print(f"   Total slides: {len(prs.slides)}")
 
             # Count elements

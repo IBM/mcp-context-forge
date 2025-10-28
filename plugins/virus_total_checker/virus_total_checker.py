@@ -48,6 +48,46 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 
 
 class VirusTotalConfig(BaseModel):
+    """Configuration for VirusTotal URL/file checking plugin.
+
+    Attributes:
+        enabled: Enable VirusTotal checks.
+        api_key_env: Environment variable name for VirusTotal API key.
+        base_url: Base URL for VirusTotal API.
+        timeout_seconds: Request timeout in seconds.
+        check_url: Enable URL reputation checks.
+        check_domain: Enable domain reputation checks.
+        check_ip: Enable IP address reputation checks.
+        scan_if_unknown: Submit unknown URLs for analysis.
+        wait_for_analysis: Poll for analysis completion.
+        max_wait_seconds: Maximum time to wait for analysis.
+        poll_interval_seconds: Polling interval for analysis status.
+        block_on_verdicts: List of verdicts that trigger blocking.
+        min_malicious: Minimum malicious engine count to block.
+        cache_ttl_seconds: Cache TTL in seconds.
+        max_retries: Maximum retry attempts for HTTP requests.
+        base_backoff: Base backoff delay for retries.
+        max_delay: Maximum backoff delay.
+        jitter_max: Maximum jitter for backoff.
+        enable_file_checks: Enable file reputation checks.
+        file_hash_alg: Hash algorithm for files (sha256/md5/sha1).
+        upload_if_unknown: Upload unknown files for analysis.
+        upload_max_bytes: Maximum file size for upload.
+        scan_tool_outputs: Scan URLs in tool outputs.
+        max_urls_per_call: Maximum URLs to check per call.
+        url_pattern: Regex pattern for URL extraction.
+        scan_prompt_outputs: Scan URLs in prompt outputs.
+        scan_resource_contents: Scan URLs in resource contents.
+        min_harmless_ratio: Minimum harmless ratio required.
+        allow_url_patterns: URL patterns to allow.
+        deny_url_patterns: URL patterns to deny.
+        allow_domains: Domains to allow.
+        deny_domains: Domains to deny.
+        allow_ip_cidrs: IP CIDR ranges to allow.
+        deny_ip_cidrs: IP CIDR ranges to deny.
+        override_precedence: Override precedence (deny_over_allow/allow_over_deny).
+    """
+
     enabled: bool = Field(default=True, description="Enable VirusTotal checks")
     api_key_env: str = Field(default="VT_API_KEY", description="Env var name for VirusTotal API key")
     base_url: str = Field(default="https://www.virustotal.com/api/v3")
@@ -108,15 +148,39 @@ _CACHE: Dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _get_api_key(cfg: VirusTotalConfig) -> Optional[str]:
+    """Get VirusTotal API key from environment.
+
+    Args:
+        cfg: VirusTotal configuration.
+
+    Returns:
+        API key string or None if not found.
+    """
     return os.getenv(cfg.api_key_env)
 
 
 def _b64_url_id(url: str) -> str:
+    """Generate VirusTotal URL identifier from URL.
+
+    Args:
+        url: URL to encode.
+
+    Returns:
+        Base64 URL-safe encoded identifier without padding.
+    """
     raw = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii")
     return raw.strip("=")
 
 
 def _from_cache(key: str) -> Optional[dict[str, Any]]:
+    """Retrieve cached data if not expired.
+
+    Args:
+        key: Cache key.
+
+    Returns:
+        Cached data dictionary or None if not found or expired.
+    """
     ent = _CACHE.get(key)
     if not ent:
         return None
@@ -128,10 +192,29 @@ def _from_cache(key: str) -> Optional[dict[str, Any]]:
 
 
 def _to_cache(key: str, data: dict[str, Any], ttl: int) -> None:
+    """Store data in cache with TTL.
+
+    Args:
+        key: Cache key.
+        data: Data to cache.
+        ttl: Time-to-live in seconds.
+    """
     _CACHE[key] = (time.time() + ttl, data)
 
 
 async def _http_get(client: ResilientHttpClient, url: str) -> dict[str, Any] | None:
+    """Perform HTTP GET request with 404 handling.
+
+    Args:
+        client: HTTP client.
+        url: URL to fetch.
+
+    Returns:
+        JSON response dictionary or None if 404.
+
+    Raises:
+        HTTPStatusError: If response status is not 2xx (except 404).
+    """
     resp = await client.get(url)
     if resp.status_code == 404:
         return None
@@ -140,6 +223,15 @@ async def _http_get(client: ResilientHttpClient, url: str) -> dict[str, Any] | N
 
 
 def _should_block(stats: dict[str, Any], cfg: VirusTotalConfig) -> bool:
+    """Determine if stats warrant blocking based on configuration.
+
+    Args:
+        stats: VirusTotal analysis statistics.
+        cfg: Configuration with blocking thresholds.
+
+    Returns:
+        True if resource should be blocked, False otherwise.
+    """
     # VT stats example: {"harmless": 82, "malicious": 2, "suspicious": 1, "undetected": 12, "timeout": 0}
     malicious = int(stats.get("malicious", 0))
     if malicious >= cfg.min_malicious:
@@ -158,6 +250,15 @@ def _should_block(stats: dict[str, Any], cfg: VirusTotalConfig) -> bool:
 
 
 def _domain_matches(host: str, patterns: list[str]) -> bool:
+    """Check if hostname matches any domain pattern.
+
+    Args:
+        host: Hostname to check.
+        patterns: List of domain patterns to match against.
+
+    Returns:
+        True if hostname matches any pattern, False otherwise.
+    """
     host = host.lower()
     for p in patterns or []:
         p = p.lower()
@@ -167,6 +268,15 @@ def _domain_matches(host: str, patterns: list[str]) -> bool:
 
 
 def _url_matches(url: str, patterns: list[str]) -> bool:
+    """Check if URL matches any regex pattern.
+
+    Args:
+        url: URL to check.
+        patterns: List of regex patterns to match against.
+
+    Returns:
+        True if URL matches any pattern, False otherwise.
+    """
     for pat in patterns or []:
         try:
             if re.search(pat, url):
@@ -177,6 +287,15 @@ def _url_matches(url: str, patterns: list[str]) -> bool:
 
 
 def _ip_in_cidrs(ip: str, cidrs: list[str]) -> bool:
+    """Check if IP address is in any CIDR range.
+
+    Args:
+        ip: IP address string.
+        cidrs: List of CIDR ranges.
+
+    Returns:
+        True if IP is in any CIDR range, False otherwise.
+    """
     try:
         ip_obj = ipaddress.ip_address(ip)
     except Exception:
@@ -217,10 +336,24 @@ class VirusTotalURLCheckerPlugin(Plugin):
     """Query VirusTotal for URL/domain/IP verdicts and block on policy breaches."""
 
     def __init__(self, config: PluginConfig) -> None:
+        """Initialize the VirusTotal URL checker plugin.
+
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = VirusTotalConfig(**(config.config or {}))
 
     def _client_factory(self, cfg: VirusTotalConfig, headers: dict[str, str]) -> ResilientHttpClient:
+        """Create HTTP client with retry configuration.
+
+        Args:
+            cfg: VirusTotal configuration.
+            headers: HTTP headers including API key.
+
+        Returns:
+            Configured resilient HTTP client.
+        """
         client_args = {"headers": headers, "timeout": cfg.timeout_seconds}
         return ResilientHttpClient(
             max_retries=cfg.max_retries,
@@ -231,6 +364,16 @@ class VirusTotalURLCheckerPlugin(Plugin):
         )
 
     async def _check_url(self, client: ResilientHttpClient, url: str, cfg: VirusTotalConfig) -> dict[str, Any] | None:
+        """Check URL reputation with VirusTotal, optionally scanning if unknown.
+
+        Args:
+            client: HTTP client.
+            url: URL to check.
+            cfg: VirusTotal configuration.
+
+        Returns:
+            VirusTotal API response or None if not found.
+        """
         key = f"vt:url:{_b64_url_id(url)}"
         cached = _from_cache(key)
         if cached is not None:
@@ -260,6 +403,16 @@ class VirusTotalURLCheckerPlugin(Plugin):
         return info
 
     async def _check_domain(self, client: ResilientHttpClient, domain: str, cfg: VirusTotalConfig) -> dict[str, Any] | None:
+        """Check domain reputation with VirusTotal.
+
+        Args:
+            client: HTTP client.
+            domain: Domain to check.
+            cfg: VirusTotal configuration.
+
+        Returns:
+            VirusTotal API response or None if not found.
+        """
         key = f"vt:domain:{domain}"
         cached = _from_cache(key)
         if cached is not None:
@@ -270,6 +423,16 @@ class VirusTotalURLCheckerPlugin(Plugin):
         return info
 
     async def _check_ip(self, client: ResilientHttpClient, ip: str, cfg: VirusTotalConfig) -> dict[str, Any] | None:
+        """Check IP address reputation with VirusTotal.
+
+        Args:
+            client: HTTP client.
+            ip: IP address to check.
+            cfg: VirusTotal configuration.
+
+        Returns:
+            VirusTotal API response or None if not found.
+        """
         key = f"vt:ip:{ip}"
         cached = _from_cache(key)
         if cached is not None:
@@ -280,6 +443,15 @@ class VirusTotalURLCheckerPlugin(Plugin):
         return info
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:  # noqa: D401
+        """Check resource URL/domain/IP/file with VirusTotal before fetching.
+
+        Args:
+            payload: Resource pre-fetch payload containing URI.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking fetch if reputation check fails, or allowing with metadata.
+        """
         cfg = self._cfg
         if not cfg.enabled:
             return ResourcePreFetchResult(continue_processing=True)
@@ -485,6 +657,15 @@ class VirusTotalURLCheckerPlugin(Plugin):
                 return ResourcePreFetchResult(metadata={"virustotal": {"error": "exception", "detail": str(exc)}})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:  # noqa: D401
+        """Scan URLs in tool output with VirusTotal.
+
+        Args:
+            payload: Tool invocation result payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if any URL is flagged, or allowing with scan metadata.
+        """
         cfg = self._cfg
         if not cfg.scan_tool_outputs:
             return ToolPostInvokeResult(continue_processing=True)
@@ -497,6 +678,11 @@ class VirusTotalURLCheckerPlugin(Plugin):
         pattern = re.compile(cfg.url_pattern)
 
         def add_from(obj: Any):
+            """Recursively extract URLs from nested data structures.
+
+            Args:
+                obj: Object to extract URLs from (str, dict, or list).
+            """
             if isinstance(obj, str):
                 urls.extend(pattern.findall(obj))
             elif isinstance(obj, dict):
@@ -561,6 +747,15 @@ class VirusTotalURLCheckerPlugin(Plugin):
             return ToolPostInvokeResult(metadata={"virustotal": {"outputs": vt_items}})
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:  # noqa: D401
+        """Scan URLs in prompt output with VirusTotal.
+
+        Args:
+            payload: Prompt post-fetch payload.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if any URL is flagged, or allowing with scan metadata.
+        """
         cfg = self._cfg
         if not cfg.scan_prompt_outputs:
             return PromptPosthookResult(continue_processing=True)
@@ -637,6 +832,15 @@ class VirusTotalURLCheckerPlugin(Plugin):
             return PromptPosthookResult(metadata={"virustotal": {"outputs": vt_items}})
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:  # noqa: D401
+        """Scan URLs in resource content with VirusTotal.
+
+        Args:
+            payload: Resource post-fetch payload containing content.
+            context: Plugin execution context.
+
+        Returns:
+            Result blocking if any URL is flagged, or allowing with scan metadata.
+        """
         cfg = self._cfg
         if not cfg.scan_resource_contents:
             return ResourcePostFetchResult(continue_processing=True)

@@ -7,6 +7,7 @@ Authors: Mihai Criveti
 
 Module documentation...
 """
+
 # Third-Party
 from playwright.sync_api import expect, Page
 

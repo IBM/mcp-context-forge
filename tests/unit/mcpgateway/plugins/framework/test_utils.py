@@ -6,6 +6,7 @@ Authors: Teryl Taylor
 
 Unit tests for utilities.
 """
+
 # Standard
 import sys
 
@@ -18,7 +19,7 @@ def test_server_ids():
     condition1 = PluginCondition(server_ids={"1", "2"})
     context1 = GlobalContext(server_id="1", tenant_id="4", request_id="5")
 
-    payload1 = PromptPrehookPayload(name="test_prompt", args={})
+    payload1 = PromptPrehookPayload(prompt_id="test_prompt", args={})
 
     assert matches(condition=condition1, context=context1)
     assert pre_prompt_matches(payload1, [condition1], context1)
@@ -60,18 +61,19 @@ def test_server_ids():
 # Test import_module function
 # ============================================================================
 
+
 def test_import_module():
     """Test the import_module function."""
     # Test importing sys module
-    imported_sys = import_module('sys')
+    imported_sys = import_module("sys")
     assert imported_sys is sys
 
     # Test importing os module
-    os_mod = import_module('os')
-    assert hasattr(os_mod, 'path')
+    os_mod = import_module("os")
+    assert hasattr(os_mod, "path")
 
     # Test caching - calling again should return same object
-    imported_sys2 = import_module('sys')
+    imported_sys2 = import_module("sys")
     assert imported_sys2 is imported_sys
 
 
@@ -79,32 +81,34 @@ def test_import_module():
 # Test parse_class_name function
 # ============================================================================
 
+
 def test_parse_class_name():
     """Test the parse_class_name function with various inputs."""
     # Test fully qualified class name
-    module, class_name = parse_class_name('module.submodule.ClassName')
-    assert module == 'module.submodule'
-    assert class_name == 'ClassName'
+    module, class_name = parse_class_name("module.submodule.ClassName")
+    assert module == "module.submodule"
+    assert class_name == "ClassName"
 
     # Test simple class name (no module)
-    module, class_name = parse_class_name('SimpleClass')
-    assert module == ''
-    assert class_name == 'SimpleClass'
+    module, class_name = parse_class_name("SimpleClass")
+    assert module == ""
+    assert class_name == "SimpleClass"
 
     # Test package.Class format
-    module, class_name = parse_class_name('package.Class')
-    assert module == 'package'
-    assert class_name == 'Class'
+    module, class_name = parse_class_name("package.Class")
+    assert module == "package"
+    assert class_name == "Class"
 
     # Test deeply nested class name
-    module, class_name = parse_class_name('a.b.c.d.e.MyClass')
-    assert module == 'a.b.c.d.e'
-    assert class_name == 'MyClass'
+    module, class_name = parse_class_name("a.b.c.d.e.MyClass")
+    assert module == "a.b.c.d.e"
+    assert class_name == "MyClass"
 
 
 # ============================================================================
 # Test post_prompt_matches function
 # ============================================================================
+
 
 def test_post_prompt_matches():
     """Test the post_prompt_matches function."""
@@ -115,14 +119,14 @@ def test_post_prompt_matches():
     # Test basic matching
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
     result = PromptResult(messages=[msg])
-    payload = PromptPosthookPayload(name="greeting", result=result)
+    payload = PromptPosthookPayload(prompt_id="greeting", result=result)
     condition = PluginCondition(prompts={"greeting"})
     context = GlobalContext(request_id="req1")
 
     assert post_prompt_matches(payload, [condition], context) is True
 
     # Test no match
-    payload2 = PromptPosthookPayload(name="other", result=result)
+    payload2 = PromptPosthookPayload(prompt_id ="other", result=result)
     assert post_prompt_matches(payload2, [condition], context) is False
 
     # Test with server_id condition
@@ -144,7 +148,7 @@ def test_post_prompt_matches_multiple_conditions():
     # Create the payload
     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
     result = PromptResult(messages=[msg])
-    payload = PromptPosthookPayload(name="greeting", result=result)
+    payload = PromptPosthookPayload(prompt_id="greeting", result=result)
 
     # First condition fails, second condition succeeds
     condition1 = PluginCondition(server_ids={"srv1"}, prompts={"greeting"})
@@ -166,6 +170,7 @@ def test_post_prompt_matches_multiple_conditions():
 # ============================================================================
 # Test pre_tool_matches function
 # ============================================================================
+
 
 def test_pre_tool_matches():
     """Test the pre_tool_matches function."""
@@ -216,6 +221,7 @@ def test_pre_tool_matches_multiple_conditions():
 # Test post_tool_matches function
 # ============================================================================
 
+
 def test_post_tool_matches():
     """Test the post_tool_matches function."""
     # Test basic matching
@@ -265,9 +271,10 @@ def test_post_tool_matches_multiple_conditions():
 # Test enhanced pre_prompt_matches scenarios
 # ============================================================================
 
+
 def test_pre_prompt_matches_multiple_conditions():
     """Test pre_prompt_matches with multiple conditions to cover OR logic paths."""
-    payload = PromptPrehookPayload(name="greeting", args={})
+    payload = PromptPrehookPayload(prompt_id="greeting", args={})
 
     # First condition fails, second condition succeeds
     condition1 = PluginCondition(server_ids={"srv1"}, prompts={"greeting"})
@@ -289,6 +296,7 @@ def test_pre_prompt_matches_multiple_conditions():
 # ============================================================================
 # Test matches function edge cases
 # ============================================================================
+
 
 def test_matches_edge_cases():
     """Test the matches function with edge cases."""
@@ -312,15 +320,9 @@ def test_matches_edge_cases():
     assert matches(condition_user_required, context_no_user) is True  # No user means condition is ignored
 
     # Test all conditions together
-    complex_condition = PluginCondition(
-        server_ids={"srv1", "srv2"},
-        tenant_ids={"tenant1"},
-        user_patterns=["admin"]
-    )
+    complex_condition = PluginCondition(server_ids={"srv1", "srv2"}, tenant_ids={"tenant1"}, user_patterns=["admin"])
     assert matches(complex_condition, context) is True
 
     # Test complex condition with one mismatch
-    context_wrong_tenant = GlobalContext(
-        request_id="req1", server_id="srv1", tenant_id="tenant2", user="admin_user"
-    )
+    context_wrong_tenant = GlobalContext(request_id="req1", server_id="srv1", tenant_id="tenant2", user="admin_user")
     assert matches(complex_condition, context_wrong_tenant) is False
