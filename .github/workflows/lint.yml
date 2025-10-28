@@ -70,8 +70,8 @@ jobs:
               vulture mcpgateway --min-confidence 80
 
           - id: pylint
-            setup: pip install pylint pylint-pydantic
-            cmd: pylint mcpgateway --errors-only --fail-under=10
+            setup: true
+            cmd: uv run pylint mcpgateway --fail-on E --fail-under=10
 
           - id: interrogate
             setup: pip install interrogate
@@ -131,6 +131,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      # -----------------------------------------------------------
+      #   Install uv
+      # -----------------------------------------------------------
+      - name: ⚡Set up uv
+        uses: astral-sh/setup-uv@v6
 
       # -----------------------------------------------------------
       # 2️⃣  Install Project + Dev Dependencies
