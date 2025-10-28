@@ -4225,7 +4225,10 @@ async function viewServer(serverId) {
                 const toolsList = document.createElement("div");
                 toolsList.className = "mt-1 space-y-1";
 
-                server.associatedTools.forEach((toolId) => {
+                const maxToShow = 3;
+                const toolsToShow = server.associatedTools.slice(0, maxToShow);
+                
+                toolsToShow.forEach((toolId) => {
                     const toolItem = document.createElement("div");
                     toolItem.className = "flex items-center space-x-2";
 
@@ -4246,6 +4249,22 @@ async function viewServer(serverId) {
                     toolItem.appendChild(toolIdSpan);
                     toolsList.appendChild(toolItem);
                 });
+                
+                // If more than maxToShow, add a summary badge
+                if (server.associatedTools.length > maxToShow) {
+                    const moreItem = document.createElement("div");
+                    moreItem.className = "flex items-center space-x-2";
+                    
+                    const moreBadge = document.createElement("span");
+                    moreBadge.className =
+                        "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-green-900 dark:text-green-200";
+                    moreBadge.title = "Total tools associated";
+                    const remaining = server.associatedTools.length - maxToShow;
+                    moreBadge.textContent = `+${remaining} more`;
+                    
+                    moreItem.appendChild(moreBadge);
+                    toolsList.appendChild(moreItem);
+                }
 
                 toolsLabel.appendChild(toolsList);
                 toolsSection.appendChild(toolsLabel);
@@ -4268,7 +4287,10 @@ async function viewServer(serverId) {
                 const resourcesList = document.createElement("div");
                 resourcesList.className = "mt-1 space-y-1";
 
-                server.associatedResources.forEach((resourceId) => {
+                const maxToShow = 3;
+                const resourcesToShow = server.associatedResources.slice(0, maxToShow);
+
+                resourcesToShow.forEach((resourceId) => {
                     const resourceItem = document.createElement("div");
                     resourceItem.className = "flex items-center space-x-2";
 
@@ -4290,6 +4312,22 @@ async function viewServer(serverId) {
                     resourceItem.appendChild(resourceIdSpan);
                     resourcesList.appendChild(resourceItem);
                 });
+                
+                // If more than maxToShow, add a summary badge
+                if (server.associatedResources.length > maxToShow) {
+                    const moreItem = document.createElement("div");
+                    moreItem.className = "flex items-center space-x-2";
+                    
+                    const moreBadge = document.createElement("span");
+                    moreBadge.className =
+                        "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-blue-900 dark:text-blue-200";
+                    moreBadge.title = "Total resources associated";
+                    const remaining = server.associatedResources.length - maxToShow;
+                    moreBadge.textContent = `+${remaining} more`;
+                    
+                    moreItem.appendChild(moreBadge);
+                    resourcesList.appendChild(moreItem);
+                }
 
                 resourcesLabel.appendChild(resourcesList);
                 resourcesSection.appendChild(resourcesLabel);
@@ -4312,7 +4350,10 @@ async function viewServer(serverId) {
                 const promptsList = document.createElement("div");
                 promptsList.className = "mt-1 space-y-1";
 
-                server.associatedPrompts.forEach((promptId) => {
+                const maxToShow = 3;
+                const promptsToShow = server.associatedPrompts.slice(0, maxToShow);
+
+                promptsToShow.forEach((promptId) => {
                     const promptItem = document.createElement("div");
                     promptItem.className = "flex items-center space-x-2";
 
@@ -4333,6 +4374,22 @@ async function viewServer(serverId) {
                     promptItem.appendChild(promptIdSpan);
                     promptsList.appendChild(promptItem);
                 });
+                
+                // If more than maxToShow, add a summary badge
+                if (server.associatedPrompts.length > maxToShow) {
+                    const moreItem = document.createElement("div");
+                    moreItem.className = "flex items-center space-x-2";
+                    
+                    const moreBadge = document.createElement("span");
+                    moreBadge.className =
+                        "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full cursor-pointer dark:bg-purple-900 dark:text-purple-200";
+                    moreBadge.title = "Total prompts associated";
+                    const remaining = server.associatedPrompts.length - maxToShow;
+                    moreBadge.textContent = `+${remaining} more`;
+                    
+                    moreItem.appendChild(moreBadge);
+                    promptsList.appendChild(moreItem);
+                }
 
                 promptsLabel.appendChild(promptsList);
                 promptsSection.appendChild(promptsLabel);
@@ -4608,24 +4665,15 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
-            console.log("Setting associated items for server:", server.id);
-            console.log("Associated tools:", server.associatedTools);
-            console.log("Associated resources:", server.associatedResources);
-            console.log("Associated prompts:", server.associatedPrompts);
-
             // Set associated tools checkboxes
             const toolCheckboxes = document.querySelectorAll(
                 'input[name="associatedTools"]',
             );
-            console.log("Found", toolCheckboxes.length, "tool checkboxes");
 
             toolCheckboxes.forEach((checkbox) => {
                 const isChecked =
                     server.associatedTools &&
                     server.associatedTools.includes(checkbox.value);
-                console.log(
-                    `Tool ${checkbox.value}: ${isChecked ? "CHECKED" : "unchecked"}`,
-                );
                 checkbox.checked = isChecked;
             });
 
@@ -4633,20 +4681,12 @@ async function editServer(serverId) {
             const resourceCheckboxes = document.querySelectorAll(
                 'input[name="associatedResources"]',
             );
-            console.log(
-                "Found",
-                resourceCheckboxes.length,
-                "resource checkboxes",
-            );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
                 const isChecked =
                     server.associatedResources &&
                     server.associatedResources.includes(checkboxValue);
-                console.log(
-                    `Resource ${checkboxValue}: ${isChecked ? "CHECKED" : "unchecked"}`,
-                );
                 checkbox.checked = isChecked;
             });
 
@@ -4654,16 +4694,12 @@ async function editServer(serverId) {
             const promptCheckboxes = document.querySelectorAll(
                 'input[name="associatedPrompts"]',
             );
-            console.log("Found", promptCheckboxes.length, "prompt checkboxes");
 
             promptCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
                 const isChecked =
                     server.associatedPrompts &&
                     server.associatedPrompts.includes(checkboxValue);
-                console.log(
-                    `Prompt ${checkboxValue}: ${isChecked ? "CHECKED" : "unchecked"}`,
-                );
                 checkbox.checked = isChecked;
             });
 
@@ -5635,23 +5671,49 @@ function initToolSelect(
     }
 
     const pillClasses =
-        "inline-block px-3 py-1 text-xs font-semibold text-indigo-700 bg-indigo-100 rounded-full shadow";
+        "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
 
     function update() {
         try {
             const checkboxes = container.querySelectorAll('input[type="checkbox"]');
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            const count = checked.length;
+            
+            // Check if "Select All" mode is active
+            const selectAllInput = container.querySelector('input[name="selectAllTools"]');
+            const allIdsInput = container.querySelector('input[name="allToolIds"]');
+            let count = checked.length;
+            
+            // If Select All mode is active, use the count from allToolIds
+            if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allToolIds:", e);
+                }
+            }
 
-            // Rebuild pills safely
+            // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
-            checked.forEach((cb) => {
+            const maxPillsToShow = 3;
+            
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
                 span.textContent =
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
+            
+            // If more than maxPillsToShow, show a summary pill
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected tools";
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
 
             // Warning when > max
             if (count > max) {
@@ -5709,8 +5771,6 @@ function initToolSelect(
                 const data = await response.json();
                 const allToolIds = data.tool_ids || [];
                 
-                console.log(`Select All: ${allToolIds.length} tools available for container ${selectId}`);
-                
                 // Check all currently loaded checkboxes
                 const loadedCheckboxes = container.querySelectorAll('input[type="checkbox"]');
                 loadedCheckboxes.forEach((cb) => (cb.checked = true));
@@ -5761,6 +5821,34 @@ function initToolSelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // Check if we're in "Select All" mode
+                const selectAllInput = container.querySelector('input[name="selectAllTools"]');
+                const allIdsInput = container.querySelector('input[name="allToolIds"]');
+                
+                if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+                    // User is manually checking/unchecking after Select All
+                    // Update the allToolIds array to reflect the change
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const toolId = e.target.value;
+                        
+                        if (e.target.checked) {
+                            // Add the ID if it's not already there
+                            if (!allIds.includes(toolId)) {
+                                allIds.push(toolId);
+                            }
+                        } else {
+                            // Remove the ID from the array
+                            allIds = allIds.filter(id => id !== toolId);
+                        }
+                        
+                        // Update the hidden field
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (error) {
+                        console.error('Error updating allToolIds:', error);
+                    }
+                }
+                
                 update();
             }
         });
@@ -5797,15 +5885,27 @@ function initResourceSelect(
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
-            // Rebuild pills safely
+            // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
-            checked.forEach((cb) => {
+            const maxPillsToShow = 3;
+            
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
                 span.textContent =
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
+            
+            // If more than maxPillsToShow, show a summary pill
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected resources";
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
 
             // Warning when > max
             if (count > max) {
@@ -5888,15 +5988,27 @@ function initPromptSelect(
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
             const count = checked.length;
 
-            // Rebuild pills safely
+            // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
-            checked.forEach((cb) => {
+            const maxPillsToShow = 3;
+            
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
                 const span = document.createElement("span");
                 span.className = pillClasses;
                 span.textContent =
                     cb.nextElementSibling?.textContent?.trim() || "Unnamed";
                 pillsBox.appendChild(span);
             });
+            
+            // If more than maxPillsToShow, show a summary pill
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected prompts";
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
 
             // Warning when > max
             if (count > max) {
@@ -9125,6 +9237,7 @@ function initializeCodeMirrorEditors() {
 function initializeToolSelects() {
     console.log("Initializing tool selects...");
 
+    // Add Server form
     initToolSelect(
         "associatedTools",
         "selectedToolsPills",
@@ -9133,6 +9246,26 @@ function initializeToolSelects() {
         "selectAllToolsBtn",
         "clearAllToolsBtn",
     );
+    
+    initResourceSelect(
+        "associatedResources",
+        "selectedResourcesPills",
+        "selectedResourcesWarning",
+        10,
+        "selectAllResourcesBtn",
+        "clearAllResourcesBtn",
+    );
+    
+    initPromptSelect(
+        "associatedPrompts",
+        "selectedPromptsPills",
+        "selectedPromptsWarning",
+        8,
+        "selectAllPromptsBtn",
+        "clearAllPromptsBtn",
+    );
+    
+    // Edit Server form
     initToolSelect(
         "edit-server-tools",
         "selectedEditToolsPills",

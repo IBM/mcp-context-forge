@@ -2047,16 +2047,7 @@
                       value="{{ resource.id }}"
                       class="form-checkbox h-5 w-5 text-blue-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <div class="flex-1 min-w-0">
-                      <span class="select-none font-medium"
-                        >{{ resource.name }}</span
-                      >
-                      <div
-                        class="text-xs text-gray-500 dark:text-gray-400 truncate"
-                      >
-                        {{ resource.description or resource.uri }}
-                      </div>
-                    </div>
+                    <span class="select-none">{{ resource.name }}</span>
                   </label>
                   {% endfor %}
                   <p
@@ -2088,6 +2079,17 @@
                     Clear All
                   </button>
                 </div>
+                <!-- Selected pills -->
+                <div
+                  id="selectedResourcesPills"
+                  class="mt-4 flex flex-wrap gap-2"
+                ></div>
+                <!-- Warning message -->
+                <div
+                  id="selectedResourcesWarning"
+                  class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                  aria-live="polite"
+                ></div>
               </div>
               <div>
                 <label
@@ -2116,16 +2118,7 @@
                       value="{{ prompt.id }}"
                       class="form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
                     />
-                    <div class="flex-1 min-w-0">
-                      <span class="select-none font-medium"
-                        >{{ prompt.name }}</span
-                      >
-                      <div
-                        class="text-xs text-gray-500 dark:text-gray-400 truncate"
-                      >
-                        {{ prompt.description or "No description" }}
-                      </div>
-                    </div>
+                    <span class="select-none">{{ prompt.name }}</span>
                   </label>
                   {% endfor %}
                   <p
@@ -2157,6 +2150,17 @@
                     Clear All
                   </button>
                 </div>
+                <!-- Selected pills -->
+                <div
+                  id="selectedPromptsPills"
+                  class="mt-4 flex flex-wrap gap-2"
+                ></div>
+                <!-- Warning message -->
+                <div
+                  id="selectedPromptsWarning"
+                  class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                  aria-live="polite"
+                ></div>
               </div>
             </div>
             <!-- 🔻 Error Display Span -->

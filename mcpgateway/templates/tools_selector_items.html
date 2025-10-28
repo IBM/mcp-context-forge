@@ -9,7 +9,9 @@
     type="checkbox"
     name="associatedTools"
     value="{{ tool.id }}"
+    data-tool-name="{{ tool.name }}"
     class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+    data-auto-check="true"
   />
   <span class="select-none">{{ tool.displayName or tool.customName or tool.name }}</span>
 </label>
@@ -32,4 +34,103 @@
     Loading more tools...
   </span>
 </div>
+<script>
+// Global handler for auto-checking newly loaded tools when Select All is active or Edit Server mode
+(function() {
+  if (!window._toolsScrollHandlerAttached) {
+    window._toolsScrollHandlerAttached = true;
+    
+    htmx.on('htmx:afterSettle', function(evt) {
+      console.log('[HTMX] afterSettle event fired');
+      // Only handle tool pagination requests
+      if (evt.detail.pathInfo.requestPath && evt.detail.pathInfo.requestPath.includes('/admin/tools/partial')) {
+        console.log('[HTMX] Tool pagination detected');
+        
+        // Use a slight delay to ensure DOM is fully updated
+        setTimeout(() => {
+          // Find which container actually triggered the request by checking the target
+          let container = null;
+          const target = evt.detail.target;
+          
+          if (target) {
+            // Walk up the DOM to find the container
+            container = target.closest('#associatedTools') || target.closest('#edit-server-tools');
+          }
+          
+          // Fallback: check which container is visible
+          if (!container) {
+            const addServerContainer = document.getElementById('associatedTools');
+            const editServerContainer = document.getElementById('edit-server-tools');
+            
+            if (addServerContainer && addServerContainer.offsetParent !== null) {
+              container = addServerContainer;
+            } else if (editServerContainer && editServerContainer.offsetParent !== null) {
+              container = editServerContainer;
+            } else {
+              // Last resort: just pick one that exists
+              container = addServerContainer || editServerContainer;
+            }
+          }
+          
+          console.log('[HTMX] Container:', container ? container.id : 'NOT FOUND');
+          
+          if (container) {
+            const selectAllInput = container.querySelector('input[name=selectAllTools]');
+            console.log('[HTMX] selectAllTools input:', selectAllInput ? selectAllInput.value : 'NOT FOUND');
+            
+            // Check if Select All is active
+            if (selectAllInput && selectAllInput.value === 'true') {
+              console.log('[HTMX] Select All mode - auto-checking new tools');
+              const newCheckboxes = container.querySelectorAll('input[data-auto-check=true]');
+              console.log('[HTMX] Found', newCheckboxes.length, 'new checkboxes');
+              
+              newCheckboxes.forEach(cb => {
+                cb.checked = true;
+                cb.removeAttribute('data-auto-check');
+              });
+              
+              if (newCheckboxes.length > 0) {
+                const event = new Event('change', { bubbles: true });
+                container.dispatchEvent(event);
+              }
+            }
+            // Check if we're in Edit Server mode and need to pre-select tools
+            else if (container.id === 'edit-server-tools') {
+              // Try to get server tools from data attribute or window object
+              let serverTools = null;
+              const dataAttr = container.getAttribute('data-server-tools');
+              if (dataAttr) {
+                try {
+                  serverTools = JSON.parse(dataAttr);
+                } catch (e) {
+                  console.error('Failed to parse data-server-tools:', e);
+                }
+              } else if (window.currentEditingServer && window.currentEditingServer.associatedTools) {
+                serverTools = window.currentEditingServer.associatedTools;
+              }
+              
+              if (serverTools && serverTools.length > 0) {
+                const newCheckboxes = container.querySelectorAll('input[data-auto-check=true]');
+                
+                newCheckboxes.forEach(cb => {
+                  const toolName = cb.getAttribute('data-tool-name');
+                  if (toolName && serverTools.includes(toolName)) {
+                    cb.checked = true;
+                  }
+                  cb.removeAttribute('data-auto-check');
+                });
+                
+                if (newCheckboxes.length > 0) {
+                  const event = new Event('change', { bubbles: true });
+                  container.dispatchEvent(event);
+                }
+              }
+            }
+          }
+        }, 10); // Small delay to ensure DOM is updated
+      }
+    });
+  }
+})();
+</script>
 {% endif %}
