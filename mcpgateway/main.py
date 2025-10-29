@@ -108,6 +108,7 @@ from mcpgateway.services.import_service import ConflictStrategy, ImportConflictE
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -478,6 +479,9 @@ app = FastAPI(
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
 )
+
+# Setup metrics instrumentation
+setup_metrics(app)
 
 
 async def validate_security_configuration():
