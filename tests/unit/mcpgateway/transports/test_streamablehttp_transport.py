@@ -717,6 +717,7 @@ async def test_read_resource_success(monkeypatch):
     mock_db = MagicMock()
     mock_result = MagicMock()
     mock_result.text = "resource content here"
+    mock_result.blob = None  # Explicitly set to None so text is returned
 
     @asynccontextmanager
     async def fake_get_db():
@@ -733,7 +734,7 @@ async def test_read_resource_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_read_resource_no_content(monkeypatch, caplog):
-    """Test read_resource returns [] and logs warning if no content."""
+    """Test read_resource returns empty string and logs warning if no content."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -743,6 +744,7 @@ async def test_read_resource_no_content(monkeypatch, caplog):
     mock_db = MagicMock()
     mock_result = MagicMock()
     mock_result.text = ""
+    mock_result.blob = None
 
     @asynccontextmanager
     async def fake_get_db():
@@ -754,13 +756,13 @@ async def test_read_resource_no_content(monkeypatch, caplog):
     test_uri = AnyUrl("file:///empty.txt")
     with caplog.at_level("WARNING"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "No content returned by resource: file:///empty.txt" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_no_result(monkeypatch, caplog):
-    """Test read_resource returns [] and logs warning if no result."""
+    """Test read_resource returns empty string and logs warning if no result."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -779,13 +781,13 @@ async def test_read_resource_no_result(monkeypatch, caplog):
     test_uri = AnyUrl("file:///missing.txt")
     with caplog.at_level("WARNING"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "No content returned by resource: file:///missing.txt" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_service_exception(monkeypatch, caplog):
-    """Test read_resource returns [] and logs exception from service."""
+    """Test read_resource returns empty string and logs exception from service."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -804,13 +806,13 @@ async def test_read_resource_service_exception(monkeypatch, caplog):
     test_uri = AnyUrl("file:///error.txt")
     with caplog.at_level("ERROR"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "Error reading resource 'file:///error.txt': service error!" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_outer_exception(monkeypatch, caplog):
-    """Test read_resource returns [] and logs exception from outer try-catch."""
+    """Test read_resource returns empty string and logs exception from outer try-catch."""
     # Standard
     from contextlib import asynccontextmanager
 
@@ -831,7 +833,7 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
     test_uri = AnyUrl("file:///db_error.txt")
     with caplog.at_level("ERROR"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "Error reading resource 'file:///db_error.txt': db error!" in caplog.text
 
 
