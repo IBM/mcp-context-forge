@@ -1,0 +1,1067 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "contact": {
+            "name": "Testing"
+        },
+        "description": "from Salesloft",
+        "title": "Salesloft",
+        "version": "1.0.0",
+        "x-ibm-annotations": "1.0.0",
+        "x-ibm-application-icon": "\n<svg id=\"Layer_1\" data-name=\"Layer 1\" xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" viewBox=\"0 0 1920 1080\">\n  <defs>\n    <style>\n      .cls-1 {\n        fill: #b5d626;\n      }\n\n      .cls-1, .cls-2 {\n        stroke-width: 0px;\n      }\n\n      .cls-2 {\n        fill: #02524b;\n      }\n    </style>\n  </defs>\n  <path id=\"fullLogo\" class=\"cls-2\" d=\"m1038.55,581.06l-32.66-19.47c-37.17-20.63-56.03-34.21-56.03-58.98,0-18.28,16.68-33.15,37.92-33.15,43.27,0,63.32,33.66,68.71,76.32h7.58l16.95-91.6c-14.75-5.88-37.38-10.63-59.78-10.63-79.03,0-118.54,42.54-118.54,90.89,0,41.28,34.21,62.52,60.17,77.26l45.64,25.35c29.49,15.93,44.24,31.26,44.24,53.07,0,17.6-13.75,38.16-44.48,38.16-41.67,0-76.39-38.55-89.61-92.61h-6.17l-17.31,23.39c-22.64,26.95-48.13,48.76-89.51,48.76-63.7,0-93.29-46.9-93.29-111.47h156.39v-42.47c0-58.38-28.89-110.29-99.08-110.29-82.56,0-122.08,74.31-122.08,157.48,0,36.59,9.03,68.13,24.5,92.85-10.12,10.99-25.11,23.41-43.99,23.41-20.97,0-31.23-19.93-31.23-49.54v-340.96c-1.94.94-3.87,1.89-5.79,2.78-23.2,11.02-45.16,19.56-69.1,26.1.85,1.86,1.65,3.78,2.4,5.71,10.15,26.22,11.16,58.69,11.16,92.2v202.88c0,15.25,1.74,28.3,4.77,39.59-8.06,11.62-19.71,23.51-35.08,23.51-19.59,0-34.67-14.96-34.67-45.98v-118.06c0-51.31-9.95-112.06-95.47-112.06-74.91,0-105.57,47.26-105.57,93.85l56.78,21.23s-7.24-94.43,44.14-94.43c41.28,0,40.02,46.08,40.02,86.17v14.75c0,9.44-21.23,21.23-62.52,37.17-35.98,14.75-90.82,33.03-90.82,84.94,0,37.75,27.72,65.93,69.01,65.93,33.03,0,64.89-18.74,84.94-47.65,1.19,14.16,23.12,47.65,58.72,47.65s60.48-21.36,75.86-41.84c13.1,28.84,37.51,41.84,64.87,41.84,29.88,0,53.61-25.4,69.25-48.18,23.39,30.29,57.7,48.16,96.7,48.16,48.74,0,82.1-32.18,102.27-62.4,12.03,16.05,51.45,62.42,112.98,62.42,51.72,0,100.53-33.92,100.53-93.07,0-44.82-30.07-66.05-53.68-79.03v.02Zm-628.1,110.29c-13.56,10.02-29.49,19.35-47.19,19.35-29.49,0-44.24-21.69-44.24-47.65,0-33.63,17.12-48.96,70.77-48.96,18.86,0,20.63,2.37,20.63,13.56v63.7h.02Zm301.11-119.15c0-69.59,16.83-106.75,49.25-106.75,26.54,0,44.82,26.54,44.82,87.87,0,23.58-3.53,26.54-21.82,26.54h-72.06l-.22-7.68.02.02Z\"/>\n  <a xlink:href=\"79.9752941176471\">\n    <path id=\"fullLogo-2\" class=\"cls-2\" d=\"m1197.91,656.56v-329.7c-25.37,12.4-48.96,21.82-74.91,28.91,12.37,27.12,13.56,61.94,13.56,97.92v202.88c0,31.86-1.77,56.61-14.16,89.05h97.7s-22.2-29.37-22.2-89.05h.02Z\"/>\n  </a>\n  <path id=\"fullLogo-3\" class=\"cls-2\" d=\"m1359.87,443.56c-72.54,0-122.08,61.6-122.08,155.95,0,88.47,44.82,153.63,117.36,153.63s122.1-60.43,122.1-154.23c0-88.47-45.42-155.37-117.38-155.37v.02Zm2.37,286.6c-40.12,0-57.8-71.64-57.8-149.51,0-72.54,15.93-114.67,47.77-114.67,40.7,0,57.8,75.16,57.8,152.42s-17.12,111.76-47.77,111.76Z\"/>\n  <a xlink:href=\"79.9752941176471\">\n    <path id=\"fullLogo-4\" class=\"cls-2\" d=\"m1741.19,465.5h84.48v-16.51h-84.48v-82.01c-20.65,12.98-41.86,23.58-64.28,31.84,1.72,21.86,2.32,34.77,2.91,50.17h-101.77c-8.04-24.84-13.2-45.69-13.2-61.38,0-20.05,7.07-31.84,23.61-31.84s32.88,20.14,47.21,72.25h7.55l17.05-92.32s-13.99-8.84-35.23-8.84c-75.06,0-105.2,57.12-105.57,122.13h-33.63v16.51h33.61v183.99c0,31.84-1.19,61.94-14.14,96.12h89.63c-12.98-34.21-14.14-64.28-14.14-96.12v-181.08l-.39-2.93h99.46v206.41c0,53.68,21.23,81.26,57.8,81.26,42.47,0,71.96-34.67,71.96-68.28-14.75,10.63-25.96,16.97-38.33,16.97-30.07,0-30.07-32.9-30.07-45.88v-190.46h-.05Z\"/>\n  </a>\n  <a xlink:href=\"79.9752941176471\">\n    <path id=\"fullLogo-5\" class=\"cls-2\" d=\"m67.26,434.19c0-26.97,25.45-48.5,58.11-48.5,42.61,0,67.6,19.93,81.98,121.76h8.86l13.27-138.91c-94.09-33.22-211.96,1.09-213.63,101.26,0,107.91,171.88,107.87,171.88,206.44,0,28.79-25.45,48.69-54.24,48.69-75.86,0-93.85-63.65-97.72-130.05h-9.42L1.48,719.95s56.44,33.2,117.33,33.2c73.05-1.11,121.76-54.79,122.85-111.23,0-108.47-174.4-130.8-174.4-207.74v.02Z\"/>\n  </a>\n  <path id=\"fullLogo-6\" class=\"cls-1\" d=\"m1841.14,714.67c0-20.63,16.05-38.4,38.4-38.4s38.98,17.77,38.98,38.4-16.05,38.4-38.4,38.4-38.98-17.77-38.98-38.4Z\"/>\n</svg>\n    ",
+        "x-ibm-application-id": "salesloft-32ebbd73",
+        "x-ibm-application-name": "Salesloft",
+        "x-ibm-created-date": "2024-05-29T07:11:22.439Z",
+        "x-ibm-skill-subtype": "public",
+        "x-ibm-skill-type": "external",
+        "x-ibm-tags": {
+            "categories": [
+                "Sales"
+            ]
+        }
+    },
+    "servers": [
+        {
+            "url": "https://api.salesloft.com"
+        }
+    ],
+    "tags": [
+        {
+            "name": "action list"
+        }
+    ],
+    "paths": {
+        "/v2/actions": {
+            "get": {
+                "description": "from Salesloft",
+                "operationId": "getV2Actions",
+                "parameters": [
+                    {
+                        "description": "the id's of actions",
+                        "in": "query",
+                        "name": "ids",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter by action id",
+                            "example": 18,
+                            "type": "string",
+                            "x-ibm-examples": [
+                                345687678,
+                                767763892
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 1,
+                        "x-ibm-show": false
+                    },
+                    {
+                        "description": "The ID of the step to retrieve. If not provided, all steps for the pipeline will be returned.",
+                        "in": "query",
+                        "name": "step_id",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter actions by step name",
+                            "title": "Step name",
+                            "type": "string",
+                            "x-ibm-category": "An-ID"
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 2,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ],
+                        "x-ibm-ui-extension": {
+                            "actions": [
+                                {
+                                    "mappings": {
+                                        "labels": "data.items.properties.name",
+                                        "values": "data.items.properties.id"
+                                    },
+                                    "params": {},
+                                    "skill_id": "Salesloft__1.0.0__getV2Steps",
+                                    "type": "data"
+                                }
+                            ],
+                            "component": "dropdown"
+                        }
+                    },
+                    {
+                        "description": "Filter actions by type. email, phone, integration etc.",
+                        "in": "query",
+                        "name": "type",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter actions by type. Can be one of:email, phone,integration and other",
+                            "example": "filter",
+                            "title": "Type",
+                            "type": "string",
+                            "x-ibm-enum-descriptions": [
+                                "phone",
+                                "email",
+                                "integration",
+                                "other"
+                            ],
+                            "x-ibm-examples": [
+                                "email",
+                                "phone"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 3,
+                        "x-ibm-show": true,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "due_on[gt]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are due on after the provided date",
+                            "format": "date",
+                            "title": "Due on after the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time"
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 4,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": true,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The date should be in iso8601 format.",
+                        "in": "query",
+                        "name": "due_on[gte]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are greater than or equal to the provided date",
+                            "example": "2018-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Due on greater than or equal to date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2018-02-01T00:00:00Z",
+                                "2018-03-01T00:00:00Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 5,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "due_on[lt]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are due on before the provided date",
+                            "example": "2018-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Due on before the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2018-01-02T00:00:00Z",
+                                "2018-01-03T00:00:00Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 6,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": true,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "due_on[lte]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are less than or equal to the provided date",
+                            "example": "2018-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Due on less than or equal to date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time"
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 7,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Filters actions by the user's guid. Multiple user guids can be applied.",
+                        "in": "query",
+                        "name": "user_guid",
+                        "required": false,
+                        "schema": {
+                            "description": "Filters actions by the user's guid",
+                            "example": "12345678-1234-1234-1234-123456789012",
+                            "title": "User guid",
+                            "type": "string",
+                            "x-ibm-examples": [
+                                12345678,
+                                12355668
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 8,
+                        "x-ibm-ui-extension": {
+                            "actions": [
+                                {
+                                    "mappings": {
+                                        "labels": "data.items.properties.name",
+                                        "values": "data.items.properties.guid"
+                                    },
+                                    "params": {},
+                                    "skill_id": "Salesloft__1.0.0__getV2Users",
+                                    "type": "data"
+                                }
+                            ],
+                            "component": "dropdown"
+                        },
+                        "x-ibm-show": true
+                    },
+                    {
+                        "description": "retrieves the records by using person name.",
+                        "in": "query",
+                        "name": "person_id",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter actions by person name",
+                            "example": "123456",
+                            "title": "Person name",
+                            "type": "string",
+                            "x-ibm-category": "An-ID",
+                            "x-ibm-examples": [
+                                "319104110",
+                                "345678993"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 9,
+                        "x-ibm-ui-extension": {
+                            "actions": [
+                                {
+                                    "mappings": {
+                                        "labels": "data.items.properties.first_name",
+                                        "values": "data.items.properties.id"
+                                    },
+                                    "params": {},
+                                    "skill_id": "Salesloft__1.0.0__getV2People",
+                                    "type": "data"
+                                }
+                            ],
+                            "component": "dropdown"
+                        }
+                    },
+                    {
+                        "description": "The cadence id of the action",
+                        "in": "query",
+                        "name": "cadence_id",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter actions by cadence name",
+                            "example": "123456789",
+                            "title": "Cadence name",
+                            "type": "string",
+                            "x-ibm-category": "An-ID",
+                            "x-ibm-examples": [
+                                "1030231",
+                                "1034653"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 10,
+                        "x-ibm-ui-extension": {
+                            "actions": [
+                                {
+                                    "mappings": {
+                                        "labels": "data.items.properties.name",
+                                        "values": "data.items.properties.id"
+                                    },
+                                    "params": {},
+                                    "skill_id": "Salesloft__1.0.0__getV2Cadences",
+                                    "type": "data"
+                                }
+                            ],
+                            "component": "dropdown"
+                        }
+                    },
+                    {
+                        "description": "The ID of the multitouch group to filter by. If not specified, all actions will be returned.",
+                        "in": "query",
+                        "name": "multitouch_group_id",
+                        "required": false,
+                        "schema": {
+                            "description": "Filter actions by multitouch group id",
+                            "example": 987667893,
+                            "title": "Multitouch group id",
+                            "type": "string",
+                            "x-ibm-examples": [
+                                345696969,
+                                767088963
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 11,
+                        "x-ibm-show": false
+                    },
+                    {
+                        "description": "Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "updated_at[gt]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are updated after the provided date",
+                            "example": "2017-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Updated on after the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2018-01-01T00:00:00Z",
+                                "2019-01-01T00:00:00Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 12,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": true,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "updated_at[gte]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are greater than the provided date",
+                            "example": "2017-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Updated at greater than or equal to the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2018-01-01T00:00:00Z",
+                                "2019-01-01T00:00:00Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 13,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "updated_at[lt]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are updated before the provided date",
+                            "example": "2017-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Updated on before the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2017-01-01T00:00:00.123Z",
+                                "2017-01-01T00:00:00.456Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 14,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": true,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.",
+                        "in": "query",
+                        "name": "updated_at[lte]",
+                        "required": false,
+                        "schema": {
+                            "description": "Returns actions that are less than or equal to the provided date",
+                            "example": "2017-01-01T00:00:00Z",
+                            "format": "date",
+                            "title": "Updated at less than or equal to the date",
+                            "type": "string",
+                            "x-ibm-category": "Date-Time",
+                            "x-ibm-examples": [
+                                "2017-01-01T00:00:00.123Z",
+                                "2017-01-01T00:00:00.456Z"
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 15,
+                        "x-ibm-property-pattern": "ISO",
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "The field to sort by. Defaults to created_at.",
+                        "in": "query",
+                        "name": "sort_by",
+                        "required": false,
+                        "schema": {
+                            "default": "updated_at",
+                            "description": "Key to sort on, must be one of: created_at, updated_at. Defaults to updated_at",
+                            "enum": [
+                                "updated_at",
+                                "created_at"
+                            ],
+                            "example": "updated_at",
+                            "title": "Sort by",
+                            "type": "string",
+                            "x-ibm-enum-descriptions": [
+                                "updated at",
+                                "created at"
+                            ],
+                            "x-ibm-examples": [
+                                "created_at"
+                            ]
+                        },
+                        "x-ibm-order": 16,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "The direction to sort the results in. Can be either `asc` or `desc`.",
+                        "in": "query",
+                        "name": "sort_direction",
+                        "required": false,
+                        "schema": {
+                            "default": "DESC",
+                            "description": "Direction to sort in, must be one of: ASC, DESC. Defaults to DESC",
+                            "enum": [
+                                "ASC",
+                                "DESC"
+                            ],
+                            "example": "ASC",
+                            "title": "Sort direction",
+                            "type": "string",
+                            "x-ibm-enum-descriptions": [
+                                "ASC",
+                                "DESC"
+                            ],
+                            "x-ibm-examples": [
+                                "DESC"
+                            ]
+                        },
+                        "x-ibm-order": 17,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "How many records to show per page in the range [1, 100]. Defaults to 25",
+                        "in": "query",
+                        "name": "per_page",
+                        "required": false,
+                        "schema": {
+                            "default": 25,
+                            "description": "How many records to show per page in the range [1, 100]. Defaults to 25",
+                            "example": 1,
+                            "maximum": 100,
+                            "minimum": 1,
+                            "title": "Per page",
+                            "type": "integer",
+                            "x-ibm-examples": [
+                                100,
+                                25
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 18,
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "The current page to fetch results from. Defaults to 1.",
+                        "in": "query",
+                        "name": "page",
+                        "required": false,
+                        "schema": {
+                            "default": 1,
+                            "example": 1,
+                            "title": "Page",
+                            "type": "integer",
+                            "x-ibm-examples": [
+                                2,
+                                3
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 19,
+                        "x-ibm-show": false,
+                        "x-ibm-supported-operators": [
+                            "eq"
+                        ]
+                    },
+                    {
+                        "description": "Whether to include total_pages and total_count in the metadata. Defaults to false",
+                        "in": "query",
+                        "name": "include_paging_counts",
+                        "required": false,
+                        "schema": {
+                            "default": false,
+                            "example": true,
+                            "title": "Include paging counts",
+                            "type": "boolean",
+                            "x-ibm-enum-descriptions": [
+                                "True",
+                                "False"
+                            ],
+                            "x-ibm-examples": [
+                                false
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 20,
+                        "x-ibm-show": false
+                    },
+                    {
+                        "description": "Specifies whether the max limit of 10k records should be applied to pagination counts. Affects the total_count and total_pages data.",
+                        "in": "query",
+                        "name": "limit_paging_counts",
+                        "required": false,
+                        "schema": {
+                            "example": true,
+                            "title": "Limit paging counts",
+                            "type": "boolean",
+                            "x-ibm-enum-descriptions": [
+                                "True",
+                                "False"
+                            ],
+                            "x-ibm-examples": [
+                                false
+                            ]
+                        },
+                        "x-ibm-multiline": "false",
+                        "x-ibm-order": 21,
+                        "x-ibm-show": false
+                    }
+                ],
+                "responses": {
+                    "200": {
+                            "description": "sucess",
+                            "content": {
+                            "text/plain": {
+                                "schema": {
+                                "type": "string",
+                                "example": "success"
+                                }
+                            }
+                            }
+                        }
+                },
+                "security": [
+                    {
+                        "bearerAuth": []
+                    }
+                ],
+                "summary": "Get all actions",
+                "tags": [
+                    "action list"
+                ],
+                "x-ibm-conversational-skill": true,
+                "x-ibm-mandatory": [],
+                "x-ibm-next-actions": [],
+                "x-ibm-nl-entities": {
+                    "entities": [
+                        {
+                            "entity": "sort_by",
+                            "fuzzy_match": true,
+                            "values": [
+                                {
+                                    "synonyms": [],
+                                    "type": "synonyms",
+                                    "value": "updated_at"
+                                },
+                                {
+                                    "synonyms": [],
+                                    "type": "synonyms",
+                                    "value": "created_at"
+                                }
+                            ]
+                        },
+                        {
+                            "entity": "sort_direction",
+                            "fuzzy_match": true,
+                            "values": [
+                                {
+                                    "synonyms": [],
+                                    "type": "synonyms",
+                                    "value": "ASC"
+                                },
+                                {
+                                    "synonyms": [],
+                                    "type": "synonyms",
+                                    "value": "DESC"
+                                }
+                            ]
+                        },
+                        {
+                            "entity": "type",
+                            "values": [
+                                {
+                                    "value": "email",
+                                    "synonyms": [],
+                                    "type": "synonyms"
+                                },
+                                {
+                                    "value": "phone",
+                                    "synonyms": [],
+                                    "type": "synonyms"
+                                },
+                                {
+                                    "value": "integration",
+                                    "synonyms": [],
+                                    "type": "synonyms"
+                                },
+                                {
+                                    "value": "other",
+                                    "synonyms": [],
+                                    "type": "synonyms"
+                                }
+                            ],
+                            "fuzzy_match": true
+                        }
+                    ]
+                },
+                "x-ibm-nl-intent-examples": [
+                    "Get all actions",
+                    "Fetch all actions",
+                    "Retrieve all actions",
+                    "Get all actions from salesloft",
+                    "Fetch all actions from salesloft",
+                    "Retrieve all actions from salesloft"
+                ],
+                "x-ibm-operation": {
+                    "action": "retrieve",
+                    "model": "action list"
+                },
+                "x-ibm-response-include": [
+                    "data",
+                    "data.action_details",
+                    "data.action_details._href",
+                    "data.action_details.id",
+                    "data.cadence",
+                    "data.cadence._href",
+                    "data.cadence.id",
+                    "data.created_at",
+                    "data.due",
+                    "data.due_on",
+                    "data.id",
+                    "data.multitouch_group_id",
+                    "data.person",
+                    "data.person._href",
+                    "data.person.id",
+                    "data.status",
+                    "data.step",
+                    "data.step._href",
+                    "data.step.id",
+                    "data.task",
+                    "data.task._href",
+                    "data.task.id",
+                    "data.type",
+                    "data.updated_at",
+                    "data.user",
+                    "data.user._href",
+                    "data.user.id",
+                    "metadata",
+                    "metadata.filtering",
+                    "metadata.paging",
+                    "metadata.paging.current_page",
+                    "metadata.paging.next_page",
+                    "metadata.paging.per_page",
+                    "metadata.paging.prev_page",
+                    "metadata.sorting",
+                    "metadata.sorting.sort_by",
+                    "metadata.sorting.sort_direction"
+                ],
+                "x-ibm-visible": true
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Action_list": {
+                "description": "A list of actions to be performed on the specified resources. The following actions are supported:- `read`: Returns the details of a resource.",
+                "properties": {
+                    "data": {
+                        "description": "A list of actions.",
+                        "items": {
+                            "description": "A dictionary containing the data to be used to create the action.",
+                            "properties": {
+                                "action_details": {
+                                    "description": "{ type: object, properties: { action_type: { type: string, description: The type of action to perform. , enum: [ add_member, remove_member, change_role, change_manager, delete, join, leave, accept, reject, activate, deactivate, add_login, remove_login, add_email, remove_email, add_phone, remove_phone, add_address, remove_address, add_card, remove_card, add_key, remove_key, add_note, remove_note, add_custom_field, remove_custom_field, add.",
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the action.",
+                                            "example": 18,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                3456,
+                                                767
+                                            ]
+                                        }
+                                    },
+                                    "title": "Action details",
+                                    "type": "object"
+                                },
+                                "cadence": {
+                                    "description": "{ type: object, properties: { frequency: { type: string, description: The frequency of the cadence. , enum: [ daily, weekly, monthly ] }, day_of_week: { type: string, description: The day of the week for the cadence.",
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the action.",
+                                            "example": 18,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                34568766,
+                                                76783966
+                                            ]
+                                        }
+                                    },
+                                    "title": "Cadence",
+                                    "type": "object"
+                                },
+                                "created_at": {
+                                    "description": "The date and time the action was created.",
+                                    "example": "2022-01-01T00:00:00Z",
+                                    "title": "Created at",
+                                    "type": "string",
+                                    "x-ibm-examples": [
+                                        "2022-01-02T00:00:00Z",
+                                        "2022-01-03T00:00:00Z"
+                                    ]
+                                },
+                                "due": {
+                                    "description": "If true, only return overdue items",
+                                    "example": true,
+                                    "title": "Due",
+                                    "type": "boolean",
+                                    "x-ibm-examples": [
+                                        false
+                                    ]
+                                },
+                                "due_on": {
+                                    "description": "The due date of the action. Format: YYYY-MM-DD.",
+                                    "example": "2022-01-01",
+                                    "title": "Due on",
+                                    "type": "string",
+                                    "x-ibm-examples": [
+                                        "2022-02-02",
+                                        "2022-03-03"
+                                    ]
+                                },
+                                "id": {
+                                    "description": "The unique identifier of the action.",
+                                    "example": 182356224,
+                                    "title": "Id",
+                                    "type": "number",
+                                    "x-ibm-examples": [
+                                        3527169,
+                                        7166683
+                                    ]
+                                },
+                                "multitouch_group_id": {
+                                    "description": "The multitouch group id",
+                                    "example": "group_1",
+                                    "nullable": true,
+                                    "title": "Multitouch group id",
+                                    "type": "string",
+                                    "x-ibm-examples": [
+                                        1604389216,
+                                        1604426461
+                                    ]
+                                },
+                                "person": {
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the person.",
+                                            "example": 18,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                34569877,
+                                                76763583
+                                            ]
+                                        }
+                                    },
+                                    "title": "Person",
+                                    "type": "object"
+                                },
+                                "status": {
+                                    "description": "The status of the action. Can be one of: pending, completed, failed, cancelled.",
+                                    "example": "pending",
+                                    "title": "Status",
+                                    "type": "string",
+                                    "x-ibm-examples": [
+                                        "completed",
+                                        "failed"
+                                    ]
+                                },
+                                "step": {
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the step.",
+                                            "example": 187988769,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                7495251,
+                                                7749525
+                                            ]
+                                        }
+                                    },
+                                    "title": "Step",
+                                    "type": "object"
+                                },
+                                "task": {
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the task.",
+                                            "example": 1876876,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                402356224,
+                                                402169847
+                                            ]
+                                        }
+                                    },
+                                    "title": "Task",
+                                    "type": "object"
+                                },
+                                "type": {
+                                    "description": "The type of action to filter by. If not specified, all actions will be returned.",
+                                    "example": "integrate",
+                                    "title": "Type",
+                                    "type": "string",
+                                    "x-ibm-examples": [
+                                        "phone",
+                                        "email"
+                                    ]
+                                },
+                                "updated_at": {
+                                    "description": "The date and time the action was last updated.",
+                                    "example": "2021-09-15T19:30:00Z",
+                                    "title": "Updated at",
+                                    "type": "string"
+                                },
+                                "user": {
+                                    "properties": {
+                                        "_href": {
+                                            "description": "The link to the current page.",
+                                            "example": "https://api.example.com/v1/resources?page=1",
+                                            "title": " href",
+                                            "type": "string",
+                                            "x-ibm-examples": [
+                                                "https://api.example.com/v1/resources?page=2",
+                                                "https://api.example.com/v1/resources?page=3"
+                                            ]
+                                        },
+                                        "id": {
+                                            "description": "The unique identifier of the user.",
+                                            "example": 18,
+                                            "title": "Id",
+                                            "type": "number",
+                                            "x-ibm-examples": [
+                                                134490,
+                                                146661
+                                            ]
+                                        }
+                                    },
+                                    "title": "User",
+                                    "type": "object"
+                                }
+                            },
+                            "type": "object"
+                        },
+                        "title": "Data",
+                        "type": "array"
+                    },
+                    "metadata": {
+                        "description": "A dictionary of metadata to be stored with the action.",
+                        "properties": {
+                            "filtering": {
+                                "description": "A dictionary with keys as column names and values as a list of values to filter by. Example:{ 'name': ['John', 'Jane'], 'age': [20, 30]}This will return all the actions where the name is either John or Jane and the age is either 20 or 30.",
+                                "properties": {},
+                                "title": "Filtering",
+                                "type": "object"
+                            },
+                            "paging": {
+                                "properties": {
+                                    "current_page": {
+                                        "description": "The current page number of the collection to return.",
+                                        "example": 1,
+                                        "title": "Current page",
+                                        "type": "number",
+                                        "x-ibm-examples": [
+                                            2,
+                                            3
+                                        ]
+                                    },
+                                    "next_page": {
+                                        "description": "The next page of results to fetch.",
+                                        "example": 1,
+                                        "title": "Next page",
+                                        "type": "number",
+                                        "x-ibm-examples": [
+                                            3,
+                                            5
+                                        ]
+                                    },
+                                    "per_page": {
+                                        "description": "The number of items to return per page.",
+                                        "example": 10,
+                                        "title": "Per page",
+                                        "type": "number",
+                                        "x-ibm-examples": [
+                                            20,
+                                            30
+                                        ]
+                                    },
+                                    "prev_page": {
+                                        "description": "The previous page of results. Use this parameter to get the previous page of results.",
+                                        "example": "page=1",
+                                        "nullable": true,
+                                        "title": "Prev page",
+                                        "type": "string",
+                                        "x-ibm-examples": [
+                                            "page=2",
+                                            "page=3"
+                                        ]
+                                    }
+                                },
+                                "title": "Paging",
+                                "type": "object"
+                            },
+                            "sorting": {
+                                "properties": {
+                                    "sort_by": {
+                                        "description": "The field to sort by. Can be one of: name, created_at, updated_at.",
+                                        "example": "name",
+                                        "title": "Sort by",
+                                        "type": "string",
+                                        "x-ibm-examples": [
+                                            "created_at",
+                                            "updated_at"
+                                        ]
+                                    },
+                                    "sort_direction": {
+                                        "description": "The direction to sort the results in. Can be either `asc` for ascending or `desc` for descending.",
+                                        "example": "asc",
+                                        "title": "Sort direction",
+                                        "type": "string",
+                                        "x-ibm-examples": [
+                                            "desc"
+                                        ]
+                                    }
+                                },
+                                "title": "Sorting",
+                                "type": "object"
+                            }
+                        },
+                        "title": "Metadata",
+                        "type": "object"
+                    }
+                },
+                "type": "object"
+            }
+        },
+        "securitySchemes": {
+            "bearerAuth": {
+                "scheme": "bearer",
+                "type": "http",
+                "x-ibm-auth": {
+                    "token": {
+                        "x-ibm-display-name": "Token",
+                        "x-ibm-required": true
+                    }
+                },
+                "x-ibm-visible": true
+            }
+        }
+    }
+}
