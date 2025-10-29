@@ -418,17 +418,62 @@ class ToolService:
 
     def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
         """
-        Extract structured content (if any) and validate it against tool.output_schema.
+        Extract structured content (if any) and validate it against ``tool.output_schema``.
 
-        - If `candidate` is provided, it's treated as the extracted Python object to attach.
-        - Otherwise the function will attempt to parse the first textual content item as JSON.
+        Behavior:
+        - If ``candidate`` is provided it is used as the structured payload to validate.
+        - Otherwise the method will try to parse the first ``TextContent`` item in
+            ``tool_result.content`` as JSON and use that as the candidate.
+        - If no output schema is declared on the tool the method returns True (nothing to validate).
+        - On successful validation the parsed value is attached to ``tool_result.structuredContent``.
+            When structured content is present and valid callers may drop textual ``content`` in favour
+            of the structured payload.
+        - On validation failure the method sets ``tool_result.content`` to a single ``TextContent``
+            containing a compact JSON object describing the validation error, sets
+            ``tool_result.is_error = True`` and returns False.
 
-        On successful validation the parsed value is attached to `tool_result.structuredContent`.
-        On validation failure `tool_result.content` is replaced with a compact error TextContent and
-        `tool_result.is_error` is set to True.
+        Returns:
+                True when the structured content is valid or when no schema is declared.
+                False when validation fails.
 
-        Returns True when the structured content is valid or when no schema is declared. Returns
-        False when validation fails.
+        Examples:
+                >>> from mcpgateway.services.tool_service import ToolService
+                >>> from mcpgateway.models import TextContent, ToolResult
+                >>> import json
+                >>> service = ToolService()
+                >>> # No schema declared -> nothing to validate
+                >>> tool = type("T", (object,), {"output_schema": None})()
+                >>> r = ToolResult(content=[TextContent(type="text", text='{"a":1}')])
+                >>> service._extract_and_validate_structured_content(tool, r)
+                True
+
+                >>> # Valid candidate provided -> attaches structuredContent and returns True
+                >>> tool = type(
+                ...     "T",
+                ...     (object,),
+                ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
+                ... )()
+                >>> r = ToolResult(content=[])
+                >>> service._extract_and_validate_structured_content(tool, r, candidate={"foo": "bar"})
+                True
+                >>> r.structuredContent == {"foo": "bar"}
+                True
+
+                >>> # Invalid candidate -> returns False, marks result as error and emits details
+                >>> tool = type(
+                ...     "T",
+                ...     (object,),
+                ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
+                ... )()
+                >>> r = ToolResult(content=[])
+                >>> ok = service._extract_and_validate_structured_content(tool, r, candidate={"foo": 123})
+                >>> ok
+                False
+                >>> r.is_error
+                True
+                >>> details = json.loads(r.content[0].text)
+                >>> "received" in details
+                True
         """
         try:
             output_schema = getattr(tool, "output_schema", None)
