@@ -568,12 +568,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Support multiple custom headers
             auth_value = getattr(gateway, "auth_value", {})
             authentication_headers: Optional[Dict[str, str]] = None
+
             if hasattr(gateway, "auth_headers") and gateway.auth_headers:
                 # Convert list of {key, value} to dict
                 header_dict = {h["key"]: h["value"] for h in gateway.auth_headers if h.get("key")}
                 # Keep encoded form for persistence, but pass raw headers for initialization
                 auth_value = encode_auth(header_dict)  # Encode the dict for consistency
                 authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
+
             elif isinstance(auth_value, str) and auth_value:
                 # Decode persisted auth for initialization
                 decoded = decode_auth(auth_value)
@@ -1383,6 +1385,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             True
         """
         gateway = db.get(DbGateway, gateway_id)
+
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 

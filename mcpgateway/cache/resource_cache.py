@@ -125,18 +125,24 @@ class ResourceCache:
 
         Examples:
             >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> from unittest.mock import patch
+
+            >>> # Normal get
             >>> cache = ResourceCache(max_size=2, ttl=1)
             >>> cache.set('a', 1)
             >>> cache.get('a')
             1
-            >>> # Test expiration by using a very short TTL
-            >>> short_cache = ResourceCache(max_size=2, ttl=0.1)
-            >>> short_cache.set('b', 2)
-            >>> short_cache.get('b')
+
+            >>> # Test expiration deterministically using mock time
+            >>> with patch("time.time") as mock_time:
+            ...     mock_time.return_value = 1000
+            ...     short_cache = ResourceCache(max_size=2, ttl=0.1)
+            ...     short_cache.set('b', 2)
+            ...     short_cache.get('b')
+            ...     # Advance time past TTL
+            ...     mock_time.return_value = 1000.2
+            ...     short_cache.get('b') is None
             2
-            >>> import time
-            >>> time.sleep(0.2)  # Sleep longer than TTL (0.1s) to ensure expiration
-            >>> short_cache.get('b') is None
             True
         """
         if key not in self._cache:

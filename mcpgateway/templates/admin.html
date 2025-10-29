@@ -1624,7 +1624,7 @@
               type="text"
               id="search-servers"
               data-testid="search-input"
-              placeholder="Search servers..."
+              placeholder="Search servers via tags..."
               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
               oninput="filterServerTable(this.value)"
             />
@@ -4568,7 +4568,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <div id="auth-basic-fields-gw" style="display: none">
                 <div>
-                  <label class="block text-sm font-medium text-gray-700"
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >Username</label
                   >
                   <input
@@ -4578,7 +4578,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   />
                 </div>
                 <div>
-                  <label class="block text-sm font-medium text-gray-700"
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                     >Password</label
                   >
                   <div class="relative">
@@ -5399,7 +5399,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
       <!-- A2A Agents Panel -->
       {% if a2a_enabled %}
-      <div id="a2a-agents-panel" class="tab-panel hidden">
+       <div id="a2a-agents-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
             A2A Agents Catalog
@@ -5452,216 +5452,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <!-- A2A Agent Add Form -->
-        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
-          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
-            Add New A2A Agent
-          </h3>
-          <form method="POST" id="add-a2a-form">
-            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
-              <!-- Agent Name -->
-              <div>
-                <label
-                  for="a2a-agent-name"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Agent Name</label
-                >
-                <input
-                  type="text"
-                  id="a2a-agent-name"
-                  name="name"
-                  required
-                  placeholder="my-assistant-agent"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                />
-              </div>
-
-              <!-- Endpoint URL -->
-              <div>
-                <label
-                  for="a2a-agent-endpoint-url"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Endpoint URL</label
-                >
-                <input
-                  type="url"
-                  id="a2a-agent-endpoint-url"
-                  name="endpoint_url"
-                  required
-                  placeholder="https://api.example.com/agent"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                />
-              </div>
-
-              <!-- Agent Type -->
-              <div>
-                <label
-                  for="a2a-agent-type"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Agent Type</label
-                >
-                <select
-                  id="a2a-agent-type"
-                  name="agent_type"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-                >
-                  <option value="generic">Generic</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="custom">Custom</option>
-                </select>
-              </div>
-
-              <!-- Authentication Type -->
-              <div>
-                <label
-                  for="a2a-agent-auth-type"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Authentication Type</label
-                >
-                <select
-                  id="a2a-agent-auth-type"
-                  name="auth_type"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-                >
-                  <option value="">None</option>
-                  <option value="api_key">API Key</option>
-                  <option value="bearer">Bearer Token</option>
-                  <option value="oauth">OAuth</option>
-                </select>
-              </div>
-
-              <!-- Authentication Value -->
-              <div>
-                <label
-                  for="a2a-agent-auth-value"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Authentication Value</label
-                >
-                <input
-                  type="password"
-                  id="a2a-agent-auth-value"
-                  name="auth_value"
-                  placeholder="API key, token, etc."
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                />
-              </div>
-
-              <!-- Description -->
-              <div class="sm:col-span-2">
-                <label
-                  for="a2a-agent-description"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Description</label
-                >
-                <textarea
-                  id="a2a-agent-description"
-                  name="description"
-                  rows="2"
-                  placeholder="Description of the agent's capabilities"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                ></textarea>
-              </div>
-
-              <!-- Tags -->
-              <div>
-                <label
-                  for="a2a-agent-tags"
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Tags</label
-                >
-                <input
-                  type="text"
-                  id="a2a-agent-tags"
-                  name="tags"
-                  placeholder="ai,assistant,production (comma-separated)"
-                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                />
-              </div>
-
-              <!-- Visibility -->
-              <div class="sm:col-span-2">
-                <label
-                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
-                  >Visibility</label
-                >
-                <div class="flex gap-x-6 mt-2">
-                  <div class="flex items-center">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="public"
-                      id="a2a-visibility-public"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                      checked
-                    />
-                    <label
-                      for="a2a-visibility-public"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🌍 Public</label
-                    >
-                  </div>
-                  <div class="flex items-center">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="team"
-                      id="a2a-visibility-team"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                    />
-                    <label
-                      for="a2a-visibility-team"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >👥 Team</label
-                    >
-                  </div>
-                  <div class="flex items-center">
-                    <input
-                      type="radio"
-                      name="visibility"
-                      value="private"
-                      id="a2a-visibility-private"
-                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                    />
-                    <label
-                      for="a2a-visibility-private"
-                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
-                      >🔒 Private</label
-                    >
-                  </div>
-                </div>
-              </div>
-
-              <!-- Error Display -->
-              <span
-                id="a2aFormError"
-                class="sm:col-span-2 block text-sm font-semibold text-red-600 mt-2"
-              ></span>
-
-              <!-- Loading Indicator -->
-              <div
-                id="add-a2a-loading"
-                class="hidden sm:col-span-2 text-sm text-gray-500 mt-2"
-              >
-                Submitting...
-              </div>
-
-              <!-- Submit -->
-              <div class="sm:col-span-2 mt-6">
-                <button
-                  type="submit"
-                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                >
-                  Add A2A Agent
-                </button>
-              </div>
-            </div>
-          </form>
-        </div>
-
-        <!-- A2A Agents List -->
-        <div class="bg-white shadow rounded-lg dark:bg-gray-800">
-          <div class="p-6">
+                <!-- A2A Agents List -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="p-0">
             <h3
               class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4"
             >
@@ -5752,6 +5545,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     </button>
                     <!--- Adding a2a-agents EDIT HERE -->
                     <button
+                      onclick="editA2AAgent('{{ agent.id }}')"
                       class="px-3 py-1 text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                       x-tooltip="'Edit Agent A2A details and configuration'"
                     >
@@ -5807,6 +5601,593 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
           </div>
         </div>
+
+        <!-- A2A Agent Add Form -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
+            Add New A2A Agent
+          </h3>
+          <form method="POST" id="add-a2a-form">
+            <div class="grid grid-cols-1 gap-6 sm:grid-cols-2">
+              <!-- Agent Name -->
+              <div>
+                <label
+                  for="a2a-agent-name"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Agent Name</label
+                >
+                <input
+                  type="text"
+                  id="a2a-agent-name"
+                  name="name"
+                  required
+                  placeholder="my-assistant-agent"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Endpoint URL -->
+              <div>
+                <label
+                  for="a2a-agent-endpoint-url"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Endpoint URL</label
+                >
+                <input
+                  type="url"
+                  id="a2a-agent-endpoint-url"
+                  name="endpoint_url"
+                  required
+                  placeholder="https://api.example.com/agent"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Agent Type -->
+              <div>
+                <label
+                  for="a2a-agent-type"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Agent Type</label
+                >
+                <select
+                  id="a2a-agent-type"
+                  name="agent_type"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <option value="generic">Generic</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="anthropic">Anthropic</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </div>
+
+              <!-- Authentication Type -->
+              <div>
+                <label
+                  for="auth-type-a2a"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Authentication Type</label
+                >
+                <select
+                  id="auth-type-a2a"
+                  name="auth_type"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                >
+                  <option value="">None</option>
+                  <option value="basic">Basic</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="authheaders">Custom Headers</option>
+                  <option value="oauth">OAuth 2.0</option>
+                </select>
+              </div>
+
+              <div id="auth-basic-fields-a2a" style="display: none">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Username</label
+                  >
+                  <input
+                    type="text"
+                    name="auth_username"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Password</label
+                  >
+                  <input
+                    type="password"
+                    name="auth_password"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                </div>
+              </div>
+
+              <div id="auth-bearer-fields-a2a" style="display: none">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >Token</label
+                  >
+                  <input
+                    type="password"
+                    name="auth_token"
+                    class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                  />
+                </div>
+              </div>
+
+              <div id="auth-headers-fields-a2a" style="display: none">
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Custom Headers
+                    </label>
+                    <button
+                      type="button"
+                      onclick="addAuthHeader('auth-headers-container-a2a')"
+                      class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      <svg
+                        class="w-4 h-4 mr-1"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          d="M12 6v6m0 0v6m0-6h6m-6 0H6"
+                        ></path>
+                      </svg>
+                      Add Header
+                    </button>
+                  </div>
+                  <div id="auth-headers-container-a2a" class="space-y-2">
+                    <!-- Headers will be added dynamically here -->
+                  </div>
+                  <input
+                    type="hidden"
+                    name="auth_headers"
+                    id="auth-headers-json-a2a"
+                  />
+                </div>
+              </div>
+
+              <!-- OAuth Configuration Fields -->
+              <div id="auth-oauth-fields-a2a" style="display: none">
+                <div class="space-y-4">
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Grant Type
+                    </label>
+                    <select
+                      name="oauth_grant_type"
+                      id="oauth-grant-type-a2a"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                    >
+                      <option value="authorization_code" selected>
+                        Authorization Code (User Delegation)
+                      </option>
+                      <option value="client_credentials">
+                        Client Credentials (Machine-to-Machine)
+                      </option>
+                      <option value="password">
+                        Resource Owner Password Credentials (Keycloak/Legacy)
+                      </option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Issuer URL
+                    </label>
+                    <input
+                      type="url"
+                      name="oauth_issuer"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="http://localhost:3003 or https://oauth.example.com"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Client ID <span class="text-gray-500">(optional for DCR)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_client_id"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Leave empty for auto-registration via DCR"
+                    />
+                    <p class="mt-1 text-sm text-blue-600">
+                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Client Secret <span class="text-gray-500">(optional for DCR)</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="oauth_client_secret"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Leave empty for auto-registration via DCR"
+                    />
+                    <p class="mt-1 text-sm text-blue-600">
+                      💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                    </p>
+                  </div>
+
+                  <div id="oauth-username-field-a2a" style="display: none;">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Username <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_username"
+                      id="oauth-username-a2a"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="systemadmin@system.com"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Required for Resource Owner Password Credentials grant type (Keycloak).
+                    </p>
+                  </div>
+
+                  <div id="oauth-password-field-a2a" style="display: none;">
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Password <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                    </label>
+                    <input
+                      type="password"
+                      name="oauth_password"
+                      id="oauth-password-a2a"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="Enter password"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Required for Resource Owner Password Credentials grant type (Keycloak).
+                    </p>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Token URL
+                    </label>
+                    <input
+                      type="url"
+                      name="oauth_token_url"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="https://oauth.example.com/token"
+                    />
+                  </div>
+
+                  <div id="oauth-auth-code-fields-a2a">
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        Authorization URL
+                      </label>
+                      <input
+                        type="url"
+                        name="oauth_authorization_url"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="https://oauth.example.com/authorize"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        The OAuth provider's authorization endpoint URL
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        Redirect URI
+                      </label>
+                      <input
+                        type="url"
+                        name="oauth_redirect_uri"
+                        class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        placeholder="https://a2aagent.example.com/oauth/callback"
+                      />
+                      <p class="mt-1 text-sm text-gray-500">
+                        This must match the redirect URI configured in your
+                        OAuth application
+                      </p>
+                      <p class="mt-1 text-sm text-blue-600 font-medium">
+                        💡 Use:
+                        <code class="bg-blue-100 px-1 rounded"
+                          >{{ request.base_url }}oauth/callback</code
+                        >
+                      </p>
+                    </div>
+
+                    <div>
+                      <label
+                        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >
+                        Token Management
+                      </label>
+                      <div class="mt-2 space-y-2">
+                        <label class="flex items-center">
+                          <input
+                            type="checkbox"
+                            name="oauth_store_tokens"
+                            checked
+                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            Store access tokens for reuse
+                          </span>
+                        </label>
+                        <label class="flex items-center">
+                          <input
+                            type="checkbox"
+                            name="oauth_auto_refresh"
+                            checked
+                            class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                          <span
+                            class="ml-2 text-sm text-gray-700 dark:text-gray-300"
+                          >
+                            Automatically refresh expired tokens
+                          </span>
+                        </label>
+                      </div>
+                      <p class="mt-1 text-sm text-gray-500">
+                        Token management options for Authorization Code flow
+                      </p>
+                    </div>
+
+                    <div
+                      class="bg-blue-50 border border-blue-200 rounded-md p-4 dark:bg-blue-900/20 dark:border-blue-800"
+                    >
+                      <div class="flex">
+                        <div class="flex-shrink-0">
+                          <svg
+                            class="h-5 w-5 text-blue-400"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                          >
+                            <path
+                              fill-rule="evenodd"
+                              d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                              clip-rule="evenodd"
+                            />
+                          </svg>
+                        </div>
+                        <div class="ml-3">
+                          <h3
+                            class="text-sm font-medium text-blue-800 dark:text-blue-200"
+                          >
+                            Authorization Code Flow Setup
+                          </h3>
+                          <div
+                            class="mt-2 text-sm text-blue-700 dark:text-blue-300"
+                          >
+                            <p>After creating this gateway, you'll need to:</p>
+                            <ol class="list-decimal list-inside mt-1 space-y-1">
+                              <li>
+                                Click the "🔐 Authorize" button in the gateway
+                                list
+                              </li>
+                              <li>
+                                Complete the OAuth consent flow with your
+                                provider
+                              </li>
+                              <li>
+                                Return to the admin panel to see authorization
+                                status
+                              </li>
+                            </ol>
+                            <p class="mt-2 font-medium">
+                              Note: The Agent will be created but tools won't
+                              work until OAuth authorization is completed.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Scopes
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_scopes"
+                      class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="repo read:user (space-separated)"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      Space-separated list of OAuth scopes (e.g., "repo
+                      read:user")
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Authentication Value -->
+              <!-- Commenting the
+              <div>
+                <label
+                  for="a2a-agent-auth-value"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Authentication Value</label
+                >
+                <input
+                  type="password"
+                  id="a2a-agent-auth-value"
+                  name="auth_value"
+                  placeholder="API key, token, etc."
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+              -->
+              <!-- Description -->
+              <div class="sm:col-span-2">
+                <label
+                  for="a2a-agent-description"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Description</label
+                >
+                <textarea
+                  id="a2a-agent-description"
+                  name="description"
+                  rows="2"
+                  placeholder="Description of the agent's capabilities"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                ></textarea>
+              </div>
+
+              <!-- Tags -->
+              <div>
+                <label
+                  for="a2a-agent-tags"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Tags</label
+                >
+                <input
+                  type="text"
+                  id="a2a-agent-tags"
+                  name="tags"
+                  placeholder="ai,assistant,production (comma-separated)"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+              </div>
+
+              <!-- Visibility -->
+              <div class="sm:col-span-2">
+                <label
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  >Visibility</label
+                >
+                <div class="flex gap-x-6 mt-2">
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="public"
+                      id="a2a-visibility-public"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      checked
+                    />
+                    <label
+                      for="a2a-visibility-public"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🌍 Public</label
+                    >
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="team"
+                      id="a2a-visibility-team"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label
+                      for="a2a-visibility-team"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >👥 Team</label
+                    >
+                  </div>
+                  <div class="flex items-center">
+                    <input
+                      type="radio"
+                      name="visibility"
+                      value="private"
+                      id="a2a-visibility-private"
+                      class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                    />
+                    <label
+                      for="a2a-visibility-private"
+                      class="ml-2 text-sm text-gray-700 dark:text-gray-400"
+                      >🔒 Private</label
+                    >
+                  </div>
+                </div>
+              </div>
+
+              <div class="sm:col-span-2 max-w-5xl">
+                <label
+                  for="passthrough_headers"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Passthrough Headers
+                </label>
+                <input
+                  type="text"
+                  name="passthrough_headers"
+                  placeholder="Authorization, X-Tenant-Id, X-Trace-Id"
+                  class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                        focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                />
+                <small class="block mt-1 text-sm text-gray-500 dark:text-gray-400">
+                  List of headers to pass through from client requests (comma-separated, e.g.,
+                  "Authorization, X-Tenant-Id, X-Trace-Id").
+                </small>
+              </div>
+
+
+              <!-- Error Display -->
+              <span
+                id="a2aFormError"
+                class="sm:col-span-2 block text-sm font-semibold text-red-600 mt-2"
+              ></span>
+
+              <!-- Loading Indicator -->
+              <div
+                id="add-a2a-loading"
+                class="hidden sm:col-span-2 text-sm text-gray-500 mt-2"
+              >
+                Submitting...
+              </div>
+
+              <!-- Submit -->
+              <div class="sm:col-span-2 mt-6">
+                <button
+                  type="submit"
+                  class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  Add A2A Agent
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+
+
       </div>
       {% endif %}
 
@@ -7517,8 +7898,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <!-- Gateway Edit Modal -->
       <div
         id="gateway-edit-modal"
-        class="fixed z-10 inset-0 overflow-y-auto hidden"
-      >
+        class="fixed z-10 inset-0 overflow-y-auto hidden">
         <div
           class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
         >
@@ -7856,7 +8236,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           </p>
                         </div>
 
-                        <div id="oauth-username-field-edit" style="display: none;">
+                        <div id="oauth-username-field-gw-edit" style="display: none;">
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
@@ -7874,7 +8254,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           </p>
                         </div>
 
-                        <div id="oauth-password-field-edit" style="display: none;">
+                        <div id="oauth-password-field-gw-edit" style="display: none;">
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
@@ -8018,6 +8398,484 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
       </div>
+
+      <!-- A2A Agent Edit Modal -->
+       <div id="a2a-edit-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
+          <div class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+              <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            <div
+              class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+            >
+              <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                  Edit A2A Agent
+                </h3>
+                <div class="mt-4">
+                  <form id="edit-a2a-agent-form" method="POST">
+                    <div class="grid grid-cols-1 gap-6">
+                      <!-- Agent Name -->
+                      <div>
+                        <label for="a2a-agent-name-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Agent Name
+                        </label>
+                        <input
+                          type="text"
+                          id="a2a-agent-name-edit"
+                          name="name"
+                          required
+                          placeholder="my-assistant-agent"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+
+                      <!-- Endpoint URL -->
+                      <div>
+                        <label for="a2a-agent-endpoint-url-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Endpoint URL
+                        </label>
+                        <input
+                          type="url"
+                          id="a2a-agent-endpoint-url-edit"
+                          name="endpoint_url"
+                          required
+                          placeholder="https://api.example.com/agent"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+
+                      <!-- Agent Type -->
+                      <div>
+                        <label for="a2a-agent-type-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Agent Type
+                        </label>
+                        <select
+                          id="a2a-agent-type-edit"
+                          name="agent_type"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                        >
+                          <option value="generic">Generic</option>
+                          <option value="openai">OpenAI</option>
+                          <option value="anthropic">Anthropic</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                      </div>
+
+                      <!-- Authentication Type -->
+                      <div>
+                        <label for="auth-type-a2a-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Authentication Type
+                        </label>
+                        <select
+                          id="auth-type-a2a-edit"
+                          name="auth_type"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                        >
+                          <option value="">None</option>
+                          <option value="basic">Basic</option>
+                          <option value="bearer">Bearer Token</option>
+                          <option value="authheaders">Custom Headers</option>
+                          <option value="oauth">OAuth 2.0</option>
+                        </select>
+                      </div>
+
+                      <!-- Basic Auth -->
+                      <div id="auth-basic-fields-a2a-edit" style="display: none">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Username</label>
+                          <input
+                            type="text"
+                            name="auth_username"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                  focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                          />
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Password</label>
+                          <input
+                            type="password"
+                            name="auth_password"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                  focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                          />
+                        </div>
+                      </div>
+
+                      <!-- Bearer Token -->
+                      <div id="auth-bearer-fields-a2a-edit" style="display: none">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Token</label>
+                          <input
+                            type="password"
+                            name="auth_token"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                  focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                          />
+                        </div>
+                      </div>
+
+                      <!-- Custom Headers -->
+                      <div id="auth-headers-fields-a2a-edit" style="display: none">
+                        <div class="space-y-3">
+                          <div class="flex items-center justify-between">
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Headers</label>
+                            <button
+                              type="button"
+                              onclick="addAuthHeader('auth-headers-container-a2a-edit')"
+                              class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md
+                                    text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                              <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                              </svg>
+                              Add Header
+                            </button>
+                          </div>
+                          <div id="auth-headers-container-a2a-edit" class="space-y-2"></div>
+                          <input type="hidden" name="auth_headers" id="auth-headers-json-a2a-edit" />
+                        </div>
+                      </div>
+
+                      <!-- OAuth Fields -->
+                      <div id="auth-oauth-fields-a2a-edit" style="display: none">
+                        <div class="space-y-4">
+                          <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Grant Type
+                          </label>
+                          <select
+                            name="oauth_grant_type"
+                            id="oauth-grant-type-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                          >
+                            <option value="authorization_code" selected>
+                            Authorization Code (User Delegation)
+                            </option>
+                            <option value="client_credentials">
+                            Client Credentials (Machine-to-Machine)
+                            </option>
+                            <option value="password">
+                            Resource Owner Password Credentials (Keycloak/Legacy)
+                            </option>
+                          </select>
+                          </div>
+
+                          <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Issuer URL
+                          </label>
+                          <input
+                            type="url"
+                            name="oauth_issuer"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="http://localhost:3003 or https://oauth.example.com"
+                          />
+
+                          <!--
+                          <p class="mt-1 text-sm text-gray-500">
+                            The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
+                          </p>
+                          -->
+
+                          </div>
+
+                          <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Client ID <span class="text-gray-500">(optional for DCR)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_client_id"
+                            id="oauth-client-id-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Leave empty for auto-registration via DCR"
+                          />
+
+                          <!--
+                          <p class="mt-1 text-sm text-blue-600">
+                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                          </p>
+                          -->
+
+                          </div>
+
+                          <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Client Secret <span class="text-gray-500">(optional for DCR)</span>
+                          </label>
+                          <input
+                            type="password"
+                            name="oauth_client_secret"
+                            id="oauth-client-secret-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Leave empty for auto-registration via DCR"
+                          />
+
+                          <!--
+                          <p class="mt-1 text-sm text-blue-600">
+                            💡 Leave empty if the server supports DCR - credentials will be auto-registered
+                          </p>
+                          -->
+
+                          </div>
+
+                          <div id="oauth-username-field-a2a-edit" style="display: none;">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Username <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_username"
+                            id="oauth-username-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="systemadmin@system.com"
+                          />
+
+                          <!--
+                          <p class="mt-1 text-sm text-gray-500">
+                            Required for Resource Owner Password Credentials grant type (Keycloak).
+                          </p>
+                          -->
+
+                          </div>
+
+                          <div id="oauth-password-field-a2a-edit" style="display: none;">
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Password <span class="text-red-500">*</span> <span class="text-gray-500">(for password grant)</span>
+                          </label>
+                          <input
+                            type="password"
+                            name="oauth_password"
+                            id="oauth-password-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="Enter password"
+                          />
+
+                          <!--
+                          <p class="mt-1 text-sm text-gray-500">
+                            Required for Resource Owner Password Credentials grant type (Keycloak).
+                          </p>
+                          -->
+
+                          </div>
+
+                          <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
+                            Token URL
+                          </label>
+                          <input
+                            type="url"
+                            name="oauth_token_url"
+                            id="oauth-token-url-a2a-edit"
+                            class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="https://oauth.example.com/token"
+                          />
+                          </div>
+
+                          <div id="oauth-auth-code-fields-a2a-edit">
+                            <div>
+                              <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                              >
+                              Authorization URL
+                              </label>
+                              <input
+                              type="url"
+                              name="oauth_authorization_url"
+                              id="oauth-authorization-url-a2a-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="https://oauth.example.com/authorize"
+                              />
+                              <p class="mt-1 text-sm text-gray-500">
+                              The OAuth provider's authorization endpoint URL
+                              </p>
+                            </div>
+
+                            <div>
+                              <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                              >
+                              Redirect URI
+                              </label>
+                              <input
+                              type="url"
+                              name="oauth_redirect_uri"
+                              id="oauth-redirect-uri-a2a-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="https://a2aagent.example.com/oauth/callback"
+                              />
+                              <p class="mt-1 text-sm text-gray-500">
+                              This must match the redirect URI configured in your
+                              OAuth application
+                              </p>
+                              <p class="mt-1 text-sm text-blue-600 font-medium">
+                              💡 Use:
+                              <code class="bg-blue-100 px-1 rounded"
+                                >{{ request.base_url }}oauth/callback</code
+                              >
+                              </p>
+                            </div>
+                          </div>
+
+                          <div>
+                            <label
+                              class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                            >
+                              Scopes
+                            </label>
+                            <input
+                              type="text"
+                              name="oauth_scopes"
+                              id="oauth-scopes-a2a-edit"
+                              class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                              placeholder="repo read:user (space-separated)"
+                            />
+                            <p class="mt-1 text-sm text-gray-500">
+                              Space-separated list of OAuth scopes (e.g., "repo
+                              read:user")
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Description -->
+                      <div>
+                        <label for="a2a-agent-description-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Description
+                        </label>
+                        <textarea
+                          id="a2a-agent-description-edit"
+                          name="description"
+                          rows="2"
+                          placeholder="Description of the agent's capabilities"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        ></textarea>
+                      </div>
+
+                      <!-- Tags -->
+                      <div>
+                        <label for="a2a-agent-tags-edit" class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                          Tags
+                        </label>
+                        <input
+                          type="text"
+                          id="a2a-agent-tags-edit"
+                          name="tags"
+                          placeholder="ai,assistant,production (comma-separated)"
+                          class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
+                                focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+
+                      <!-- Visibility -->
+                      <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">Visibility</label>
+                        <div class="flex gap-x-6 mt-2">
+                          <label class="flex items-center">
+                            <input
+                              type="radio"
+                              name="visibility"
+                              value="public"
+                              id="a2a-visibility-public-edit"
+                              class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                              checked
+                            />
+                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🌍 Public</span>
+                          </label>
+                          <label class="flex items-center">
+                            <input
+                              type="radio"
+                              name="visibility"
+                              value="team"
+                              id="a2a-visibility-team-edit"
+                              class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            />
+                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">👥 Team</span>
+                          </label>
+                          <label class="flex items-center">
+                            <input
+                              type="radio"
+                              name="visibility"
+                              value="private"
+                              id="a2a-visibility-private-edit"
+                              class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                            />
+                            <span class="ml-2 text-sm text-gray-700 dark:text-gray-400">🔒 Private</span>
+                          </label>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label
+                          class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                          >Passthrough Headers</label
+                        >
+                        <small
+                          class="text-gray-500 dark:text-gray-400 block mb-2"
+                        >
+                          List of headers to pass through from client requests
+                          (comma-separated, e.g., "Authorization, X-Tenant-Id,
+                          X-Trace-Id"). Leave empty to use global defaults.
+                        </small>
+                        <input
+                          type="text"
+                          name="passthrough_headers"
+                          id="edit-a2a-agent-passthrough-headers"
+                          placeholder="Authorization, X-Tenant-Id, X-Trace-Id"
+                          class="mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                        />
+                      </div>
+
+                      <!-- Hidden Config Fields -->
+                      <input type="hidden" name="capabilities" id="a2a-agent-capabilities-edit" value="{}" />
+                      <input type="hidden" name="config" id="a2a-agent-config-edit" value="{}" />
+
+                      <!-- Footer Buttons -->
+                      <div class="mt-6 flex justify-end space-x-3">
+                        <button
+                          type="button"
+                          onclick="closeModal('a2a-edit-modal')"
+                          class="px-4 py-2 border rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 dark:text-gray-300"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          class="px-4 py-2 rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                        >
+                          Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </div>
+       </div>
+
+
 
       <!-- Server Detail Modal -->
       <div id="server-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
