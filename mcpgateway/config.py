@@ -1418,6 +1418,12 @@ Disallow: /
         summary = self.model_dump(exclude={"database_url", "memcached_url"})
         logger.info(f"Application settings summary: {summary}")
 
+    ENABLE_METRICS: bool = Field(True, description="Enable Prometheus metrics instrumentation")
+    METRICS_EXCLUDED_HANDLERS: str = Field("", description="Comma-separated regex patterns for paths to exclude from metrics")
+    METRICS_NAMESPACE: str = Field("default", description="Prometheus metrics namespace")
+    METRICS_SUBSYSTEM: str = Field("", description="Prometheus metrics subsystem")
+    METRICS_CUSTOM_LABELS: str = Field("", description='Comma-separated "key=value" pairs for static custom labels')
+
 
 @lru_cache()
 def get_settings() -> Settings:

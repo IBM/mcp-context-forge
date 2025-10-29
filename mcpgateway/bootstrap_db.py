@@ -35,10 +35,9 @@ from importlib.resources import files
 from typing import Any, cast
 
 # Third-Party
-from sqlalchemy import create_engine, inspect
-
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
