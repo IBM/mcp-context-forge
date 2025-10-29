@@ -6384,6 +6384,12 @@ async function testTool(toolId) {
     }
 }
 
+async function enrichTool(toolId) {
+    
+        console.log(`Enriching tool ID: ${toolId}`);
+    
+}
+
 async function validateTool(toolId) {
     try {
         console.log(`Validating tool ID: ${toolId}`);
