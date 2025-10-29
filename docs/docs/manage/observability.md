@@ -52,21 +52,21 @@ appears in OpenAPI / Swagger) and gzip compression is enabled by default
 
 1. Ensure `ENABLE_METRICS=true` in your shell or `.env`.
 
-	 ```bash
-	 export ENABLE_METRICS=true
-	 export METRICS_CUSTOM_LABELS="env=local,team=dev"
-	 export METRICS_EXCLUDED_HANDLERS="/servers/.*/sse,/static/.*"
-	 ```
+     ```bash
+     export ENABLE_METRICS=true
+     export METRICS_CUSTOM_LABELS="env=local,team=dev"
+     export METRICS_EXCLUDED_HANDLERS="/servers/.*/sse,/static/.*"
+     ```
 
 2. Start the gateway (development). By default the app listens on port 4444. The Prometheus endpoint will be:
 
-	 http://localhost:4444/metrics/prometheus
+     http://localhost:4444/metrics/prometheus
 
 3. Quick check (get the first lines of exposition text):
 
-	 ```bash
-	 curl -sS http://localhost:4444/metrics/prometheus | head -n 20
-	 ```
+     ```bash
+     curl -sS http://localhost:4444/metrics/prometheus | head -n 20
+     ```
 
 4. If metrics are disabled, the endpoint returns a small JSON 503 response.
 
@@ -76,10 +76,10 @@ Add the job below to your `prometheus.yml` for local testing:
 
 ```yaml
 scrape_configs:
-	- job_name: 'mcp-gateway'
-		metrics_path: /metrics/prometheus
-		static_configs:
-			- targets: ['localhost:4444']
+    - job_name: 'mcp-gateway'
+        metrics_path: /metrics/prometheus
+        static_configs:
+            - targets: ['localhost:4444']
 ```
 
 If Prometheus runs in Docker, adjust the target host accordingly (host networking
@@ -89,32 +89,32 @@ deploying Prometheus in Kubernetes.
 ### Grafana and dashboards
 
 - Use Grafana to import dashboards for Kubernetes, PostgreSQL and Redis (IDs
-	suggested elsewhere in the repo). For MCP Gateway app metrics, create panels
-	for:
-	- Request rate: `rate(http_requests_total[1m])`
-	- Error rate: `rate(http_requests_total{status=~"5.."}[5m])`
-	- P99 latency: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
+    suggested elsewhere in the repo). For MCP Gateway app metrics, create panels
+    for:
+    - Request rate: `rate(http_requests_total[1m])`
+    - Error rate: `rate(http_requests_total{status=~"5.."}[5m])`
+    - P99 latency: `histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))`
 
 ### Common pitfalls — short guidance
 
 - High-cardinality labels
-	- Never add per-request identifiers (user IDs, full URIs, request IDs) as
-		Prometheus labels. They explode the number of time series and can crash
-		Prometheus memory.
-	- Use `METRICS_CUSTOM_LABELS` only for low-cardinality labels (env, region).
+    - Never add per-request identifiers (user IDs, full URIs, request IDs) as
+        Prometheus labels. They explode the number of time series and can crash
+        Prometheus memory.
+    - Use `METRICS_CUSTOM_LABELS` only for low-cardinality labels (env, region).
 
 - Compression (gzip) vs CPU
-	- The metrics exposer in `mcpgateway.services.metrics` enables gzip by
-		default for the `/metrics/prometheus` endpoint. Compressing the payload
-		reduces network usage but increases CPU on scrape time. On CPU-constrained
-		nodes consider increasing scrape interval (e.g. 15s→30s) or disabling gzip
-		at the instrumentor layer.
+    - The metrics exposer in `mcpgateway.services.metrics` enables gzip by
+        default for the `/metrics/prometheus` endpoint. Compressing the payload
+        reduces network usage but increases CPU on scrape time. On CPU-constrained
+        nodes consider increasing scrape interval (e.g. 15s→30s) or disabling gzip
+        at the instrumentor layer.
 
 - Duplicate collectors during reloads/tests
-	- Instrumentation registers collectors on the global Prometheus registry.
-		When reloading the app in the same process (tests, interactive sessions)
-		you may see "collector already registered"; restart the process or clear
-		the registry in test fixtures.
+    - Instrumentation registers collectors on the global Prometheus registry.
+        When reloading the app in the same process (tests, interactive sessions)
+        you may see "collector already registered"; restart the process or clear
+        the registry in test fixtures.
 
 ### Quick checklist
 
@@ -127,9 +127,9 @@ deploying Prometheus in Kubernetes.
 ## Where to look in the code
 
 - `mcpgateway/main.py` — wiring: imports and calls `setup_metrics(app)` from
-	`mcpgateway.services.metrics`. The function call instruments the app at
-	startup; the actual HTTP handler for `/metrics/prometheus` is registered by
-	the `Instrumentator` inside `mcpgateway/services/metrics.py`.
+    `mcpgateway.services.metrics`. The function call instruments the app at
+    startup; the actual HTTP handler for `/metrics/prometheus` is registered by
+    the `Instrumentator` inside `mcpgateway/services/metrics.py`.
 - `mcpgateway/services/metrics.py` — instrumentation implementation and env-vars.
 - `mcpgateway/config.py` — settings defaults and names used by the app.
 

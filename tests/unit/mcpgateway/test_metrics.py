@@ -14,7 +14,7 @@ Tests:
 - test_metrics_endpoint: Verifies that the /metrics endpoint returns Prometheus format data
 - test_metrics_contains_standard_metrics: Verifies key metric families exist
 - test_metrics_counters_increment: Ensures counters increase after requests
-- test_metrics_excluded_paths: Ensures excluded paths don’t appear in metrics
+- test_metrics_excluded_paths: Ensures excluded paths don't appear in metrics
 - test_metrics_disabled: Ensures disabling metrics hides the endpoint
 """
 
@@ -29,26 +29,26 @@ from fastapi.testclient import TestClient
 def client(monkeypatch):
     """Provides a FastAPI TestClient with metrics enabled."""
     monkeypatch.setenv("ENABLE_METRICS", "true")
-    
+
     # Clear the prometheus registry to avoid duplicates
     from prometheus_client import REGISTRY
     REGISTRY._collector_to_names.clear()
     REGISTRY._names_to_collectors.clear()
-    
+
     # Create a fresh app instance with metrics enabled
     from fastapi import FastAPI
     from mcpgateway.services.metrics import setup_metrics
-    
+
     app = FastAPI()
     setup_metrics(app)
-    
+
     return TestClient(app)
 
 
 def test_metrics_endpoint(client):
     """✅ /metrics endpoint returns Prometheus format data."""
     response = client.get("/metrics/prometheus")
-    
+
     assert response.status_code == 200, f"Expected HTTP 200 OK, got {response.status_code}"
     assert "text/plain" in response.headers["content-type"]
     assert len(response.text) > 0, "Metrics response should not be empty"
@@ -72,7 +72,7 @@ def test_metrics_counters_increment(client):
 
     # Trigger another request
     client.get("/health")
-    
+
     # Second scrape
     resp2 = client.get("/metrics/prometheus")
     after_lines = len(resp2.text.splitlines())
@@ -94,13 +94,13 @@ def test_metrics_excluded_paths(monkeypatch):
     # Create fresh app with exclusions
     from fastapi import FastAPI
     from mcpgateway.services.metrics import setup_metrics
-    
+
     app = FastAPI()
-    
+
     @app.get("/health")
     async def health():
         return {"status": "ok"}
-    
+
     setup_metrics(app)
     client = TestClient(app)
 
