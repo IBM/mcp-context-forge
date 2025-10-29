@@ -29,6 +29,7 @@ import uuid
 # Third-Party
 import httpx
 import jq
+import jsonschema
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -414,6 +415,125 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
+
+    def _attach_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> None:
+        """
+        If the tool declares an output_schema, attempt to populate the
+        ToolResult.structuredContent field with a parsed JSON-like object.
+
+        - candidate can be an already extracted Python object (dict/list).
+        - if candidate is None, the method will try to parse the first
+          textual content item as JSON.
+        The textual `content` is left intact (serialized JSON string) so
+        clients that expect the string form keep working.
+        """
+        # Only attempt when tool defines an output schema
+        try:
+            output_schema = getattr(tool, "output_schema", None)
+            if not output_schema:
+                return
+
+            structured = None
+            # Prefer an explicit candidate if provided
+            if candidate is not None:
+                structured = candidate
+            else:
+                # Try to parse first TextContent text payload
+                for c in getattr(tool_result, "content", []) or []:
+                    if getattr(c, "type", None) == "text" and getattr(c, "text", None):
+                        try:
+                            parsed = json.loads(c.text)
+                            structured = parsed
+                            break
+                        except Exception:
+                            # Not JSON — skip
+                            continue
+
+            # If we still don't have structured data, nothing to attach
+            if structured is None:
+                return
+
+            # If the tool declares an output_schema, try to coerce/unwrap common
+            # wrapper shapes so structuredContent better matches the schema.
+            output_schema = getattr(tool, "output_schema", None)
+            schema_type = None
+            try:
+                if isinstance(output_schema, dict):
+                    schema_type = output_schema.get("type")
+            except Exception:
+                schema_type = None
+
+            # Common case: structured is a list containing a single TextContent-like
+            # dict whose 'text' is the real JSON object we want -> unwrap and parse.
+            if isinstance(structured, list) and len(structured) > 0:
+                # If schema expects an object, try to find an inner object
+                if schema_type == "object":
+                    # 1) If list has single dict element that itself is the desired object
+                    if len(structured) == 1 and isinstance(structured[0], dict) and not ("type" in structured[0] and "text" in structured[0]):
+                        structured = structured[0]
+                    else:
+                        # 2) Search for TextContent-like wrappers and parse their text
+                        for item in structured:
+                            if isinstance(item, dict) and item.get("type") == "text" and isinstance(item.get("text"), str):
+                                try:
+                                    parsed = json.loads(item["text"])
+                                    if isinstance(parsed, dict):
+                                        structured = parsed
+                                        break
+                                except Exception:
+                                    continue
+                        # 3) If still a single-element list with a dict, pick that dict
+                        if isinstance(structured, list) and len(structured) == 1 and isinstance(structured[0], dict):
+                            structured = structured[0]
+
+            # Attach the final structured value (can be dict or list)
+            try:
+                setattr(tool_result, "structuredContent", structured)
+            except Exception:
+                logger.debug("Failed to set structuredContent on ToolResult")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"Error extracting structuredContent: {exc}")
+
+    def _validate_structured_content(self, tool: DbTool, tool_result: "ToolResult") -> bool:
+        """
+        Validate tool_result.structuredContent against the tool.output_schema using jsonschema.
+
+        If validation fails, mutate tool_result to indicate an error and return False.
+        Returns True when validation passes or when no output_schema is set.
+        """
+        try:
+            output_schema = getattr(tool, "output_schema", None)
+            if not output_schema:
+                return True
+
+            structured = getattr(tool_result, "structuredContent", None)
+            # If there's no structured content to validate, treat as valid here
+            if structured is None:
+                return True
+
+            # Perform validation
+            jsonschema.validate(instance=structured, schema=output_schema)
+            return True
+        except jsonschema.exceptions.ValidationError as e:
+            # Build a concise error summary for clients
+            details = {
+                "code": getattr(e, "validator", "validation_error"),
+                "expected": e.schema.get("type") if isinstance(e.schema, dict) and "type" in e.schema else None,
+                "received": type(e.instance).__name__.lower() if e.instance is not None else None,
+                "path": list(e.absolute_path) if hasattr(e, "absolute_path") else list(e.path or []),
+                "message": e.message,
+            }
+            # Replace content with an error payload, keep structuredContent for debugging/clients
+            try:
+                tool_result.content = [TextContent(type="text", text=json.dumps(details))]
+            except Exception:
+                tool_result.content = [TextContent(type="text", text=str(details))]
+            tool_result.is_error = True
+            logger.debug(f"structuredContent validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+            return False
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"Error validating structuredContent: {exc}")
+            return False
 
     async def register_tool(
         self,
@@ -1087,9 +1207,20 @@ class ToolService:
 
                     # Handle 204 No Content responses that have no body
                     if response.status_code == 204:
+                        #need add structured_content in ToolResult to avoid downstream errors
                         tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
-                        # Mark as successful only after all operations complete successfully
-                        success = True
+                        # If the tool declares an output_schema, include an empty structuredContent
+                        if getattr(tool, "output_schema", None):
+                            self._attach_structured_content(tool, tool_result, candidate={})
+                            # Validate and, on success, replace the unstructured text with canonical serialized structuredContent
+                            valid = self._validate_structured_content(tool, tool_result)
+                            if valid and getattr(tool_result, "structuredContent", None) is not None:
+                                # Remove the unstructured textual content when structuredContent is valid
+                                tool_result.content = []
+                            success = bool(valid)
+                        else:
+                            # No schema declared -> success
+                            success = True
                     elif response.status_code not in [200, 201, 202, 206]:
                         result = response.json()
                         tool_result = ToolResult(
@@ -1100,9 +1231,26 @@ class ToolService:
                     else:
                         result = response.json()
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
+                        # Keep textual content (serialized JSON) for backward compatibility while
+                        # also exposing structuredContent when an output schema is declared.
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-                        # Mark as successful only after all operations complete successfully
-                        success = True
+                        if getattr(tool, "output_schema", None):
+                            # Attach parsed structured content for clients that expect it
+                            self._attach_structured_content(tool, tool_result, candidate=filtered_response)
+                            # Validate structured content against the declared schema. If validation fails
+                            # _validate_structured_content will convert the tool_result into an error payload.
+                            valid = self._validate_structured_content(tool, tool_result)
+                            if valid:
+                                # Replace unstructured text with canonical serialized structured content
+                                if getattr(tool_result, "structuredContent", None) is not None:
+                                    # Remove textual content in favor of structuredContent
+                                    tool_result.content = []
+                                success = True
+                            else:
+                                success = False
+                        else:
+                            # No schema declared -> success
+                            success = True
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1208,11 +1356,20 @@ class ToolService:
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
                     content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
+                    # Extract a structured result using jsonpath/jq and present both textual
+                    # and structured content to callers when appropriate.
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=filtered_response)
-                    # Mark as successful only after all operations complete successfully
-                    success = True
+                    # Normalize to textual content while preserving structured object
+                    tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                    if getattr(tool, "output_schema", None):
+                        self._attach_structured_content(tool, tool_result, candidate=filtered_response)
+                        valid = self._validate_structured_content(tool, tool_result)
+                        if not valid:
+                            success = False
+                        else:
+                            success = True
+                    else:
+                        success = True
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
@@ -1233,6 +1390,20 @@ class ToolService:
                         else:
                             # If result is not in expected format, convert it to text content
                             tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
+
+                # After plugins may have modified the result, ensure we still remove
+                # the textual `content` when structuredContent is present and valid.
+                try:
+                    if getattr(tool, "output_schema", None) and getattr(tool_result, "structuredContent", None) is not None:
+                        valid = self._validate_structured_content(tool, tool_result)
+                        if valid:
+                            tool_result.content = []
+                        else:
+                            # validation failed: leave tool_result as-is (it will be an error payload)
+                            pass
+                except Exception:
+                    # non-fatal: keep current tool_result
+                    logger.debug("Failed to re-check structuredContent after post-invoke plugins")
 
                 return tool_result
             except (PluginError, PluginViolationError):
@@ -1757,6 +1928,27 @@ class ToolService:
             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
             result = ToolResult(content=content, is_error=True)
 
+        # If the tool declares an output schema, try to attach structured content
+        try:
+            if getattr(tool, "output_schema", None):
+                # Prefer the raw response_data when available as the structured candidate
+                candidate = response_data if isinstance(response_data, (dict, list)) else None
+                self._attach_structured_content(tool, result, candidate=candidate)
+                # Validate and convert to an error result if validation fails
+                try:
+                    valid = self._validate_structured_content(tool, result)
+                    if valid:
+                        # Replace unstructured text with canonical serialized structured content
+                        if getattr(result, "structuredContent", None) is not None:
+                            # Remove textual content when structuredContent is valid
+                            result.content = []
+                    else:
+                        result.is_error = True
+                except Exception:
+                    logger.debug("Validation check failed for A2A result")
+        except Exception:
+            # Non-fatal: keep textual content and proceed
+            logger.debug("Failed to attach structuredContent for A2A result")
         # Note: Metrics are recorded by the calling invoke_tool method, not here
         return result
 
