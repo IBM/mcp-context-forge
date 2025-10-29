@@ -256,3 +256,6 @@ tmp/
 plugins_rust/target/
 plugins_rust/**/*.rs.bk
 plugins_rust/Cargo.lock
+.env.example
+nohup.out
+mcpgateway/toolops/mcp-server-setup/toolops_fastmcp_server.py

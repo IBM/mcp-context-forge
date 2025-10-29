@@ -1,0 +1,492 @@
+{
+    "openapi": "3.0.3",
+    "info": {
+        "title": "FreshService",
+        "description": "",
+        "version": "1.0.0",
+        "x-ibm-annotations": "1.0.0",
+        "x-ibm-application-name": "FreshService",
+        "x-ibm-application-id": "freshservice-32ebbd73",
+        "x-ibm-disable-default-server-url": "true",
+        "x-ibm-tags": {
+            "categories": [
+                "Business operations"
+            ]
+        },
+        "x-ibm-application-icon": "\n<svg id=\"Layer_1\" data-name=\"Layer 1\" xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 1080 1080\">\n  <defs>\n    <style>\n      .cls-1 {\n        fill: #59f2f6;\n      }\n\n      .cls-1, .cls-2, .cls-3, .cls-4, .cls-5, .cls-6, .cls-7, .cls-8, .cls-9, .cls-10, .cls-11, .cls-12, .cls-13, .cls-14, .cls-15, .cls-16 {\n        stroke-width: 0px;\n      }\n\n      .cls-2 {\n        fill: #9b65c3;\n      }\n\n      .cls-3 {\n        fill: #45a4ec;\n      }\n\n      .cls-4 {\n        fill: #25c16f;\n      }\n\n      .cls-5 {\n        fill: #19bb7d;\n      }\n\n      .cls-6 {\n        fill: #08c7fb;\n      }\n\n      .cls-7 {\n        fill: #d33c4e;\n      }\n\n      .cls-8 {\n        fill: #bf63c6;\n      }\n\n      .cls-9 {\n        fill: #da3757;\n      }\n\n      .cls-10 {\n        fill: #be63c5;\n      }\n\n      .cls-11 {\n        fill: #8bdf55;\n      }\n\n      .cls-12 {\n        fill: #3278b2;\n      }\n\n      .cls-13 {\n        fill: #3278b1;\n      }\n\n      .cls-14 {\n        fill: #ffa800;\n      }\n\n      .cls-15 {\n        fill: #fb0;\n      }\n\n      .cls-16 {\n        fill: #ee5a24;\n      }\n    </style>\n  </defs>\n  <path class=\"cls-2\" d=\"m11.07,618.73c16.82,116.18,71.85,218.61,151.34,298.1l181.92-181.92c0-184.97,96.31-363.83,267.52-461.67L11.07,618.73Z\"/>\n  <path class=\"cls-2\" d=\"m344.32,734.91c-90.19,0-183.45-22.93-267.52-71.85h0c-22.93-13.76-45.86-29.05-65.73-44.33,16.82,116.18,71.85,218.61,151.34,298.1l181.92-181.92h0Z\"/>\n  <path class=\"cls-10\" d=\"m344.32,734.91h0l-181.92,181.92c79.49,79.49,183.45,133,299.63,149.81l347.02-599.26c-99.37,171.22-279.75,267.52-464.73,267.52Z\"/>\n  <path class=\"cls-8\" d=\"m416.17,1002.44c-48.92-84.08-71.85-175.8-71.85-267.52l-181.92,181.92c79.49,79.49,183.45,133,299.63,149.81-16.82-19.87-32.1-41.28-45.86-64.21h0Z\"/>\n  <path class=\"cls-13\" d=\"m1024.6,34.76l-412.75,238.48c-171.22,99.37-374.53,91.72-535.05,0C32.47,351.2,4.95,441.4,4.95,539.24h0c0,27.52,1.53,53.5,6.11,79.49,19.87,16.82,42.8,30.57,65.73,44.33h0c84.08,48.92,177.33,71.85,267.52,71.85h0L1036.83,43.93c-4.59-3.06-7.64-6.11-12.23-9.17Z\"/>\n  <path class=\"cls-12\" d=\"m76.8,663.06c84.08,48.92,177.33,71.85,267.52,71.85,0-184.97,96.31-363.83,267.52-461.67L11.07,618.73c21.4,15.29,42.8,30.57,65.73,44.33h0Z\"/>\n  <path class=\"cls-3\" d=\"m76.8,271.71C32.47,351.2,4.95,441.4,4.95,539.24h0c0,27.52,1.53,53.5,6.11,79.49l600.78-345.49c-171.22,97.84-374.53,91.72-535.05-1.53Z\"/>\n  <path class=\"cls-5\" d=\"m1036.83,43.93c-4.59-3.06-7.64-6.11-12.23-9.17-4.59-4.59-10.7-7.64-16.82-10.7-19.87-10.7-42.8-18.34-67.26-18.34h-400.52c-198.73,0-371.48,107.01-463.2,267.52,160.51,91.72,363.83,99.37,535.05,0-171.22,97.84-266,276.7-267.52,461.67h0c184.97,0,363.83-96.31,463.2-267.52l238.48-412.75c-3.06-3.06-6.11-6.11-9.17-10.7Z\"/>\n  <path class=\"cls-6\" d=\"m611.85,271.71l412.75-236.95c-4.59-4.59-10.7-7.64-16.82-10.7L76.8,271.71c160.51,93.25,363.83,99.37,535.05,0Z\"/>\n  <path class=\"cls-1\" d=\"m942.05,5.71h-402.05c-198.73,0-371.48,107.01-463.2,267.52L1009.31,22.53c-19.87-10.7-42.8-16.82-67.26-16.82Z\"/>\n  <path class=\"cls-9\" d=\"m807.52,467.39l238.48-412.75c-3.06-4.59-6.11-7.64-10.7-10.7L344.32,734.91h0c0,90.19,22.93,183.45,71.85,267.52h0c13.76,22.93,29.05,45.86,44.33,65.73,25.99,4.59,51.98,6.11,79.49,6.11h0c97.84,0,189.56-25.99,267.52-71.85-91.72-160.52-97.84-363.83,0-535.05Z\"/>\n  <path class=\"cls-7\" d=\"m344.32,734.91h0c0,90.19,22.93,183.45,71.85,267.52h0c13.76,22.93,29.05,45.86,44.33,65.73l347.02-599.26c-97.84,169.69-278.23,266-463.2,266Z\"/>\n  <path class=\"cls-16\" d=\"m807.52,467.39l-345.49,599.26c25.99,4.59,51.98,6.11,79.49,6.11h0c97.84,0,189.56-25.99,267.52-71.85-93.25-158.99-99.37-362.31-1.53-533.52Z\"/>\n  <path class=\"cls-11\" d=\"m1058.23,71.45c-3.06-6.11-7.64-10.7-10.7-16.82-3.06-4.59-6.11-7.64-10.7-10.7-4.59-3.06-7.64-6.11-12.23-9.17l-412.75,238.48c-171.22,97.84-266,276.7-267.52,461.67h0c184.97,0,363.83-96.31,463.2-267.52-99.37,171.22-91.72,374.53,0,533.52,160.51-91.72,267.52-264.47,267.52-461.67V138.71c0-24.46-6.11-47.39-16.82-67.26Z\"/>\n  <path class=\"cls-4\" d=\"m1024.6,34.76l-412.75,238.48c-171.22,97.84-266,276.7-267.52,461.67h0L1036.83,43.93c-4.59-3.06-7.64-6.11-12.23-9.17Z\"/>\n  <path class=\"cls-11\" d=\"m344.32,734.91c184.97,0,363.83-96.31,463.2-267.52l238.48-412.75c-3.06-4.59-6.11-7.64-10.7-10.7L344.32,734.91Z\"/>\n  <path class=\"cls-15\" d=\"m1046,56.16l-238.48,412.75c-99.37,171.22-91.72,374.53,0,533.52l250.71-930.99c-3.06-4.59-7.64-10.7-12.23-15.29Z\"/>\n  <path class=\"cls-14\" d=\"m807.52,1000.91c160.51-91.72,267.52-264.47,267.52-461.67V138.71c0-24.46-6.11-47.39-18.34-67.26l-249.18,929.46Z\"/>\n</svg>",
+        "x-ibm-created-date": "2023-12-22T07:56:38.117Z",
+        "contact": {
+            "name": "Testing"
+        },
+        "x-ibm-skill-type": "external",
+        "x-ibm-skill-subtype": "public"
+    },
+    "servers": [
+        {
+            "url": "https://example.freshservice.com"
+        }
+    ],
+    "tags": [
+        {
+            "name": "ticket"
+        }
+    ],
+    "paths": {
+        "/api/v2/tickets": {
+            "post": {
+                "summary": "Create a ticket",
+                "description": "in Freshservice",
+                "operationId": "postApiV2Tickets",
+                "parameters": [],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "email": {
+                                        "type": "string",
+                                        "title": "Requester",
+                                        "x-ibm-order": 1,
+                                        "x-ibm-multiline": "false",
+                                        "x-ibm-ui-extension": {
+                                            "component": "dropdown",
+                                            "actions": [
+                                                {
+                                                    "skill_id": "FreshService__1.0.0__getApiV2Requesters",
+                                                    "mappings": {
+                                                        "labels": "requesters.items.properties.primary_email",
+                                                        "values": "requesters.items.properties.primary_email"
+                                                    },
+                                                    "type": "data",
+                                                    "params": {}
+                                                }
+                                            ]
+                                        }
+                                    },
+                                    "subject": {
+                                        "type": "string",
+                                        "title": "Subject",
+                                        "x-ibm-order": 2,
+                                        "x-ibm-multiline": "false"
+                                    },
+                                    "source": {
+                                        "type": "number",
+                                        "title": "Source",
+                                        "description": "Possible values : 1 - Email, 2 - Portal, 3 - Phone, 4 - Chat",
+                                        "minimum": 1,
+                                        "maximum": 4,
+                                        "x-ibm-order": 3,
+                                        "x-ibm-multiline": "false"
+                                    },
+                                    "status": {
+                                        "type": "number",
+                                        "title": "Status",
+                                        "default": 2,
+                                        "x-ibm-show": false,
+                                        "description": "Possible values: 2- Open,3- Pending,4 - Resolved , 5 - Closed ",
+                                        "minimum": 2,
+                                        "maximum": 5,
+                                        "x-ibm-order": 4,
+                                        "x-ibm-multiline": "false"
+                                    },
+                                    "priority": {
+                                        "type": "number",
+                                        "title": "Priority",
+                                        "description": "Possible value : 1 - Low,2 - Medium,3 - High,4 - Urgent",
+                                        "minimum": 1,
+                                        "maximum": 4,
+                                        "x-ibm-order": 5,
+                                        "x-ibm-multiline": "false"
+                                    },
+                                    "description": {
+                                        "type": "string",
+                                        "title": "Description",
+                                        "x-ibm-order": 6,
+                                        "x-ibm-multiline": "true"
+                                    }
+                                },
+                                "required": [
+                                    "email",
+                                    "subject",
+                                    "status",
+                                    "priority",
+                                    "description"
+                                ]
+                            }
+                        }
+                    }
+                },
+                "x-ibm-important": [
+                    "email",
+                    "subject",
+                    "source",
+                    "status",
+                    "priority",
+                    "description"
+                ],
+                "x-ibm-order": [],
+                "responses": {
+                    "201": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "ticket": {
+                                            "type": "object",
+                                            "properties": {
+                                                "cc_emails": {
+                                                    "type": "array",
+                                                    "items": {},
+                                                    "title": "Cc emails",
+                                                    "x-ibm-show": false
+                                                },
+                                                "fwd_emails": {
+                                                    "type": "array",
+                                                    "items": {},
+                                                    "title": "Fwd emails",
+                                                    "x-ibm-show": false
+                                                },
+                                                "reply_cc_emails": {
+                                                    "type": "array",
+                                                    "items": {},
+                                                    "title": "Reply cc emails",
+                                                    "x-ibm-show": false
+                                                },
+                                                "fr_escalated": {
+                                                    "type": "boolean",
+                                                    "title": "Fr escalated",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 1
+                                                },
+                                                "spam": {
+                                                    "type": "boolean",
+                                                    "title": "Spam",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 2
+                                                },
+                                                "email_config_id": {
+                                                    "type": "string",
+                                                    "title": "Email config id",
+                                                    "x-ibm-show": false,
+                                                    "nullable": true,
+                                                    "x-ibm-order": 3
+                                                },
+                                                "group_id": {
+                                                    "type": "string",
+                                                    "title": "Group id",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 4
+                                                },
+                                                "priority": {
+                                                    "type": "number",
+                                                    "title": "Priority",
+                                                    "x-ibm-order": 5
+                                                },
+                                                "requester_id": {
+                                                    "type": "number",
+                                                    "title": "Requester id",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 6
+                                                },
+                                                "requested_for_id": {
+                                                    "type": "number",
+                                                    "title": "Requested for id",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 7
+                                                },
+                                                "responder_id": {
+                                                    "type": "string",
+                                                    "title": "Responder id",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 8
+                                                },
+                                                "source": {
+                                                    "type": "number",
+                                                    "title": "Source",
+                                                    "x-ibm-order": 9
+                                                },
+                                                "status": {
+                                                    "type": "number",
+                                                    "title": "Status",
+                                                    "x-ibm-order": 10
+                                                },
+                                                "subject": {
+                                                    "type": "string",
+                                                    "title": "Subject",
+                                                    "x-ibm-order": 11
+                                                },
+                                                "to_emails": {
+                                                    "type": "string",
+                                                    "title": "To emails",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 12
+                                                },
+                                                "department_id": {
+                                                    "type": "string",
+                                                    "title": "Department id",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 13
+                                                },
+                                                "id": {
+                                                    "type": "number",
+                                                    "title": "Id",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 14
+                                                },
+                                                "type": {
+                                                    "type": "string",
+                                                    "title": "Type"
+                                                },
+                                                "due_by": {
+                                                    "type": "string",
+                                                    "title": "Resolution due",
+                                                    "x-ibm-order": 15
+                                                },
+                                                "fr_due_by": {
+                                                    "type": "string",
+                                                    "title": "First response due",
+                                                    "x-ibm-order": 16
+                                                },
+                                                "is_escalated": {
+                                                    "type": "boolean",
+                                                    "title": "Is escalated",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 17
+                                                },
+                                                "description": {
+                                                    "type": "string",
+                                                    "title": "Description",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 18
+                                                },
+                                                "description_text": {
+                                                    "type": "string",
+                                                    "title": "Description",
+                                                    "x-ibm-order": 19
+                                                },
+                                                "category": {
+                                                    "type": "string",
+                                                    "title": "Category",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 20
+                                                },
+                                                "sub_category": {
+                                                    "type": "string",
+                                                    "title": "Sub category",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 21
+                                                },
+                                                "item_category": {
+                                                    "type": "string",
+                                                    "title": "Item category",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 22
+                                                },
+                                                "custom_fields": {
+                                                    "type": "object",
+                                                    "properties": {
+                                                        "major_incident_type": {
+                                                            "type": "string",
+                                                            "title": "Major incident type",
+                                                            "nullable": true,
+                                                            "x-ibm-show": false,
+                                                            "x-ibm-order": 23
+                                                        },
+                                                        "business_impact": {
+                                                            "type": "string",
+                                                            "title": "Business impact",
+                                                            "nullable": true,
+                                                            "x-ibm-show": false,
+                                                            "x-ibm-order": 24
+                                                        },
+                                                        "impacted_locations": {
+                                                            "type": "string",
+                                                            "title": "Impacted locations",
+                                                            "nullable": true,
+                                                            "x-ibm-show": false,
+                                                            "x-ibm-order": 25
+                                                        },
+                                                        "no_of_customers_impacted": {
+                                                            "type": "string",
+                                                            "title": "No of customers impacted",
+                                                            "nullable": true,
+                                                            "x-ibm-show": false,
+                                                            "x-ibm-order": 26
+                                                        }
+                                                    },
+                                                    "title": "Custom fields",
+                                                    "x-ibm-show": false
+                                                },
+                                                "created_at": {
+                                                    "type": "string",
+                                                    "title": "Created at",
+                                                    "x-ibm-order": 27
+                                                },
+                                                "updated_at": {
+                                                    "type": "string",
+                                                    "title": "Updated at",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 28
+                                                },
+                                                "tags": {
+                                                    "type": "array",
+                                                    "items": {},
+                                                    "title": "Tags",
+                                                    "x-ibm-show": false
+                                                },
+                                                "attachments": {
+                                                    "type": "array",
+                                                    "items": {},
+                                                    "title": "Attachments"
+                                                },
+                                                "workspace_id": {
+                                                    "type": "number",
+                                                    "title": "Workspace id",
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 29
+                                                },
+                                                "planned_start_date": {
+                                                    "type": "string",
+                                                    "title": "Planned start date",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 30
+                                                },
+                                                "planned_end_date": {
+                                                    "type": "string",
+                                                    "title": "Planned end date",
+                                                    "x-ibm-show": false,
+                                                    "nullable": true,
+                                                    "x-ibm-order": 31
+                                                },
+                                                "planned_effort": {
+                                                    "type": "string",
+                                                    "title": "Planned effort",
+                                                    "nullable": true,
+                                                    "x-ibm-show": false,
+                                                    "x-ibm-order": 32
+                                                }
+                                            },
+                                            "title": "Ticket created"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "description": {
+                                            "type": "string",
+                                            "title": "Description"
+                                        },
+                                        "errors": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "field": {
+                                                        "type": "string",
+                                                        "title": "Field"
+                                                    },
+                                                    "message": {
+                                                        "type": "string",
+                                                        "title": "Message"
+                                                    },
+                                                    "code": {
+                                                        "type": "string",
+                                                        "title": "Code"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "code": {
+                                            "type": "string",
+                                            "title": "Code"
+                                        },
+                                        "message": {
+                                            "type": "string",
+                                            "title": "Message"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "x-ibm-operation": {
+                    "action": "create",
+                    "model": "ticket"
+                },
+                "x-ibm-mandatory": [],
+                "x-ibm-visible": true,
+                "tags": [
+                    "ticket"
+                ],
+                "security": [
+                    {
+                        "basicAuth": []
+                    }
+                ],
+                "x-ibm-nl-intent-examples": [
+                    "Create a ticket",
+                    "Start a ticket",
+                    "Generate a ticket"
+                ],
+                "x-ibm-nl-entities": {
+                    "entities": []
+                },
+                "x-ibm-nl-output-template": "Ticket was created successfully",
+                "x-ibm-next-actions": [],
+                "x-ibm-conversational-skill": true
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "basicAuth": {
+                "type": "http",
+                "scheme": "basic",
+                "x-ibm-visible": true,
+                "x-ibm-auth": {
+                    "username": {
+                        "x-ibm-display-name": "Username",
+                        "x-ibm-required": true
+                    },
+                    "password": {
+                        "x-ibm-display-name": "Password",
+                        "x-ibm-required": false
+                    }
+                }
+            }
+        }
+    }
+}
