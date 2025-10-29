@@ -55,6 +55,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared._httpx_utils import McpHttpClientFactory
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -2330,7 +2331,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return capabilities, tools, resources, prompts
         except Exception as e:
-            logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
+            logger.error(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
@@ -3085,7 +3086,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
         # and go straight to the client connection. The outer try/except in
         # _initialize_gateway will handle any connection errors.
-        async with streamablehttp_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+        def my_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            return httpx.AsyncClient(
+                verify=not settings.skip_ssl_verify,   # set your toggle here
+                follow_redirects=True,
+                headers=headers,
+                timeout=timeout or httpx.Timeout(30.0),
+                auth=auth,
+            )
+
+        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=my_client_factory) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Initialize the session
                 response = await session.initialize()
