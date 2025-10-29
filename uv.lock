@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
@@ -3056,6 +3056,7 @@ dev = [
     { name = "pytest-env" },
     { name = "pytest-examples" },
     { name = "pytest-httpx" },
+    { name = "pytest-integration-mark" },
     { name = "pytest-md-report" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-timeout" },
@@ -3122,14 +3123,14 @@ requires-dist = [
     { name = "orjson", specifier = ">=3.11.3" },
     { name = "parse", specifier = ">=1.20.2" },
     { name = "playwright", marker = "extra == 'playwright'", specifier = ">=1.55.0" },
+    { name = "prometheus-client", specifier = ">=0.16.0" },
+    { name = "prometheus-fastapi-instrumentator", specifier = ">=7.0.0" },
     { name = "protobuf", marker = "extra == 'grpc'", specifier = ">=6.33.0" },
     { name = "psutil", specifier = ">=7.1.1" },
     { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9.11" },
     { name = "pydantic", specifier = ">=2.12.3" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.12.3" },
     { name = "pydantic-settings", specifier = ">=2.11.0" },
-    { name = "prometheus-client", specifier = ">=0.16.0" },
-    { name = "prometheus-fastapi-instrumentator", specifier = ">=7.0.0" },
     { name = "pyjwt", specifier = ">=2.10.1" },
     { name = "pymysql", marker = "extra == 'mysql'", specifier = ">=1.1.2" },
     { name = "pytest-benchmark", marker = "extra == 'fuzz'", specifier = ">=5.1.0" },
@@ -3194,6 +3195,7 @@ dev = [
     { name = "pytest-env", specifier = ">=1.1.5" },
     { name = "pytest-examples", specifier = ">=0.0.18" },
     { name = "pytest-httpx", specifier = ">=0.35.0" },
+    { name = "pytest-integration-mark", specifier = ">=0.2.0" },
     { name = "pytest-md-report", specifier = ">=0.7.0" },
     { name = "pytest-rerunfailures", specifier = ">=16.0.1" },
     { name = "pytest-timeout", specifier = ">=2.4.0" },
@@ -5400,6 +5402,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1f/89/5b12b7b29e3d0af3a4b9c071ee92fa25a9017453731a38f08ba01c280f4c/pytest_httpx-0.35.0.tar.gz", hash = "sha256:d619ad5d2e67734abfbb224c3d9025d64795d4b8711116b1a13f72a251ae511f", size = 54146, upload-time = "2024-11-28T19:16:54.237Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b0/ed/026d467c1853dd83102411a78126b4842618e86c895f93528b0528c7a620/pytest_httpx-0.35.0-py3-none-any.whl", hash = "sha256:ee11a00ffcea94a5cbff47af2114d34c5b231c326902458deed73f9c459fd744", size = 19442, upload-time = "2024-11-28T19:16:52.787Z" },
+]
+
+[[package]]
+name = "pytest-integration-mark"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/43/1d/e091051123391bc3b7706c2e2d91f35e448b359fd697967ca93cc2fa99e5/pytest_integration_mark-0.2.0.tar.gz", hash = "sha256:2f3580fba9aa7fecc9ede2385ae5c0c1414c688cc4e8511ccb61f65025508a14", size = 6523, upload-time = "2023-05-22T09:54:49.427Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/29/d7c0776cce4466265fe355faa1b10ffbc14a4b9e7835389aace1ffcbe1f0/pytest_integration_mark-0.2.0-py3-none-any.whl", hash = "sha256:dfff273d47922c2d750923e06ac65bda20ff1c016adba187dee20840f0d5869b", size = 7667, upload-time = "2023-05-22T09:54:47.728Z" },
 ]
 
 [[package]]

@@ -154,8 +154,8 @@ class StorageHandler(logging.Handler):
                     # No running loop, can't store
                     return
 
-            # Schedule the coroutine
-            asyncio.run_coroutine_threadsafe(
+            # Schedule the coroutine and store the future (fire-and-forget)
+            future = asyncio.run_coroutine_threadsafe(
                 self.storage.add_log(
                     level=log_level,
                     message=message,
@@ -167,6 +167,8 @@ class StorageHandler(logging.Handler):
                 ),
                 self.loop,
             )
+            # Add a done callback to catch any exceptions without blocking
+            future.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
         except Exception:
             # Silently fail to avoid logging recursion
             pass  # nosec B110 - Intentional to prevent logging recursion
@@ -204,6 +206,7 @@ class LoggingService:
         self._subscribers: List[asyncio.Queue[_LogMessage]] = []
         self._loggers: Dict[str, logging.Logger] = {}
         self._storage: LogStorageService | None = None  # Will be initialized if admin UI is enabled
+        self._storage_handler: Optional[StorageHandler] = None  # Track the storage handler for cleanup
 
     async def initialize(self) -> None:
         """Initialize logging service.
@@ -249,10 +252,10 @@ class LoggingService:
             self._storage = LogStorageService()
 
             # Add storage handler to capture all logs
-            storage_handler = StorageHandler(self._storage)
-            storage_handler.setFormatter(text_formatter)
-            storage_handler.setLevel(getattr(logging, settings.log_level.upper()))
-            root_logger.addHandler(storage_handler)
+            self._storage_handler = StorageHandler(self._storage)
+            self._storage_handler.setFormatter(text_formatter)
+            self._storage_handler.setLevel(getattr(logging, settings.log_level.upper()))
+            root_logger.addHandler(self._storage_handler)
 
             logging.info(f"Log storage initialized with {settings.log_buffer_size_mb}MB buffer")
 
@@ -271,6 +274,12 @@ class LoggingService:
             >>> asyncio.run(service.shutdown())
 
         """
+        # Remove storage handler from root logger if it was added
+        if self._storage_handler:
+            root_logger = logging.getLogger()
+            root_logger.removeHandler(self._storage_handler)
+            self._storage_handler = None
+
         # Clear subscribers
         self._subscribers.clear()
         logging.info("Logging service shutdown")

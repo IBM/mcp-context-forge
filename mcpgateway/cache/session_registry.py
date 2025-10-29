@@ -50,6 +50,7 @@ Examples:
 
 # Standard
 import asyncio
+from asyncio import Task
 from datetime import datetime, timezone
 import json
 import logging
@@ -184,7 +185,7 @@ class SessionBackend:
         # Set up backend-specific components
         if self._backend == "memory":
             # Nothing special needed for memory backend
-            self._session_message = None
+            self._session_message: dict[str, Any] | None = None
 
         elif self._backend == "none":
             # No session tracking - this is just a dummy registry
@@ -296,7 +297,7 @@ class SessionRegistry(SessionBackend):
         self._sessions: Dict[str, Any] = {}  # Local transport cache
         self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
         self._lock = asyncio.Lock()
-        self._cleanup_task = None
+        self._cleanup_task: Task | None = None
 
     async def initialize(self) -> None:
         """Initialize the registry with async setup.
@@ -702,7 +703,7 @@ class SessionRegistry(SessionBackend):
             else:
                 msg_json = json.dumps(str(message))
 
-            self._session_message: Dict[str, Any] = {"session_id": session_id, "message": msg_json}
+            self._session_message: Dict[str, Any] | None = {"session_id": session_id, "message": msg_json}
 
         elif self._backend == "redis":
             try:
@@ -840,7 +841,7 @@ class SessionRegistry(SessionBackend):
         elif self._backend == "memory":
             # if self._session_message:
             transport = self.get_session_sync(session_id)
-            if transport:
+            if transport and self._session_message:
                 message = json.loads(str(self._session_message.get("message")))
                 await self.generate_response(message=message, transport=transport, server_id=server_id, user=user, base_url=base_url)
 
@@ -868,7 +869,7 @@ class SessionRegistry(SessionBackend):
 
         elif self._backend == "database":
 
-            def _db_read_session(session_id: str) -> SessionRecord:
+            def _db_read_session(session_id: str) -> SessionRecord | None:
                 """Check if session still exists in the database.
 
                 Queries the SessionRecord table to verify that the session
@@ -903,7 +904,7 @@ class SessionRegistry(SessionBackend):
                 finally:
                     db_session.close()
 
-            def _db_read(session_id: str) -> SessionMessageRecord:
+            def _db_read(session_id: str) -> SessionMessageRecord | None:
                 """Read pending message for a session from the database.
 
                 Retrieves the first (oldest) unprocessed message for the given
@@ -1348,23 +1349,23 @@ class SessionRegistry(SessionBackend):
         result = {}
 
         if "method" in message and "id" in message:
-            try:
-                method = message["method"]
-                params = message.get("params", {})
-                params["server_id"] = server_id
-                req_id = message["id"]
+            method = message["method"]
+            params = message.get("params", {})
+            params["server_id"] = server_id
+            req_id = message["id"]
 
-                rpc_input = {
-                    "jsonrpc": "2.0",
-                    "method": method,
-                    "params": params,
-                    "id": req_id,
-                }
-                # Get the token from the current authentication context
-                # The user object doesn't contain the token directly, we need to reconstruct it
-                # Since we don't have access to the original headers here, we need a different approach
-                # We'll extract the token from the session or create a new admin token
-                token = None
+            rpc_input = {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+                "id": req_id,
+            }
+            # Get the token from the current authentication context
+            # The user object doesn't contain the token directly, we need to reconstruct it
+            # Since we don't have access to the original headers here, we need a different approach
+            # We'll extract the token from the session or create a new admin token
+            token = None
+            try:
                 if hasattr(user, "get") and "auth_token" in user:
                     token = user["auth_token"]
                 else:

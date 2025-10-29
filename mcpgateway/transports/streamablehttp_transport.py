@@ -505,7 +505,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             if not result or not result.messages:
                 logger.warning(f"No content returned by prompt: {prompt_id}")
                 return []
-            message_dicts = [message.dict() for message in result.messages]
+            message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
     except Exception as e:
         logger.exception(f"Error getting prompt '{prompt_id}': {e}")
