@@ -57,6 +57,7 @@ from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
+    A2AAgentUpdate,
     CatalogBulkRegisterRequest,
     CatalogBulkRegisterResponse,
     CatalogListRequest,
@@ -311,9 +312,7 @@ def rate_limit(requests_per_minute: Optional[int] = None):
                     status_code=429,
                     detail=f"Rate limit exceeded. Maximum {limit} requests per minute.",
                 )
-
             rate_limit_storage[client_ip].append(current_time)
-
             # IMPORTANT: forward request to the real endpoint
             return await func_to_wrap(*args, request=request, **kwargs)
 
@@ -322,79 +321,59 @@ def rate_limit(requests_per_minute: Optional[int] = None):
     return decorator
 
 
-def get_user_email(user) -> str:
-    """Extract user email from JWT payload consistently.
+def get_user_email(user: Union[str, dict, object] = None) -> str:
+    """Return the user email from a JWT payload, user object, or string.
 
     Args:
-        user: User object from JWT token (from get_current_user_with_permissions)
+        user (Union[str, dict, object], optional): User object from JWT token
+            (from get_current_user_with_permissions). Can be:
+            - dict: representing JWT payload
+            - object: with an `email` attribute
+            - str: an email string
+            - None: will return "unknown"
+            Defaults to None.
 
     Returns:
-        str: User email address
+        str: User email address, or "unknown" if no email can be determined.
+             - If `user` is a dict, returns `sub` if present, else `email`, else "unknown".
+             - If `user` has an `email` attribute, returns that.
+             - If `user` is a string, returns it.
+             - If `user` is None, returns "unknown".
+             - Otherwise, returns str(user).
 
     Examples:
-        Test with dictionary user (JWT payload) with 'sub':
-        >>> from mcpgateway import admin
-        >>> user_dict = {'sub': 'alice@example.com', 'iat': 1234567890}
-        >>> admin.get_user_email(user_dict)
+        >>> get_user_email({'sub': 'alice@example.com'})
         'alice@example.com'
-
-        Test with dictionary user with 'email' field:
-        >>> user_dict = {'email': 'bob@company.com', 'role': 'admin'}
-        >>> admin.get_user_email(user_dict)
+        >>> get_user_email({'email': 'bob@company.com'})
         'bob@company.com'
-
-        Test with dictionary user with both 'sub' and 'email' (sub takes precedence):
-        >>> user_dict = {'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'}
-        >>> admin.get_user_email(user_dict)
+        >>> get_user_email({'sub': 'charlie@primary.com', 'email': 'charlie@secondary.com'})
         'charlie@primary.com'
-
-        Test with dictionary user with no email fields:
-        >>> user_dict = {'username': 'dave', 'role': 'user'}
-        >>> admin.get_user_email(user_dict)
+        >>> get_user_email({'username': 'dave'})
         'unknown'
-
-        Test with user object having email attribute:
         >>> class MockUser:
         ...     def __init__(self, email):
         ...         self.email = email
-        >>> user_obj = MockUser('eve@test.com')
-        >>> admin.get_user_email(user_obj)
+        >>> get_user_email(MockUser('eve@test.com'))
         'eve@test.com'
-
-        Test with user object without email attribute:
-        >>> class BasicUser:
-        ...     def __init__(self, name):
-        ...         self.name = name
-        ...     def __str__(self):
-        ...         return self.name
-        >>> user_obj = BasicUser('frank')
-        >>> admin.get_user_email(user_obj)
-        'frank'
-
-        Test with None user:
-        >>> admin.get_user_email(None)
+        >>> get_user_email(None)
         'unknown'
-
-        Test with string user:
-        >>> admin.get_user_email('grace@example.org')
+        >>> get_user_email('grace@example.org')
         'grace@example.org'
-
-        Test with empty dictionary:
-        >>> admin.get_user_email({})
+        >>> get_user_email({})
         'unknown'
-
-        Test with non-string, non-dict, non-object values:
-        >>> admin.get_user_email(12345)
+        >>> get_user_email(12345)
         '12345'
     """
     if isinstance(user, dict):
-        # Standard JWT format - try 'sub' first, then 'email'
-        return user.get("sub") or user.get("email", "unknown")
+        return user.get("sub") or user.get("email") or "unknown"
+
     if hasattr(user, "email"):
-        # User object with email attribute
         return user.email
-    # Fallback to string representation
-    return str(user) if user else "unknown"
+
+    if user is None:
+        return "unknown"
+
+    return str(user)
 
 
 def serialize_datetime(obj):
@@ -5533,7 +5512,6 @@ async def admin_edit_tool(
             an error message if the update fails.
 
     Examples:
-            Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
         >>> from fastapi import Request
@@ -5668,7 +5646,6 @@ async def admin_edit_tool(
 
         >>> # Restore original method
         >>> tool_service.update_tool = original_update_tool
-
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing tool ID {tool_id}")
     form = await request.form()
@@ -6381,8 +6358,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
-
-
 @admin_router.post("/gateways/{gateway_id}/edit")
 async def admin_edit_gateway(
     gateway_id: str,
@@ -7597,6 +7572,7 @@ async def admin_edit_prompt(
         >>> asyncio.run(test_admin_edit_prompt_inactive())
         True
         >>> prompt_service.update_prompt = original_update_prompt
+
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
@@ -9437,7 +9413,7 @@ async def admin_list_a2a_agents(
 
     Examples:
         >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from unittest.mock import AsyncMock, MagicMock, patch
         >>> from mcpgateway.schemas import A2AAgentRead, A2AAgentMetrics
         >>> from datetime import datetime, timezone
         >>>
@@ -9473,28 +9449,28 @@ async def admin_list_a2a_agents(
         ...     )
         ... )
         >>>
-        >>> original_list_agents_for_user = a2a_service.list_agents_for_user
-        >>> a2a_service.list_agents_for_user = AsyncMock(return_value=[mock_agent])
-        >>>
         >>> async def test_admin_list_a2a_agents_active():
-        ...     result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user=mock_user)
-        ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Agent1"
+        ...     fake_service = MagicMock()
+        ...     fake_service.list_agents_for_user = AsyncMock(return_value=[mock_agent])
+        ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
+        ...         result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user=mock_user)
+        ...         return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Agent1"
         >>>
         >>> asyncio.run(test_admin_list_a2a_agents_active())
         True
         >>>
-        >>> a2a_service.list_agents_for_user = AsyncMock(side_effect=Exception("A2A error"))
         >>> async def test_admin_list_a2a_agents_exception():
-        ...     try:
-        ...         await admin_list_a2a_agents(False, db=mock_db, user=mock_user)
-        ...         return False
-        ...     except Exception as e:
-        ...         return "A2A error" in str(e)
+        ...     fake_service = MagicMock()
+        ...     fake_service.list_agents_for_user = AsyncMock(side_effect=Exception("A2A error"))
+        ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
+        ...         try:
+        ...             await admin_list_a2a_agents(False, db=mock_db, user=mock_user)
+        ...             return False
+        ...         except Exception as e:
+        ...             return "A2A error" in str(e)
         >>>
         >>> asyncio.run(test_admin_list_a2a_agents_exception())
         True
-        >>>
-        >>> a2a_service.list_agents_for_user = original_list_agents_for_user
     """
     if a2a_service is None:
         LOGGER.warning("A2A features are disabled, returning empty list")
@@ -9534,10 +9510,13 @@ async def admin_add_a2a_agent(
 
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         LOGGER.warning("A2A agent creation attempted but A2A features are disabled")
-        return HTMLResponse(content='<div class="text-red-500">A2A features are disabled</div>', status_code=403)
+        return JSONResponse(
+            content={"message": "A2A features are disabled!", "success": False},
+            status_code=403,
+        )
 
+    form = await request.form()
     try:
-        form = await request.form()
         LOGGER.info(f"A2A agent creation form data: {dict(form)}")
 
         user_email = get_user_email(user)
@@ -9551,17 +9530,121 @@ async def admin_add_a2a_agent(
         tags_str = ts_val if isinstance(ts_val, str) else ""
         tags = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
 
+        # Parse auth_headers JSON if present
+        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers: list[dict[str, Any]] = []
+        if auth_headers_json:
+            try:
+                auth_headers = json.loads(auth_headers_json)
+            except (json.JSONDecodeError, ValueError):
+                auth_headers = []
+
+        # Parse OAuth configuration - support both JSON string and individual form fields
+        oauth_config_json = str(form.get("oauth_config"))
+        oauth_config: Optional[dict[str, Any]] = None
+
+        LOGGER.info(f"DEBUG: oauth_config_json from form = '{oauth_config_json}'")
+        LOGGER.info(f"DEBUG: Individual OAuth fields - grant_type='{form.get('oauth_grant_type')}', issuer='{form.get('oauth_issuer')}'")
+
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = json.loads(oauth_config_json)
+                # Encrypt the client secret if present
+                if oauth_config and "client_secret" in oauth_config:
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+            except (json.JSONDecodeError, ValueError) as e:
+                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                oauth_config = None
+
+        # Option 2: Assemble from individual UI form fields
+        if not oauth_config:
+            oauth_grant_type = str(form.get("oauth_grant_type", ""))
+            oauth_issuer = str(form.get("oauth_issuer", ""))
+            oauth_token_url = str(form.get("oauth_token_url", ""))
+            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(form.get("oauth_client_id", ""))
+            oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_username = str(form.get("oauth_username", ""))
+            oauth_password = str(form.get("oauth_password", ""))
+            oauth_scopes_str = str(form.get("oauth_scopes", ""))
+
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
+                if oauth_authorization_url:
+                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    # Encrypt the client secret
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+
+                # Add username and password for password grant type
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
+
+                # Parse scopes (comma or space separated)
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
+
+        passthrough_headers = str(form.get("passthrough_headers"))
+        if passthrough_headers and passthrough_headers.strip():
+            try:
+                passthrough_headers = json.loads(passthrough_headers)
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to comma-separated parsing
+                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+        else:
+            passthrough_headers = None
+
+        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        auth_type_from_form = str(form.get("auth_type", ""))
+        LOGGER.info(f"DEBUG: auth_type from form: '{auth_type_from_form}', oauth_config present: {oauth_config is not None}")
+        if oauth_config and not auth_type_from_form:
+            auth_type_from_form = "oauth"
+            LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
+        elif oauth_config and auth_type_from_form:
+            LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
+
         agent_data = A2AAgentCreate(
             name=form["name"],
             description=form.get("description"),
             endpoint_url=form["endpoint_url"],
             agent_type=form.get("agent_type", "generic"),
-            auth_type=form.get("auth_type") if form.get("auth_type") else None,
+            auth_type=auth_type_from_form,
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
+            auth_headers=auth_headers if auth_headers else None,
+            oauth_config=oauth_config,
             auth_value=form.get("auth_value") if form.get("auth_value") else None,
             tags=tags,
             visibility=form.get("visibility", "private"),
             team_id=team_id,
             owner_email=user_email,
+            passthrough_headers=passthrough_headers,
         )
 
         LOGGER.info(f"Creating A2A agent: {agent_data.name} at {agent_data.endpoint_url}")
@@ -9610,6 +9693,290 @@ async def admin_add_a2a_agent(
     except Exception as ex:
         LOGGER.error(f"Error creating A2A agent: {ex}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+
+
+@admin_router.post("/a2a/{agent_id}/edit")
+async def admin_edit_a2a_agent(
+    agent_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """
+    Edit an existing A2A agent via the admin UI.
+
+    Expects form fields:
+      - name
+      - description (optional)
+      - endpoint_url
+      - agent_type
+      - tags (optional, comma-separated)
+      - auth_type (optional)
+      - auth_username (optional)
+      - auth_password (optional)
+      - auth_token (optional)
+      - auth_header_key / auth_header_value (optional)
+      - auth_headers (JSON array, optional)
+      - oauth_config (JSON string or individual OAuth fields)
+      - visibility (optional)
+      - team_id (optional)
+      - capabilities (JSON, optional)
+      - config (JSON, optional)
+      - passthrough_headers: Optional[List[str]]
+
+    Args:
+        agent_id (str): The ID of the agent being edited.
+        request (Request): The incoming FastAPI request containing form data.
+        db (Session): Active database session.
+        user: The authenticated admin user performing the edit.
+
+    Returns:
+        JSONResponse: A JSON response indicating success or failure.
+
+    Examples:
+        >>> import asyncio, json
+        >>> from unittest.mock import AsyncMock, MagicMock, patch
+        >>> from fastapi import Request
+        >>> from fastapi.responses import JSONResponse
+        >>> from starlette.datastructures import FormData
+        >>>
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_admin_user", "db": mock_db}
+        >>> agent_id = "agent-123"
+        >>>
+        >>> # Happy path: edit A2A agent successfully
+        >>> form_data_success = FormData([
+        ...     ("name", "Updated Agent"),
+        ...     ("endpoint_url", "http://updated-agent.com"),
+        ...     ("agent_type", "generic"),
+        ...     ("auth_type", "basic"),
+        ...     ("auth_username", "user"),
+        ...     ("auth_password", "pass"),
+        ... ])
+        >>> mock_request_success = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_success.form = AsyncMock(return_value=form_data_success)
+        >>> original_update_agent = a2a_service.update_agent
+        >>> a2a_service.update_agent = AsyncMock()
+        >>>
+        >>> async def test_admin_edit_a2a_agent_success():
+        ...     response = await admin_edit_a2a_agent(agent_id, mock_request_success, mock_db, mock_user)
+        ...     body = json.loads(response.body)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 200 and body["success"] is True
+        >>>
+        >>> asyncio.run(test_admin_edit_a2a_agent_success())
+        True
+        >>>
+        >>> # Error path: simulate exception during update
+        >>> form_data_error = FormData([
+        ...     ("name", "Error Agent"),
+        ...     ("endpoint_url", "http://error-agent.com"),
+        ...     ("auth_type", "basic"),
+        ...     ("auth_username", "user"),
+        ...     ("auth_password", "pass"),
+        ... ])
+        >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
+        >>> a2a_service.update_agent = AsyncMock(side_effect=Exception("Update failed"))
+        >>>
+        >>> async def test_admin_edit_a2a_agent_exception():
+        ...     response = await admin_edit_a2a_agent(agent_id, mock_request_error, mock_db, mock_user)
+        ...     body = json.loads(response.body)
+        ...     return isinstance(response, JSONResponse) and response.status_code == 500 and body["success"] is False and "Update failed" in body["message"]
+        >>>
+        >>> asyncio.run(test_admin_edit_a2a_agent_exception())
+        True
+        >>>
+        >>> # Validation error path: e.g., invalid URL
+        >>> form_data_validation = FormData([
+        ...     ("name", "Bad URL Agent"),
+        ...     ("endpoint_url", "invalid-url"),
+        ...     ("auth_type", "basic"),
+        ...     ("auth_username", "user"),
+        ...     ("auth_password", "pass"),
+        ... ])
+        >>> mock_request_validation = MagicMock(spec=Request, scope={"root_path": ""})
+        >>> mock_request_validation.form = AsyncMock(return_value=form_data_validation)
+        >>>
+        >>> async def test_admin_edit_a2a_agent_validation():
+        ...     response = await admin_edit_a2a_agent(agent_id, mock_request_validation, mock_db, mock_user)
+        ...     body = json.loads(response.body)
+        ...     return isinstance(response, JSONResponse) and response.status_code in (422, 400) and body["success"] is False
+        >>>
+        >>> asyncio.run(test_admin_edit_a2a_agent_validation())
+        True
+        >>>
+        >>> # Restore original method
+        >>> a2a_service.update_agent = original_update_agent
+
+    """
+
+    try:
+        form = await request.form()
+
+        # Normalize tags
+        tags_raw = str(form.get("tags", ""))
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+
+        # Visibility
+        visibility = str(form.get("visibility", "private"))
+
+        # Agent Type
+        agent_type = str(form.get("agent_type", "generic"))
+
+        # Capabilities
+        raw_capabilities = form.get("capabilities")
+        capabilities = {}
+        if raw_capabilities:
+            try:
+                capabilities = json.loads(raw_capabilities)
+            except (ValueError, json.JSONDecodeError):
+                capabilities = {}
+
+        # Config
+        raw_config = form.get("config")
+        config = {}
+        if raw_config:
+            try:
+                config = json.loads(raw_config)
+            except (ValueError, json.JSONDecodeError):
+                config = {}
+
+        # Parse auth_headers JSON if present
+        auth_headers_json = str(form.get("auth_headers"))
+        auth_headers = []
+        if auth_headers_json:
+            try:
+                auth_headers = json.loads(auth_headers_json)
+            except (json.JSONDecodeError, ValueError):
+                auth_headers = []
+
+        # Passthrough headers
+        passthrough_headers = str(form.get("passthrough_headers"))
+        if passthrough_headers and passthrough_headers.strip():
+            try:
+                passthrough_headers = json.loads(passthrough_headers)
+            except (json.JSONDecodeError, ValueError):
+                # Fallback to comma-separated parsing
+                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
+        else:
+            passthrough_headers = None
+
+        # Parse OAuth configuration - support both JSON string and individual form fields
+        oauth_config_json = str(form.get("oauth_config"))
+        oauth_config: Optional[dict[str, Any]] = None
+
+        # Option 1: Pre-assembled oauth_config JSON (from API calls)
+        if oauth_config_json and oauth_config_json != "None":
+            try:
+                oauth_config = json.loads(oauth_config_json)
+                # Encrypt the client secret if present and not empty
+                if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
+            except (json.JSONDecodeError, ValueError) as e:
+                LOGGER.error(f"Failed to parse OAuth config: {e}")
+                oauth_config = None
+
+        # Option 2: Assemble from individual UI form fields
+        if not oauth_config:
+            oauth_grant_type = str(form.get("oauth_grant_type", ""))
+            oauth_issuer = str(form.get("oauth_issuer", ""))
+            oauth_token_url = str(form.get("oauth_token_url", ""))
+            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
+            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
+            oauth_client_id = str(form.get("oauth_client_id", ""))
+            oauth_client_secret = str(form.get("oauth_client_secret", ""))
+            oauth_username = str(form.get("oauth_username", ""))
+            oauth_password = str(form.get("oauth_password", ""))
+            oauth_scopes_str = str(form.get("oauth_scopes", ""))
+
+            # If any OAuth field is provided, assemble oauth_config
+            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
+                oauth_config = {}
+
+                if oauth_grant_type:
+                    oauth_config["grant_type"] = oauth_grant_type
+                if oauth_issuer:
+                    oauth_config["issuer"] = oauth_issuer
+                if oauth_token_url:
+                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
+                if oauth_authorization_url:
+                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
+                if oauth_redirect_uri:
+                    oauth_config["redirect_uri"] = oauth_redirect_uri
+                if oauth_client_id:
+                    oauth_config["client_id"] = oauth_client_id
+                if oauth_client_secret:
+                    # Encrypt the client secret
+                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
+
+                # Add username and password for password grant type
+                if oauth_username:
+                    oauth_config["username"] = oauth_username
+                if oauth_password:
+                    oauth_config["password"] = oauth_password
+
+                # Parse scopes (comma or space separated)
+                if oauth_scopes_str:
+                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+                    if scopes:
+                        oauth_config["scopes"] = scopes
+
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+
+        user_email = get_user_email(user)
+        team_service = TeamManagementService(db)
+        team_id = await team_service.verify_team_for_user(user_email, form.get("team_id"))
+
+        # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
+        auth_type_from_form = str(form.get("auth_type", ""))
+        if oauth_config and not auth_type_from_form:
+            auth_type_from_form = "oauth"
+            LOGGER.info("Auto-detected OAuth configuration in edit, setting auth_type='oauth'")
+
+        agent_update = A2AAgentUpdate(
+            name=form.get("name"),
+            description=form.get("description"),
+            endpoint_url=form.get("endpoint_url"),
+            agent_type=agent_type,
+            tags=tags,
+            auth_type=auth_type_from_form,
+            auth_username=str(form.get("auth_username", "")),
+            auth_password=str(form.get("auth_password", "")),
+            auth_token=str(form.get("auth_token", "")),
+            auth_header_key=str(form.get("auth_header_key", "")),
+            auth_header_value=str(form.get("auth_header_value", "")),
+            auth_value=str(form.get("auth_value", "")),
+            auth_headers=auth_headers if auth_headers else None,
+            passthrough_headers=passthrough_headers,
+            oauth_config=oauth_config,
+            visibility=visibility,
+            team_id=team_id,
+            owner_email=user_email,
+            capabilities=capabilities,  # Optional, not editable via UI
+            config=config,  # Optional, not editable via UI
+        )
+
+        mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
+        await a2a_service.update_agent(
+            db=db,
+            agent_id=agent_id,
+            agent_data=agent_update,
+            modified_by=mod_metadata["modified_by"],
+            modified_from_ip=mod_metadata["modified_from_ip"],
+            modified_via=mod_metadata["modified_via"],
+            modified_user_agent=mod_metadata["modified_user_agent"],
+        )
+
+        return JSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
+
+    except ValidationError as ve:
+        return JSONResponse({"message": str(ve), "success": False}, status_code=422)
+    except IntegrityError as ie:
+        return JSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except Exception as e:
+        return JSONResponse({"message": str(e), "success": False}, status_code=500)
 
 
 @admin_router.post("/a2a/{agent_id}/toggle")

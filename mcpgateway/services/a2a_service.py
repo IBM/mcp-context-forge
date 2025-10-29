@@ -23,12 +23,13 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric
+from mcpgateway.db import A2AAgentMetric, EmailTeam
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -139,6 +140,22 @@ class A2AAgentService:
             logger.info("Shutting down A2A Agent Service")
             self._initialized = False
 
+    def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
+        """Retrieve the team name given a team ID.
+
+        Args:
+            db (Session): Database session for querying teams.
+            team_id (Optional[str]): The ID of the team.
+
+        Returns:
+            Optional[str]: The name of the team if found, otherwise None.
+        """
+        if not team_id:
+            return None
+
+        team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+        return team.name if team else None
+
     async def register_agent(
         self,
         db: Session,
@@ -156,25 +173,29 @@ class A2AAgentService:
         """Register a new A2A agent.
 
         Args:
-            db: Database session.
-            agent_data: Agent creation data.
-            created_by: Username who created this agent.
-            created_from_ip: IP address of creator.
-            created_via: Creation method.
-            created_user_agent: User agent of creation request.
-            import_batch_id: UUID of bulk import batch.
-            federation_source: Source gateway for federated entities.
-            team_id (Optional[str]): Team ID to assign the agent to.
-            owner_email (Optional[str]): Email of the user who owns this agent.
-            visibility (str): Agent visibility level (private, team, public).
+            db (Session): Database session.
+            agent_data (A2AAgentCreate): Data required to create an agent.
+            created_by (Optional[str]): User who created the agent.
+            created_from_ip (Optional[str]): IP address of the creator.
+            created_via (Optional[str]): Method used for creation (e.g., API, import).
+            created_user_agent (Optional[str]): User agent of the creation request.
+            import_batch_id (Optional[str]): UUID of a bulk import batch.
+            federation_source (Optional[str]): Source gateway for federated agents.
+            team_id (Optional[str]): ID of the team to assign the agent to.
+            owner_email (Optional[str]): Email of the agent owner.
+            visibility (Optional[str]): Visibility level ('public', 'team', 'private').
 
         Returns:
-            The created agent data.
+            A2AAgentRead: The created agent object.
 
         Raises:
-            A2AAgentNameConflictError: If an agent with the same name already exists.
-            IntegrityError: If a database integrity error occurs.
-            A2AAgentError: For other errors during registration.
+            A2AAgentNameConflictError: If another agent with the same name already exists.
+            IntegrityError: If a database constraint or integrity violation occurs.
+            ValueError: If invalid configuration or data is provided.
+            A2AAgentError: For any other unexpected errors during registration.
+
+        Examples:
+            # TODO
         """
         try:
             agent_data.slug = slugify(agent_data.name)
@@ -193,19 +214,43 @@ class A2AAgentService:
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
+            auth_type = getattr(agent_data, "auth_type", None)
+            # Support multiple custom headers
+            auth_value = getattr(agent_data, "auth_value", {})
+
+            # authentication_headers: Optional[Dict[str, str]] = None
+
+            if hasattr(agent_data, "auth_headers") and agent_data.auth_headers:
+                # Convert list of {key, value} to dict
+                header_dict = {h["key"]: h["value"] for h in agent_data.auth_headers if h.get("key")}
+                # Keep encoded form for persistence, but pass raw headers for initialization
+                auth_value = encode_auth(header_dict)  # Encode the dict for consistency
+                # authentication_headers = {str(k): str(v) for k, v in header_dict.items()}
+            # elif isinstance(auth_value, str) and auth_value:
+            #    # Decode persisted auth for initialization
+            #    decoded = decode_auth(auth_value)
+            # authentication_headers = {str(k): str(v) for k, v in decoded.items()}
+            else:
+                # authentication_headers = None
+                pass
+                # auth_value = {}
+
+            oauth_config = getattr(agent_data, "oauth_config", None)
+
             # Create new agent
             new_agent = DbA2AAgent(
                 name=agent_data.name,
-                slug=agent_data.slug,
                 description=agent_data.description,
                 endpoint_url=agent_data.endpoint_url,
                 agent_type=agent_data.agent_type,
                 protocol_version=agent_data.protocol_version,
                 capabilities=agent_data.capabilities,
                 config=agent_data.config,
-                auth_type=agent_data.auth_type,
-                auth_value=agent_data.auth_value,  # This should be encrypted in practice
+                auth_type=auth_type,
+                auth_value=auth_value,  # This should be encrypted in practice
+                oauth_config=oauth_config,
                 tags=agent_data.tags,
+                passthrough_headers=getattr(agent_data, "passthrough_headers", None),
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(agent_data, "team_id", None) or team_id,
                 owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
@@ -234,7 +279,8 @@ class A2AAgentService:
             )
 
             logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
-            return self._db_to_schema(new_agent)
+            return self._db_to_schema(db=db, db_agent=new_agent)
+
         except A2AAgentNameConflictError as ie:
             db.rollback()
             raise ie
@@ -242,6 +288,8 @@ class A2AAgentService:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
             raise ie
+        except ValueError as ve:
+            raise ve
         except Exception as e:
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
@@ -257,6 +305,41 @@ class A2AAgentService:
 
         Returns:
             List of agent data.
+
+        Examples:
+            >>> from mcpgateway.services.a2a_service import A2AAgentService
+            >>> from unittest.mock import MagicMock
+            >>> from mcpgateway.schemas import A2AAgentRead
+            >>> import asyncio
+
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+
+            >>> # Mock a single agent object returned by the DB
+            >>> agent_obj = MagicMock()
+            >>> db.execute.return_value.scalars.return_value.all.return_value = [agent_obj]
+
+            >>> # Mock the A2AAgentRead schema to return a masked string
+            >>> mocked_agent_read = MagicMock()
+            >>> mocked_agent_read.masked.return_value = 'agent_read'
+            >>> A2AAgentRead.model_validate = MagicMock(return_value=mocked_agent_read)
+
+            >>> # Run the service method
+            >>> result = asyncio.run(service.list_agents(db))
+            >>> result == ['agent_read']
+            True
+
+            >>> # Test include_inactive parameter (same mock works)
+            >>> result_with_inactive = asyncio.run(service.list_agents(db, include_inactive=True))
+            >>> result_with_inactive == ['agent_read']
+            True
+
+            >>> # Test empty result
+            >>> db.execute.return_value.scalars.return_value.all.return_value = []
+            >>> empty_result = asyncio.run(service.list_agents(db))
+            >>> empty_result
+            []
+
         """
         query = select(DbA2AAgent)
 
@@ -275,7 +358,8 @@ class A2AAgentService:
         query = query.order_by(desc(DbA2AAgent.created_at))
 
         agents = db.execute(query).scalars().all()
-        return [self._db_to_schema(agent) for agent in agents]
+
+        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
 
     async def list_agents_for_user(
         self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -348,20 +432,87 @@ class A2AAgentService:
         query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
-        return [self._db_to_schema(agent) for agent in agents]
+        return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
 
-    async def get_agent(self, db: Session, agent_id: str) -> A2AAgentRead:
+    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
+            include_inactive: Whether to include inactive a2a agents
 
         Returns:
             Agent data.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> from datetime import datetime
+            >>> import asyncio
+            >>> from mcpgateway.schemas import A2AAgentRead
+            >>> from mcpgateway.services.a2a_service import A2AAgentService, A2AAgentNotFoundError
+
+            >>> service = A2AAgentService()
+            >>> db = MagicMock()
+
+            >>> # Create a mock agent
+            >>> agent_mock = MagicMock()
+            >>> agent_mock.enabled = True
+            >>> agent_mock.id = "agent_id"
+            >>> agent_mock.name = "Test Agent"
+            >>> agent_mock.slug = "test-agent"
+            >>> agent_mock.description = "A2A test agent"
+            >>> agent_mock.endpoint_url = "https://example.com"
+            >>> agent_mock.agent_type = "rest"
+            >>> agent_mock.protocol_version = "v1"
+            >>> agent_mock.capabilities = {}
+            >>> agent_mock.config = {}
+            >>> agent_mock.reachable = True
+            >>> agent_mock.created_at = datetime.now()
+            >>> agent_mock.updated_at = datetime.now()
+            >>> agent_mock.last_interaction = None
+            >>> agent_mock.tags = []
+            >>> agent_mock.metrics = MagicMock()
+            >>> agent_mock.metrics.success_rate = 1.0
+            >>> agent_mock.metrics.failure_rate = 0.0
+            >>> agent_mock.metrics.last_error = None
+            >>> agent_mock.auth_type = None
+            >>> agent_mock.auth_value = None
+            >>> agent_mock.oauth_config = None
+            >>> agent_mock.created_by = "user"
+            >>> agent_mock.created_from_ip = "127.0.0.1"
+            >>> agent_mock.created_via = "ui"
+            >>> agent_mock.created_user_agent = "test-agent"
+            >>> agent_mock.modified_by = "user"
+            >>> agent_mock.modified_from_ip = "127.0.0.1"
+            >>> agent_mock.modified_via = "ui"
+            >>> agent_mock.modified_user_agent = "test-agent"
+            >>> agent_mock.import_batch_id = None
+            >>> agent_mock.federation_source = None
+            >>> agent_mock.team_id = "team-1"
+            >>> agent_mock.team = "Team 1"
+            >>> agent_mock.owner_email = "owner@example.com"
+            >>> agent_mock.visibility = "public"
+
+            >>> db.get.return_value = agent_mock
+
+            >>> # Mock _db_to_schema to simplify test
+            >>> service._db_to_schema = lambda db, db_agent: 'agent_read'
+
+            >>> # Test with active agent
+            >>> result = asyncio.run(service.get_agent(db, 'agent_id'))
+            >>> result
+            'agent_read'
+
+            >>> # Test with inactive agent but include_inactive=True
+            >>> agent_mock.enabled = False
+            >>> result_inactive = asyncio.run(service.get_agent(db, 'agent_id', include_inactive=True))
+            >>> result_inactive
+            'agent_read'
+
         """
         query = select(DbA2AAgent).where(DbA2AAgent.id == agent_id)
         agent = db.execute(query).scalar_one_or_none()
@@ -369,7 +520,17 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        return self._db_to_schema(agent)
+        # if agent.enabled or include_inactive:
+        #    agent.team = self._get_team_name(db, getattr(agent, "team_id", None))
+        #    return A2AAgentRead.model_validate(self._prepare_a2a_agent_for_read(agent)).masked()
+
+        # raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+        if not agent.enabled and not include_inactive:
+            raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+        # ✅ Delegate conversion and masking to _db_to_schema()
+        return self._db_to_schema(db=db, db_agent=agent)
 
     async def get_agent_by_name(self, db: Session, agent_name: str) -> A2AAgentRead:
         """Retrieve an A2A agent by name.
@@ -390,7 +551,7 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with name: {agent_name}")
 
-        return self._db_to_schema(agent)
+        return self._db_to_schema(db=db, db_agent=agent)
 
     async def update_agent(
         self,
@@ -442,22 +603,41 @@ class A2AAgentService:
                     raise PermissionError("Only the owner can update this agent")
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
+                new_slug = slugify(agent_data.name)
                 visibility = agent_data.visibility or agent.visibility
                 team_id = agent_data.team_id or agent.team_id
                 # Check for existing server with the same slug within the same team or public scope
                 if visibility.lower() == "public":
                     # Check for existing public a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                     if existing_agent:
-                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                        raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team a2a agent with the same slug
-                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                    existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == new_slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
                     if existing_agent:
-                        raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
+                        raise A2AAgentNameConflictError(name=new_slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
             # Update fields
             update_data = agent_data.model_dump(exclude_unset=True)
+
             for field, value in update_data.items():
+                if field == "passthrough_headers":
+                    if value is not None:
+                        if isinstance(value, list):
+                            # Clean list: remove empty or whitespace-only entries
+                            cleaned = [h.strip() for h in value if isinstance(h, str) and h.strip()]
+                            agent.passthrough_headers = cleaned or None
+                        elif isinstance(value, str):
+                            # Parse comma-separated string and clean
+                            parsed: List[str] = [h.strip() for h in value.split(",") if h.strip()]
+                            agent.passthrough_headers = parsed or None
+                        else:
+                            raise A2AAgentError("Invalid passthrough_headers format: must be list[str] or comma-separated string")
+                    else:
+                        # Explicitly set to None if value is None
+                        agent.passthrough_headers = None
+                    continue
+
                 if hasattr(agent, field):
                     setattr(agent, field, value)
 
@@ -477,7 +657,7 @@ class A2AAgentService:
             db.refresh(agent)
 
             logger.info(f"Updated A2A agent: {agent.name} (ID: {agent.id})")
-            return self._db_to_schema(agent)
+            return self._db_to_schema(db=db, db_agent=agent)
         except PermissionError:
             db.rollback()
             raise
@@ -535,7 +715,8 @@ class A2AAgentService:
 
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
-        return self._db_to_schema(agent)
+
+        return self._db_to_schema(db=db, db_agent=agent)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
         """Delete an A2A agent.
@@ -722,32 +903,56 @@ class A2AAgentService:
 
         logger.info("Reset A2A agent metrics" + (f" for agent {agent_id}" if agent_id else ""))
 
-    def _db_to_schema(self, db_agent: DbA2AAgent) -> A2AAgentRead:
+    def _prepare_a2a_agent_for_read(self, agent: DbA2AAgent) -> DbA2AAgent:
+        """Prepare a a2a agent object for A2AAgentRead validation.
+
+        Ensures auth_value is in the correct format (encoded string) for the schema.
+
+        Args:
+            agent: A2A Agent database object
+
+        Returns:
+            A2A Agent object with properly formatted auth_value
+        """
+        # If auth_value is a dict, encode it to string for GatewayRead schema
+        if isinstance(agent.auth_value, dict):
+            agent.auth_value = encode_auth(agent.auth_value)
+        return agent
+
+    def _db_to_schema(self, db: Session, db_agent: DbA2AAgent) -> A2AAgentRead:
         """Convert database model to schema.
 
         Args:
-            db_agent: Database agent model.
+            db (Session): Database session.
+            db_agent (DbA2AAgent): Database agent model.
 
         Returns:
-            Agent read schema.
+            A2AAgentRead: Agent read schema.
+
+        Raises:
+            A2AAgentNotFoundError: If the provided agent is not found or invalid.
+
         """
-        # Calculate metrics
+
+        if not db_agent:
+            raise A2AAgentNotFoundError("Agent not found")
+
+        setattr(db_agent, "team", self._get_team_name(db, getattr(db_agent, "team_id", None)))
+
+        # ✅ Compute metrics
         total_executions = len(db_agent.metrics)
         successful_executions = sum(1 for m in db_agent.metrics if m.is_success)
         failed_executions = total_executions - successful_executions
-        failure_rate = (failed_executions / total_executions) * 100 if total_executions > 0 else 0.0
+        failure_rate = (failed_executions / total_executions * 100) if total_executions > 0 else 0.0
 
-        min_response_time = None
-        max_response_time = None
-        avg_response_time = None
-        last_execution_time = None
-
+        min_response_time = max_response_time = avg_response_time = last_execution_time = None
         if db_agent.metrics:
-            response_times = [m.response_time for m in db_agent.metrics]
-            min_response_time = min(response_times)
-            max_response_time = max(response_times)
-            avg_response_time = sum(response_times) / len(response_times)
-            last_execution_time = max(m.timestamp for m in db_agent.metrics)
+            response_times = [m.response_time for m in db_agent.metrics if m.response_time is not None]
+            if response_times:
+                min_response_time = min(response_times)
+                max_response_time = max(response_times)
+                avg_response_time = sum(response_times) / len(response_times)
+            last_execution_time = max((m.timestamp for m in db_agent.metrics), default=None)
 
         metrics = A2AAgentMetrics(
             total_executions=total_executions,
@@ -760,36 +965,13 @@ class A2AAgentService:
             last_execution_time=last_execution_time,
         )
 
-        return A2AAgentRead(
-            id=db_agent.id,
-            name=db_agent.name,
-            slug=db_agent.slug,
-            description=db_agent.description,
-            endpoint_url=db_agent.endpoint_url,
-            agent_type=db_agent.agent_type,
-            protocol_version=db_agent.protocol_version,
-            capabilities=db_agent.capabilities,
-            config=db_agent.config,
-            auth_type=db_agent.auth_type,
-            enabled=db_agent.enabled,
-            reachable=db_agent.reachable,
-            created_at=db_agent.created_at,
-            updated_at=db_agent.updated_at,
-            last_interaction=db_agent.last_interaction,
-            tags=db_agent.tags,
-            metrics=metrics,
-            created_by=db_agent.created_by,
-            created_from_ip=db_agent.created_from_ip,
-            created_via=db_agent.created_via,
-            created_user_agent=db_agent.created_user_agent,
-            modified_by=db_agent.modified_by,
-            modified_from_ip=db_agent.modified_from_ip,
-            modified_via=db_agent.modified_via,
-            modified_user_agent=db_agent.modified_user_agent,
-            import_batch_id=db_agent.import_batch_id,
-            federation_source=db_agent.federation_source,
-            version=db_agent.version,
-            visibility=db_agent.visibility,
-            team_id=db_agent.team_id,
-            owner_email=db_agent.owner_email,
-        )
+        # Build dict from ORM model
+        agent_data = {k: getattr(db_agent, k, None) for k in A2AAgentRead.model_fields.keys()}
+        agent_data["metrics"] = metrics
+        agent_data["team"] = getattr(db_agent, "team", None)
+
+        # Validate using Pydantic model
+        validated_agent = A2AAgentRead.model_validate(agent_data)
+
+        # Return masked version (like GatewayRead)
+        return validated_agent.masked()

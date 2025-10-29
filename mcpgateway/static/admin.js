@@ -2554,6 +2554,7 @@ async function editTool(toolId) {
 /**
  * SECURE: View A2A Agents function with safe display
  */
+
 async function viewAgent(agentId) {
     try {
         console.log(`Viewing agent ID: ${agentId}`);
@@ -2577,9 +2578,9 @@ async function viewAgent(agentId) {
             const fields = [
                 { label: "Name", value: agent.name },
                 { label: "Slug", value: agent.slug },
-                { label: "Endpoint URL", value: agent.endpoint_url },
-                { label: "Agent Type", value: agent.agent_type },
-                { label: "Protocol Version", value: agent.protocol_version },
+                { label: "Endpoint URL", value: agent.endpointUrl },
+                { label: "Agent Type", value: agent.agentType },
+                { label: "Protocol Version", value: agent.protocolVersion },
                 { label: "Description", value: agent.description || "N/A" },
                 { label: "Visibility", value: agent.visibility || "private" },
             ];
@@ -2760,11 +2761,347 @@ async function viewAgent(agentId) {
         }
 
         openModal("agent-modal");
+        const modal = document.getElementById("agent-modal");
+        if (modal && modal.classList.contains("hidden")) {
+            console.warn("Modal was still hidden — forcing visible.");
+            modal.classList.remove("hidden");
+        }
+
         console.log("✓ Agent details loaded successfully");
     } catch (error) {
         console.error("Error fetching agent details:", error);
         const errorMessage = handleFetchError(error, "load agent details");
         showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * SECURE: Edit A2A Agent function
+ */
+
+async function editA2AAgent(agentId) {
+    try {
+        console.log(`Editing A2A Agent ID: ${agentId}`);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/a2a/${agentId}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const agent = await response.json();
+
+        console.log("Agent Details: " + JSON.stringify(agent, null, 2));
+
+        // for (const [key, value] of Object.entries(agent)) {
+        //       console.log(`${key}:`, value);
+        //     }
+
+        const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
+        const editForm = safeGetElement("edit-a2a-agent-form");
+        let hiddenField = safeGetElement("edit-a2a-agents-show-inactive");
+        if (!hiddenField) {
+            hiddenField = document.createElement("input");
+            hiddenField.type = "hidden";
+            hiddenField.name = "is_inactivate_checked";
+            hiddenField.id = "edit-a2a-agents-show-inactive";
+
+            if (editForm) {
+                editForm.appendChild(hiddenField);
+            }
+        }
+        hiddenField.value = isInactiveCheckedBool;
+
+        // Set form action and populate fields with validation
+
+        if (editForm) {
+            editForm.action = `${window.ROOT_PATH}/admin/a2a/${agentId}/edit`;
+            editForm.method = "POST"; // ensure method is POST
+        }
+
+        const nameValidation = validateInputName(agent.name, "a2a_agent");
+        const urlValidation = validateUrl(agent.endpointUrl);
+
+        const nameField = safeGetElement("a2a-agent-name-edit");
+        const urlField = safeGetElement("a2a-agent-endpoint-url-edit");
+        const descField = safeGetElement("a2a-agent-description-edit");
+        const agentType = safeGetElement("a2a-agent-type-edit");
+
+        agentType.value = agent.agentType;
+
+        console.log("Agent Type: ", agent.agentType);
+
+        if (nameField && nameValidation.valid) {
+            nameField.value = nameValidation.value;
+        }
+        if (urlField && urlValidation.valid) {
+            urlField.value = urlValidation.value;
+        }
+        if (descField) {
+            descField.value = agent.description || "";
+        }
+
+        // Set tags field
+        const tagsField = safeGetElement("a2a-agent-tags-edit");
+        if (tagsField) {
+            tagsField.value = agent.tags ? agent.tags.join(", ") : "";
+        }
+
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+
+        if (teamId) {
+            const hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.name = "team_id";
+            hiddenInput.value = teamId;
+            editForm.appendChild(hiddenInput);
+        }
+
+        // ✅ Prefill visibility radios (consistent with server)
+        const visibility = agent.visibility
+            ? agent.visibility.toLowerCase()
+            : null;
+
+        const publicRadio = safeGetElement("a2a-visibility-public-edit");
+        const teamRadio = safeGetElement("a2a-visibility-team-edit");
+        const privateRadio = safeGetElement("a2a-visibility-private-edit");
+
+        // Clear all first
+        if (publicRadio) {
+            publicRadio.checked = false;
+        }
+        if (teamRadio) {
+            teamRadio.checked = false;
+        }
+        if (privateRadio) {
+            privateRadio.checked = false;
+        }
+
+        if (visibility) {
+            // Check visibility and set the corresponding radio button
+            if (visibility === "public" && publicRadio) {
+                publicRadio.checked = true;
+            } else if (visibility === "team" && teamRadio) {
+                teamRadio.checked = true;
+            } else if (visibility === "private" && privateRadio) {
+                privateRadio.checked = true;
+            }
+        }
+
+        const authTypeField = safeGetElement("auth-type-a2a-edit");
+
+        if (authTypeField) {
+            authTypeField.value = agent.authType || "";
+        }
+
+        toggleA2AAuthFields(agent.authType || "");
+
+        // Auth containers
+        const authBasicSection = safeGetElement("auth-basic-fields-a2a-edit");
+        const authBearerSection = safeGetElement("auth-bearer-fields-a2a-edit");
+        const authHeadersSection = safeGetElement(
+            "auth-headers-fields-a2a-edit",
+        );
+        const authOAuthSection = safeGetElement("auth-oauth-fields-a2a-edit");
+
+        // Individual fields
+        const authUsernameField = safeGetElement(
+            "auth-basic-fields-a2a-edit",
+        )?.querySelector("input[name='auth_username']");
+        const authPasswordField = safeGetElement(
+            "auth-basic-fields-a2a-edit",
+        )?.querySelector("input[name='auth_password']");
+
+        const authTokenField = safeGetElement(
+            "auth-bearer-fields-a2a-edit",
+        )?.querySelector("input[name='auth_token']");
+
+        const authHeaderKeyField = safeGetElement(
+            "auth-headers-fields-a2a-edit",
+        )?.querySelector("input[name='auth_header_key']");
+        const authHeaderValueField = safeGetElement(
+            "auth-headers-fields-a2a-edit",
+        )?.querySelector("input[name='auth_header_value']");
+
+        // OAuth fields
+        const oauthGrantTypeField = safeGetElement("oauth-grant-type-a2a-edit");
+        const oauthClientIdField = safeGetElement("oauth-client-id-a2a-edit");
+        const oauthClientSecretField = safeGetElement(
+            "oauth-client-secret-a2a-edit",
+        );
+        const oauthTokenUrlField = safeGetElement("oauth-token-url-a2a-edit");
+        const oauthAuthUrlField = safeGetElement(
+            "oauth-authorization-url-a2a-edit",
+        );
+        const oauthRedirectUriField = safeGetElement(
+            "oauth-redirect-uri-a2a-edit",
+        );
+        const oauthScopesField = safeGetElement("oauth-scopes-a2a-edit");
+        const oauthAuthCodeFields = safeGetElement(
+            "oauth-auth-code-fields-a2a-edit",
+        );
+
+        // Hide all auth sections first
+        if (authBasicSection) {
+            authBasicSection.style.display = "none";
+        }
+        if (authBearerSection) {
+            authBearerSection.style.display = "none";
+        }
+        if (authHeadersSection) {
+            authHeadersSection.style.display = "none";
+        }
+        if (authOAuthSection) {
+            authOAuthSection.style.display = "none";
+        }
+
+        switch (agent.authType) {
+            case "basic":
+                if (authBasicSection) {
+                    authBasicSection.style.display = "block";
+                    if (authUsernameField) {
+                        authUsernameField.value = agent.authUsername || "";
+                    }
+                    if (authPasswordField) {
+                        authPasswordField.value = "*****"; // mask password
+                    }
+                }
+                break;
+            case "bearer":
+                if (authBearerSection) {
+                    authBearerSection.style.display = "block";
+                    if (authTokenField) {
+                        authTokenField.value = agent.authValue || ""; // show full token
+                    }
+                }
+                break;
+            case "authheaders":
+                if (authHeadersSection) {
+                    authHeadersSection.style.display = "block";
+                    if (authHeaderKeyField) {
+                        authHeaderKeyField.value = agent.authHeaderKey || "";
+                    }
+                    if (authHeaderValueField) {
+                        authHeaderValueField.value = "*****"; // mask header value
+                    }
+                }
+                break;
+            case "oauth":
+                if (authOAuthSection) {
+                    authOAuthSection.style.display = "block";
+                }
+                // Populate OAuth fields if available
+                if (agent.oauthConfig) {
+                    const config = agent.oauthConfig;
+                    if (oauthGrantTypeField && config.grant_type) {
+                        oauthGrantTypeField.value = config.grant_type;
+                        // Show/hide authorization code fields based on grant type
+                        if (oauthAuthCodeFields) {
+                            oauthAuthCodeFields.style.display =
+                                config.grant_type === "authorization_code"
+                                    ? "block"
+                                    : "none";
+                        }
+                    }
+                    if (oauthClientIdField && config.client_id) {
+                        oauthClientIdField.value = config.client_id;
+                    }
+                    if (oauthClientSecretField) {
+                        oauthClientSecretField.value = ""; // Don't populate secret for security
+                    }
+                    if (oauthTokenUrlField && config.token_url) {
+                        oauthTokenUrlField.value = config.token_url;
+                    }
+                    if (oauthAuthUrlField && config.authorization_url) {
+                        oauthAuthUrlField.value = config.authorization_url;
+                    }
+                    if (oauthRedirectUriField && config.redirect_uri) {
+                        oauthRedirectUriField.value = config.redirect_uri;
+                    }
+                    if (
+                        oauthScopesField &&
+                        config.scopes &&
+                        Array.isArray(config.scopes)
+                    ) {
+                        oauthScopesField.value = config.scopes.join(" ");
+                    }
+                }
+                break;
+            case "":
+            default:
+                // No auth – keep everything hidden
+                break;
+        }
+
+        // **Capabilities & Config (ensure valid dicts)**
+        safeSetValue(
+            "a2a-agent-capabilities-edit",
+            JSON.stringify(agent.capabilities || {}),
+        );
+        safeSetValue(
+            "a2a-agent-config-edit",
+            JSON.stringify(agent.config || {}),
+        );
+
+        // Set form action to the new POST endpoint
+
+        // Handle passthrough headers
+        const passthroughHeadersField = safeGetElement(
+            "edit-a2a-agent-passthrough-headers",
+        );
+        if (passthroughHeadersField) {
+            if (
+                agent.passthroughHeaders &&
+                Array.isArray(agent.passthroughHeaders)
+            ) {
+                passthroughHeadersField.value =
+                    agent.passthroughHeaders.join(", ");
+            } else {
+                passthroughHeadersField.value = "";
+            }
+        }
+
+        openModal("a2a-edit-modal");
+        console.log("✓ A2A Agent edit modal loaded successfully");
+    } catch (err) {
+        console.error("Error loading A2A agent:", err);
+        const errorMessage = handleFetchError(
+            err,
+            "load A2A Agent for editing",
+        );
+        showErrorMessage(errorMessage);
+    }
+}
+
+function safeSetValue(id, val) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.value = val;
+    }
+}
+
+function toggleA2AAuthFields(authType) {
+    const sections = [
+        "auth-basic-fields-a2a-edit",
+        "auth-bearer-fields-a2a-edit",
+        "auth-headers-fields-a2a-edit",
+        "auth-oauth-fields-a2a-edit",
+    ];
+    sections.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.display = "none";
+        }
+    });
+    if (authType) {
+        const el = document.getElementById(`auth-${authType}-fields-a2a-edit`);
+        if (el) {
+            el.style.display = "block";
+        }
     }
 }
 
@@ -3813,6 +4150,8 @@ async function editGateway(gatewayId) {
         }
 
         const gateway = await response.json();
+
+        console.log("Gateway Details: " + JSON.stringify(gateway, null, 2));
 
         const isInactiveCheckedBool = isInactiveChecked("gateways");
         let hiddenField = safeGetElement("edit-gateway-show-inactive");
@@ -8419,7 +8758,6 @@ async function handleGatewayFormSubmit(e) {
 
             const queryString = searchParams.toString();
             const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
-
             window.location.href = redirectUrl;
         }
     } catch (error) {
@@ -8715,6 +9053,7 @@ async function handleServerFormSubmit(e) {
 // Handle Add A2A Form Submit
 async function handleA2AFormSubmit(e) {
     e.preventDefault();
+
     const form = e.target;
     const formData = new FormData(form);
     const status = safeGetElement("a2aFormError");
@@ -8723,7 +9062,6 @@ async function handleA2AFormSubmit(e) {
     try {
         // Basic validation
         const name = formData.get("name");
-
         const nameValidation = validateInputName(name, "A2A Agent");
         if (!nameValidation.valid) {
             throw new Error(nameValidation.error);
@@ -8737,30 +9075,85 @@ async function handleA2AFormSubmit(e) {
             status.classList.remove("error-status");
         }
 
-        // Append visibility (radio buttons)
+        const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Process passthrough headers - convert comma-separated string to array
+        const passthroughHeadersString = formData.get("passthrough_headers");
+        if (passthroughHeadersString && passthroughHeadersString.trim()) {
+            // Split by comma and clean up each header name
+            const passthroughHeaders = passthroughHeadersString
+                .split(",")
+                .map((header) => header.trim())
+                .filter((header) => header.length > 0);
+
+            // Validate each header name
+            for (const headerName of passthroughHeaders) {
+                if (!HEADER_NAME_REGEX.test(headerName)) {
+                    showErrorMessage(
+                        `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+                    );
+                    return;
+                }
+            }
+
+            // Remove the original string and add as JSON array
+            formData.delete("passthrough_headers");
+            formData.append(
+                "passthrough_headers",
+                JSON.stringify(passthroughHeaders),
+            );
+        }
+
+        // Handle auth_headers JSON field
+        const authHeadersJson = formData.get("auth_headers");
+        if (authHeadersJson) {
+            try {
+                const authHeaders = JSON.parse(authHeadersJson);
+                if (Array.isArray(authHeaders) && authHeaders.length > 0) {
+                    // Remove the JSON string and add as parsed data for backend processing
+                    formData.delete("auth_headers");
+                    formData.append(
+                        "auth_headers",
+                        JSON.stringify(authHeaders),
+                    );
+                }
+            } catch (e) {
+                console.error("Invalid auth_headers JSON:", e);
+            }
+        }
+
+        const authType = formData.get("auth_type");
+        if (authType !== "oauth") {
+            formData.set("oauth_grant_type", "");
+        }
 
         // ✅ Ensure visibility is captured from checked radio button
-
         // formData.set("visibility", visibility);
         formData.append("visibility", formData.get("visibility"));
-
         const teamId = new URL(window.location.href).searchParams.get(
             "team_id",
         );
         teamId && formData.append("team_id", teamId);
 
         // Submit to backend
+        // specifically log agentType only
+        console.log("agentType:", formData.get("agentType"));
+
         const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
             method: "POST",
             body: formData,
         });
 
         const result = await response.json();
+
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add A2A Agent.");
         } else {
             // Success redirect
             const searchParams = new URLSearchParams();
+            if (isInactiveCheckedBool) {
+                searchParams.set("include_inactive", "true");
+            }
             if (teamId) {
                 searchParams.set("team_id", teamId);
             }
@@ -8932,6 +9325,8 @@ async function handleEditToolFormSubmit(event) {
         showErrorMessage(error.message);
     }
 }
+
+// Handle Gateway Edit Form
 async function handleEditGatewayFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
@@ -9015,6 +9410,104 @@ async function handleEditGatewayFormSubmit(e) {
         }
         const queryString = searchParams.toString();
         const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
+        window.location.href = redirectUrl;
+    } catch (error) {
+        console.error("Error:", error);
+        showErrorMessage(error.message);
+    }
+}
+
+// Handle A2A Agent Edit Form
+async function handleEditA2AAgentFormSubmit(e) {
+    e.preventDefault();
+    const form = e.target;
+    const formData = new FormData(form);
+
+    console.log("Edit A2A Agent Form Details: ");
+    console.log(
+        JSON.stringify(Object.fromEntries(formData.entries()), null, 2),
+    );
+
+    try {
+        // Validate form inputs
+        const name = formData.get("name");
+        const url = formData.get("endpoint_url");
+        console.log("Original A2A URL: ", url);
+        const nameValidation = validateInputName(name, "a2a_agent");
+        const urlValidation = validateUrl(url);
+
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!urlValidation.valid) {
+            throw new Error(urlValidation.error);
+        }
+
+        // Handle passthrough headers
+        const passthroughHeadersString =
+            formData.get("passthrough_headers") || "";
+        const passthroughHeaders = passthroughHeadersString
+            .split(",")
+            .map((header) => header.trim())
+            .filter((header) => header.length > 0);
+
+        // Validate each header name
+        for (const headerName of passthroughHeaders) {
+            if (headerName && !HEADER_NAME_REGEX.test(headerName)) {
+                showErrorMessage(
+                    `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+                );
+                return;
+            }
+        }
+
+        formData.append(
+            "passthrough_headers",
+            JSON.stringify(passthroughHeaders),
+        );
+
+        // Handle OAuth configuration
+        // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
+        // The backend assembles individual form fields into oauth_config with proper field names
+        // and supports DCR (Dynamic Client Registration) when client_id/client_secret are empty
+        //
+        // Leaving this commented for reference:
+        // const authType = formData.get("auth_type");
+        // if (authType === "oauth") {
+        //     ... backend handles this now ...
+        // }
+
+        const authType = formData.get("auth_type");
+        if (authType !== "oauth") {
+            formData.set("oauth_grant_type", "");
+        }
+
+        const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
+        formData.append("is_inactive_checked", isInactiveCheckedBool);
+        // Submit via fetch
+        const response = await fetch(form.action, {
+            method: "POST",
+            body: formData,
+        });
+        const result = await response.json();
+        if (!result || !result.success) {
+            throw new Error(result?.message || "Failed to edit a2a agent");
+        }
+        // Only redirect on success
+        const teamId = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
+
+        const searchParams = new URLSearchParams();
+        if (isInactiveCheckedBool) {
+            searchParams.set("include_inactive", "true");
+        }
+        if (teamId) {
+            searchParams.set("team_id", teamId);
+        }
+        const queryString = searchParams.toString();
+        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
         window.location.href = redirectUrl;
     } catch (error) {
         console.error("Error:", error);
@@ -9680,12 +10173,27 @@ function setupAuthenticationToggles() {
             bearerId: "auth-bearer-fields",
             headersId: "auth-headers-fields",
         },
+
+        // Gateway Add Form auth fields
+
         {
             id: "auth-type-gw",
             basicId: "auth-basic-fields-gw",
             bearerId: "auth-bearer-fields-gw",
             headersId: "auth-headers-fields-gw",
         },
+
+        // A2A Add Form auth fields
+
+        {
+            id: "auth-type-a2a",
+            basicId: "auth-basic-fields-a2a",
+            bearerId: "auth-bearer-fields-a2a",
+            headersId: "auth-headers-fields-a2a",
+        },
+
+        // Gateway Edit Form auth fields
+
         {
             id: "auth-type-gw-edit",
             basicId: "auth-basic-fields-gw-edit",
@@ -9693,6 +10201,17 @@ function setupAuthenticationToggles() {
             headersId: "auth-headers-fields-gw-edit",
             oauthId: "auth-oauth-fields-gw-edit",
         },
+
+        // A2A Edit Form auth fields
+
+        {
+            id: "auth-type-a2a-edit",
+            basicId: "auth-basic-fields-a2a-edit",
+            bearerId: "auth-bearer-fields-a2a-edit",
+            headersId: "auth-headers-fields-a2a-edit",
+            oauthId: "auth-oauth-fields-a2a-edit",
+        },
+
         {
             id: "edit-auth-type",
             basicId: "edit-auth-basic-fields",
@@ -9730,8 +10249,29 @@ function setupFormHandlers() {
             authTypeField.addEventListener("change", handleAuthTypeChange);
         }
 
-        // Add OAuth grant type change handler
+        // Add OAuth grant type change handler for Gateway
         const oauthGrantTypeField = safeGetElement("oauth-grant-type-gw");
+        if (oauthGrantTypeField) {
+            oauthGrantTypeField.addEventListener(
+                "change",
+                handleOAuthGrantTypeChange,
+            );
+        }
+    }
+
+    // Add A2A Form
+    const a2aForm = safeGetElement("add-a2a-form");
+
+    if (a2aForm) {
+        a2aForm.addEventListener("submit", handleA2AFormSubmit);
+
+        // Add OAuth authentication type change handler
+        const authTypeField = safeGetElement("auth-type-a2a");
+        if (authTypeField) {
+            authTypeField.addEventListener("change", handleAuthTypeChange);
+        }
+
+        const oauthGrantTypeField = safeGetElement("oauth-grant-type-a2a");
         if (oauthGrantTypeField) {
             oauthGrantTypeField.addEventListener(
                 "change",
@@ -9761,6 +10301,8 @@ function setupFormHandlers() {
     }
 
     // Add OAuth grant type change handler for Edit Gateway modal
+    // Checkpoint commented
+    /*
     const editOAuthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
     if (editOAuthGrantTypeField) {
         editOAuthGrantTypeField.addEventListener(
@@ -9768,6 +10310,17 @@ function setupFormHandlers() {
             handleEditOAuthGrantTypeChange,
         );
     }
+
+    */
+
+    // Checkpoint Started
+    ["oauth-grant-type-gw-edit", "oauth-grant-type-a2a-edit"].forEach((id) => {
+        const field = safeGetElement(id);
+        if (field) {
+            field.addEventListener("change", handleEditOAuthGrantTypeChange);
+        }
+    });
+    // Checkpoint Ended
 
     const toolForm = safeGetElement("add-tool-form");
     if (toolForm) {
@@ -9792,12 +10345,6 @@ function setupFormHandlers() {
     const serverForm = safeGetElement("add-server-form");
     if (serverForm) {
         serverForm.addEventListener("submit", handleServerFormSubmit);
-    }
-
-    // Add A2A Form
-    const a2aForm = safeGetElement("add-a2a-form");
-    if (a2aForm) {
-        a2aForm.addEventListener("submit", handleA2AFormSubmit);
     }
 
     const editServerForm = safeGetElement("edit-server-form");
@@ -9835,6 +10382,19 @@ function setupFormHandlers() {
         editGatewayForm.addEventListener("submit", handleEditGatewayFormSubmit);
         editGatewayForm.addEventListener("click", () => {
             if (getComputedStyle(editGatewayForm).display !== "none") {
+                refreshEditors();
+            }
+        });
+    }
+
+    const editA2AAgentForm = safeGetElement("edit-a2a-agent-form");
+    if (editA2AAgentForm) {
+        editA2AAgentForm.addEventListener(
+            "submit",
+            handleEditA2AAgentFormSubmit,
+        );
+        editA2AAgentForm.addEventListener("click", () => {
+            if (getComputedStyle(editA2AAgentForm).display !== "none") {
                 refreshEditors();
             }
         });
@@ -9996,24 +10556,26 @@ window.filterServerTable = filterServerTable;
 
 function handleAuthTypeChange() {
     const authType = this.value;
-    const basicFields = safeGetElement("auth-basic-fields-gw");
-    const bearerFields = safeGetElement("auth-bearer-fields-gw");
-    const headersFields = safeGetElement("auth-headers-fields-gw");
-    const oauthFields = safeGetElement("auth-oauth-fields-gw");
+
+    // Detect form type based on the element ID
+    // e.g., "auth-type-a2a" or "auth-type-gw"
+    const isA2A = this.id.includes("a2a");
+    const prefix = isA2A ? "a2a" : "gw";
+
+    // Select the correct field groups dynamically
+    const basicFields = safeGetElement(`auth-basic-fields-${prefix}`);
+    const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
+    const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
+    const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
 
     // Hide all auth sections first
-    if (basicFields) {
-        basicFields.style.display = "none";
-    }
-    if (bearerFields) {
-        bearerFields.style.display = "none";
-    }
-    if (headersFields) {
-        headersFields.style.display = "none";
-    }
-    if (oauthFields) {
-        oauthFields.style.display = "none";
-    }
+    [basicFields, bearerFields, headersFields, oauthFields].forEach(
+        (section) => {
+            if (section) {
+                section.style.display = "none";
+            }
+        },
+    );
 
     // Show the appropriate section
     switch (authType) {
@@ -10038,53 +10600,55 @@ function handleAuthTypeChange() {
             }
             break;
         default:
-            // No auth - keep everything hidden
+            // "none" or unknown type — keep everything hidden
             break;
     }
 }
 
 function handleOAuthGrantTypeChange() {
     const grantType = this.value;
-    const authCodeFields = safeGetElement("oauth-auth-code-fields-gw");
-    const usernameField = safeGetElement("oauth-username-field-gw");
-    const passwordField = safeGetElement("oauth-password-field-gw");
 
+    // Detect form type (a2a or gw) from the triggering element ID
+    const isA2A = this.id.includes("a2a");
+    const prefix = isA2A ? "a2a" : "gw";
+
+    // Select the correct fields dynamically based on prefix
+    const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
+    const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+    // Handle Authorization Code flow
     if (authCodeFields) {
         if (grantType === "authorization_code") {
             authCodeFields.style.display = "block";
 
-            // Make authorization code specific fields required
+            // Make URL fields required
             const requiredFields =
                 authCodeFields.querySelectorAll('input[type="url"]');
-            requiredFields.forEach((field) => {
-                field.required = true;
-            });
+            requiredFields.forEach((field) => (field.required = true));
 
-            // Show additional validation for required fields
             console.log(
-                "Authorization Code flow selected - additional fields are now required",
+                `(${prefix.toUpperCase()}) Authorization Code flow selected - fields are now required`,
             );
         } else {
             authCodeFields.style.display = "none";
 
-            // Remove required validation for hidden fields
+            // Remove required validation
             const requiredFields =
                 authCodeFields.querySelectorAll('input[type="url"]');
-            requiredFields.forEach((field) => {
-                field.required = false;
-            });
+            requiredFields.forEach((field) => (field.required = false));
         }
     }
 
-    // Handle password grant type fields
+    // Handle Password Grant flow
     if (usernameField && passwordField) {
+        const usernameInput = safeGetElement(`oauth-username-${prefix}`);
+        const passwordInput = safeGetElement(`oauth-password-${prefix}`);
+
         if (grantType === "password") {
             usernameField.style.display = "block";
             passwordField.style.display = "block";
 
-            // Make username and password required for password grant
-            const usernameInput = safeGetElement("oauth-username-gw");
-            const passwordInput = safeGetElement("oauth-password-gw");
             if (usernameInput) {
                 usernameInput.required = true;
             }
@@ -10093,15 +10657,12 @@ function handleOAuthGrantTypeChange() {
             }
 
             console.log(
-                "Password grant flow selected - username and password are now required",
+                `(${prefix.toUpperCase()}) Password grant flow selected - username and password are now required`,
             );
         } else {
             usernameField.style.display = "none";
             passwordField.style.display = "none";
 
-            // Remove required validation for hidden fields
-            const usernameInput = safeGetElement("oauth-username-gw");
-            const passwordInput = safeGetElement("oauth-password-gw");
             if (usernameInput) {
                 usernameInput.required = false;
             }
@@ -10114,46 +10675,39 @@ function handleOAuthGrantTypeChange() {
 
 function handleEditOAuthGrantTypeChange() {
     const grantType = this.value;
-    const authCodeFields = safeGetElement("oauth-auth-code-fields-gw-edit");
-    const usernameField = safeGetElement("oauth-username-field-edit");
-    const passwordField = safeGetElement("oauth-password-field-edit");
 
+    // Detect prefix dynamically (supports both gw-edit and a2a-edit)
+    const id = this.id || "";
+    const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
+
+    const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
+    const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
+    const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
+
+    // === Handle Authorization Code grant ===
     if (authCodeFields) {
+        const urlInputs = authCodeFields.querySelectorAll('input[type="url"]');
         if (grantType === "authorization_code") {
             authCodeFields.style.display = "block";
-
-            // Make authorization code specific fields required
-            const requiredFields =
-                authCodeFields.querySelectorAll('input[type="url"]');
-            requiredFields.forEach((field) => {
-                field.required = true;
-            });
-
-            // Show additional validation for required fields
+            urlInputs.forEach((field) => (field.required = true));
             console.log(
-                "Authorization Code flow selected - additional fields are now required",
+                `Authorization Code flow selected (${prefix}) - additional fields are now required`,
             );
         } else {
             authCodeFields.style.display = "none";
-
-            // Remove required validation for hidden fields
-            const requiredFields =
-                authCodeFields.querySelectorAll('input[type="url"]');
-            requiredFields.forEach((field) => {
-                field.required = false;
-            });
+            urlInputs.forEach((field) => (field.required = false));
         }
     }
 
-    // Handle password grant type fields
+    // === Handle Password grant ===
     if (usernameField && passwordField) {
+        const usernameInput = safeGetElement(`oauth-username-${prefix}`);
+        const passwordInput = safeGetElement(`oauth-password-${prefix}`);
+
         if (grantType === "password") {
             usernameField.style.display = "block";
             passwordField.style.display = "block";
 
-            // Make username and password required for password grant
-            const usernameInput = safeGetElement("oauth-username-gw-edit");
-            const passwordInput = safeGetElement("oauth-password-gw-edit");
             if (usernameInput) {
                 usernameInput.required = true;
             }
@@ -10162,15 +10716,12 @@ function handleEditOAuthGrantTypeChange() {
             }
 
             console.log(
-                "Password grant flow selected - username and password are now required",
+                `Password grant flow selected (${prefix}) - username and password are now required`,
             );
         } else {
             usernameField.style.display = "none";
             passwordField.style.display = "none";
 
-            // Remove required validation for hidden fields
-            const usernameInput = safeGetElement("oauth-username-gw-edit");
-            const passwordInput = safeGetElement("oauth-password-gw-edit");
             if (usernameInput) {
                 usernameInput.required = false;
             }
@@ -10317,6 +10868,7 @@ window.editGateway = editGateway;
 window.viewServer = viewServer;
 window.editServer = editServer;
 window.viewAgent = viewAgent;
+window.editA2AAgent = editA2AAgent;
 window.runToolTest = runToolTest;
 window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;
@@ -10788,8 +11340,16 @@ function filterEntitiesByTags(entityType, tagsInput) {
         .split(",")
         .map((tag) => tag.trim().toLowerCase())
         .filter((tag) => tag);
-    const tableSelector = `#${entityType}-panel tbody tr`;
-    const rows = document.querySelectorAll(tableSelector);
+
+    let rows;
+    if (entityType === "a2a-agents") {
+        const panel = document.querySelector(`#${entityType}-panel`);
+        rows = panel.querySelectorAll(".border.rounded-lg.p-4");
+        // 👆 adjust selector if your agent cards have different class names
+    } else {
+        const tableSelector = `#${entityType}-panel tbody tr`;
+        rows = document.querySelectorAll(tableSelector);
+    }
 
     let visibleCount = 0;
 
@@ -10803,10 +11363,32 @@ function filterEntitiesByTags(entityType, tagsInput) {
 
         // Extract tags from this row using specific tag selectors (not status badges)
         const rowTags = new Set();
-        const tagElements = row.querySelectorAll(`
+
+        /*
+        const tagElements_ver1 = row.querySelectorAll(`
             span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
             span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
         `);
+
+        const tagElements_ver2 = row.querySelectorAll(`
+            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-blue-100.text-blue-800,
+            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700,
+            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
+            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
+        `);
+        */
+
+        const tagElements = row.querySelectorAll(`
+            /* Gateways */
+            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full,
+            /* A2A Agents */
+            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
+            /* Prompts & Resources */
+            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
+            /* Gray tags for A2A agent metadata */
+            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700
+        `);
+
         tagElements.forEach((tagEl) => {
             const tagText = tagEl.textContent.trim().toLowerCase();
             // Filter out any remaining non-tag content
@@ -10906,6 +11488,7 @@ function initializeTagFiltering() {
         "prompts",
         "servers",
         "gateways",
+        "a2a-agents",
     ];
 
     entityTypes.forEach((entityType) => {
@@ -11126,10 +11709,14 @@ function updateAuthHeadersJSON(containerId) {
         jsonInput = document.getElementById("auth-headers-json");
     } else if (containerId === "auth-headers-container-gw") {
         jsonInput = document.getElementById("auth-headers-json-gw");
+    } else if (containerId === "auth-headers-container-a2a") {
+        jsonInput = document.getElementById("auth-headers-json-a2a");
     } else if (containerId === "edit-auth-headers-container") {
         jsonInput = document.getElementById("edit-auth-headers-json");
     } else if (containerId === "auth-headers-container-gw-edit") {
         jsonInput = document.getElementById("auth-headers-json-gw-edit");
+    } else if (containerId === "auth-headers-container-a2a-edit") {
+        jsonInput = document.getElementById("auth-headers-json-a2a-edit");
     }
 
     // Warn about duplicate keys in console
