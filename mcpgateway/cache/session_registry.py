@@ -1251,7 +1251,7 @@ class SessionRegistry(SessionBackend):
             logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
 
         return InitializeResult(
-            protocolVersion=settings.protocol_version,
+            protocolVersion=protocol_version,
             capabilities=ServerCapabilities(
                 prompts={"listChanged": True},
                 resources={"subscribe": True, "listChanged": True},
