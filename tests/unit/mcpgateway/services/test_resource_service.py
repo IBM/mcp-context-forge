@@ -353,7 +353,7 @@ class TestResourceListing:
         mock_team = MagicMock()
         mock_team.name = "test-team"
         mock_db.query().filter().first.return_value = mock_team
-        result = await resource_service.list_resources(mock_db, include_inactive=False)
+        result, _ = await resource_service.list_resources(mock_db, include_inactive=False)
 
         assert len(result) == 1
         assert isinstance(result[0], ResourceRead)
@@ -372,7 +372,7 @@ class TestResourceListing:
         mock_team.name = "test-team"
         mock_db.query().filter().first.return_value = mock_team
 
-        result = await resource_service.list_resources(mock_db, include_inactive=True)
+        result, _ = await resource_service.list_resources(mock_db, include_inactive=True)
 
         assert len(result) == 2
 
@@ -1349,9 +1349,11 @@ class TestResourceServiceMetricsExtended:
         """Test listing resources with tag filtering."""
         # Third-Party
 
-        # Mock query chain
+        # Mock query chain - support pagination methods
         mock_query = MagicMock()
         mock_query.where.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
         mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_resource]
 
         bind = MagicMock()
@@ -1369,7 +1371,7 @@ class TestResourceServiceMetricsExtended:
                 mock_team.name = "test-team"
                 mock_db.query().filter().first.return_value = mock_team
 
-                result = await resource_service.list_resources(mock_db, tags=["test", "production"])
+                result, _ = await resource_service.list_resources(mock_db, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
                 mock_json_contains.assert_called_once()  # called exactly once

@@ -7,7 +7,7 @@ Authors: Mihai Criveti
 add oauth config to gateways
 
 Revision ID: f8c9d3e2a1b4
-Revises: eb17fd368f9d
+Revises: 34492f99a0c4
 Create Date: 2024-12-20 10:00:00.000000
 """
 

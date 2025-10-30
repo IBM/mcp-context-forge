@@ -2,7 +2,7 @@
 """add pagination indexes
 
 Revision ID: g1a2b3c4d5e6
-Revises: f8c9d3e2a1b4
+Revises: e5a59c16e041
 Create Date: 2025-10-13 10:00:00.000000
 
 """

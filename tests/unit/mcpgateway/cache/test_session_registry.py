@@ -144,17 +144,6 @@ class MockPubSub:
 
 
 # --------------------------------------------------------------------------- #
-# Event-loop fixture (pytest default loop is function-scoped)                 #
-# --------------------------------------------------------------------------- #
-@pytest.fixture(name="event_loop")
-def _event_loop_fixture():
-    """Provide a fresh asyncio loop for these async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-# --------------------------------------------------------------------------- #
 # SessionRegistry fixture (memory backend)                                    #
 # --------------------------------------------------------------------------- #
 @pytest.fixture()

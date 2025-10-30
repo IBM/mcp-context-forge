@@ -154,7 +154,7 @@ class SamplingHandler:
             ... }
             >>> result = asyncio.run(handler.create_message(db, request))
             >>> result.role
-            <Role.ASSISTANT: 'assistant'>
+            'assistant'
             >>> result.content.type
             'text'
             >>> result.stop_reason
