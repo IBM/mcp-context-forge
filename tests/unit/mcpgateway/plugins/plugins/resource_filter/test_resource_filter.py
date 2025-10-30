@@ -11,7 +11,7 @@ Tests for the ResourceFilterPlugin.
 import pytest
 
 # First-Party
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     PluginConfig,

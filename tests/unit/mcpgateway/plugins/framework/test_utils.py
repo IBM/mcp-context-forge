@@ -115,7 +115,7 @@ def test_parse_class_name():
 #     """Test the post_prompt_matches function."""
 #     # Import required models
 #     # First-Party
-#     from mcpgateway.models import Message, PromptResult, TextContent
+#     from mcpgateway.common.models import Message, PromptResult, TextContent
 
 #     # Test basic matching
 #     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))
@@ -144,7 +144,7 @@ def test_parse_class_name():
 # def test_post_prompt_matches_multiple_conditions():
 #     """Test post_prompt_matches with multiple conditions (OR logic)."""
 #     # First-Party
-#     from mcpgateway.models import Message, PromptResult, TextContent
+#     from mcpgateway.common.models import Message, PromptResult, TextContent
 
 #     # Create the payload
 #     msg = Message(role="assistant", content=TextContent(type="text", text="Hello"))

@@ -17,7 +17,7 @@ from mcp.types import CallToolResult
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, ResourceContent, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
 from mcpgateway.plugins.framework import (
     ConfigLoader,
     GlobalContext,

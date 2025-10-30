@@ -8,7 +8,7 @@ import asyncio
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, ResourceContent, Role, TextContent
+from mcpgateway.common.models import Message, ResourceContent, Role, TextContent
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginManager,

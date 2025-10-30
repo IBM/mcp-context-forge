@@ -11,7 +11,7 @@ Unit tests for plugin manager.
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError
 from mcpgateway.plugins.mcp.entities import HookType, HttpHeaderPayload,  PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig

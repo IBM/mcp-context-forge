@@ -178,7 +178,7 @@ class ResourceFilterPlugin(MCPPlugin):
             if filtered_text != original_text:
                 # Create new content object with filtered text
                 # First-Party
-                from mcpgateway.models import ResourceContent
+                from mcpgateway.common.models import ResourceContent
 
                 modified_content = ResourceContent(
                     type=payload.content.type,

@@ -16,8 +16,8 @@ from typing import AsyncGenerator, Dict, List, Optional
 from urllib.parse import urlparse
 
 # First-Party
+from mcpgateway.common.models import Root
 from mcpgateway.config import settings
-from mcpgateway.models import Root
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -296,7 +296,7 @@ class RootService:
         Examples:
             >>> import asyncio
             >>> from mcpgateway.services.root_service import RootService
-            >>> from mcpgateway.models import Root
+            >>> from mcpgateway.common.models import Root
             >>> service = RootService()
             >>> queue = asyncio.Queue()
             >>> service._subscribers.append(queue)
@@ -320,7 +320,7 @@ class RootService:
         Examples:
             >>> import asyncio
             >>> from mcpgateway.services.root_service import RootService
-            >>> from mcpgateway.models import Root
+            >>> from mcpgateway.common.models import Root
             >>> service = RootService()
             >>> queue = asyncio.Queue()
             >>> service._subscribers.append(queue)

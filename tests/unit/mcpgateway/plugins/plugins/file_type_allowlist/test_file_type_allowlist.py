@@ -20,7 +20,7 @@ from mcpgateway.plugins.mcp.entities import (
     ResourcePreFetchPayload,
     ResourcePostFetchPayload,
 )
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from plugins.file_type_allowlist.file_type_allowlist import FileTypeAllowlistPlugin
 
 

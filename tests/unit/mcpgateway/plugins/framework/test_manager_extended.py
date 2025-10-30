@@ -16,7 +16,7 @@ import re
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.base import HookRef, Plugin
 from mcpgateway.plugins.framework.models import Config
 from mcpgateway.plugins.framework import (
@@ -461,7 +461,7 @@ async def test_manager_payload_size_validation():
 
     # Test large result payload (covers line 258)
     # First-Party
-    from mcpgateway.models import Message, PromptResult, Role, TextContent
+    from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 
     large_text = "y" * (MAX_PAYLOAD_SIZE + 1)
     message = Message(role=Role.USER, content=TextContent(type="text", text=large_text))
@@ -543,7 +543,7 @@ async def test_manager_initialization_edge_cases():
 async def test_base_plugin_coverage():
     """Test base plugin functionality for complete coverage."""
     # First-Party
-    from mcpgateway.models import Message, PromptResult, Role, TextContent
+    from mcpgateway.common.models import Message, PromptResult, Role, TextContent
     from mcpgateway.plugins.framework.base import PluginRef
     from mcpgateway.plugins.framework.models import (
         GlobalContext,

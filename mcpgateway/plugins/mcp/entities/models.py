@@ -17,7 +17,7 @@ from typing import Any, Optional
 from pydantic import Field, RootModel
 
 # First-Party
-from mcpgateway.models import PromptResult
+from mcpgateway.common.models import PromptResult
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 
 
@@ -86,7 +86,7 @@ class PromptPosthookPayload(PluginPayload):
         result (PromptResult): The prompt after its template is rendered.
 
      Examples:
-        >>> from mcpgateway.models import PromptResult, Message, TextContent
+        >>> from mcpgateway.common.models import PromptResult, Message, TextContent
         >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
         >>> result = PromptResult(messages=[msg])
         >>> payload = PromptPosthookPayload(prompt_id="123", result=result)
@@ -94,7 +94,7 @@ class PromptPosthookPayload(PluginPayload):
         '123'
         >>> payload.result.messages[0].content.text
         'Hello World'
-        >>> from mcpgateway.models import PromptResult, Message, TextContent
+        >>> from mcpgateway.common.models import PromptResult, Message, TextContent
         >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
         >>> r = PromptResult(messages=[msg])
         >>> p = PromptPosthookPayload(prompt_id="123", result=r)
@@ -244,7 +244,7 @@ class ResourcePostFetchPayload(PluginPayload):
         content: The fetched resource content.
 
     Examples:
-        >>> from mcpgateway.models import ResourceContent
+        >>> from mcpgateway.common.models import ResourceContent
         >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt",
         ...     text="Hello World")
         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
@@ -252,7 +252,7 @@ class ResourcePostFetchPayload(PluginPayload):
         'file:///data.txt'
         >>> payload.content.text
         'Hello World'
-        >>> from mcpgateway.models import ResourceContent
+        >>> from mcpgateway.common.models import ResourceContent
     >>> resource_content = ResourceContent(type="resource", id="res-2", uri="test://resource", text="Test data")
         >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
         >>> p.uri

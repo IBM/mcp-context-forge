@@ -17,7 +17,8 @@ import re
 from typing import Any
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, ResourceContent, TextContent
+from mcpgateway.common.models import Message, PromptResult, TextContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,

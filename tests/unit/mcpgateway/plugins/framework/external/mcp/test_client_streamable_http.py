@@ -17,7 +17,7 @@ import time
 import pytest
 
 # First-Party
-from mcpgateway.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import ConfigLoader, GlobalContext, PluginContext, PluginLoader
 from mcpgateway.plugins.mcp.entities import  PromptPosthookPayload, PromptPrehookPayload
 

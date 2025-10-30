@@ -30,11 +30,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
-from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager
 from mcpgateway.plugins.mcp.entities import HookType, PromptPosthookPayload, PromptPrehookPayload
