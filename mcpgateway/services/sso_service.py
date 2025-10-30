@@ -30,8 +30,8 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
 from mcpgateway.services.email_auth_service import EmailAuthService
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.utils.create_jwt_token import create_jwt_token
-from mcpgateway.utils.fernet_encryption import get_fernet_encryption
 
 # Logger
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class SSOService:
         """
         self.db = db
         self.auth_service = EmailAuthService(db)
-        self._encryption = get_fernet_encryption(settings.auth_encryption_secret)
+        self._encryption = get_encryption_service(settings.auth_encryption_secret)
 
     def _encrypt_secret(self, secret: str) -> str:
         """Encrypt a client secret for secure storage.

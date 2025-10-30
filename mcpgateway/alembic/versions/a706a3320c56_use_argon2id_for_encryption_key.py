@@ -133,6 +133,14 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
     except Exception as e:
         raise ValueError("Invalid Argon2id bundle") from e
 
+def _reflect(conn):
+    md = sa.MetaData()
+    gateways = sa.Table("gateways", md, autoload_with=conn)
+    a2a_agents = sa.Table("a2a_agents", md, autoload_with=conn)
+    return {"gateways": gateways, "a2a_agents": a2a_agents}
+
+def _is_json(col):
+    return isinstance(col.type, sa.JSON)
 
 def _looks_argon2_bundle(val: Optional[str]) -> bool:
     """Heuristic for Argon2id bundle format (JSON with kdf=argon2id).
@@ -213,82 +221,65 @@ def _downgrade_value(old: Optional[str]) -> Optional[str]:
         return None
 
 
-def _upgrade_json_client_secret(bind, table: str) -> None:
-    rows = (
-        bind.execute(
-            text(
-                f"""
-        SELECT id, oauth_config
-        FROM {table}
-        WHERE oauth_config IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+def _upgrade_json_client_secret(conn, table):
+    t = table
+    sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
+    for row in conn.execute(sel).mappings():
+        rid = row["id"]
+        cfg = row["oauth_config"]
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except json.JSONDecodeError as e:
+                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
+                continue
+        if not isinstance(cfg, dict): continue
 
-    for r in rows:
-        rid = r["id"]
-        cfg_raw = r["oauth_config"]
-        try:
-            cfg = cfg_raw if isinstance(cfg_raw, dict) else json.loads(cfg_raw)
-        except Exception:
-            logger.warning("%s.id=%s: oauth_config not JSON, skipping", table, rid)
-            continue
+        old = cfg.get("client_secret")
+        new = _upgrade_value(old)   # your helper
+        if not new: continue
 
-        secret = cfg.get("client_secret")
-        new_secret = _upgrade_value(secret)
-        if new_secret:
-            cfg["client_secret"] = new_secret
-            bind.execute(
-                text(f"UPDATE {table} SET oauth_config = :cfg WHERE id = :id"),
-                {"cfg": json.dumps(cfg), "id": rid},
-            )
+        cfg["client_secret"] = new
+        value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
+        upd = sa.update(t).where(t.c.id == rid).values(oauth_config=value)
+        conn.execute(upd)
 
 
-def _downgrade_json_client_secret(bind, table: str) -> None:
-    rows = (
-        bind.execute(
-            text(
-                f"""
-        SELECT id, oauth_config
-        FROM {table}
-        WHERE oauth_config IS NOT NULL
-    """
-            )
-        )
-        .mappings()
-        .all()
-    )
+def _downgrade_json_client_secret(conn, table):
+    t = table
+    sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
+    for row in conn.execute(sel).mappings():
+        rid = row["id"]
+        cfg = row["oauth_config"]
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except json.JSONDecodeError as e:
+                logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
+                continue
+        if not isinstance(cfg, dict): continue
 
-    for r in rows:
-        rid = r["id"]
-        cfg_raw = r["oauth_config"]
-        try:
-            cfg = cfg_raw if isinstance(cfg_raw, dict) else json.loads(cfg_raw)
-        except Exception:
-            logger.warning("%s.id=%s: oauth_config not JSON, skipping", table, rid)
-            continue
+        old = cfg.get("client_secret")
+        new = _downgrade_value(old)   # your helper
+        if not new: continue
 
-        secret = cfg.get("client_secret")
-        new_secret = _downgrade_value(secret)
-        if new_secret:
-            cfg["client_secret"] = new_secret
-            bind.execute(
-                text(f"UPDATE {table} SET oauth_config = :cfg WHERE id = :id"),
-                {"cfg": json.dumps(cfg), "id": rid},
-            )
+        cfg["client_secret"] = new
+        value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
+        upd = sa.update(t).where(t.c.id == rid).values(oauth_config=value)
+        conn.execute(upd)
 
 
 def upgrade() -> None:
     bind = op.get_bind()
 
+    conn = op.get_bind()
+    t = _reflect(conn)
+
     # JSON: gateways.oauth_config.client_secret
-    _upgrade_json_client_secret(bind, "gateways")
+    _upgrade_json_client_secret(conn, t["gateways"])
 
     # JSON: a2a_agents.oauth_config.client_secret
-    _upgrade_json_client_secret(bind, "a2a_agents")
+    _upgrade_json_client_secret(conn, t["a2a_agents"])
 
     # oauth_tokens: access_token, refresh_token
     rows = (

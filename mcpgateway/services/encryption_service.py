@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/utils/oauth_encryption.py
+"""Location: ./mcpgateway/services/encryption_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Madhav Kandukuri
 
-Fernet Encryption Utilities.
+Encryption Service.
 
-This module provides encryption and decryption functions for client secrets
+This service provides encryption and decryption functions for client secrets
 using the AUTH_ENCRYPTION_SECRET from configuration.
 """
 
@@ -28,12 +28,12 @@ from mcpgateway.config import settings
 logger = logging.getLogger(__name__)
 
 
-class FernetEncryption:
-    """Handles Fernet encryption and decryption of client secrets.
+class EncryptionService:
+    """Handles encryption and decryption of client secrets.
 
     Examples:
         Basic roundtrip:
-        >>> enc = FernetEncryption(SecretStr('very-secret-key'))
+        >>> enc = EncryptionService(SecretStr('very-secret-key'))
         >>> cipher = enc.encrypt_secret('hello')
         >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
         True
@@ -156,18 +156,18 @@ class FernetEncryption:
             return False
 
 
-def get_fernet_encryption(encryption_secret: SecretStr) -> FernetEncryption:
-    """Get an Fernet encryption instance.
+def get_encryption_service(encryption_secret: SecretStr) -> EncryptionService:
+    """Get an EncryptionService instance.
 
     Args:
         encryption_secret: Secret key for encryption/decryption
 
     Returns:
-        FernetEncryption instance
+        EncryptionService instance
 
     Examples:
-        >>> enc = get_fernet_encryption(SecretStr('k'))
-        >>> isinstance(enc, FernetEncryption)
+        >>> enc = get_encryption_service(SecretStr('k'))
+        >>> isinstance(enc, EncryptionService)
         True
     """
-    return FernetEncryption(encryption_secret)
+    return EncryptionService(encryption_secret)
