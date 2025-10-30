@@ -64,6 +64,18 @@ class FernetEncryption:
         self.salt_len = salt_len
 
     def derive_key_argon2id(self, passphrase: bytes, salt: bytes, time_cost: int, memory_cost: int, parallelism: int) -> bytes:
+        """Derive a key from a passphrase using Argon2id.
+
+        Args:
+            passphrase: The passphrase to derive the key from
+            salt: The salt to use in key derivation
+            time_cost: Argon2id time cost parameter
+            memory_cost: Argon2id memory cost parameter (in KiB)
+            parallelism: Argon2id parallelism parameter
+
+        Returns:
+            The derived key
+        """
         raw = hash_secret_raw(
             secret=passphrase,
             salt=salt,
