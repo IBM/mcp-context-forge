@@ -14,7 +14,7 @@ from typing import Sequence, Union, Optional
 from mcpgateway.config import settings
 
 from alembic import op
-import sqlalchemy as sa
+import sqlalchemy as text
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
