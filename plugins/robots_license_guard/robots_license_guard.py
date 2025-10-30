@@ -23,10 +23,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -87,7 +89,7 @@ def _parse_meta(text: str) -> dict[str, str]:
     return found
 
 
-class RobotsLicenseGuardPlugin(Plugin):
+class RobotsLicenseGuardPlugin(MCPPlugin):
     """Honors robots/noai/license meta tags in fetched HTML content."""
 
     def __init__(self, config: PluginConfig) -> None:

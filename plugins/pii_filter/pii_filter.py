@@ -19,10 +19,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -408,7 +410,7 @@ class PIIDetector:
         return self.config.redaction_text
 
 
-class PIIFilterPlugin(Plugin):
+class PIIFilterPlugin(MCPPlugin):
     """PII Filter plugin for detecting and masking sensitive information."""
 
     def __init__(self, config: PluginConfig):

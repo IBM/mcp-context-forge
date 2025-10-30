@@ -11,12 +11,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     PromptPrehookPayload,
     ToolPreInvokePayload,
     ToolPostInvokePayload,

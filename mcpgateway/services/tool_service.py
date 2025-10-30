@@ -49,8 +49,9 @@ from mcpgateway.models import TextContent
 from mcpgateway.models import Tool as PydanticTool
 from mcpgateway.models import ToolResult
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginManager, PluginViolationError
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+from mcpgateway.plugins.mcp.entities import HookType, HttpHeaderPayload, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -1002,7 +1003,8 @@ class ToolService:
                     if self._plugin_manager:
                         tool_metadata = PydanticTool.model_validate(tool)
                         global_context.metadata[TOOL_METADATA] = tool_metadata
-                        pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            HookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
                             global_context=global_context,
                             local_contexts=None,
@@ -1153,7 +1155,8 @@ class ToolService:
                         if tool_gateway:
                             gateway_metadata = PydanticGateway.model_validate(tool_gateway)
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                        pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            HookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
                             global_context=global_context,
                             local_contexts=None,
@@ -1182,7 +1185,8 @@ class ToolService:
 
                 # Plugin hook: tool post-invoke
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.tool_post_invoke(
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        HookType.TOOL_POST_INVOKE,
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
                         global_context=global_context,
                         local_contexts=context_table,

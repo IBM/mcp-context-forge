@@ -36,7 +36,8 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginManager
+from mcpgateway.plugins.mcp.entities import HookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -690,8 +691,12 @@ class PromptService:
                     if not request_id:
                         request_id = uuid.uuid4().hex
                     global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
-                    pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(
-                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
+                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                        HookType.PROMPT_PRE_FETCH,
+                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments),
+                        global_context=global_context,
+                        local_contexts=None,
+                        violations_as_exceptions=True,
                     )
 
                     # Use modified payload if provided
@@ -755,8 +760,12 @@ class PromptService:
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        HookType.PROMPT_POST_FETCH,
+                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result),
+                        global_context=global_context,
+                        local_contexts=context_table,
+                        violations_as_exceptions=True,
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result

@@ -22,13 +22,15 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
+    HttpHeaderPayload,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.models import HttpHeaderPayload
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.logging_service import LoggingService
 
@@ -75,7 +77,7 @@ class VaultConfig(BaseModel):
     system_handling: SystemHandling = SystemHandling.TAG
 
 
-class Vault(Plugin):
+class Vault(MCPPlugin):
     """Vault plugin that based on OAUTH2 config that protects a tool will generate bearer token based on a vault saved token"""
 
     def __init__(self, config: PluginConfig):

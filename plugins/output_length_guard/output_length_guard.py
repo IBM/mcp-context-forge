@@ -34,10 +34,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -98,7 +100,7 @@ def _truncate(value: str, max_chars: int, ellipsis: str) -> str:
     return value[:cut] + ell
 
 
-class OutputLengthGuardPlugin(Plugin):
+class OutputLengthGuardPlugin(MCPPlugin):
     """Guard tool outputs by length with block or truncate strategies."""
 
     def __init__(self, config: PluginConfig):

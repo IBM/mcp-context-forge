@@ -17,7 +17,8 @@ import pytest
 from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.models import GlobalContext, PluginContext, PluginMode, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginContext, PluginMode 
+from mcpgateway.plugins.mcp.entities import  PromptPosthookPayload, PromptPrehookPayload
 from plugins.regex_filter.search_replace import SearchReplaceConfig, SearchReplacePlugin
 from unittest.mock import patch
 

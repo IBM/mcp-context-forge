@@ -28,9 +28,11 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -145,7 +147,7 @@ def _format_by_language(result: Any, cfg: CodeFormatterConfig, language: str | N
     return _normalize_text(text, cfg)
 
 
-class CodeFormatterPlugin(Plugin):
+class CodeFormatterPlugin(MCPPlugin):
     """Lightweight formatter for post-invoke and resource content."""
 
     def __init__(self, config: PluginConfig) -> None:

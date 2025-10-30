@@ -12,12 +12,14 @@ import pytest
 
 # First-Party
 from mcpgateway.models import Message, PromptResult, Role, TextContent
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginMode,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     PromptPosthookPayload,
     PromptPrehookPayload,
 )
@@ -414,7 +416,7 @@ async def test_integration_with_manager():
         payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Email: test@example.com, SSN: 123-45-6789"})
 
         global_context = GlobalContext(request_id="test-manager")
-        result, contexts = await manager.prompt_pre_fetch(payload, global_context)
+        result, contexts = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, payload, global_context)
 
         # Verify PII was masked
         assert result.modified_payload is not None

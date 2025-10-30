@@ -24,10 +24,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -116,7 +118,7 @@ def _extract_links(text: str, limit: int) -> List[str]:
     return out
 
 
-class CitationValidatorPlugin(Plugin):
+class CitationValidatorPlugin(MCPPlugin):
     """Validates citations by checking URL reachability and content."""
 
     def __init__(self, config: PluginConfig) -> None:

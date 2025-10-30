@@ -9,11 +9,13 @@ Tests for ClamAVRemotePlugin (direct import, eicar_only mode).
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
 )
@@ -77,7 +79,7 @@ async def test_non_blocking_mode_reports_metadata(tmp_path):
 @pytest.mark.asyncio
 async def test_prompt_post_fetch_blocks_on_eicar_text():
     plugin = _mk_plugin(True)
-    from mcpgateway.plugins.framework.models import PromptPosthookPayload
+    from mcpgateway.plugins.mcp.entities import PromptPosthookPayload
 
     pr = __import__("mcpgateway.models").models.PromptResult(
         messages=[
@@ -97,7 +99,7 @@ async def test_prompt_post_fetch_blocks_on_eicar_text():
 @pytest.mark.asyncio
 async def test_tool_post_invoke_blocks_on_eicar_string():
     plugin = _mk_plugin(True)
-    from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+    from mcpgateway.plugins.mcp.entities import ToolPostInvokePayload
 
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     payload = ToolPostInvokePayload(name="t", result={"text": EICAR})
@@ -118,7 +120,7 @@ async def test_health_stats_counters():
     await plugin.resource_post_fetch(payload_r, ctx)
 
     # 2) prompt_post_fetch with EICAR -> attempted +1, infected +1 (total attempted=2, infected=2)
-    from mcpgateway.plugins.framework.models import PromptPosthookPayload
+    from mcpgateway.plugins.mcp.entities import PromptPosthookPayload
 
     pr = __import__("mcpgateway.models").models.PromptResult(
         messages=[
@@ -132,7 +134,7 @@ async def test_health_stats_counters():
     await plugin.prompt_post_fetch(payload_p, ctx)
 
     # 3) tool_post_invoke with one EICAR and one clean string -> attempted +2, infected +1
-    from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+    from mcpgateway.plugins.mcp.entities import ToolPostInvokePayload
 
     payload_t = ToolPostInvokePayload(name="t", result={"a": EICAR, "b": "clean"})
     await plugin.tool_post_invoke(payload_t, ctx)

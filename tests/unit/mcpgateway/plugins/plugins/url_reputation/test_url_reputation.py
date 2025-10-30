@@ -9,11 +9,13 @@ Tests for URLReputationPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     ResourcePreFetchPayload,
 )
 from plugins.url_reputation.url_reputation import URLReputationPlugin

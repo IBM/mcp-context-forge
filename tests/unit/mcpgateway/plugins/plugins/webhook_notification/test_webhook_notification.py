@@ -13,10 +13,12 @@ import pytest
 
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     PromptPrehookPayload,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
@@ -463,7 +465,7 @@ class TestWebhookNotificationPlugin:
         # Test post-hook with mock notification
         plugin._notify_webhooks = AsyncMock()
 
-        from mcpgateway.plugins.framework.models import PromptPosthookPayload, PromptResult
+        from mcpgateway.plugins.mcp.entities import PromptPosthookPayload, PromptResult
         post_payload = PromptPosthookPayload(
             prompt_id="test_prompt",
             result=PromptResult(messages=[])

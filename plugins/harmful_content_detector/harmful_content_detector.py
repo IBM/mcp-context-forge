@@ -23,10 +23,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPostInvokePayload,
@@ -119,7 +121,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
     yield from walk(value, "")
 
 
-class HarmfulContentDetectorPlugin(Plugin):
+class HarmfulContentDetectorPlugin(MCPPlugin):
     """Detects harmful content in prompts and tool outputs using keyword lexicons.
 
     This plugin scans for self-harm, violence, and hate categories.

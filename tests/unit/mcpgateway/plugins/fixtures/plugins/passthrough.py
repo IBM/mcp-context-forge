@@ -8,9 +8,9 @@ Passthrough plugin.
 """
 
 # First-Party
-from mcpgateway.plugins.framework import (
-    Plugin,
-    PluginContext,
+from mcpgateway.plugins.framework import PluginContext
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -26,7 +26,7 @@ from mcpgateway.plugins.framework import (
 )
 
 
-class PassThroughPlugin(Plugin):
+class PassThroughPlugin(MCPPlugin):
     """A simple pass through plugin."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:

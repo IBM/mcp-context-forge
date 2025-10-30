@@ -27,10 +27,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -117,7 +119,7 @@ class WebhookNotificationConfig(BaseModel):
     max_payload_size: int = Field(default=1000, description="Max payload size to include in notifications")
 
 
-class WebhookNotificationPlugin(Plugin):
+class WebhookNotificationPlugin(MCPPlugin):
     """Plugin for sending webhook notifications on events and violations."""
 
     def __init__(self, config: PluginConfig) -> None:

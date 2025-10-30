@@ -23,10 +23,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ResourcePostFetchPayload,
@@ -159,7 +161,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, A
     return total, container, all_findings
 
 
-class SecretsDetectionPlugin(Plugin):
+class SecretsDetectionPlugin(MCPPlugin):
     """Detect and optionally redact secrets in inputs/outputs."""
 
     def __init__(self, config: PluginConfig) -> None:

@@ -22,9 +22,11 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
 )
@@ -57,7 +59,7 @@ def _should_apply(uri: str, prefixes: Optional[list[str]]) -> bool:
     return any(uri.startswith(p) for p in prefixes)
 
 
-class HeaderInjectorPlugin(Plugin):
+class HeaderInjectorPlugin(MCPPlugin):
     """Inject custom headers for resource fetching."""
 
     def __init__(self, config: PluginConfig) -> None:

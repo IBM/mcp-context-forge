@@ -19,9 +19,11 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ResourcePostFetchPayload,
@@ -104,7 +106,7 @@ def _normalize_text(text: str, cfg: AINormalizerConfig) -> str:
     return out
 
 
-class AIArtifactsNormalizerPlugin(Plugin):
+class AIArtifactsNormalizerPlugin(MCPPlugin):
     """Plugin to normalize AI-generated text artifacts in prompts, resources, and tool results."""
 
     def __init__(self, config: PluginConfig) -> None:

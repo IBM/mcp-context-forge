@@ -22,10 +22,12 @@ from pydantic import BaseModel, Field
 # First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin, 
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -60,7 +62,7 @@ def _ext_from_uri(uri: str) -> str:
     return ""
 
 
-class FileTypeAllowlistPlugin(Plugin):
+class FileTypeAllowlistPlugin(MCPPlugin):
     """Block non-allowed file types for resources."""
 
     def __init__(self, config: PluginConfig) -> None:

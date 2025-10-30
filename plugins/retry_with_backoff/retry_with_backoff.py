@@ -17,9 +17,11 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -43,7 +45,7 @@ class RetryPolicyConfig(BaseModel):
     retry_on_status: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
 
 
-class RetryWithBackoffPlugin(Plugin):
+class RetryWithBackoffPlugin(MCPPlugin):
     """Attach retry/backoff policy in metadata for observability/orchestration."""
 
     def __init__(self, config: PluginConfig) -> None:
