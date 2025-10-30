@@ -4,9 +4,9 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-OAuth Encryption Utilities.
+Fernet Encryption Utilities.
 
-This module provides encryption and decryption functions for OAuth client secrets
+This module provides encryption and decryption functions for client secrets
 using the AUTH_ENCRYPTION_SECRET from configuration.
 """
 
@@ -17,23 +17,23 @@ import logging
 import os
 from typing import Optional
 
+# Third-Party
+from argon2.low_level import hash_secret_raw, Type
+from cryptography.fernet import Fernet
+from pydantic import SecretStr
+
 # First-Party
 from mcpgateway.config import settings
-
-# Third-Party
-from cryptography.fernet import Fernet
-from argon2.low_level import hash_secret_raw, Type
-from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
 
 
-class OAuthEncryption:
-    """Handles encryption and decryption of OAuth client secrets.
+class FernetEncryption:
+    """Handles Fernet encryption and decryption of client secrets.
 
     Examples:
         Basic roundtrip:
-        >>> enc = OAuthEncryption(SecretStr('very-secret-key'))
+        >>> enc = FernetEncryption(SecretStr('very-secret-key'))
         >>> cipher = enc.encrypt_secret('hello')
         >>> isinstance(cipher, str) and enc.is_encrypted(cipher)
         True
@@ -50,6 +50,11 @@ class OAuthEncryption:
 
         Args:
             encryption_secret: Secret key for encryption/decryption
+            time_cost: Argon2id time cost parameter
+            memory_cost: Argon2id memory cost parameter (in KiB)
+            parallelism: Argon2id parallelism parameter
+            hash_len: Length of the derived key
+            salt_len: Length of the salt
         """
         self.encryption_secret = encryption_secret.get_secret_value().encode()
         self.time_cost = time_cost or getattr(settings, "argon2id_time_cost", 3)
@@ -57,7 +62,6 @@ class OAuthEncryption:
         self.parallelism = parallelism or getattr(settings, "argon2id_parallelism", 1)
         self.hash_len = hash_len
         self.salt_len = salt_len
-    
 
     def derive_key_argon2id(self, passphrase: bytes, salt: bytes, time_cost: int, memory_cost: int, parallelism: int) -> bytes:
         raw = hash_secret_raw(
@@ -88,16 +92,18 @@ class OAuthEncryption:
             key = self.derive_key_argon2id(self.encryption_secret, salt, self.time_cost, self.memory_cost, self.parallelism)
             fernet = Fernet(key)
             encrypted = fernet.encrypt(plaintext.encode())
-            return json.dumps({
-                "kdf": "argon2id",
-                "t": self.time_cost,
-                "m": self.memory_cost,
-                "p": self.parallelism,
-                "salt": base64.b64encode(salt).decode(),
-                "token": encrypted.decode(),
-            })
+            return json.dumps(
+                {
+                    "kdf": "argon2id",
+                    "t": self.time_cost,
+                    "m": self.memory_cost,
+                    "p": self.parallelism,
+                    "salt": base64.b64encode(salt).decode(),
+                    "token": encrypted.decode(),
+                }
+            )
         except Exception as e:
-            logger.error(f"Failed to encrypt OAuth secret: {e}")
+            logger.error(f"Failed to encrypt secret: {e}")
             raise
 
     def decrypt_secret(self, bundle_json: str) -> Optional[str]:
@@ -117,7 +123,7 @@ class OAuthEncryption:
             decrypted = fernet.decrypt(b["token"].encode())
             return decrypted.decode()
         except Exception as e:
-            logger.error(f"Failed to decrypt OAuth secret: {e}")
+            logger.error(f"Failed to decrypt secret: {e}")
             return None
 
     def is_encrypted(self, text: str) -> bool:
@@ -138,18 +144,18 @@ class OAuthEncryption:
             return False
 
 
-def get_oauth_encryption(encryption_secret: SecretStr) -> OAuthEncryption:
-    """Get an OAuth encryption instance.
+def get_fernet_encryption(encryption_secret: SecretStr) -> FernetEncryption:
+    """Get an Fernet encryption instance.
 
     Args:
         encryption_secret: Secret key for encryption/decryption
 
     Returns:
-        OAuthEncryption instance
+        FernetEncryption instance
 
     Examples:
-        >>> enc = get_oauth_encryption(SecretStr('k'))
-        >>> isinstance(enc, OAuthEncryption)
+        >>> enc = get_fernet_encryption(SecretStr('k'))
+        >>> isinstance(enc, FernetEncryption)
         True
     """
-    return OAuthEncryption(encryption_secret)
+    return FernetEncryption(encryption_secret)
