@@ -15,7 +15,7 @@ import base64
 import json
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union
 
 # Third-Party
 from argon2.low_level import hash_secret_raw, Type
@@ -45,7 +45,7 @@ class EncryptionService:
         False
     """
 
-    def __init__(self, encryption_secret: SecretStr, time_cost: Optional[int] = None, memory_cost: Optional[int] = None, parallelism: Optional[int] = None, hash_len: int = 32, salt_len: int = 16):
+    def __init__(self, encryption_secret: Union[SecretStr, str], time_cost: Optional[int] = None, memory_cost: Optional[int] = None, parallelism: Optional[int] = None, hash_len: int = 32, salt_len: int = 16):
         """Initialize the encryption handler.
 
         Args:
@@ -56,7 +56,12 @@ class EncryptionService:
             hash_len: Length of the derived key
             salt_len: Length of the salt
         """
-        self.encryption_secret = encryption_secret.get_secret_value().encode()
+        # Handle both SecretStr and plain string for backwards compatibility
+        if isinstance(encryption_secret, SecretStr):
+            self.encryption_secret = encryption_secret.get_secret_value().encode()
+        else:
+            # If a plain string is passed, use it directly (for testing/legacy code)
+            self.encryption_secret = str(encryption_secret).encode()
         self.time_cost = time_cost or getattr(settings, "argon2id_time_cost", 3)
         self.memory_cost = memory_cost or getattr(settings, "argon2id_memory_cost", 65536)
         self.parallelism = parallelism or getattr(settings, "argon2id_parallelism", 1)
@@ -156,11 +161,11 @@ class EncryptionService:
             return False
 
 
-def get_encryption_service(encryption_secret: SecretStr) -> EncryptionService:
+def get_encryption_service(encryption_secret: Union[SecretStr, str]) -> EncryptionService:
     """Get an EncryptionService instance.
 
     Args:
-        encryption_secret: Secret key for encryption/decryption
+        encryption_secret: Secret key for encryption/decryption (SecretStr or plain string)
 
     Returns:
         EncryptionService instance
@@ -168,6 +173,9 @@ def get_encryption_service(encryption_secret: SecretStr) -> EncryptionService:
     Examples:
         >>> enc = get_encryption_service(SecretStr('k'))
         >>> isinstance(enc, EncryptionService)
+        True
+        >>> enc2 = get_encryption_service('plain-key')
+        >>> isinstance(enc2, EncryptionService)
         True
     """
     return EncryptionService(encryption_secret)
