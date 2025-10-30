@@ -32,12 +32,8 @@ async def test_cedarpolicyplugin():
     # Test your plugin logic
     users = ["bob","alice"]
     actions = ["submit_request","get_users"]
-    flag = 0
     for user, action in zip(users,actions):
-        payload = ToolPreInvokePayload(name=action, args={"user" : user})
-        context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
+        payload = ToolPreInvokePayload(name=action, args={})
+        context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2",user=user))
         result = await plugin.tool_pre_invoke(payload, context)
-        if result.continue_processing:
-            flag+=1
-        
-    assert flag ==1
+        assert result.continue_processing

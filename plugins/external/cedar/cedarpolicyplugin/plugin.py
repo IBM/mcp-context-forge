@@ -143,13 +143,17 @@ class CedarPolicyPlugin(MCPPlugin):
             return ToolPreInvokeResult()
 
         policy = None
+        user = ""
         if self.cedar_config.policy_lang == "cedar":
             if self.cedar_config.policy:
                 policy = self.cedar_config.policy
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
-                policy = self._dsl2cedar(self.cedar_config.policy)  
-        request = CedarInput(user=payload.args["user"],action=payload.name,resource="tools",context={}).model_dump()
+                policy = self._dsl2cedar(self.cedar_config.policy) 
+        if context.global_context.user:
+            user = context.global_context.user
+        
+        request = CedarInput(user=user,action=payload.name,resource="tools",context={}).model_dump()
         if policy:
             decision = self._evaluate_policy(request["user"], request["action"], request["resource"],policy)
             if decision == Decision.Deny.value:
