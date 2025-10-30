@@ -20,6 +20,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy import text
+import sqlalchemy as sa
 
 # First-Party
 from mcpgateway.config import settings
@@ -133,6 +134,7 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
     except Exception as e:
         raise ValueError("Invalid Argon2id bundle") from e
 
+
 def _reflect(conn):
     """Reflect relevant tables.
 
@@ -147,6 +149,7 @@ def _reflect(conn):
     a2a_agents = sa.Table("a2a_agents", md, autoload_with=conn)
     return {"gateways": gateways, "a2a_agents": a2a_agents}
 
+
 def _is_json(col):
     """Check if a column is of JSON type.
 
@@ -157,6 +160,7 @@ def _is_json(col):
         True if the column is of JSON type.
     """
     return isinstance(col.type, sa.JSON)
+
 
 def _looks_argon2_bundle(val: Optional[str]) -> bool:
     """Heuristic for Argon2id bundle format (JSON with kdf=argon2id).
@@ -255,11 +259,13 @@ def _upgrade_json_client_secret(conn, table):
             except json.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
-        if not isinstance(cfg, dict): continue
+        if not isinstance(cfg, dict):
+            continue
 
         old = cfg.get("client_secret")
         new = _upgrade_value(old)   # your helper
-        if not new: continue
+        if not new:
+            continue
 
         cfg["client_secret"] = new
         value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
@@ -285,11 +291,13 @@ def _downgrade_json_client_secret(conn, table):
             except json.JSONDecodeError as e:
                 logger.warning("Skipping %s.id=%s: invalid JSON (%s)", table, rid, e)
                 continue
-        if not isinstance(cfg, dict): continue
+        if not isinstance(cfg, dict):
+            continue
 
         old = cfg.get("client_secret")
         new = _downgrade_value(old)   # your helper
-        if not new: continue
+        if not new:
+            continue
 
         cfg["client_secret"] = new
         value = cfg if _is_json(t.c.oauth_config) else json.dumps(cfg)
