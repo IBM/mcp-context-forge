@@ -188,7 +188,7 @@ class Plugin:
         # Fall back to global registry
         if not hook_payload_type:
             # First-Party
-            from mcpgateway.plugins.framework.hook_registry import get_hook_registry
+            from mcpgateway.plugins.framework.hook_registry import get_hook_registry  # pylint: disable=import-outside-toplevel
 
             registry = get_hook_registry()
             hook_payload_type = registry.get_payload_type(hook)
@@ -223,7 +223,7 @@ class Plugin:
         # Fall back to global registry
         if not hook_result_type:
             # First-Party
-            from mcpgateway.plugins.framework.hook_registry import get_hook_registry
+            from mcpgateway.plugins.framework.hook_registry import get_hook_registry  # pylint: disable=import-outside-toplevel
 
             registry = get_hook_registry()
             hook_result_type = registry.get_result_type(hook)

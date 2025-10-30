@@ -316,8 +316,11 @@ class ExternalPlugin(Plugin):
 class ExternalHookRef(HookRef):
     """A Hook reference point for external plugins."""
 
-    def __init__(self, hook: str, plugin_ref: PluginRef):
+    def __init__(self, hook: str, plugin_ref: PluginRef):  # pylint: disable=super-init-not-called
         """Initialize a hook reference point for an external plugin.
+
+        Note: We intentionally don't call super().__init__() because external plugins
+        use invoke_hook() rather than direct method attributes.
 
         Args:
             hook: name of the hook point.
