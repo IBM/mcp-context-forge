@@ -86,7 +86,7 @@ class SSOService:
         decrypted: str | None = self._encryption.decrypt_secret(encrypted_secret)
         if decrypted:
             return decrypted
-        
+
         return None
 
     def list_enabled_providers(self) -> List[SSOProvider]:

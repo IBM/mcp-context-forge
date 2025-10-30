@@ -5,32 +5,37 @@ Revises: 3c89a45f32e5
 Create Date: 2025-10-30 15:31:25.115536
 
 """
+
+# Standard
 import base64
 import json
 import logging
 import os
-from typing import Sequence, Union, Optional
+from typing import Optional, Sequence, Union
 
-from mcpgateway.config import settings
-
+# Third-Party
 from alembic import op
-import sqlalchemy as text
+from argon2.low_level import hash_secret_raw, Type
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from argon2.low_level import hash_secret_raw, Type
+from sqlalchemy import text
+
+# First-Party
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
-revision: str = 'a706a3320c56'
-down_revision: Union[str, Sequence[str], None] = '3c89a45f32e5'
+revision: str = "a706a3320c56"
+down_revision: Union[str, Sequence[str], None] = "3c89a45f32e5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+
 def reencrypt_with_argon2id(encrypted_text: str) -> str:
     """Re-encrypts an existing encrypted text using Argon2id KDF.
-    
+
     Args:
         encrypted_text: The original encrypted text using PBKDF2HMAC.
 
@@ -87,12 +92,15 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
 
     Returns:
         A PBKDF2HMAC re-encrypted token.
+
+    Raises:
+        ValueError: If the input is not a valid Argon2id bundle.
     """
     try:
         argon2id_data = json.loads(argon2id_bundle)
         if argon2id_data.get("kdf") != "argon2id":
             raise ValueError("Not an Argon2id bundle")
-        
+
         encryption_secret = settings.auth_encryption_secret.get_secret_value().encode()
         salt = base64.b64decode(argon2id_data["salt"])
         time_cost = argon2id_data["t"]
@@ -125,11 +133,20 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
     except Exception as e:
         raise ValueError("Invalid Argon2id bundle") from e
 
+
 def _looks_argon2_bundle(val: Optional[str]) -> bool:
+    """Heuristic for Argon2id bundle format (JSON with kdf=argon2id).
+
+    Args:
+        val: The encrypted value.
+
+    Returns:
+        True if it looks like an Argon2id encrypted token.
+    """
     if not val:
         return False
     # Fast path: Fernet tokens usually start with 'gAAAAA'; Argon2 bundle is JSON
-    if val and val[:1] in ('{', '['):
+    if val and val[:1] in ("{", "["):
         try:
             obj = json.loads(val)
             return isinstance(obj, dict) and obj.get("kdf") == "argon2id"
@@ -137,16 +154,32 @@ def _looks_argon2_bundle(val: Optional[str]) -> bool:
             return False
     return False
 
+
 def _looks_legacy_pbkdf2_token(val: Optional[str]) -> bool:
-    """Heuristic for legacy PBKDF2 format (base64-wrapped Fernet token string, not JSON)."""
+    """Heuristic for legacy PBKDF2 format (base64-wrapped Fernet token string, not JSON).
+
+    Args:
+        val: The encrypted value.
+
+    Returns:
+        True if it looks like a legacy PBKDF2 encrypted token.
+    """
     if not val or not isinstance(val, str):
         return False
     # Legacy column stored base64(urlsafe) of the Fernet token (which is itself base64 bytes),
     # so it's NOT JSON and usually not starting with '{'
     return not val.startswith("{")
 
+
 def _upgrade_value(old: Optional[str]) -> Optional[str]:
-    """PBKDF2 -> Argon2id bundle, when needed."""
+    """PBKDF2 -> Argon2id bundle, when needed.
+
+    Args:
+        old: The existing encrypted value.
+
+    Returns:
+        The re-encrypted value using Argon2id, or None if no change is needed.
+    """
     if not old:
         return None
     if _looks_argon2_bundle(old):
@@ -161,7 +194,14 @@ def _upgrade_value(old: Optional[str]) -> Optional[str]:
 
 
 def _downgrade_value(old: Optional[str]) -> Optional[str]:
-    """Argon2id bundle -> PBKDF2 legacy, when needed."""
+    """Argon2id bundle -> PBKDF2 legacy, when needed.
+
+    Args:
+        old: The existing encrypted value.
+
+    Returns:
+        The re-encrypted value using PBKDF2HMAC, or None if no change is needed.
+    """
     if not old:
         return None
     if not _looks_argon2_bundle(old):
@@ -174,11 +214,19 @@ def _downgrade_value(old: Optional[str]) -> Optional[str]:
 
 
 def _upgrade_json_client_secret(bind, table: str) -> None:
-    rows = bind.execute(text(f"""
+    rows = (
+        bind.execute(
+            text(
+                f"""
         SELECT id, oauth_config
         FROM {table}
         WHERE oauth_config IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         rid = r["id"]
@@ -200,11 +248,19 @@ def _upgrade_json_client_secret(bind, table: str) -> None:
 
 
 def _downgrade_json_client_secret(bind, table: str) -> None:
-    rows = bind.execute(text(f"""
+    rows = (
+        bind.execute(
+            text(
+                f"""
         SELECT id, oauth_config
         FROM {table}
         WHERE oauth_config IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         rid = r["id"]
@@ -224,6 +280,7 @@ def _downgrade_json_client_secret(bind, table: str) -> None:
                 {"cfg": json.dumps(cfg), "id": rid},
             )
 
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -234,11 +291,19 @@ def upgrade() -> None:
     _upgrade_json_client_secret(bind, "a2a_agents")
 
     # oauth_tokens: access_token, refresh_token
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, access_token, refresh_token
         FROM oauth_tokens
         WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         tid = r["id"]
@@ -248,22 +313,32 @@ def upgrade() -> None:
         nrt = _upgrade_value(rt)
         if nat or nrt:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE oauth_tokens
                     SET access_token  = COALESCE(:nat, access_token),
                         refresh_token = COALESCE(:nrt, refresh_token)
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"nat": nat, "nrt": nrt, "id": tid},
             )
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, client_secret_encrypted, registration_access_token_encrypted
         FROM registered_oauth_clients
         WHERE client_secret_encrypted IS NOT NULL
            OR registration_access_token_encrypted IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         rid = r["id"]
@@ -273,21 +348,31 @@ def upgrade() -> None:
         nrat = _upgrade_value(rat)
         if ncs or nrat:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE registered_oauth_clients
                     SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
                         registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"ncs": ncs, "nrat": nrat, "id": rid},
             )
 
     # sso_providers: client_secret_encrypted
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, client_secret_encrypted
         FROM sso_providers
         WHERE client_secret_encrypted IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         sid = r["id"]
@@ -295,11 +380,13 @@ def upgrade() -> None:
         ncs = _upgrade_value(cs)
         if ncs:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE sso_providers
                     SET client_secret_encrypted = :ncs
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"ncs": ncs, "id": sid},
             )
 
@@ -316,11 +403,19 @@ def downgrade() -> None:
     _downgrade_json_client_secret(bind, "a2a_agents")
 
     # oauth_tokens: access_token, refresh_token
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, access_token, refresh_token
         FROM oauth_tokens
         WHERE (access_token IS NOT NULL OR refresh_token IS NOT NULL)
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         tid = r["id"]
@@ -330,22 +425,32 @@ def downgrade() -> None:
         nrt = _downgrade_value(rt)
         if nat or nrt:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE oauth_tokens
                     SET access_token  = COALESCE(:nat, access_token),
                         refresh_token = COALESCE(:nrt, refresh_token)
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"nat": nat, "nrt": nrt, "id": tid},
             )
 
     # registered_oauth_clients: client_secret_encrypted, registration_access_token_encrypted
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, client_secret_encrypted, registration_access_token_encrypted
         FROM registered_oauth_clients
         WHERE client_secret_encrypted IS NOT NULL
            OR registration_access_token_encrypted IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         rid = r["id"]
@@ -355,21 +460,31 @@ def downgrade() -> None:
         nrat = _downgrade_value(rat)
         if ncs or nrat:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE registered_oauth_clients
                     SET client_secret_encrypted = COALESCE(:ncs, client_secret_encrypted),
                         registration_access_token_encrypted = COALESCE(:nrat, registration_access_token_encrypted)
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"ncs": ncs, "nrat": nrat, "id": rid},
             )
 
     # sso_providers: client_secret_encrypted
-    rows = bind.execute(text("""
+    rows = (
+        bind.execute(
+            text(
+                """
         SELECT id, client_secret_encrypted
         FROM sso_providers
         WHERE client_secret_encrypted IS NOT NULL
-    """)).mappings().all()
+    """
+            )
+        )
+        .mappings()
+        .all()
+    )
 
     for r in rows:
         sid = r["id"]
@@ -377,11 +492,13 @@ def downgrade() -> None:
         ncs = _downgrade_value(cs)
         if ncs:
             bind.execute(
-                text("""
+                text(
+                    """
                     UPDATE sso_providers
                     SET client_secret_encrypted = :ncs
                     WHERE id = :id
-                """),
+                """
+                ),
                 {"ncs": ncs, "id": sid},
             )
 
