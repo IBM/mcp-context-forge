@@ -523,7 +523,12 @@ Respond with JSON format:
                     break
 
         return ModerationResult(
-            flagged=flagged, categories=categories, action=action, provider=ModerationProvider.IBM_WATSON, confidence=max_score, details={"method": "pattern_matching"}  # Default fallback
+            flagged=flagged,
+            categories=categories,
+            action=action,
+            provider=ModerationProvider.IBM_WATSON,
+            confidence=max_score,
+            details={"method": "pattern_matching"},  # Default fallback
         )
 
     async def _extract_text_content(self, payload: Any) -> List[str]:
@@ -555,7 +560,7 @@ Respond with JSON format:
 
                 if self._cfg.audit_decisions:
                     logger.info(
-                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}, " f"Confidence: {result.confidence:.2f}"
+                        f"Content moderation - Prompt: {payload.prompt_id}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}, Confidence: {result.confidence:.2f}"
                     )
 
                 if result.action == ModerationAction.BLOCK:
@@ -572,7 +577,7 @@ Respond with JSON format:
                                 "flagged_text_preview": text[:100] + "..." if len(text) > 100 else text,
                             },
                         ),
-                        metadata={"moderation_result": result.dict(), "provider": result.provider.value},
+                        metadata={"moderation_result": result.model_dump(), "provider": result.provider.value},
                     )
                 elif result.modified_content:
                     # Modify the payload with redacted/transformed content
@@ -598,7 +603,7 @@ Respond with JSON format:
                 result = await self._moderate_content(text)
 
                 if self._cfg.audit_decisions:
-                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, " f"Action: {result.action}, Provider: {result.provider}")
+                    logger.info(f"Content moderation - Tool: {payload.name}, Result: {result.flagged}, Action: {result.action}, Provider: {result.provider}")
 
                 if result.action == ModerationAction.BLOCK:
                     return ToolPreInvokeResult(

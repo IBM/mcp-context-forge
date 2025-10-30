@@ -11,7 +11,7 @@ Unit tests for the MCP reverse proxy module.
 import asyncio
 import json
 import signal
-from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
@@ -79,9 +79,9 @@ class TestStdioProcess:
     async def test_start_no_stdin(self):
         """Test start failure when no stdin."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
+            mock_process = MagicMock()
             mock_process.stdin = None
-            mock_process.stdout = AsyncMock()
+            mock_process.stdout = MagicMock()
             mock_create.return_value = mock_process
 
             with pytest.raises(RuntimeError, match="Failed to create subprocess with stdio"):
@@ -91,8 +91,8 @@ class TestStdioProcess:
     async def test_start_no_stdout(self):
         """Test start failure when no stdout."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            mock_process = AsyncMock()
-            mock_process.stdin = AsyncMock()
+            mock_process = MagicMock()
+            mock_process.stdin = MagicMock()
             mock_process.stdout = None
             mock_create.return_value = mock_process
 
@@ -124,8 +124,13 @@ class TestStdioProcess:
     @pytest.mark.asyncio
     async def test_stop_force_kill(self):
         """Test force kill when process doesn't terminate."""
+
+        # Create async function that raises TimeoutError to avoid AsyncMock issues
+        async def mock_wait_for(*args, **kwargs):
+            raise asyncio.TimeoutError()
+
         with patch("asyncio.create_subprocess_exec") as mock_create:
-            with patch("asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            with patch("asyncio.wait_for", new=mock_wait_for):
                 mock_process = MagicMock()
                 mock_process.pid = 12345
                 mock_process.stdin = MagicMock()
@@ -133,7 +138,16 @@ class TestStdioProcess:
                 mock_process.stdin.drain = AsyncMock()
                 mock_process.stdout = Mock()  # Use Mock instead of MagicMock to avoid auto-async
                 mock_process.stdout.readline = AsyncMock(return_value=b"")  # EOF immediately
-                mock_process.wait = AsyncMock(return_value=0)
+
+                # Use a function that returns a Future to avoid unawaited coroutine warnings
+                # when wait_for raises TimeoutError before awaiting
+                def mock_wait():
+                    future = asyncio.Future()
+                    future.set_result(0)
+                    return future
+
+                mock_process.wait = mock_wait
+
                 mock_process.terminate = MagicMock()
                 mock_process.kill = MagicMock()
                 mock_process.returncode = None
@@ -184,7 +198,7 @@ class TestStdioProcess:
     @pytest.mark.asyncio
     async def test_send_no_stdin(self):
         """Test sending when stdin is None."""
-        self.stdio.process = AsyncMock()
+        self.stdio.process = MagicMock()
         self.stdio.process.stdin = None
 
         with pytest.raises(RuntimeError, match="Subprocess not running"):
@@ -201,11 +215,13 @@ class TestStdioProcess:
         """Test reading messages from stdout."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
             # Use an iterator to avoid side_effect initialization issues
-            messages = iter([
-                b'{"test": "message1"}\n',
-                b'{"test": "message2"}\n',
-                b"",  # EOF
-            ])
+            messages = iter(
+                [
+                    b'{"test": "message1"}\n',
+                    b'{"test": "message2"}\n',
+                    b"",  # EOF
+                ]
+            )
 
             async def readline_func():
                 return next(messages)
@@ -223,7 +239,12 @@ class TestStdioProcess:
             mock_process.returncode = 0
             mock_create.return_value = mock_process
 
-            handler = AsyncMock()
+            # Use real async function instead of AsyncMock to avoid unawaited coroutines
+            messages_received = []
+
+            async def handler(msg):
+                messages_received.append(msg)
+
             self.stdio.add_message_handler(handler)
 
             await self.stdio.start()
@@ -232,18 +253,21 @@ class TestStdioProcess:
             await self.stdio.stop()
 
             # Verify handler was called with messages
-            assert handler.call_count == 2
-            handler.assert_has_calls([call('{"test": "message1"}'), call('{"test": "message2"}')])
+            assert len(messages_received) == 2
+            assert messages_received[0] == '{"test": "message1"}'
+            assert messages_received[1] == '{"test": "message2"}'
 
     @pytest.mark.asyncio
     async def test_read_stdout_handler_error(self):
         """Test error handling in message handlers."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
             # Use an iterator to avoid side_effect initialization issues
-            messages = iter([
-                b'{"test": "message"}\n',
-                b"",  # EOF
-            ])
+            messages = iter(
+                [
+                    b'{"test": "message"}\n',
+                    b"",  # EOF
+                ]
+            )
 
             async def readline_func():
                 return next(messages)
@@ -364,8 +388,8 @@ class TestReverseProxyClient:
             mock_connection = AsyncMock()
             mock_ws.connect = AsyncMock(return_value=mock_connection)
 
-            with patch.object(self.client.stdio_process, "start", AsyncMock()):
-                with patch.object(self.client, "_register", AsyncMock()):
+            with patch.object(self.client.stdio_process, "start", new_callable=AsyncMock):
+                with patch.object(self.client, "_register", new_callable=AsyncMock):
                     with patch("asyncio.create_task") as mock_create_task:
                         mock_task = MagicMock()  # create_task returns a Task (sync object)
                         mock_create_task.return_value = mock_task
@@ -383,7 +407,7 @@ class TestReverseProxyClient:
         with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
             mock_ws.connect = AsyncMock(side_effect=Exception("Connection failed"))
 
-            with patch.object(self.client.stdio_process, "start", AsyncMock()):
+            with patch.object(self.client.stdio_process, "start", new_callable=AsyncMock):
                 with pytest.raises(Exception, match="Connection failed"):
                     await self.client.connect()
 
@@ -393,7 +417,7 @@ class TestReverseProxyClient:
     async def test_connect_websocket_no_websockets_module(self):
         """Test WebSocket connection when websockets module not available."""
         with patch("mcpgateway.reverse_proxy.websockets", None):
-            with patch.object(self.client.stdio_process, "start", AsyncMock()):
+            with patch.object(self.client.stdio_process, "start", new_callable=AsyncMock):
                 with pytest.raises(ImportError, match="websockets package required"):
                     await self.client._connect_websocket()
 
@@ -439,8 +463,8 @@ class TestReverseProxyClient:
         """Test registration with gateway."""
         self.client.connection = AsyncMock()
 
-        with patch.object(self.client.stdio_process, "send", AsyncMock()) as mock_send:
-            with patch("asyncio.sleep", AsyncMock()):
+        with patch.object(self.client.stdio_process, "send", new_callable=AsyncMock) as mock_send:
+            with patch("asyncio.sleep", new_callable=AsyncMock):
                 await self.client._register()
 
         # Should send initialize to local server
@@ -494,7 +518,7 @@ class TestReverseProxyClient:
     @pytest.mark.asyncio
     async def test_handle_gateway_message_request(self):
         """Test handling request from gateway."""
-        with patch.object(self.client.stdio_process, "send", AsyncMock()) as mock_send:
+        with patch.object(self.client.stdio_process, "send", new_callable=AsyncMock) as mock_send:
             message = json.dumps({"type": MessageType.REQUEST.value, "payload": {"jsonrpc": "2.0", "id": 1, "method": "test"}})
 
             await self.client._handle_gateway_message(message)
@@ -545,7 +569,7 @@ class TestReverseProxyClient:
         mock_connection.__aiter__.return_value = ['{"type": "heartbeat"}', '{"type": "request", "payload": {"method": "test"}}']
         self.client.connection = mock_connection
 
-        with patch.object(self.client, "_handle_gateway_message", AsyncMock()) as mock_handle:
+        with patch.object(self.client, "_handle_gateway_message", new_callable=AsyncMock) as mock_handle:
             await self.client._receive_websocket()
 
         assert mock_handle.call_count == 2
@@ -629,7 +653,7 @@ class TestReverseProxyClient:
         self.client._keepalive_task = MagicMock()
         self.client._receive_task = MagicMock()
 
-        with patch.object(self.client.stdio_process, "stop", AsyncMock()) as mock_stop:
+        with patch.object(self.client.stdio_process, "stop", new_callable=AsyncMock) as mock_stop:
             await self.client.disconnect()
 
         assert self.client.state == ConnectionState.DISCONNECTED
@@ -651,7 +675,7 @@ class TestReverseProxyClient:
         self.client.state = ConnectionState.CONNECTED
         self.client.connection = AsyncMock()
 
-        with patch.object(self.client.stdio_process, "stop", AsyncMock()):
+        with patch.object(self.client.stdio_process, "stop", new_callable=AsyncMock):
             await self.client.disconnect()
 
         # Should send unregister message
@@ -666,7 +690,7 @@ class TestReverseProxyClient:
         self.client.connection = AsyncMock()
         self.client.connection.send.side_effect = Exception("Send failed")
 
-        with patch.object(self.client.stdio_process, "stop", AsyncMock()):
+        with patch.object(self.client.stdio_process, "stop", new_callable=AsyncMock):
             await self.client.disconnect()
 
         # Should still complete disconnect
