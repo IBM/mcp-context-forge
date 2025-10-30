@@ -18,8 +18,9 @@ RUN mkdir -p /var/cache/nginx/static \
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Verify configuration
-RUN nginx -t
+# Note: nginx -t skipped during build because upstream gateway
+# is only available at runtime in docker-compose network.
+# Configuration will be validated when container starts.
 
 # Expose HTTP port
 EXPOSE 80
