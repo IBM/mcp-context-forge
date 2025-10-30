@@ -179,7 +179,7 @@ from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext
 from mcpgateway.plugins.framework import PromptPrehookPayload, PromptPrehookResult
 from mcpgateway.plugins.framework import PluginViolation
 
-class MyGuard(Plugin):
+class MyGuard(MCPPlugin):
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         if payload.args and any("forbidden" in v for v in payload.args.values() if isinstance(v, str)):
             return PromptPrehookResult(

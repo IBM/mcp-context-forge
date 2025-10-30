@@ -24,10 +24,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPostInvokePayload,
@@ -174,7 +176,7 @@ class ModerationResult(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
 
-class ContentModerationPlugin(Plugin):
+class ContentModerationPlugin(MCPPlugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:

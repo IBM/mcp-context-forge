@@ -19,11 +19,13 @@ from urllib.parse import urlparse
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginMode,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -33,7 +35,7 @@ from mcpgateway.plugins.framework import (
 )
 
 
-class ResourceFilterPlugin(Plugin):
+class ResourceFilterPlugin(MCPPlugin):
     """Plugin that filters and modifies resources.
 
     This plugin demonstrates the use of resource hooks to:

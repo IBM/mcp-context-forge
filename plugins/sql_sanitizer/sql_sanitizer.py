@@ -26,10 +26,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPreInvokePayload,
@@ -157,7 +159,7 @@ def _scan_args(args: dict[str, Any] | None, cfg: SQLSanitizerConfig) -> tuple[li
     return issues, scanned
 
 
-class SQLSanitizerPlugin(Plugin):
+class SQLSanitizerPlugin(MCPPlugin):
     """Block or sanitize risky SQL statements in inputs."""
 
     def __init__(self, config: PluginConfig) -> None:

@@ -31,10 +31,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
@@ -332,7 +334,7 @@ def _apply_overrides(url: str, host: str | None, cfg: VirusTotalConfig) -> str |
     return None
 
 
-class VirusTotalURLCheckerPlugin(Plugin):
+class VirusTotalURLCheckerPlugin(MCPPlugin):
     """Query VirusTotal for URL/domain/IP verdicts and block on policy breaches."""
 
     def __init__(self, config: PluginConfig) -> None:

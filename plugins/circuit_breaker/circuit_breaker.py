@@ -26,10 +26,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -138,7 +140,7 @@ def _is_error(result: Any) -> bool:
     return False
 
 
-class CircuitBreakerPlugin(Plugin):
+class CircuitBreakerPlugin(MCPPlugin):
     """Circuit breaker plugin to prevent cascading failures by tripping on high error rates."""
 
     def __init__(self, config: PluginConfig) -> None:

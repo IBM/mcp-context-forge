@@ -20,10 +20,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
 )
@@ -41,7 +43,7 @@ class URLReputationConfig(BaseModel):
     blocked_patterns: List[str] = Field(default_factory=list)
 
 
-class URLReputationPlugin(Plugin):
+class URLReputationPlugin(MCPPlugin):
     """Static allow/deny URL reputation checks."""
 
     def __init__(self, config: PluginConfig) -> None:

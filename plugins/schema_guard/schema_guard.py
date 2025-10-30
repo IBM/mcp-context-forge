@@ -20,10 +20,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -103,7 +105,7 @@ def _validate(data: Any, schema: Dict[str, Any]) -> list[str]:
     return errors
 
 
-class SchemaGuardPlugin(Plugin):
+class SchemaGuardPlugin(MCPPlugin):
     """Validate tool args and results using a simple schema subset."""
 
     def __init__(self, config: PluginConfig) -> None:

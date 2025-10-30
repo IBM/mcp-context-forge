@@ -1330,7 +1330,7 @@ class PluginSettings(BaseModel):
 #### PII Filter Plugin (Native)
 
 ```python
-class PIIFilterPlugin(Plugin):
+class PIIFilterPlugin(MCPPlugin):
     """Detects and masks Personally Identifiable Information"""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload,
@@ -1367,7 +1367,7 @@ class PIIFilterPlugin(Plugin):
 #### Resource Filter Plugin (Security)
 
 ```python
-class ResourceFilterPlugin(Plugin):
+class ResourceFilterPlugin(MCPPlugin):
     """Validates and filters resource requests"""
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload,

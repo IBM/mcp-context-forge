@@ -30,9 +30,11 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
 )
@@ -276,7 +278,7 @@ def _to_text(html_str: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", no_tags).strip()
 
 
-class SafeHTMLSanitizerPlugin(Plugin):
+class SafeHTMLSanitizerPlugin(MCPPlugin):
     """Sanitizes HTML content to remove XSS vectors and dangerous elements."""
 
     def __init__(self, config: PluginConfig) -> None:

@@ -31,10 +31,12 @@ from typing import Any
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
@@ -119,7 +121,7 @@ def _clamd_instream_scan_unix(path: str, data: bytes, timeout: float) -> str:
         s.close()
 
 
-class ClamAVRemotePlugin(Plugin):
+class ClamAVRemotePlugin(MCPPlugin):
     """External ClamAV plugin for scanning resources and content."""
 
     def __init__(self, config: PluginConfig) -> None:

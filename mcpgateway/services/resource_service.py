@@ -58,7 +58,8 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginManager
+    from mcpgateway.plugins.mcp.entities import HookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -769,7 +770,7 @@ class ResourceService:
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
                     # Execute pre-fetch hooks
-                    pre_result, contexts = await self._plugin_manager.resource_pre_fetch(pre_payload, global_context, violations_as_exceptions=True)
+                    pre_result, contexts = await self._plugin_manager.invoke_hook(HookType.RESOURCE_PRE_FETCH, pre_payload, global_context, violations_as_exceptions=True)
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
@@ -799,7 +800,9 @@ class ResourceService:
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
 
                     # Execute post-fetch hooks
-                    post_result, _ = await self._plugin_manager.resource_post_fetch(post_payload, global_context, contexts, violations_as_exceptions=True)  # Pass contexts from pre-fetch
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        HookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
+                    )  # Pass contexts from pre-fetch
 
                     # Use modified content if plugin changed it
                     if post_result.modified_payload:

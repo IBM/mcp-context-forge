@@ -14,10 +14,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.models import HookType, PluginConfig
+from mcpgateway.plugins.framework import PluginConfig
+from mcpgateway.plugins.mcp.entities import HookType, MCPPlugin
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 
 
@@ -96,21 +96,21 @@ async def test_registry_priority_sorting():
     )
 
     # Create plugin instances
-    low_priority_plugin = Plugin(low_priority_config)
-    high_priority_plugin = Plugin(high_priority_config)
+    low_priority_plugin = MCPPlugin(low_priority_config)
+    high_priority_plugin = MCPPlugin(high_priority_config)
 
     # Register plugins in reverse priority order
     registry.register(low_priority_plugin)
     registry.register(high_priority_plugin)
 
     # Get plugins for hook - should be sorted by priority (lines 131-134)
-    hook_plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+    hook_plugins = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
     assert len(hook_plugins) == 2
-    assert hook_plugins[0].name == "HighPriority"  # Lower number = higher priority
-    assert hook_plugins[1].name == "LowPriority"
+    assert hook_plugins[0].plugin_ref.name == "HighPriority"  # Lower number = higher priority
+    assert hook_plugins[1].plugin_ref.name == "LowPriority"
 
     # Test priority cache - calling again should use cached result
-    cached_plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+    cached_plugins = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
     assert cached_plugins == hook_plugins
 
     # Clean up
@@ -133,22 +133,22 @@ async def test_registry_hook_filtering():
         name="PostFetchPlugin", description="Post-fetch plugin", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_POST_FETCH], config={}
     )
 
-    pre_fetch_plugin = Plugin(pre_fetch_config)
-    post_fetch_plugin = Plugin(post_fetch_config)
+    pre_fetch_plugin = MCPPlugin(pre_fetch_config)
+    post_fetch_plugin = MCPPlugin(post_fetch_config)
 
     registry.register(pre_fetch_plugin)
     registry.register(post_fetch_plugin)
 
     # Test hook filtering
-    pre_plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
-    post_plugins = registry.get_plugins_for_hook(HookType.PROMPT_POST_FETCH)
-    tool_plugins = registry.get_plugins_for_hook(HookType.TOOL_PRE_INVOKE)
+    pre_plugins = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
+    post_plugins = registry.get_hook_refs_for_hook(HookType.PROMPT_POST_FETCH)
+    tool_plugins = registry.get_hook_refs_for_hook(HookType.TOOL_PRE_INVOKE)
 
     assert len(pre_plugins) == 1
-    assert pre_plugins[0].name == "PreFetchPlugin"
+    assert pre_plugins[0].plugin_ref.name == "PreFetchPlugin"
 
     assert len(post_plugins) == 1
-    assert post_plugins[0].name == "PostFetchPlugin"
+    assert post_plugins[0].plugin_ref.name == "PostFetchPlugin"
 
     assert len(tool_plugins) == 0  # No plugins for this hook
 
@@ -163,9 +163,9 @@ async def test_registry_shutdown():
     registry = PluginInstanceRegistry()
 
     # Create mock plugins with shutdown methods
-    mock_plugin1 = Plugin(PluginConfig(name="Plugin1", description="Test plugin 1", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={}))
+    mock_plugin1 = MCPPlugin(PluginConfig(name="Plugin1", description="Test plugin 1", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={}))
 
-    mock_plugin2 = Plugin(PluginConfig(name="Plugin2", description="Test plugin 2", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_POST_FETCH], config={}))
+    mock_plugin2 = MCPPlugin(PluginConfig(name="Plugin2", description="Test plugin 2", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_POST_FETCH], config={}))
 
     # Mock the shutdown methods
     mock_plugin1.shutdown = AsyncMock()
@@ -196,7 +196,7 @@ async def test_registry_shutdown_with_error():
     registry = PluginInstanceRegistry()
 
     # Create mock plugin that fails during shutdown
-    failing_plugin = Plugin(
+    failing_plugin = MCPPlugin(
         PluginConfig(name="FailingPlugin", description="Plugin that fails shutdown", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
     )
 
@@ -232,7 +232,7 @@ async def test_registry_edge_cases():
     assert registry.plugin_count == 0
 
     # Test getting hooks for empty registry
-    empty_hooks = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+    empty_hooks = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
     assert len(empty_hooks) == 0
 
     # Test get_all_plugins when empty
@@ -246,13 +246,13 @@ async def test_registry_cache_invalidation():
 
     plugin_config = PluginConfig(name="TestPlugin", description="Test plugin", author="Test", version="1.0", tags=["test"], kind="test.Plugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
 
-    plugin = Plugin(plugin_config)
+    plugin = MCPPlugin(plugin_config)
 
     # Register plugin
     registry.register(plugin)
 
     # Get plugins for hook (populates cache)
-    hooks1 = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+    hooks1 = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
     assert len(hooks1) == 1
 
     # Cache should be populated
@@ -262,5 +262,5 @@ async def test_registry_cache_invalidation():
     registry.unregister("TestPlugin")
 
     # Cache should be cleared for this hook type
-    hooks2 = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+    hooks2 = registry.get_hook_refs_for_hook(HookType.PROMPT_PRE_FETCH)
     assert len(hooks2) == 0
