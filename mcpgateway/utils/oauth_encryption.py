@@ -12,13 +12,17 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 
 # Standard
 import base64
+import json
 import logging
+import os
 from typing import Optional
+
+# First-Party
+from mcpgateway.config import settings
 
 # Third-Party
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+from argon2.low_level import hash_secret_raw, Type
 from pydantic import SecretStr
 
 logger = logging.getLogger(__name__)
@@ -41,32 +45,31 @@ class OAuthEncryption:
         False
     """
 
-    def __init__(self, encryption_secret: SecretStr):
+    def __init__(self, encryption_secret: SecretStr, time_cost: Optional[int] = None, memory_cost: Optional[int] = None, parallelism: Optional[int] = None, hash_len: int = 32, salt_len: int = 16):
         """Initialize the encryption handler.
 
         Args:
             encryption_secret: Secret key for encryption/decryption
         """
         self.encryption_secret = encryption_secret.get_secret_value().encode()
-        self._fernet = None
+        self.time_cost = time_cost or getattr(settings, "argon2id_time_cost", 3)
+        self.memory_cost = memory_cost or getattr(settings, "argon2id_memory_cost", 65536)
+        self.parallelism = parallelism or getattr(settings, "argon2id_parallelism", 1)
+        self.hash_len = hash_len
+        self.salt_len = salt_len
+    
 
-    def _get_fernet(self) -> Fernet:
-        """Get or create Fernet instance for encryption.
-
-        Returns:
-            Fernet instance for encryption/decryption
-        """
-        if self._fernet is None:
-            # Derive a key from the encryption secret using PBKDF2
-            kdf = PBKDF2HMAC(
-                algorithm=hashes.SHA256(),
-                length=32,
-                salt=b"mcp_gateway_oauth",  # Fixed salt for consistency
-                iterations=100000,
-            )
-            key = base64.urlsafe_b64encode(kdf.derive(self.encryption_secret))
-            self._fernet = Fernet(key)
-        return self._fernet
+    def derive_key_argon2id(self, passphrase: bytes, salt: bytes, time_cost: int, memory_cost: int, parallelism: int) -> bytes:
+        raw = hash_secret_raw(
+            secret=passphrase,
+            salt=salt,
+            time_cost=time_cost,
+            memory_cost=memory_cost,  # KiB
+            parallelism=parallelism,
+            hash_len=self.hash_len,
+            type=Type.ID,
+        )
+        return base64.urlsafe_b64encode(raw)
 
     def encrypt_secret(self, plaintext: str) -> str:
         """Encrypt a plaintext secret.
@@ -81,25 +84,37 @@ class OAuthEncryption:
             Exception: If encryption fails
         """
         try:
-            fernet = self._get_fernet()
+            salt = os.urandom(16)
+            key = self.derive_key_argon2id(self.encryption_secret, salt, self.time_cost, self.memory_cost, self.parallelism)
+            fernet = Fernet(key)
             encrypted = fernet.encrypt(plaintext.encode())
-            return encrypted.decode()
+            return json.dumps({
+                "kdf": "argon2id",
+                "t": self.time_cost,
+                "m": self.memory_cost,
+                "p": self.parallelism,
+                "salt": base64.b64encode(salt).decode(),
+                "token": encrypted.decode(),
+            })
         except Exception as e:
             logger.error(f"Failed to encrypt OAuth secret: {e}")
             raise
 
-    def decrypt_secret(self, encrypted_text: str) -> Optional[str]:
+    def decrypt_secret(self, bundle_json: str) -> Optional[str]:
         """Decrypt an encrypted secret.
 
         Args:
-            encrypted_text: Base64-encoded encrypted string
+            bundle_json: str: JSON string containing encryption metadata and token
 
         Returns:
             Decrypted secret string, or None if decryption fails
         """
         try:
-            fernet = self._get_fernet()
-            decrypted = fernet.decrypt(encrypted_text.encode())
+            b = json.loads(bundle_json)
+            salt = base64.b64decode(b["salt"])
+            key = self.derive_key_argon2id(self.encryption_secret, salt, time_cost=b["t"], memory_cost=b["m"], parallelism=b["p"])
+            fernet = Fernet(key)
+            decrypted = fernet.decrypt(b["token"].encode())
             return decrypted.decode()
         except Exception as e:
             logger.error(f"Failed to decrypt OAuth secret: {e}")
