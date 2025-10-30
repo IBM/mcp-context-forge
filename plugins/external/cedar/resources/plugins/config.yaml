@@ -1,0 +1,59 @@
+plugins:
+  - name: "CedarPolicyPlugin"
+    kind: "cedarpolicyplugin.plugin.CedarPolicyPlugin"
+    description: "A plugin that does policy decision and enforcement using cedar"
+    version: "0.1.0"
+    author: "Shriti Priya"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["plugin"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      policy_lang: cedar # custom_dsl
+      policy: |
+          - id: allow-admin-agents
+            effect: Permit
+            principal: Role::"admin"
+            action:
+              - Action::"customer_service"
+              - Action::"approval"
+            resource: Resource::"agents"
+
+          - id: allow-admin-tools
+            effect: Permit
+            principal: Role::"admin"
+            action:
+              - Action::"get_users"
+              - Action::"submit_request"
+            resource: Resource::"tools"
+
+          - id: allow-users-agents
+            effect: Permit
+            principal: Role::"users"
+            action:
+              - Action::"customer_service"
+            resource: Resource::"agents"
+
+          - id: allow-users-tools
+            effect: Permit
+            principal: Role::"users"
+            action:
+              - Action::"get_users"
+              - Action::"submit_request"
+            resource: Resource::"tools"
+
+# Plugin directories to scan
+plugin_dirs:
+  - "cedarpolicyplugin"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
