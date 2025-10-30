@@ -20,9 +20,11 @@ from typing import Any
 # First-Party
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
 )
@@ -85,7 +87,7 @@ def _strip_tags(text: str) -> str:
     return text.strip()
 
 
-class HTMLToMarkdownPlugin(Plugin):
+class HTMLToMarkdownPlugin(MCPPlugin):
     """Transform HTML ResourceContent to Markdown in `text` field."""
 
     def __init__(self, config: PluginConfig) -> None:

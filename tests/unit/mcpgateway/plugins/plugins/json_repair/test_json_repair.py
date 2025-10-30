@@ -12,9 +12,12 @@ import pytest
 
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+)
+
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     ToolPostInvokePayload,
 )
 from plugins.json_repair.json_repair import JSONRepairPlugin

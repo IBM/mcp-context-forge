@@ -13,9 +13,11 @@ import logging
 
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.plugins.framework import (
-    HttpHeaderPayload,
-    Plugin,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
+    HttpHeaderPayload,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -33,7 +35,7 @@ from mcpgateway.plugins.framework import (
 logger = logging.getLogger("header_plugin")
 
 
-class HeadersMetaDataPlugin(Plugin):
+class HeadersMetaDataPlugin(MCPPlugin):
     """A simple header plugin to read and modify headers."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -140,7 +142,7 @@ class HeadersMetaDataPlugin(Plugin):
         return ResourcePreFetchResult(continue_processing=True)
 
 
-class HeadersPlugin(Plugin):
+class HeadersPlugin(MCPPlugin):
     """A simple header plugin to read and modify headers."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:

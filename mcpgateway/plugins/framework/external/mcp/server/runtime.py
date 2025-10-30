@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/plugins/framework/external/mcp/server/runtime.py
 Copyright 2025
@@ -29,32 +28,19 @@ import uvicorn
 # First-Party
 from mcpgateway.plugins.framework import (
     ExternalPluginServer,
-    Plugin,
-    PluginContext,
-    PromptPosthookPayload,
-    PromptPosthookResult,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    ResourcePostFetchPayload,
-    ResourcePostFetchResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
+    MCPServerConfig,
 )
 from mcpgateway.plugins.framework.constants import (
     GET_PLUGIN_CONFIG,
     GET_PLUGIN_CONFIGS,
+    INVOKE_HOOK,
     MCP_SERVER_INSTRUCTIONS,
     MCP_SERVER_NAME,
 )
-from mcpgateway.plugins.framework.models import HookType, MCPServerConfig
 
 logger = logging.getLogger(__name__)
 
-SERVER: ExternalPluginServer = None
+SERVER: ExternalPluginServer | None = None
 
 
 # Module-level tool functions (extracted for testability)
@@ -66,6 +52,8 @@ async def get_plugin_configs() -> list[dict]:
     Returns:
         JSON string containing list of plugin configuration dictionaries.
     """
+    if not SERVER:
+        raise RuntimeError("Plugin server not initialized")
     return await SERVER.get_plugin_configs()
 
 
@@ -78,175 +66,29 @@ async def get_plugin_config(name: str) -> dict:
     Returns:
         JSON string containing plugin configuration dictionary.
     """
-    return await SERVER.get_plugin_config(name)
+    if not SERVER:
+        raise RuntimeError("Plugin server not initialized")
+    result = await SERVER.get_plugin_config(name)
+    if result is None:
+        return {}
+    return result
 
 
-async def prompt_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute prompt prefetch hook for a plugin.
-
-    Args:
-        plugin_name: The name of the plugin to execute
-        payload: The prompt name and arguments to be analyzed
-        context: Contextual information required for execution
-
-    Returns:
-        Result dictionary from the prompt prefetch hook.
-    """
-
-    def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
-        """Wrapper function to invoke prompt prefetch on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The prompt prehook payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's prompt_pre_fetch method.
-        """
-        return plugin.prompt_pre_fetch(payload, context)
-
-    return await SERVER.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, plugin_name, payload, context)
-
-
-async def prompt_post_fetch(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute prompt postfetch hook for a plugin.
+async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
+    """Execute a hook for a plugin.
 
     Args:
-        plugin_name: The name of the plugin to execute
-        payload: The prompt payload to be analyzed
-        context: Contextual information
-
-    Returns:
-        Result dictionary from the prompt postfetch hook.
-    """
-
-    def prompt_post_fetch_func(plugin: Plugin, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
-        """Wrapper function to invoke prompt postfetch on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The prompt posthook payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's prompt_post_fetch method.
-        """
-        return plugin.prompt_post_fetch(payload, context)
-
-    return await SERVER.invoke_hook(PromptPosthookPayload, prompt_post_fetch_func, plugin_name, payload, context)
-
-
-async def tool_pre_invoke(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute tool pre-invoke hook for a plugin.
-
-    Args:
-        plugin_name: The name of the plugin to execute
-        payload: The tool name and arguments to be analyzed
-        context: Contextual information
-
-    Returns:
-        Result dictionary from the tool pre-invoke hook.
-    """
-
-    def tool_pre_invoke_func(plugin: Plugin, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
-        """Wrapper function to invoke tool pre-invoke on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The tool pre-invoke payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's tool_pre_invoke method.
-        """
-        return plugin.tool_pre_invoke(payload, context)
-
-    return await SERVER.invoke_hook(ToolPreInvokePayload, tool_pre_invoke_func, plugin_name, payload, context)
-
-
-async def tool_post_invoke(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute tool post-invoke hook for a plugin.
-
-    Args:
-        plugin_name: The name of the plugin to execute
-        payload: The tool result to be analyzed
-        context: Contextual information
-
-    Returns:
-        Result dictionary from the tool post-invoke hook.
-    """
-
-    def tool_post_invoke_func(plugin: Plugin, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        """Wrapper function to invoke tool post-invoke on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The tool post-invoke payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's tool_post_invoke method.
-        """
-        return plugin.tool_post_invoke(payload, context)
-
-    return await SERVER.invoke_hook(ToolPostInvokePayload, tool_post_invoke_func, plugin_name, payload, context)
-
-
-async def resource_pre_fetch(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute resource prefetch hook for a plugin.
-
-    Args:
-        plugin_name: The name of the plugin to execute
-        payload: The resource name and arguments to be analyzed
-        context: Contextual information
-
-    Returns:
-        Result dictionary from the resource prefetch hook.
-    """
-
-    def resource_pre_fetch_func(plugin: Plugin, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
-        """Wrapper function to invoke resource prefetch on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The resource prefetch payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's resource_pre_fetch method.
-        """
-        return plugin.resource_pre_fetch(payload, context)
-
-    return await SERVER.invoke_hook(ResourcePreFetchPayload, resource_pre_fetch_func, plugin_name, payload, context)
-
-
-async def resource_post_fetch(plugin_name: str, payload: Dict[str, Any], context: Dict[str, Any]) -> dict:
-    """Execute resource postfetch hook for a plugin.
-
-    Args:
+        hook_type: The name or type of the hook.
         plugin_name: The name of the plugin to execute
         payload: The resource payload to be analyzed
         context: Contextual information
 
     Returns:
-        Result dictionary from the resource postfetch hook.
+        Result dictionary with payload, context and any error information.
     """
-
-    def resource_post_fetch_func(plugin: Plugin, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
-        """Wrapper function to invoke resource postfetch on a plugin instance.
-
-        Args:
-            plugin: The plugin instance to execute.
-            payload: The resource postfetch payload.
-            context: The plugin context.
-
-        Returns:
-            Result from the plugin's resource_post_fetch method.
-        """
-        return plugin.resource_post_fetch(payload, context)
-
-    return await SERVER.invoke_hook(ResourcePostFetchPayload, resource_post_fetch_func, plugin_name, payload, context)
+    if not SERVER:
+        raise RuntimeError("Plugin server not initialized")
+    return await SERVER.invoke_hook(hook_type, plugin_name, payload, context)
 
 
 class SSLCapableFastMCP(FastMCP):
@@ -288,7 +130,7 @@ class SSLCapableFastMCP(FastMCP):
                 if tls.ca_bundle:
                     ssl_config["ssl_ca_certs"] = tls.ca_bundle
 
-                ssl_config["ssl_cert_reqs"] = tls.ssl_cert_reqs
+                ssl_config["ssl_cert_reqs"] = str(tls.ssl_cert_reqs)
 
                 if tls.keyfile_password:
                     ssl_config["ssl_keyfile_password"] = tls.keyfile_password
@@ -315,12 +157,12 @@ class SSLCapableFastMCP(FastMCP):
             health_port: Port number for the health check server.
         """
         # Third-Party
-        from starlette.applications import Starlette  # pylint: disable=import-outside-toplevel
-        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
-        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
 
-        async def health_check(request: Request):  # pylint: disable=unused-argument
+        async def health_check(request: Request):
             """Health check endpoint for container orchestration.
 
             Args:
@@ -350,11 +192,11 @@ class SSLCapableFastMCP(FastMCP):
 
         # Add health check endpoint to main app
         # Third-Party
-        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
-        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse
+        from starlette.routing import Route
 
-        async def health_check(request: Request):  # pylint: disable=unused-argument
+        async def health_check(request: Request):
             """Health check endpoint for container orchestration.
 
             Args:
@@ -379,7 +221,7 @@ class SSLCapableFastMCP(FastMCP):
         config_kwargs.update(ssl_config)
 
         logger.info(f"Starting plugin server on {self.settings.host}:{self.settings.port}")
-        config = uvicorn.Config(**config_kwargs)
+        config = uvicorn.Config(**config_kwargs)  # type: ignore[arg-type]
         server = uvicorn.Server(config)
 
         # If SSL is enabled, start a separate HTTP health check server
@@ -412,7 +254,7 @@ async def run():
     Raises:
         Exception: If plugin server initialization or execution fails.
     """
-    global SERVER  # pylint: disable=global-statement
+    global SERVER
 
     # Initialize plugin server
     SERVER = ExternalPluginServer()
@@ -445,12 +287,7 @@ async def run():
             # Register module-level tool functions with FastMCP
             mcp.tool(name=GET_PLUGIN_CONFIGS)(get_plugin_configs)
             mcp.tool(name=GET_PLUGIN_CONFIG)(get_plugin_config)
-            mcp.tool(name=HookType.PROMPT_PRE_FETCH.value)(prompt_pre_fetch)
-            mcp.tool(name=HookType.PROMPT_POST_FETCH.value)(prompt_post_fetch)
-            mcp.tool(name=HookType.TOOL_PRE_INVOKE.value)(tool_pre_invoke)
-            mcp.tool(name=HookType.TOOL_POST_INVOKE.value)(tool_post_invoke)
-            mcp.tool(name=HookType.RESOURCE_PRE_FETCH.value)(resource_pre_fetch)
-            mcp.tool(name=HookType.RESOURCE_POST_FETCH.value)(resource_post_fetch)
+            mcp.tool(name=INVOKE_HOOK)(invoke_hook)
 
             # Run with stdio transport
             logger.info("Starting MCP plugin server with FastMCP (stdio transport)")
@@ -467,12 +304,7 @@ async def run():
             # Register module-level tool functions with FastMCP
             mcp.tool(name=GET_PLUGIN_CONFIGS)(get_plugin_configs)
             mcp.tool(name=GET_PLUGIN_CONFIG)(get_plugin_config)
-            mcp.tool(name=HookType.PROMPT_PRE_FETCH.value)(prompt_pre_fetch)
-            mcp.tool(name=HookType.PROMPT_POST_FETCH.value)(prompt_post_fetch)
-            mcp.tool(name=HookType.TOOL_PRE_INVOKE.value)(tool_pre_invoke)
-            mcp.tool(name=HookType.TOOL_POST_INVOKE.value)(tool_post_invoke)
-            mcp.tool(name=HookType.RESOURCE_PRE_FETCH.value)(resource_pre_fetch)
-            mcp.tool(name=HookType.RESOURCE_POST_FETCH.value)(resource_post_fetch)
+            mcp.tool(name=INVOKE_HOOK)(invoke_hook)
 
             # Run with streamable-http transport
             logger.info("Starting MCP plugin server with FastMCP (HTTP transport)")

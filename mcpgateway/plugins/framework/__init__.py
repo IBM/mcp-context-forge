@@ -17,43 +17,30 @@ Exposes core MCP Gateway plugin components:
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
 from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
+from mcpgateway.plugins.framework.hook_registry import HookRegistry, get_hook_registry
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HttpHeaderPayload,
-    HttpHeaderPayloadResult,
-    HookType,
+    MCPServerConfig,
     PluginCondition,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
     PluginMode,
+    PluginPayload,
     PluginResult,
     PluginViolation,
-    PromptPosthookPayload,
-    PromptPosthookResult,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    PromptResult,
-    ResourcePostFetchPayload,
-    ResourcePostFetchResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
 )
 
 __all__ = [
     "ConfigLoader",
     "ExternalPluginServer",
     "GlobalContext",
-    "HookType",
-    "HttpHeaderPayload",
-    "HttpHeaderPayloadResult",
+    "HookRegistry",
+    "get_hook_registry",
+    "MCPServerConfig",
     "Plugin",
     "PluginCondition",
     "PluginConfig",
@@ -63,20 +50,8 @@ __all__ = [
     "PluginLoader",
     "PluginManager",
     "PluginMode",
+    "PluginPayload",
     "PluginResult",
     "PluginViolation",
     "PluginViolationError",
-    "PromptPosthookPayload",
-    "PromptPosthookResult",
-    "PromptPrehookPayload",
-    "PromptPrehookResult",
-    "PromptResult",
-    "ResourcePostFetchPayload",
-    "ResourcePostFetchResult",
-    "ResourcePreFetchPayload",
-    "ResourcePreFetchResult",
-    "ToolPostInvokePayload",
-    "ToolPostInvokeResult",
-    "ToolPreInvokePayload",
-    "ToolPreInvokeResult",
 ]

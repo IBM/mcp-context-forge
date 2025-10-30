@@ -22,9 +22,11 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -88,7 +90,7 @@ def _inject_header(text: str, cfg: LicenseHeaderConfig, language: str) -> str:
     return f"{header_block}\n{text}"
 
 
-class LicenseHeaderInjectorPlugin(Plugin):
+class LicenseHeaderInjectorPlugin(MCPPlugin):
     """Inject a license header into textual code outputs."""
 
     def __init__(self, config: PluginConfig) -> None:

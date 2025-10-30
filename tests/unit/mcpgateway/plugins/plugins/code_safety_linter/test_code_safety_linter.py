@@ -11,9 +11,11 @@ import pytest
 
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     ToolPostInvokePayload,
 )
 from plugins.code_safety_linter.code_safety_linter import CodeSafetyLinterPlugin

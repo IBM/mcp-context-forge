@@ -11,9 +11,11 @@ import pytest
 
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     PromptPrehookPayload,
 )
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin

@@ -21,10 +21,12 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -48,7 +50,7 @@ class CodeSafetyConfig(BaseModel):
     )
 
 
-class CodeSafetyLinterPlugin(Plugin):
+class CodeSafetyLinterPlugin(MCPPlugin):
     """Scan text outputs for dangerous code patterns."""
 
     def __init__(self, config: PluginConfig) -> None:

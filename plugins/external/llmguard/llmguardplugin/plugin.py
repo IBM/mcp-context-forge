@@ -15,12 +15,15 @@ from llmguardplugin.schema import LLMGuardConfig
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginError,
     PluginErrorModel,
     PluginViolation,
+)
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -37,7 +40,7 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-class LLMGuardPlugin(Plugin):
+class LLMGuardPlugin(MCPPlugin):
     """A plugin that leverages the capabilities of llmguard library to apply guardrails on input and output prompts.
 
     Attributes:

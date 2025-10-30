@@ -12,7 +12,8 @@ This module loads configurations for plugins.
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PluginViolation, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework import PluginConfig, PluginContext, PluginViolation
+from mcpgateway.plugins.mcp.entities import MCPPlugin, PromptPrehookPayload, PromptPrehookResult
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -30,7 +31,7 @@ class DenyListConfig(BaseModel):
     words: list[str]
 
 
-class DenyListPlugin(Plugin):
+class DenyListPlugin(MCPPlugin):
     """Example deny list plugin."""
 
     def __init__(self, config: PluginConfig):

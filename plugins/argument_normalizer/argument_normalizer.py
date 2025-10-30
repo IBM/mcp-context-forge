@@ -27,9 +27,11 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPreInvokePayload,
@@ -515,7 +517,7 @@ def _normalize_value(value: Any, base_cfg: ArgumentNormalizerConfig, path: str, 
     return value
 
 
-class ArgumentNormalizerPlugin(Plugin):
+class ArgumentNormalizerPlugin(MCPPlugin):
     """Argument Normalizer plugin for prompts and tools."""
 
     def __init__(self, config: PluginConfig):

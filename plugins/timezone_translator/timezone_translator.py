@@ -25,9 +25,11 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -131,7 +133,7 @@ def _walk_and_translate(value: Any, source: ZoneInfo, target: ZoneInfo, fields: 
     return value
 
 
-class TimezoneTranslatorPlugin(Plugin):
+class TimezoneTranslatorPlugin(MCPPlugin):
     """Converts detected ISO timestamps between server and user timezones."""
 
     def __init__(self, config: PluginConfig) -> None:

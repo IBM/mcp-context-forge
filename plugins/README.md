@@ -196,7 +196,7 @@ from mcpgateway.plugins.framework.models import (
     PluginResult
 )
 
-class MyPlugin(Plugin):
+class MyPlugin(MCPPlugin):
     """Custom plugin implementation."""
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload) -> ToolPreInvokeResult:
@@ -299,7 +299,7 @@ def validate_config(self) -> None:
 
 ### Resource Management
 ```python
-class MyPlugin(Plugin):
+class MyPlugin(MCPPlugin):
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         self._session = None

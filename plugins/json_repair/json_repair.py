@@ -18,9 +18,11 @@ import re
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -70,7 +72,7 @@ def _repair(s: str) -> str | None:
     return None
 
 
-class JSONRepairPlugin(Plugin):
+class JSONRepairPlugin(MCPPlugin):
     """Repair JSON-like string outputs, returning corrected string if fixable."""
 
     def __init__(self, config: PluginConfig) -> None:

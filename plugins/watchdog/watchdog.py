@@ -23,10 +23,12 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -48,7 +50,7 @@ class WatchdogConfig(BaseModel):
     tool_overrides: Dict[str, Dict[str, Any]] = {}
 
 
-class WatchdogPlugin(Plugin):
+class WatchdogPlugin(MCPPlugin):
     """Records tool execution duration and enforces maximum runtime policy."""
 
     def __init__(self, config: PluginConfig) -> None:

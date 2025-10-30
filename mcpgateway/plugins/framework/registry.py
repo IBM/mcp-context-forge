@@ -14,8 +14,8 @@ import logging
 from typing import Optional
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin, PluginRef
-from mcpgateway.plugins.framework.models import HookType
+from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+from mcpgateway.plugins.framework.external.mcp.client import ExternalHookRef, ExternalPlugin
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
@@ -25,7 +25,8 @@ class PluginInstanceRegistry:
     """Registry for managing loaded plugins.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import Plugin, PluginConfig, HookType
+        >>> from mcpgateway.plugins.framework import Plugin, PluginConfig
+        >>> from mcpgateway.plugins.mcp.entities import HookType
         >>> registry = PluginInstanceRegistry()
         >>> config = PluginConfig(
         ...     name="test",
@@ -60,8 +61,9 @@ class PluginInstanceRegistry:
             0
         """
         self._plugins: dict[str, PluginRef] = {}
-        self._hooks: dict[HookType, list[PluginRef]] = defaultdict(list)
-        self._priority_cache: dict[HookType, list[PluginRef]] = {}
+        self._hooks: dict[str, list[HookRef]] = defaultdict(list)
+        self._hooks_by_name: dict[str, dict[str, HookRef]] = {}
+        self._priority_cache: dict[str, list[HookRef]] = {}
 
     def register(self, plugin: Plugin) -> None:
         """Register a plugin instance.
@@ -79,13 +81,24 @@ class PluginInstanceRegistry:
 
         self._plugins[plugin.name] = plugin_ref
 
+        plugin_hooks = {}
+
+        external = isinstance(plugin, ExternalPlugin)
+
         # Register hooks
         for hook_type in plugin.hooks:
-            self._hooks[hook_type].append(plugin_ref)
+            hook_ref: HookRef
+            if external:
+                hook_ref = ExternalHookRef(hook_type, plugin_ref)
+            else:
+                hook_ref = HookRef(hook_type, plugin_ref)
+            self._hooks[hook_type].append(hook_ref)
+            plugin_hooks[hook_type] = hook_ref
             # Invalidate priority cache for this hook
             self._priority_cache.pop(hook_type, None)
+        self._hooks_by_name[plugin.name] = plugin_hooks
 
-        logger.info(f"Registered plugin: {plugin.name} with hooks: {[h.name for h in plugin.hooks]}")
+        logger.info(f"Registered plugin: {plugin.name} with hooks: {[h for h in plugin.hooks]}")
 
     def unregister(self, plugin_name: str) -> None:
         """Unregister a plugin given its name.
@@ -102,8 +115,11 @@ class PluginInstanceRegistry:
         plugin = self._plugins.pop(plugin_name)
         # Remove from hooks
         for hook_type in plugin.hooks:
-            self._hooks[hook_type] = [p for p in self._hooks[hook_type] if p.name != plugin_name]
+            self._hooks[hook_type] = [p for p in self._hooks[hook_type] if p.plugin_ref.name != plugin_name]
             self._priority_cache.pop(hook_type, None)
+
+        # Remove from hooks by name
+        self._hooks_by_name.pop(plugin_name, None)
 
         logger.info(f"Unregistered plugin: {plugin_name}")
 
@@ -118,7 +134,23 @@ class PluginInstanceRegistry:
         """
         return self._plugins.get(name)
 
-    def get_plugins_for_hook(self, hook_type: HookType) -> list[PluginRef]:
+    def get_plugin_hook_by_name(self, name: str, hook_type: str) -> Optional[HookRef]:
+        """Gets a hook reference for a particular plugin and hook type.
+
+        Args:
+            name: plugin name.
+            hook_type: the hook type.
+
+        Returns:
+            A hook reference for the plugin or None if not found.
+        """
+        if name in self._hooks_by_name:
+            hooks = self._hooks_by_name[name]
+            if hook_type in hooks:
+                return hooks[hook_type]
+        return None
+
+    def get_hook_refs_for_hook(self, hook_type: str) -> list[HookRef]:
         """Get all plugins for a specific hook, sorted by priority.
 
         Args:
@@ -128,8 +160,8 @@ class PluginInstanceRegistry:
             A list of plugin instances.
         """
         if hook_type not in self._priority_cache:
-            plugins = sorted(self._hooks[hook_type], key=lambda p: p.priority)
-            self._priority_cache[hook_type] = plugins
+            hook_refs = sorted(self._hooks[hook_type], key=lambda p: p.plugin_ref.priority)
+            self._priority_cache[hook_type] = hook_refs
         return self._priority_cache[hook_type]
 
     def get_all_plugins(self) -> list[PluginRef]:

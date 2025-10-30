@@ -23,9 +23,11 @@ from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRu
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+)
+from mcpgateway.plugins.mcp.entities import (
+    MCPPlugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -36,7 +38,7 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
-class ALTKJsonProcessor(Plugin):
+class ALTKJsonProcessor(MCPPlugin):
     """Uses JSON Processor from ALTK to extract data from long JSON responses."""
 
     def __init__(self, config: PluginConfig):

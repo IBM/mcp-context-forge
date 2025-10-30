@@ -14,10 +14,12 @@ import pytest
 from mcpgateway.models import ResourceContent
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginMode,
+)
+from mcpgateway.plugins.mcp.entities import (
+    HookType,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
 )
