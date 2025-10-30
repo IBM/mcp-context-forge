@@ -18,7 +18,7 @@ from mcpgateway.plugins.mcp.entities import (
     HookType,
     ResourcePostFetchPayload,
 )
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from plugins.html_to_markdown.html_to_markdown import HTMLToMarkdownPlugin
 
 

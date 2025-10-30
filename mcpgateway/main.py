@@ -63,6 +63,7 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
+from mcpgateway.common.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
@@ -71,7 +72,6 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
-from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
@@ -2699,8 +2699,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        # pylint: disable=import-outside-toplevel
-        from mcpgateway.models import ResourceContent, TextContent
+        from mcpgateway.common.models import ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):

@@ -291,7 +291,7 @@ class TestExampleService:
 def test_with_database(db_session):
     """Test using database session fixture."""
     # db_session is automatically provided by conftest.py
-    from mcpgateway.models import Tool
+    from mcpgateway.common.models import Tool
     tool = Tool(name="test_tool")
     db_session.add(tool)
     db_session.commit()

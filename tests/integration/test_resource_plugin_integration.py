@@ -18,7 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 # First-Party
 from mcpgateway.db import Base
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.schemas import ResourceCreate
 from mcpgateway.services.resource_service import ResourceService
 

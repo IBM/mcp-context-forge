@@ -22,7 +22,7 @@ Examples:
 
         from mcpgateway.utils.pagination import paginate_query
         from sqlalchemy import select
-        from mcpgateway.models import Tool
+        from mcpgateway.common.models import Tool
 
         async def list_tools(db: Session):
             query = select(Tool).where(Tool.enabled == True)
@@ -215,7 +215,7 @@ async def offset_paginate(
 
             from mcpgateway.utils.pagination import offset_paginate
             from sqlalchemy import select
-            from mcpgateway.models import Tool
+            from mcpgateway.common.models import Tool
 
             async def list_tools_offset(db: Session, page: int = 1):
                 query = select(Tool).where(Tool.enabled == True)
@@ -314,7 +314,7 @@ async def cursor_paginate(
 
             from mcpgateway.utils.pagination import cursor_paginate
             from sqlalchemy import select
-            from mcpgateway.models import Tool
+            from mcpgateway.common.models import Tool
 
             async def list_tools_cursor(db: Session, cursor: Optional[str] = None):
                 query = select(Tool).order_by(Tool.created_at.desc())
@@ -436,7 +436,7 @@ async def paginate_query(
 
             from mcpgateway.utils.pagination import paginate_query
             from sqlalchemy import select
-            from mcpgateway.models import Tool
+            from mcpgateway.common.models import Tool
 
             async def list_tools_auto(db: Session, page: int = 1):
                 query = select(Tool)

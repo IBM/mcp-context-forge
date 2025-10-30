@@ -25,6 +25,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent
 
 # First-Party
+from mcpgateway.common.models import TransportType
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
 from mcpgateway.plugins.framework.constants import (
     CONTEXT,
@@ -51,7 +52,6 @@ from mcpgateway.plugins.framework.models import (
     PluginPayload,
     PluginResult,
 )
-from mcpgateway.schemas import TransportType
 
 logger = logging.getLogger(__name__)
 

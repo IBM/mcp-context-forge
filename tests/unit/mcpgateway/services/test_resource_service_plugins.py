@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
 

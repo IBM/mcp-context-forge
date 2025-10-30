@@ -9,7 +9,7 @@ Tests for MarkdownCleanerPlugin.
 
 import pytest
 
-from mcpgateway.models import Message, PromptResult, TextContent
+from mcpgateway.common.models import Message, PromptResult, TextContent
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     PluginConfig,

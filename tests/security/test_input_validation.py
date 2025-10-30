@@ -35,7 +35,7 @@ import pytest
 
 # First-Party
 from mcpgateway.schemas import AdminToolCreate, encode_datetime, GatewayCreate, PromptArgument, PromptCreate, ResourceCreate, RPCRequest, ServerCreate, to_camel_case, ToolCreate, ToolInvocation
-from mcpgateway.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator
 
 # Configure logging for better test debugging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

@@ -41,12 +41,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
-from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
@@ -659,7 +659,7 @@ class ResourceService:
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.models import ResourceContent
+            >>> from mcpgateway.common.models import ResourceContent
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'

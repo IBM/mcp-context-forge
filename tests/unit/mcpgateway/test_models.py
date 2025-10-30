@@ -18,7 +18,7 @@ from pydantic import ValidationError
 import pytest
 
 # First-Party
-from mcpgateway.models import (
+from mcpgateway.common.models import (
     ClientCapabilities,
     CreateMessageResult,
     ImageContent,

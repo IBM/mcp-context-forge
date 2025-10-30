@@ -27,7 +27,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator
 
 
 class DummySettings:

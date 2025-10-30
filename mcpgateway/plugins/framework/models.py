@@ -27,6 +27,8 @@ from pydantic import (
 )
 
 # First-Party
+from mcpgateway.common.models import TransportType
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import (
     EXTERNAL_PLUGIN_TYPE,
     IGNORE_CONFIG_EXTERNAL,
@@ -34,8 +36,6 @@ from mcpgateway.plugins.framework.constants import (
     SCRIPT,
     URL,
 )
-from mcpgateway.schemas import TransportType
-from mcpgateway.validators import SecurityValidator
 
 T = TypeVar("T")
 

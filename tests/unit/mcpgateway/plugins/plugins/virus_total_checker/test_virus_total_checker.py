@@ -24,7 +24,7 @@ from mcpgateway.plugins.mcp.entities import (
 )
 
 from plugins.virus_total_checker.virus_total_checker import VirusTotalURLCheckerPlugin
-from mcpgateway.models import Message, PromptResult, TextContent
+from mcpgateway.common.models import Message, PromptResult, TextContent
 
 
 class _Resp:
@@ -291,7 +291,7 @@ async def test_resource_scan_blocks_on_url():
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
 
-    from mcpgateway.models import ResourceContent
+    from mcpgateway.common.models import ResourceContent
     rc = ResourceContent(type="resource", id="345",uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
     from mcpgateway.plugins.mcp.entities import ResourcePostFetchPayload
     payload = ResourcePostFetchPayload(uri="test://x", content=rc)

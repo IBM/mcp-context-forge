@@ -78,8 +78,8 @@ from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.common.models import ServerCapabilities
 from mcpgateway.config import settings
-from mcpgateway.models import ServerCapabilities
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

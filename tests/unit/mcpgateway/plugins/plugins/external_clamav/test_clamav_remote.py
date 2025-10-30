@@ -19,7 +19,8 @@ from mcpgateway.plugins.mcp.entities import (
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
 )
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 
 from plugins.external.clamav_server.clamav_plugin import ClamAVRemotePlugin
 
@@ -81,11 +82,11 @@ async def test_prompt_post_fetch_blocks_on_eicar_text():
     plugin = _mk_plugin(True)
     from mcpgateway.plugins.mcp.entities import PromptPosthookPayload
 
-    pr = __import__("mcpgateway.models").models.PromptResult(
+    pr = PromptResult(
         messages=[
-            __import__("mcpgateway.models").models.Message(
+            Message(
                 role="assistant",
-                content=__import__("mcpgateway.models").models.TextContent(type="text", text=EICAR),
+                content=TextContent(type="text", text=EICAR),
             )
         ]
     )
@@ -122,11 +123,11 @@ async def test_health_stats_counters():
     # 2) prompt_post_fetch with EICAR -> attempted +1, infected +1 (total attempted=2, infected=2)
     from mcpgateway.plugins.mcp.entities import PromptPosthookPayload
 
-    pr = __import__("mcpgateway.models").models.PromptResult(
+    pr = PromptResult(
         messages=[
-            __import__("mcpgateway.models").models.Message(
+            Message(
                 role="assistant",
-                content=__import__("mcpgateway.models").models.TextContent(type="text", text=EICAR),
+                content=TextContent(type="text", text=EICAR),
             )
         ]
     )
