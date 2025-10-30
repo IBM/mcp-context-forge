@@ -612,8 +612,7 @@ class PluginManager:
             if isinstance(payload, (str, dict)):
                 pydantic_payload = plugin.json_to_payload(hook_type, payload)
                 return await self._executor.execute_plugin(hook_ref, pydantic_payload, context, violations_as_exceptions)
-            else:
-                raise ValueError(f"When payload_as_json=True, payload must be str or dict, got {type(payload)}")
+            raise ValueError(f"When payload_as_json=True, payload must be str or dict, got {type(payload)}")
         # When payload_as_json=False, payload should already be a PluginPayload
         if not isinstance(payload, PluginPayload):
             raise ValueError(f"When payload_as_json=False, payload must be a PluginPayload, got {type(payload)}")

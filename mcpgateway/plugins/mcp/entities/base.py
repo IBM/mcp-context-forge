@@ -45,7 +45,7 @@ def _register_mcp_hooks():
     """
     # Import here to avoid circular dependency at module load time
     # First-Party
-    from mcpgateway.plugins.framework.hook_registry import get_hook_registry
+    from mcpgateway.plugins.framework.hook_registry import get_hook_registry  # pylint: disable=import-outside-toplevel
 
     registry = get_hook_registry()
 

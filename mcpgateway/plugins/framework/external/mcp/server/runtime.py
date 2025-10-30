@@ -157,12 +157,12 @@ class SSLCapableFastMCP(FastMCP):
             health_port: Port number for the health check server.
         """
         # Third-Party
-        from starlette.applications import Starlette
-        from starlette.requests import Request
-        from starlette.responses import JSONResponse
-        from starlette.routing import Route
+        from starlette.applications import Starlette  # pylint: disable=import-outside-toplevel
+        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
+        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
+        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
-        async def health_check(request: Request):
+        async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
 
             Args:
@@ -192,11 +192,11 @@ class SSLCapableFastMCP(FastMCP):
 
         # Add health check endpoint to main app
         # Third-Party
-        from starlette.requests import Request
-        from starlette.responses import JSONResponse
-        from starlette.routing import Route
+        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
+        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
+        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
-        async def health_check(request: Request):
+        async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
 
             Args:
@@ -254,7 +254,7 @@ async def run():
     Raises:
         Exception: If plugin server initialization or execution fails.
     """
-    global SERVER
+    global SERVER  # pylint: disable=global-statement
 
     # Initialize plugin server
     SERVER = ExternalPluginServer()

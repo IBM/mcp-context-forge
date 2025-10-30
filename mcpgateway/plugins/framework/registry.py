@@ -98,7 +98,7 @@ class PluginInstanceRegistry:
             self._priority_cache.pop(hook_type, None)
         self._hooks_by_name[plugin.name] = plugin_hooks
 
-        logger.info(f"Registered plugin: {plugin.name} with hooks: {[h for h in plugin.hooks]}")
+        logger.info(f"Registered plugin: {plugin.name} with hooks: {list(plugin.hooks)}")
 
     def unregister(self, plugin_name: str) -> None:
         """Unregister a plugin given its name.
