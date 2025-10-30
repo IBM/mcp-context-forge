@@ -34,59 +34,17 @@ from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_s
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.models import ImageContent
+from mcpgateway.models import Annotations, ImageContent
 from mcpgateway.models import Prompt as MCPPrompt
 from mcpgateway.models import Resource as MCPResource
 from mcpgateway.models import ResourceContent, TextContent
 from mcpgateway.models import Tool as MCPTool
+from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 from mcpgateway.validators import SecurityValidator
 
 logger = logging.getLogger(__name__)
-
-
-def to_camel_case(s: str) -> str:
-    """
-    Convert a string from snake_case to camelCase.
-
-    Args:
-        s (str): The string to be converted, which is assumed to be in snake_case.
-
-    Returns:
-        str: The string converted to camelCase.
-
-    Examples:
-        >>> to_camel_case("hello_world_example")
-        'helloWorldExample'
-        >>> to_camel_case("alreadyCamel")
-        'alreadyCamel'
-        >>> to_camel_case("")
-        ''
-        >>> to_camel_case("single")
-        'single'
-        >>> to_camel_case("_leading_underscore")
-        'LeadingUnderscore'
-        >>> to_camel_case("trailing_underscore_")
-        'trailingUnderscore'
-        >>> to_camel_case("multiple_words_here")
-        'multipleWordsHere'
-        >>> to_camel_case("api_key_value")
-        'apiKeyValue'
-        >>> to_camel_case("user_id")
-        'userId'
-        >>> to_camel_case("created_at")
-        'createdAt'
-        >>> to_camel_case("team_member_role")
-        'teamMemberRole'
-        >>> to_camel_case("oauth_client_id")
-        'oauthClientId'
-        >>> to_camel_case("jwt_token")
-        'jwtToken'
-        >>> to_camel_case("a2a_agent_name")
-        'a2aAgentName'
-    """
-    return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
 
 def encode_datetime(v: datetime) -> str:
@@ -117,72 +75,6 @@ def encode_datetime(v: datetime) -> str:
         '2023-07-20T16:45:30.123456'
     """
     return v.isoformat()
-
-
-# --- Base Model ---
-class BaseModelWithConfigDict(BaseModel):
-    """Base model with common configuration.
-
-    Provides:
-    - ORM mode for SQLAlchemy integration
-    - JSON encoders for datetime handling
-    - Automatic conversion from snake_case to camelCase for output
-    """
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel_case,
-        populate_by_name=True,
-        use_enum_values=True,
-        extra="ignore",
-        json_schema_extra={"nullable": True},
-    )
-
-    def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
-        """
-        Converts the model instance into a dictionary representation.
-
-        Args:
-            use_alias (bool): Whether to use aliases for field names (default is False). If True,
-                               field names will be converted using the alias generator function.
-
-        Returns:
-            Dict[str, Any]: A dictionary where keys are field names and values are corresponding field values,
-                             with any nested models recursively converted to dictionaries.
-
-        Examples:
-            >>> class ExampleModel(BaseModelWithConfigDict):
-            ...     foo: int
-            ...     bar: str
-            >>> m = ExampleModel(foo=1, bar='baz')
-            >>> m.to_dict()
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with alias
-            >>> m.to_dict(use_alias=True)
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with nested model
-            >>> class NestedModel(BaseModelWithConfigDict):
-            ...     nested_field: int
-            >>> class ParentModel(BaseModelWithConfigDict):
-            ...     parent_field: str
-            ...     child: NestedModel
-            >>> nested = NestedModel(nested_field=42)
-            >>> parent = ParentModel(parent_field="test", child=nested)
-            >>> result = parent.to_dict()
-            >>> result['child']
-            {'nested_field': 42}
-        """
-        output: Dict[str, Any] = {}
-        for key, value in self.model_dump(by_alias=use_alias).items():
-            if isinstance(value, BaseModelWithConfigDict):
-                output[key] = value.to_dict(use_alias)
-            elif isinstance(value, BaseModel):
-                output[key] = value.model_dump(by_alias=use_alias)
-            else:
-                output[key] = value
-        return output
 
 
 # --- Metrics Schemas ---
@@ -1426,6 +1318,9 @@ class ToolRead(BaseModelWithConfigDict):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
+    # MCP protocol extension field
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1907,6 +1802,11 @@ class ResourceRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2409,6 +2309,10 @@ class PromptRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 
 class PromptInvocation(BaseModelWithConfigDict):

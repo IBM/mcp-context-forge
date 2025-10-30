@@ -41,6 +41,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
@@ -51,6 +52,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Plugin support imports (conditional)
@@ -121,9 +123,6 @@ class ResourceService:
         self._plugin_manager = None
         if PLUGINS_AVAILABLE:
             try:
-                # First-Party
-                from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-
                 # Support env overrides for testability without reloading settings
                 env_flag = os.getenv("PLUGINS_ENABLED")
                 if env_flag is not None:
@@ -403,23 +402,26 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
-    async def list_resources(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ResourceRead]:
+    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
         """
-        Retrieve a list of registered resources from the database.
+        Retrieve a list of registered resources from the database with pagination support.
 
         This method retrieves resources from the database and converts them into a list
         of ResourceRead objects. It supports filtering out inactive resources based on the
-        include_inactive parameter. The cursor parameter is reserved for future pagination support
-        but is currently not implemented.
+        include_inactive parameter and cursor-based pagination.
 
         Args:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive resources in the result.
                 Defaults to False.
+            cursor (Optional[str], optional): An opaque cursor token for pagination.
+                Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
 
         Returns:
-            List[ResourceRead]: A list of resources represented as ResourceRead objects.
+            tuple[List[ResourceRead], Optional[str]]: Tuple containing:
+                - List of resources for current page
+                - Next cursor token if more results exist, None otherwise
 
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
@@ -430,8 +432,8 @@ class ResourceService:
             >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.list_resources(db))
-            >>> isinstance(result, list)
+            >>> resources, next_cursor = asyncio.run(service.list_resources(db))
+            >>> isinstance(resources, list)
             True
 
             With tags filter:
@@ -441,11 +443,27 @@ class ResourceService:
             >>> bind.dialect.name = "sqlite"           # or "postgresql" / "mysql"
             >>> db2.get_bind.return_value = bind
             >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> result2 = asyncio.run(service.list_resources(db2, tags=['api']))
+            >>> result2, _ = asyncio.run(service.list_resources(db2, tags=['api']))
             >>> isinstance(result2, list)
             True
         """
-        query = select(DbResource)
+        page_size = settings.pagination_default_page_size
+        query = select(DbResource).order_by(DbResource.id)  # Consistent ordering for cursor pagination
+
+        # Decode cursor to get last_id if provided
+        last_id = None
+        if cursor:
+            try:
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                logger.debug(f"Decoded cursor: last_id={last_id}")
+            except ValueError as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
+        # Apply cursor filter (WHERE id > last_id)
+        if last_id:
+            query = query.where(DbResource.id > last_id)
+
         if not include_inactive:
             query = query.where(DbResource.is_active)
 
@@ -453,14 +471,30 @@ class ResourceService:
         if tags:
             query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
 
-        # Cursor-based pagination logic can be implemented here in the future.
+        # Fetch page_size + 1 to determine if there are more results
+        query = query.limit(page_size + 1)
         resources = db.execute(query).scalars().all()
+
+        # Check if there are more results
+        has_more = len(resources) > page_size
+        if has_more:
+            resources = resources[:page_size]  # Trim to page_size
+
+        # Convert to ResourceRead objects
         result = []
         for t in resources:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_resource_to_read(t))
-        return result
+
+        # Generate next_cursor if there are more results
+        next_cursor = None
+        if has_more and result:
+            last_resource = resources[-1]  # Get last DB object
+            next_cursor = encode_cursor({"id": last_resource.id})
+            logger.debug(f"Generated next_cursor for id={last_resource.id}")
+
+        return (result, next_cursor)
 
     async def list_resources_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
