@@ -83,7 +83,7 @@ class OAuthEncryption:
         try:
             fernet = self._get_fernet()
             encrypted = fernet.encrypt(plaintext.encode())
-            return base64.urlsafe_b64encode(encrypted).decode()
+            return encrypted.decode()
         except Exception as e:
             logger.error(f"Failed to encrypt OAuth secret: {e}")
             raise
@@ -99,8 +99,7 @@ class OAuthEncryption:
         """
         try:
             fernet = self._get_fernet()
-            encrypted_bytes = base64.urlsafe_b64decode(encrypted_text.encode())
-            decrypted = fernet.decrypt(encrypted_bytes)
+            decrypted = fernet.decrypt(encrypted_text.encode())
             return decrypted.decode()
         except Exception as e:
             logger.error(f"Failed to decrypt OAuth secret: {e}")
