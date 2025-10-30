@@ -1,10 +1,11 @@
 # 📝 Pull Request Template Selection
 
-Thank you for contributing! To help us review your pull request effectively, please select the appropriate template:
+Thank you for contributing! To help us review your pull request effectively, please select the appropriate template (go to the `Preview` tab and select the appropriate sub-template):
 
 - **Bug Fix**: [Use the Bug Fix Template](?template=bug_fix.md)
 - **Feature / Enhancement**: [Use the Feature Template](?template=feature.md)
 - **Documentation Update**: [Use the Docs Template](?template=docs.md)
+- **Plugin**: [Use the Plugin Template](?template=plugin.md)
 
 Alternatively, after opening your pull request, you can choose the appropriate template from the **"Choose a template"** dropdown menu located at the top-right of the description box.
 
