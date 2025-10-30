@@ -40,7 +40,9 @@ def upgrade() -> None:
 
     columns_to_add = []
     if "oauth_config" not in columns:
-        columns_to_add.append(("oauth_config", sa.Column("oauth_config", sa.JSON(), nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")))
+        columns_to_add.append(
+            ("oauth_config", sa.Column("oauth_config", sa.JSON(), nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes"))
+        )
 
     if "passthrough_headers" not in columns:
         columns_to_add.append(("passthrough_headers", sa.Column("passthrough_headers", sa.JSON(), nullable=True, comment="List of headers allowed to be passed through to the agent")))
