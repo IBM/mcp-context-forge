@@ -134,12 +134,28 @@ def reencrypt_with_pbkdf2hmac(argon2id_bundle: str) -> Optional[str]:
         raise ValueError("Invalid Argon2id bundle") from e
 
 def _reflect(conn):
+    """Reflect relevant tables.
+
+    Args:
+        conn: The database connection.
+
+    Returns:
+        A dict of reflected tables.
+    """
     md = sa.MetaData()
     gateways = sa.Table("gateways", md, autoload_with=conn)
     a2a_agents = sa.Table("a2a_agents", md, autoload_with=conn)
     return {"gateways": gateways, "a2a_agents": a2a_agents}
 
 def _is_json(col):
+    """Check if a column is of JSON type.
+
+    Args:
+        col: The column to check.
+
+    Returns:
+        True if the column is of JSON type.
+    """
     return isinstance(col.type, sa.JSON)
 
 def _looks_argon2_bundle(val: Optional[str]) -> bool:
@@ -222,6 +238,12 @@ def _downgrade_value(old: Optional[str]) -> Optional[str]:
 
 
 def _upgrade_json_client_secret(conn, table):
+    """Upgrade JSON client_secret fields in the given table.
+
+    Args:
+        conn: The database connection.
+        table: The table to upgrade.
+    """
     t = table
     sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
     for row in conn.execute(sel).mappings():
@@ -246,6 +268,12 @@ def _upgrade_json_client_secret(conn, table):
 
 
 def _downgrade_json_client_secret(conn, table):
+    """Downgrade JSON client_secret fields in the given table.
+
+    Args:
+        conn: The database connection.
+        table: The table to downgrade.
+    """
     t = table
     sel = sa.select(t.c.id, t.c.oauth_config).where(t.c.oauth_config.isnot(None))
     for row in conn.execute(sel).mappings():
@@ -270,6 +298,7 @@ def _downgrade_json_client_secret(conn, table):
 
 
 def upgrade() -> None:
+    """Use Argon2id KDF for encryption key re-encryption."""
     bind = op.get_bind()
 
     conn = op.get_bind()
@@ -385,6 +414,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Revert to PBKDF2HMAC KDF for encryption key re-encryption."""
     bind = op.get_bind()
 
     # JSON: gateways.oauth_config.client_secret
