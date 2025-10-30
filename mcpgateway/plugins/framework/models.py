@@ -687,7 +687,7 @@ class PluginViolation(BaseModel):
     reason: str
     description: str
     code: str
-    details: dict[str, Any]
+    details: Optional[dict[str, Any]] = Field(default_factory=dict)
     _plugin_name: str = PrivateAttr(default="")
 
     @property
