@@ -18,8 +18,9 @@ RUN mkdir -p /var/cache/nginx/static \
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
-# Verify configuration
-RUN nginx -t
+# Note: nginx -t validation removed from build because it requires runtime
+# DNS resolution of upstream servers (gateway:4444). Configuration is still
+# validated when nginx starts at runtime via CMD below.
 
 # Expose HTTP port
 EXPOSE 80

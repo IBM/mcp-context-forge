@@ -529,9 +529,11 @@ class TestPromptService:
         """Test listing prompts with tag filtering."""
         # Third-Party
 
-        # Mock query chain
+        # Mock query chain - support pagination methods
         mock_query = MagicMock()
         mock_query.where.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_prompt]
@@ -547,7 +549,7 @@ class TestPromptService:
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
 
-                result = await prompt_service.list_prompts(session, tags=["test", "production"])
+                result, _ = await prompt_service.list_prompts(session, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
                 mock_json_contains.assert_called_once()  # called exactly once

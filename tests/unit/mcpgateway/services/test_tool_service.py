@@ -515,7 +515,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Call method
-        result = await tool_service.list_tools(test_db)
+        result, next_cursor = await tool_service.list_tools(test_db)
 
         # Verify DB query: should be called twice
         assert test_db.execute.call_count == 2
@@ -523,6 +523,7 @@ class TestToolService:
         # Verify result
         assert len(result) == 1
         assert result[0] == tool_read
+        assert next_cursor is None  # No pagination needed for single result
         tool_service._convert_tool_to_read.assert_called_once_with(mock_tool)
 
     @pytest.mark.asyncio
@@ -574,7 +575,7 @@ class TestToolService:
         tool_service._convert_tool_to_read = Mock(return_value=tool_read)
 
         # Call method
-        result = await tool_service.list_tools(test_db, include_inactive=True)
+        result, _ = await tool_service.list_tools(test_db, include_inactive=True)
 
         # Verify DB query: should be called twice
         assert test_db.execute.call_count == 2
@@ -1984,9 +1985,11 @@ class TestToolService:
         """Test listing tools with tag filtering."""
         # Third-Party
 
-        # Mock query chain
+        # Mock query chain - support pagination methods
         mock_query = MagicMock()
         mock_query.where.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
 
         session = MagicMock()
         session.execute.return_value.scalars.return_value.all.return_value = [mock_tool]
@@ -2007,7 +2010,7 @@ class TestToolService:
                 mock_team.name = "test-team"
                 session.query().filter().first.return_value = mock_team
 
-                result = await tool_service.list_tools(session, tags=["test", "production"])
+                result, _ = await tool_service.list_tools(session, tags=["test", "production"])
 
                 # helper should be called once with the tags list (not once per tag)
                 mock_json_contains.assert_called_once()  # called exactly once

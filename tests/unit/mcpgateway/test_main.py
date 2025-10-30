@@ -589,7 +589,7 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.list_tools")
     def test_list_tools_endpoint(self, mock_list_tools, test_client, auth_headers):
         """Test listing all registered tools."""
-        mock_list_tools.return_value = [MOCK_TOOL_READ]
+        mock_list_tools.return_value = ([MOCK_TOOL_READ], None)
 
         response = test_client.get("/tools/", headers=auth_headers)
         assert response.status_code == 200
@@ -668,7 +668,7 @@ class TestResourceEndpoints:
     @patch("mcpgateway.main.resource_service.list_resources")
     def test_list_resources_endpoint(self, mock_list_resources, test_client, auth_headers):
         """Test listing all available resources."""
-        mock_list_resources.return_value = [ResourceRead(**MOCK_RESOURCE_READ)]
+        mock_list_resources.return_value = ([ResourceRead(**MOCK_RESOURCE_READ)], None)
 
         response = test_client.get("/resources/", headers=auth_headers)
         assert response.status_code == 200
@@ -833,7 +833,7 @@ class TestPromptEndpoints:
     @patch("mcpgateway.main.prompt_service.list_prompts")
     def test_list_prompts_endpoint(self, mock_list_prompts, test_client, auth_headers):
         """Test listing all available prompts."""
-        mock_list_prompts.return_value = [MOCK_PROMPT_READ]
+        mock_list_prompts.return_value = ([MOCK_PROMPT_READ], None)
         response = test_client.get("/prompts/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
@@ -1126,7 +1126,7 @@ class TestRPCEndpoints:
         """Test listing tools via JSON-RPC."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
-        mock_list_tools.return_value = [mock_tool]
+        mock_list_tools.return_value = ([mock_tool], None)
 
         req = {
             "jsonrpc": "2.0",

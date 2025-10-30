@@ -294,6 +294,7 @@ class SessionRegistry(SessionBackend):
         """
         super().__init__(backend=backend, redis_url=redis_url, database_url=database_url, session_ttl=session_ttl, message_ttl=message_ttl)
         self._sessions: Dict[str, Any] = {}  # Local transport cache
+        self._client_capabilities: Dict[str, Dict[str, Any]] = {}  # Client capabilities by session_id
         self._lock = asyncio.Lock()
         self._cleanup_task = None
 
@@ -600,6 +601,10 @@ class SessionRegistry(SessionBackend):
         async with self._lock:
             if session_id in self._sessions:
                 transport = self._sessions.pop(session_id)
+            # Also clean up client capabilities
+            if session_id in self._client_capabilities:
+                self._client_capabilities.pop(session_id)
+                logger.debug(f"Removed capabilities for session {session_id}")
 
         # Disconnect transport if found
         if transport:
@@ -1190,7 +1195,7 @@ class SessionRegistry(SessionBackend):
                 await asyncio.sleep(300)  # Sleep longer on error
 
     # Handle initialize logic
-    async def handle_initialize_logic(self, body: Dict[str, Any]) -> InitializeResult:
+    async def handle_initialize_logic(self, body: Dict[str, Any], session_id: Optional[str] = None) -> InitializeResult:
         """Process MCP protocol initialization request.
 
         Validates the protocol version and returns server capabilities and information.
@@ -1198,7 +1203,8 @@ class SessionRegistry(SessionBackend):
 
         Args:
             body: Request body containing protocol_version and optional client_info.
-                Expected keys: 'protocol_version' or 'protocolVersion'.
+                Expected keys: 'protocol_version' or 'protocolVersion', 'capabilities'.
+            session_id: Optional session ID to associate client capabilities with.
 
         Returns:
             InitializeResult containing protocol version, server capabilities, and server info.
@@ -1211,10 +1217,10 @@ class SessionRegistry(SessionBackend):
             >>> from mcpgateway.cache.session_registry import SessionRegistry
             >>>
             >>> reg = SessionRegistry()
-            >>> body = {'protocol_version': '2025-03-26'}
+            >>> body = {'protocol_version': '2025-06-18'}
             >>> result = asyncio.run(reg.handle_initialize_logic(body))
             >>> result.protocol_version
-            '2025-03-26'
+            '2025-06-18'
             >>> result.server_info.name
             'MCP_Gateway'
             >>>
@@ -1226,7 +1232,7 @@ class SessionRegistry(SessionBackend):
             400
         """
         protocol_version = body.get("protocol_version") or body.get("protocolVersion")
-        # body.get("capabilities", {})
+        client_capabilities = body.get("capabilities", {})
         # body.get("client_info") or body.get("clientInfo", {})
 
         if not protocol_version:
@@ -1239,18 +1245,76 @@ class SessionRegistry(SessionBackend):
         if protocol_version != settings.protocol_version:
             logger.warning(f"Using non default protocol version: {protocol_version}")
 
+        # Store client capabilities if session_id provided
+        if session_id and client_capabilities:
+            await self.store_client_capabilities(session_id, client_capabilities)
+            logger.debug(f"Stored capabilities for session {session_id}: {client_capabilities}")
+
         return InitializeResult(
-            protocolVersion=settings.protocol_version,
+            protocolVersion=protocol_version,
             capabilities=ServerCapabilities(
                 prompts={"listChanged": True},
                 resources={"subscribe": True, "listChanged": True},
                 tools={"listChanged": True},
                 logging={},
-                # roots={"listChanged": True}
+                completions={},  # Advertise completions capability per MCP spec
             ),
             serverInfo=Implementation(name=settings.app_name, version=__version__),
             instructions=("MCP Gateway providing federated tools, resources and prompts. Use /admin interface for configuration."),
         )
+
+    async def store_client_capabilities(self, session_id: str, capabilities: Dict[str, Any]) -> None:
+        """Store client capabilities for a session.
+
+        Args:
+            session_id: The session ID
+            capabilities: Client capabilities dictionary from initialize request
+        """
+        async with self._lock:
+            self._client_capabilities[session_id] = capabilities
+        logger.debug(f"Stored capabilities for session {session_id}")
+
+    async def get_client_capabilities(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get client capabilities for a session.
+
+        Args:
+            session_id: The session ID
+
+        Returns:
+            Client capabilities dictionary, or None if not found
+        """
+        async with self._lock:
+            return self._client_capabilities.get(session_id)
+
+    async def has_elicitation_capability(self, session_id: str) -> bool:
+        """Check if a session has elicitation capability.
+
+        Args:
+            session_id: The session ID
+
+        Returns:
+            True if session supports elicitation, False otherwise
+        """
+        capabilities = await self.get_client_capabilities(session_id)
+        if not capabilities:
+            return False
+        # Check if elicitation capability exists in client capabilities
+        return bool(capabilities.get("elicitation"))
+
+    async def get_elicitation_capable_sessions(self) -> list[str]:
+        """Get list of session IDs that support elicitation.
+
+        Returns:
+            List of session IDs with elicitation capability
+        """
+        async with self._lock:
+            capable_sessions = []
+            for session_id, capabilities in self._client_capabilities.items():
+                if capabilities.get("elicitation"):
+                    # Verify session still exists
+                    if session_id in self._sessions:
+                        capable_sessions.append(session_id)
+            return capable_sessions
 
     async def generate_response(self, message: Dict[str, Any], transport: SSETransport, server_id: Optional[str], user: Dict[str, Any], base_url: str) -> None:
         """Generate and send response for incoming MCP protocol message.
