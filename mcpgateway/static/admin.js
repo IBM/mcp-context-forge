@@ -1,3 +1,5 @@
+const MASKED_AUTH_VALUE = "*****";
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -2478,6 +2480,18 @@ async function editTool(toolId) {
         const authHeaderValueField = authHeadersSection?.querySelector(
             "input[name='auth_header_value']",
         );
+        const authHeadersContainer = document.getElementById(
+            "auth-headers-container-gw-edit",
+        );
+        const authHeadersJsonInput = document.getElementById(
+            "auth-headers-json-gw-edit",
+        );
+        if (authHeadersContainer) {
+            authHeadersContainer.innerHTML = "";
+        }
+        if (authHeadersJsonInput) {
+            authHeadersJsonInput.value = "";
+        }
 
         // Hide all auth sections first
         if (authBasicSection) {
@@ -4324,7 +4338,15 @@ async function editGateway(gatewayId) {
                         authUsernameField.value = gateway.authUsername || "";
                     }
                     if (authPasswordField) {
-                        authPasswordField.value = "*****"; // mask password
+                        if (gateway.authPasswordUnmasked) {
+                            authPasswordField.dataset.isMasked = "true";
+                            authPasswordField.dataset.realValue =
+                                gateway.authPasswordUnmasked;
+                        } else {
+                            delete authPasswordField.dataset.isMasked;
+                            delete authPasswordField.dataset.realValue;
+                        }
+                        authPasswordField.value = MASKED_AUTH_VALUE;
                     }
                 }
                 break;
@@ -4332,18 +4354,52 @@ async function editGateway(gatewayId) {
                 if (authBearerSection) {
                     authBearerSection.style.display = "block";
                     if (authTokenField) {
-                        authTokenField.value = gateway.authValue || ""; // show full token
+                        if (gateway.authTokenUnmasked) {
+                            authTokenField.dataset.isMasked = "true";
+                            authTokenField.dataset.realValue =
+                                gateway.authTokenUnmasked;
+                            authTokenField.value = MASKED_AUTH_VALUE;
+                        } else {
+                            delete authTokenField.dataset.isMasked;
+                            delete authTokenField.dataset.realValue;
+                            authTokenField.value = gateway.authToken || "";
+                        }
                     }
                 }
                 break;
             case "authheaders":
                 if (authHeadersSection) {
                     authHeadersSection.style.display = "block";
+                    const unmaskedHeaders =
+                        Array.isArray(gateway.authHeadersUnmasked) &&
+                        gateway.authHeadersUnmasked.length > 0
+                            ? gateway.authHeadersUnmasked
+                            : gateway.authHeaders;
+                    if (
+                        Array.isArray(unmaskedHeaders) &&
+                        unmaskedHeaders.length > 0
+                    ) {
+                        loadAuthHeaders(
+                            "auth-headers-container-gw-edit",
+                            unmaskedHeaders,
+                            { maskValues: true },
+                        );
+                    } else {
+                        updateAuthHeadersJSON("auth-headers-container-gw-edit");
+                    }
                     if (authHeaderKeyField) {
                         authHeaderKeyField.value = gateway.authHeaderKey || "";
                     }
                     if (authHeaderValueField) {
-                        authHeaderValueField.value = "*****"; // mask header value
+                        if (
+                            Array.isArray(unmaskedHeaders) &&
+                            unmaskedHeaders.length === 1
+                        ) {
+                            authHeaderValueField.dataset.isMasked = "true";
+                            authHeaderValueField.dataset.realValue =
+                                unmaskedHeaders[0].value ?? "";
+                        }
+                        authHeaderValueField.value = MASKED_AUTH_VALUE;
                     }
                 }
                 break;
@@ -11577,7 +11633,17 @@ function toggleInputMask(inputOrId, button) {
     }
 
     const revealing = input.type === "password";
-    input.type = revealing ? "text" : "password";
+    if (revealing) {
+        input.type = "text";
+        if (input.dataset.isMasked === "true") {
+            input.value = input.dataset.realValue ?? "";
+        }
+    } else {
+        input.type = "password";
+        if (input.dataset.isMasked === "true") {
+            input.value = MASKED_AUTH_VALUE;
+        }
+    }
 
     const label = input.getAttribute("data-sensitive-label") || "value";
     button.textContent = revealing ? "Hide" : "Show";
@@ -11586,6 +11652,11 @@ function toggleInputMask(inputOrId, button) {
         "aria-label",
         `${revealing ? "Hide" : "Show"} ${label}`.trim(),
     );
+
+    const container = input.closest('[id^="auth-headers-container"]');
+    if (container) {
+        updateAuthHeadersJSON(container.id);
+    }
 }
 
 window.toggleInputMask = toggleInputMask;
@@ -11599,7 +11670,7 @@ let headerCounter = 0;
  * Add a new authentication header row to the specified container
  * @param {string} containerId - ID of the container to add the header row to
  */
-function addAuthHeader(containerId) {
+function addAuthHeader(containerId, options = {}) {
     const container = document.getElementById(containerId);
     if (!container) {
         console.error(`Container with ID ${containerId} not found`);
@@ -11612,6 +11683,9 @@ function addAuthHeader(containerId) {
     const headerRow = document.createElement("div");
     headerRow.className = "flex items-center space-x-2";
     headerRow.id = headerId;
+    if (options.existing) {
+        headerRow.dataset.existing = "true";
+    }
 
     headerRow.innerHTML = `
         <div class="flex-1">
@@ -11656,11 +11730,31 @@ function addAuthHeader(containerId) {
     `;
 
     container.appendChild(headerRow);
+
+    const keyInput = headerRow.querySelector(".auth-header-key");
+    const valueInput = headerRow.querySelector(".auth-header-value");
+    if (keyInput) {
+        keyInput.value = options.key ?? "";
+    }
+    if (valueInput) {
+        if (options.isMasked) {
+            valueInput.value = MASKED_AUTH_VALUE;
+            valueInput.dataset.isMasked = "true";
+            valueInput.dataset.realValue = options.value ?? "";
+        } else {
+            valueInput.value = options.value ?? "";
+            if (valueInput.dataset) {
+                delete valueInput.dataset.isMasked;
+                delete valueInput.dataset.realValue;
+            }
+        }
+    }
+
     updateAuthHeadersJSON(containerId);
 
+    const shouldFocus = options.focus !== false;
     // Focus on the key input of the new header
-    const keyInput = headerRow.querySelector(".auth-header-key");
-    if (keyInput) {
+    if (shouldFocus && keyInput) {
         keyInput.focus();
     }
 }
@@ -11700,10 +11794,10 @@ function updateAuthHeadersJSON(containerId) {
 
         if (keyInput && valueInput) {
             const key = keyInput.value.trim();
-            const value = valueInput.value.trim();
+            const rawValue = valueInput.value;
 
             // Skip completely empty rows
-            if (!key && !value) {
+            if (!key && (!rawValue || !rawValue.trim())) {
                 return;
             }
 
@@ -11733,9 +11827,25 @@ function updateAuthHeadersJSON(containerId) {
             }
             seenKeys.add(key.toLowerCase());
 
+            if (valueInput.dataset.isMasked === "true") {
+                const storedValue = valueInput.dataset.realValue ?? "";
+                if (
+                    rawValue !== MASKED_AUTH_VALUE &&
+                    rawValue !== storedValue
+                ) {
+                    delete valueInput.dataset.isMasked;
+                    delete valueInput.dataset.realValue;
+                }
+            }
+
+            const finalValue =
+                valueInput.dataset.isMasked === "true"
+                    ? MASKED_AUTH_VALUE
+                    : rawValue.trim();
+
             headers.push({
                 key,
-                value, // Allow empty values
+                value: finalValue, // Allow empty values
             });
         }
     });
@@ -11780,33 +11890,57 @@ function updateAuthHeadersJSON(containerId) {
  * @param {string} containerId - ID of the container to populate
  * @param {Array} headers - Array of header objects with key and value properties
  */
-function loadAuthHeaders(containerId, headers) {
+function loadAuthHeaders(containerId, headers, options = {}) {
     const container = document.getElementById(containerId);
-    if (!container || !headers || !Array.isArray(headers)) {
+    if (!container) {
         return;
     }
 
-    // Clear existing headers
+    const jsonInput = (() => {
+        if (containerId === "auth-headers-container") {
+            return document.getElementById("auth-headers-json");
+        }
+        if (containerId === "auth-headers-container-gw") {
+            return document.getElementById("auth-headers-json-gw");
+        }
+        if (containerId === "auth-headers-container-a2a") {
+            return document.getElementById("auth-headers-json-a2a");
+        }
+        if (containerId === "edit-auth-headers-container") {
+            return document.getElementById("edit-auth-headers-json");
+        }
+        if (containerId === "auth-headers-container-gw-edit") {
+            return document.getElementById("auth-headers-json-gw-edit");
+        }
+        if (containerId === "auth-headers-container-a2a-edit") {
+            return document.getElementById("auth-headers-json-a2a-edit");
+        }
+        return null;
+    })();
+
     container.innerHTML = "";
 
-    // Add each header
-    headers.forEach((header) => {
-        if (header.key && header.value) {
-            addAuthHeader(containerId);
-            // Find the last added header row and populate it
-            const headerRows = container.querySelectorAll(
-                '[id^="auth-header-"]',
-            );
-            const lastRow = headerRows[headerRows.length - 1];
-            if (lastRow) {
-                const keyInput = lastRow.querySelector(".auth-header-key");
-                const valueInput = lastRow.querySelector(".auth-header-value");
-                if (keyInput && valueInput) {
-                    keyInput.value = header.key;
-                    valueInput.value = header.value;
-                }
-            }
+    if (!headers || !Array.isArray(headers) || headers.length === 0) {
+        if (jsonInput) {
+            jsonInput.value = "";
         }
+        return;
+    }
+
+    const shouldMaskValues = options.maskValues === true;
+
+    headers.forEach((header) => {
+        if (!header || !header.key) {
+            return;
+        }
+        const value = typeof header.value === "string" ? header.value : "";
+        addAuthHeader(containerId, {
+            key: header.key,
+            value,
+            existing: true,
+            isMasked: shouldMaskValues,
+            focus: false,
+        });
     });
 
     updateAuthHeadersJSON(containerId);
@@ -11838,9 +11972,7 @@ async function fetchToolsForGateway(gatewayId, gatewayName) {
     try {
         const response = await fetch(
             `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
-            {
-                method: "POST",
-            },
+            { method: "POST" },
         );
 
         const result = await response.json();
