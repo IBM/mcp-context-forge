@@ -8102,7 +8102,11 @@ async function handleGatewayTestSubmit(e) {
 
         // Process body based on content type
         let processedBody = bodyValidation.value;
-        if (contentType === "application/x-www-form-urlencoded" && bodyValidation.value && typeof bodyValidation.value === 'object') {
+        if (
+            contentType === "application/x-www-form-urlencoded" &&
+            bodyValidation.value &&
+            typeof bodyValidation.value === "object"
+        ) {
             // Convert JSON object to URL-encoded string
             const params = new URLSearchParams();
             Object.entries(bodyValidation.value).forEach(([key, value]) => {
@@ -17572,12 +17576,18 @@ document.head.appendChild(style);
 
 // Function to update body label based on content type selection
 function updateBodyLabel() {
-    const bodyLabel = document.getElementById('gateway-test-body-label');
-    const contentType = document.getElementById('gateway-test-content-type')?.value;
-    
+    const bodyLabel = document.getElementById("gateway-test-body-label");
+    const contentType = document.getElementById(
+        "gateway-test-content-type",
+    )?.value;
+
     if (bodyLabel) {
-        bodyLabel.innerHTML = contentType === 'application/x-www-form-urlencoded' 
-            ? 'Body (JSON)<br><small class="text-gray-500">Auto-converts to form data</small>'
-            : 'Body (JSON)';
+        bodyLabel.innerHTML =
+            contentType === "application/x-www-form-urlencoded"
+                ? 'Body (JSON)<br><small class="text-gray-500">Auto-converts to form data</small>'
+                : "Body (JSON)";
     }
 }
+
+// Make it available globally for HTML onclick handlers
+window.updateBodyLabel = updateBodyLabel;
