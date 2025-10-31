@@ -1237,7 +1237,6 @@ class ToolService:
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         success = True
-                        logger.info(f"rest tool tool_result: {tool_result}")
                         
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):
@@ -1352,31 +1351,10 @@ class ToolService:
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
                     content = tool_call_result.model_dump(by_alias=True).get("content", [])
-                    logger.info(f"content: {content}")
-                    
-                    # Extract just the text content from TextContent objects for better processing
-                    if content and isinstance(content, list):
-                        text_content = []
-                        for item in content:
-                            if isinstance(item, dict) and item.get("type") == "text" and "text" in item:
-                                try:
-                                    # Try to parse as JSON first, if it's valid JSON use the parsed object
-                                    parsed = json.loads(item["text"])
-                                    text_content.append(parsed)
-                                except (json.JSONDecodeError, TypeError):
-                                    # If not valid JSON, use the text as-is
-                                    text_content.append(item["text"])
-                            else:
-                                text_content.append(item)
-                        # If we only have one item, unwrap it for simpler structure
-                        processed_content = text_content[0] if len(text_content) == 1 else text_content
-                    else:
-                        processed_content = content
-                    logger.info(f"processed_content: {processed_content}")
-                    filtered_response = extract_using_jq(processed_content, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+
+                    filtered_response = extract_using_jq(content, tool.jsonpath_filter)
+                    tool_result = ToolResult(content=filtered_response)
                     success = True
-                    logger.info(f"mcp tool tool_result: {tool_result}")
                     # If output schema is present, validate and attach structured content
                     if getattr(tool, "output_schema", None):
                         valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
