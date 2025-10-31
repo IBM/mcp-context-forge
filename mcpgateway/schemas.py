@@ -3732,7 +3732,7 @@ class ServerRead(BaseModelWithConfigDict):
 class GatewayTestRequest(BaseModelWithConfigDict):
     """Schema for testing gateway connectivity.
 
-    Includes the HTTP method, base URL, path, optional headers, and body.
+    Includes the HTTP method, base URL, path, optional headers, body, and content type.
     """
 
     method: str = Field(..., description="HTTP method to test (GET, POST, etc.)")
@@ -3740,6 +3740,7 @@ class GatewayTestRequest(BaseModelWithConfigDict):
     path: str = Field(..., description="Path to append to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers for the request")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Optional body for the request, can be a string or JSON object")
+    content_type: Optional[str] = Field("application/json", description="Content type for the request body")
 
 
 class GatewayTestResponse(BaseModelWithConfigDict):
