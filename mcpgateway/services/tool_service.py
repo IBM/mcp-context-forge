@@ -420,12 +420,18 @@ class ToolService:
         """
         Extract structured content (if any) and validate it against ``tool.output_schema``.
 
+        Args:
+            tool: The tool with an optional output schema to validate against.
+            tool_result: The tool result containing content to validate.
+            candidate: Optional structured payload to validate. If not provided, will attempt
+                      to parse the first TextContent item as JSON.
+
         Behavior:
         - If ``candidate`` is provided it is used as the structured payload to validate.
         - Otherwise the method will try to parse the first ``TextContent`` item in
             ``tool_result.content`` as JSON and use that as the candidate.
         - If no output schema is declared on the tool the method returns True (nothing to validate).
-        - On successful validation the parsed value is attached to ``tool_result.structuredContent``.
+        - On successful validation the parsed value is attached to ``tool_result.structured_content``.
             When structured content is present and valid callers may drop textual ``content`` in favour
             of the structured payload.
         - On validation failure the method sets ``tool_result.content`` to a single ``TextContent``
@@ -447,7 +453,7 @@ class ToolService:
                 >>> service._extract_and_validate_structured_content(tool, r)
                 True
 
-                >>> # Valid candidate provided -> attaches structuredContent and returns True
+                >>> # Valid candidate provided -> attaches structured_content and returns True
                 >>> tool = type(
                 ...     "T",
                 ...     (object,),
@@ -456,7 +462,7 @@ class ToolService:
                 >>> r = ToolResult(content=[])
                 >>> service._extract_and_validate_structured_content(tool, r, candidate={"foo": "bar"})
                 True
-                >>> r.structuredContent == {"foo": "bar"}
+                >>> r.structured_content == {"foo": "bar"}
                 True
 
                 >>> # Invalid candidate -> returns False, marks result as error and emits details
@@ -523,9 +529,9 @@ class ToolService:
 
             # Attach structured content
             try:
-                setattr(tool_result, "structuredContent", structured)
+                setattr(tool_result, "structured_content", structured)
             except Exception:
-                logger.debug("Failed to set structuredContent on ToolResult")
+                logger.debug("Failed to set structured_content on ToolResult")
 
             # Validate using jsonschema
             try:
@@ -544,10 +550,10 @@ class ToolService:
                 except Exception:
                     tool_result.content = [TextContent(type="text", text=str(details))]
                 tool_result.is_error = True
-                logger.debug(f"structuredContent validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+                logger.debug(f"structured_content validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
                 return False
         except Exception as exc:  # pragma: no cover - defensive
-            logger.error(f"Error extracting/validating structuredContent: {exc}")
+            logger.error(f"Error extracting/validating structured_content: {exc}")
             return False
 
     async def register_tool(
@@ -1237,7 +1243,7 @@ class ToolService:
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         success = True
-                        
+
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
@@ -1901,15 +1907,6 @@ class ToolService:
             content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
             result = ToolResult(content=content, is_error=True)
 
-        # If output schema is present, validate and attach structured content
-        if getattr(tool, "output_schema", None):
-            # Prefer the raw response_data when available as the structured candidate
-            candidate = response_data if isinstance(response_data, (dict, list)) else None
-            try:
-                valid = self._extract_and_validate_structured_content(tool, result, candidate=candidate)
-                
-            except Exception:
-                logger.debug("Validation check failed for A2A result")
         # Note: Metrics are recorded by the calling invoke_tool method, not here
         return result
 
