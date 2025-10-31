@@ -59,7 +59,11 @@ import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 
 # Third-Party
-from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
+from fastapi import HTTPException
+import jq
+from jsonpath_ng.ext import parse
+from jsonpath_ng.jsonpath import JSONPath
+from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, BaseModel
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Only configure basic logging if no handlers exist yet
@@ -900,6 +904,15 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+
+    # Session Pooling Configuration
+    session_pooling_enabled: bool = False
+    session_pool_strategy: str = "user-server"  # user-server, global, disabled
+    session_pool_ttl: int = 1800  # 30 minutes
+    session_pool_max_per_user: int = 10
+    session_pool_max_idle_time: int = 300  # 5 minutes
+    session_pool_cleanup_interval: int = 60  # 1 minute
+    session_pool_metrics_enabled: bool = True
 
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")

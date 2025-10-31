@@ -45,6 +45,9 @@ class Transport(ABC):
         >>> hasattr(Transport, 'is_connected')
         True
     """
+    def __init__(self):
+        self.session_id = str(uuid.uuid4())
+        self._connected = False
 
     @abstractmethod
     async def connect(self) -> None:
@@ -125,3 +128,7 @@ class Transport(ABC):
             >>> hasattr(Transport, 'is_connected')
             True
         """
+        
+    async def validate_session(self) -> bool:
+        """Validate session is still usable."""
+        return await self.is_connected()

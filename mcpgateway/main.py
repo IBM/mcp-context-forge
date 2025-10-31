@@ -118,6 +118,8 @@ from mcpgateway.services.server_service import ServerError, ServerNameConflictEr
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.transports.sse_transport import SSETransport
+from mcpgateway.transports.websocket_transport import WebSocketTransport
+from mcpgateway.cache.session_pool import SessionPool, TransportType
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -194,6 +196,18 @@ session_registry = SessionRegistry(
     message_ttl=settings.message_ttl,
 )
 
+# Initialize session pool globally
+session_pool: Optional[SessionPool] = None
+
+def init_session_pool():
+    """Initialize the session pool with the session registry."""
+    global session_pool
+    session_pool = SessionPool(session_registry)
+    logger.info("Global session pool initialized.")
+
+async def should_use_session_pooling(server_id: str) -> bool:
+    """Determine if session pooling should be used for this server."""
+    return settings.session_pooling_enabled
 
 # Helper function for authentication compatibility
 def get_user_email(user):
@@ -1721,25 +1735,62 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
     """
     try:
         logger.debug(f"User {user} is establishing SSE connection for server {server_id}")
+        
+        # Determine user and base URL
+        user_id = get_user_email(user)
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
+        
+        # Use pooling if enabled
+        transport: SSETransport
+        if await should_use_session_pooling(server_id):
+            transport = await session_pool.get_or_create_session(
+                user_id, server_id, server_sse_url, TransportType.SSE
+            )  # type: ignore
+            logger.info(f"Using pooled session for user={user_id}, server={server_id}, session={transport.session_id}")
+        else:
+            transport = SSETransport(base_url=server_sse_url)
+            await transport.connect()
+            await session_registry.add_session(transport.session_id, transport)
+            logger.info(f"Created new SSE session for user={user_id}, server={server_id}, session={transport.session_id}")
 
-        transport = SSETransport(base_url=server_sse_url)
-        await transport.connect()
-        await session_registry.add_session(transport.session_id, transport)
+        # Create the SSE response stream
         response = await transport.create_sse_response(request)
 
-        asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
+        # Handle background communication loop
+        asyncio.create_task(
+            session_registry.respond(
+                server_id,
+                user,
+                session_id=transport.session_id,
+                base_url=base_url
+            )
+        )
+
+        # Cleanup when connection closes - only remove from registry if not pooled
+        async def cleanup_session():
+            if not transport._pooled:  # Only remove non-pooled sessions
+                await session_registry.remove_session(transport.session_id)
 
         tasks = BackgroundTasks()
-        tasks.add_task(session_registry.remove_session, transport.session_id)
+        tasks.add_task(cleanup_session)
         response.background = tasks
-        logger.info(f"SSE connection established: {transport.session_id}")
-        return response
-    except Exception as e:
-        logger.error(f"SSE connection error: {e}")
-        raise HTTPException(status_code=500, detail="SSE connection failed")
 
+        logger.info(
+            "SSE connection established",
+            extra={
+                "user": user_id,
+                "server_id": server_id,
+                "session_id": transport.session_id,
+                "pooled": await should_use_session_pooling(server_id)
+            }
+        )
+
+        return response
+
+    except Exception as e:
+        logger.exception(f"SSE connection error for user={user}, server={server_id}: {e}")
+        raise HTTPException(status_code=500, detail="SSE connection failed")
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
@@ -1766,6 +1817,15 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
             raise HTTPException(status_code=400, detail="Missing session_id")
 
         message = await request.json()
+
+        # Check if session exists in registry
+        transport = session_registry.get_session_sync(session_id)
+        if not transport:
+            logger.warning(f"Session {session_id} not found in local registry")
+            # For distributed systems, check if session exists elsewhere
+            exists_in_registry = await session_registry.get_session(session_id)
+            if not exists_in_registry:
+                raise HTTPException(status_code=404, detail="Session not found")
 
         # Check if this is an elicitation response (JSON-RPC response with result containing action)
         is_elicitation_response = False
@@ -1805,7 +1865,6 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
     except Exception as e:
         logger.error(f"Message handling error: {e}")
         raise HTTPException(status_code=500, detail="Failed to process message")
-
 
 @server_router.get("/{server_id}/tools", response_model=List[ToolRead])
 @require_permission("servers.read")
@@ -3893,7 +3952,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 @utility_router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """
-    Handle WebSocket connection to relay JSON-RPC requests to the internal RPC endpoint.
+    Handle WebSocket connection to relay JSON-RPC requests to the internal RPC endpoint with session pooling support.
 
     Accepts incoming text messages, parses them as JSON-RPC requests, sends them to /rpc,
     and returns the result to the client over the same WebSocket.
@@ -3906,6 +3965,8 @@ async def websocket_endpoint(websocket: WebSocket):
         if settings.mcp_client_auth_enabled or settings.auth_required:
             # Extract auth from query params or headers
             token = None
+            proxy_user = None
+
             # Try to get token from query parameter
             if "token" in websocket.query_params:
                 token = websocket.query_params["token"]
@@ -3934,6 +3995,33 @@ async def websocket_endpoint(websocket: WebSocket):
                     return
 
         await websocket.accept()
+        logger.info("WebSocket connection accepted")
+
+        # Identify user and server for pooling key
+        user_id = proxy_user or "anonymous"
+        server_id = websocket.query_params.get("server_id", "default-server")
+        base_url = f"ws://localhost:{settings.port}{settings.app_root_path}/ws"
+
+        # Session Pooling logic
+        transport = None
+        if await should_use_session_pooling(server_id):
+            # Use existing or create pooled session
+            # Note: WebSocket transport needs the actual WebSocket object, so pooling works differently
+            transport = WebSocketTransport(websocket, pooled=True, pool_key=f"{user_id}:{server_id}")
+            await transport.connect()
+            await session_registry.add_session(transport.session_id, transport, pooled=True)
+            logger.info(
+                f"Created pooled WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}"
+            )
+        else:
+            # Fallback: create new transport
+            transport = WebSocketTransport(websocket)
+            await transport.connect()
+            await session_registry.add_session(transport.session_id, transport)
+            logger.info(
+                f"Created new WebSocket session for user={user_id}, server={server_id}, session={transport.session_id}"
+            )
+
         while True:
             try:
                 data = await websocket.receive_text()
@@ -3963,6 +4051,15 @@ async def websocket_endpoint(websocket: WebSocket):
                 break
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected")
+        # Cleanup pooled session if needed
+        if transport and hasattr(transport, '_pooled') and transport._pooled:
+            # For pooled sessions, we don't immediately remove from registry
+            # They get cleaned up by the pool's background task
+            pass
+        else:
+            # For non-pooled sessions, remove from registry
+            if transport:
+                await session_registry.remove_session(transport.session_id)
     except Exception as e:
         logger.error(f"WebSocket connection error: {str(e)}")
         try:

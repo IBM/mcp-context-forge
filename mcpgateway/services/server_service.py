@@ -50,6 +50,8 @@ class ServerError(Exception):
 class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
 
+class PermissionError(ServerError):
+    """Raised when a user does not have permission to perform an action on a server."""
 
 class ServerNameConflictError(ServerError):
     """Raised when a server name conflicts with an existing one."""
@@ -641,6 +643,13 @@ class ServerService:
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
+        
+        try:
+            effective_strategy = await self.get_session_strategy(db, server_id)
+            logger.debug(f"Server {server_id} effective session strategy: {effective_strategy}")
+        except Exception as e:
+            logger.warning(f"Could not determine session strategy for server {server_id}: {e}")
+
         server_data = {
             "id": server.id,
             "name": server.name,
@@ -1135,6 +1144,82 @@ class ServerService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
+
+    async def get_session_strategy(self, db: Session, server_id: str) -> str:
+        """Determine effective session strategy for server.
+        
+        This method resolves the session strategy for a specific server, taking into account:
+        1. Server-specific strategy (if configured)
+        2. Global configuration as fallback
+        
+        Args:
+            db: Database session.
+            server_id: The unique identifier of the server.
+            
+        Returns:
+            str: The resolved session strategy ("user-server", "global", "disabled", or "inherit").
+            
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> server.session_pooling_strategy = "user-server"  # Assuming this field exists on DbServer
+            >>> db.get.return_value = server
+            >>> import asyncio
+            >>> result = asyncio.run(service.get_session_strategy(db, 'test-server'))
+            >>> result
+            'user-server'
+            
+            >>> # Test with "inherit" strategy
+            >>> server.session_pooling_strategy = "inherit"
+            >>> result = asyncio.run(service.get_session_strategy(db, 'test-server'))
+            >>> result == settings.session_pool_strategy
+            True
+        """
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+        
+        # Check if server has its own strategy configured
+        if hasattr(server, 'session_pooling_strategy') and server.session_pooling_strategy:
+            if server.session_pooling_strategy == "inherit":
+                # Use global configuration if server strategy is "inherit"
+                return settings.session_pool_strategy
+            return server.session_pooling_strategy
+        
+        # Fallback to global configuration if server has no specific strategy
+        return settings.session_pool_strategy if settings.session_pooling_enabled else "disabled"
+
+    async def should_use_pooling(self, db: Session, server_id: str) -> bool:
+        """Check if session pooling should be used for server.
+        
+        Determines whether session pooling is enabled for a specific server based on
+        the resolved session strategy.
+        
+        Args:
+            db: Database session.
+            server_id: The unique identifier of the server.
+            
+        Returns:
+            bool: True if session pooling should be used, False otherwise.
+            
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> from unittest.mock import MagicMock
+            >>> service = ServerService()
+            >>> db = MagicMock()
+            >>> server = MagicMock()
+            >>> server.session_pooling_strategy = "user-server"  # Assuming this field exists on DbServer
+            >>> db.get.return_value = server
+            >>> import asyncio
+            >>> result = asyncio.run(service.should_use_pooling(db, 'test-server'))
+            >>> result == (settings.session_pooling_enabled and settings.session_pool_strategy in ["user-server", "global", "enabled"])
+            True
+        """
+        strategy = await self.get_session_strategy(db, server_id)
+        return strategy in ["user-server", "global", "enabled"] # Handle potential naming variations like "user_server"
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> ServerMetrics:
