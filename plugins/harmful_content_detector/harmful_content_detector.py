@@ -26,9 +26,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPostInvokePayload,
@@ -121,7 +119,7 @@ def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
     yield from walk(value, "")
 
 
-class HarmfulContentDetectorPlugin(MCPPlugin):
+class HarmfulContentDetectorPlugin(Plugin):
     """Detects harmful content in prompts and tool outputs using keyword lexicons.
 
     This plugin scans for self-harm, violence, and hate categories.

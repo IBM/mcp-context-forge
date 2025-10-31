@@ -1,6 +1,6 @@
 plugins:
   - name: PassThroughAgent
-    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_test.PassThroughAgentPlugin
+    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_plugins.PassThroughAgentPlugin
     description: A simple pass-through agent plugin for testing
     version: "1.0.0"
     author: Test Suite

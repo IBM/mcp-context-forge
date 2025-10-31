@@ -27,9 +27,7 @@ from pydantic import BaseModel, Field
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -88,7 +86,7 @@ def _make_key(tool: str, args: dict | None, fields: Optional[List[str]]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-class CachedToolResultPlugin(MCPPlugin):
+class CachedToolResultPlugin(Plugin):
     """Cache idempotent tool results (write-through)."""
 
     def __init__(self, config: PluginConfig) -> None:

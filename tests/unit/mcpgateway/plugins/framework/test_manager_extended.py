@@ -30,11 +30,9 @@ from mcpgateway.plugins.framework import (
     PluginResult,
     PluginViolation,
     PluginViolationError,
-)
-
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
-    MCPPlugin,
+    PromptHookType,
+    ToolHookType,
+    Plugin,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ToolPostInvokePayload,
@@ -48,7 +46,7 @@ async def test_manager_timeout_handling():
     """Test plugin timeout handling in both enforce and permissive modes."""
 
     # Create a plugin that times out
-    class TimeoutPlugin(MCPPlugin):
+    class TimeoutPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             await asyncio.sleep(10)  # Longer than timeout
             return PluginResult(continue_processing=True)
@@ -65,7 +63,7 @@ async def test_manager_timeout_handling():
     timeout_plugin = TimeoutPlugin(plugin_config)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(timeout_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(timeout_plugin))
         mock_get.return_value = [hook_ref]
 
         prompt = PromptPrehookPayload(prompt_id="test", args={})
@@ -73,7 +71,7 @@ async def test_manager_timeout_handling():
 
         escaped_regex = re.escape("Plugin TimeoutPlugin exceeded 0.01s timeout")
         with pytest.raises(PluginError, match=escaped_regex):
-            result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+            result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should pass since fail_on_plugin_error: false
         # assert result.continue_processing
@@ -84,10 +82,10 @@ async def test_manager_timeout_handling():
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(timeout_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(timeout_plugin))
         mock_get.return_value = [hook_ref]
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in permissive mode
         assert result.continue_processing
@@ -101,7 +99,7 @@ async def test_manager_exception_handling():
     """Test plugin exception handling in both enforce and permissive modes."""
 
     # Create a plugin that raises an exception
-    class ErrorPlugin(MCPPlugin):
+    class ErrorPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             raise RuntimeError("Plugin error!")
 
@@ -115,7 +113,7 @@ async def test_manager_exception_handling():
 
     # Test with enforce mode
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
         mock_get.return_value = [hook_ref]
 
         prompt = PromptPrehookPayload(prompt_id="test", args={})
@@ -123,7 +121,7 @@ async def test_manager_exception_handling():
 
         escaped_regex = re.escape("RuntimeError('Plugin error!')")
         with pytest.raises(PluginError, match=escaped_regex):
-            result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+            result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should block in enforce mode
         # assert result.continue_processing
@@ -134,10 +132,10 @@ async def test_manager_exception_handling():
     # Test with permissive mode
     plugin_config.mode = PluginMode.PERMISSIVE
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
         mock_get.return_value = [hook_ref]
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in permissive mode
         assert result.continue_processing
@@ -145,10 +143,10 @@ async def test_manager_exception_handling():
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
         mock_get.return_value = [hook_ref]
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in enforce_ignore_error mode
         assert result.continue_processing
@@ -156,10 +154,10 @@ async def test_manager_exception_handling():
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
         mock_get.return_value = [hook_ref]
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in enforce_ignore_error mode
         assert result.continue_processing
@@ -167,10 +165,10 @@ async def test_manager_exception_handling():
 
     plugin_config.mode = PluginMode.ENFORCE_IGNORE_ERROR
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(error_plugin))
         mock_get.return_value = [hook_ref]
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in enforce_ignore_error mode
         assert result.continue_processing
@@ -183,7 +181,7 @@ async def test_manager_exception_handling():
 # async def test_manager_condition_filtering():
 #     """Test that plugins are filtered based on conditions."""
 
-#     class ConditionalPlugin(MCPPlugin):
+#     class ConditionalPlugin(Plugin):
 #         async def prompt_pre_fetch(self, payload, context):
 #             payload.args["modified"] = "yes"
 #             return PluginResult(continue_processing=True, modified_payload=payload)
@@ -236,11 +234,11 @@ async def test_manager_exception_handling():
 async def test_manager_metadata_aggregation():
     """Test metadata aggregation from multiple plugins."""
 
-    class MetadataPlugin1(MCPPlugin):
+    class MetadataPlugin1(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             return PluginResult(continue_processing=True, metadata={"plugin1": "data1", "shared": "value1"})
 
-    class MetadataPlugin2(MCPPlugin):
+    class MetadataPlugin2(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             return PluginResult(
                 continue_processing=True,
@@ -256,13 +254,13 @@ async def test_manager_metadata_aggregation():
     plugin2 = MetadataPlugin2(config2)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        refs = [HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(plugin1)), HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(plugin2))]
+        refs = [HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin1)), HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin2))]
         mock_get.return_value = refs
 
         prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should aggregate metadata
         assert result.continue_processing
@@ -277,7 +275,7 @@ async def test_manager_metadata_aggregation():
 async def test_manager_local_context_persistence():
     """Test that local contexts persist across hook calls."""
 
-    class StatefulPlugin(MCPPlugin):
+    class StatefulPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context: PluginContext):
             context.state["counter"] = context.state.get("counter", 0) + 1
             return PluginResult(continue_processing=True)
@@ -298,13 +296,13 @@ async def test_manager_local_context_persistence():
 
     # Create a single PluginRef to ensure the same UUID is used for both hooks
     plugin_ref = PluginRef(plugin)
-    hook_ref_pre = HookRef(HookType.PROMPT_PRE_FETCH, plugin_ref)
-    hook_ref_post = HookRef(HookType.PROMPT_POST_FETCH, plugin_ref)
+    hook_ref_pre = HookRef(PromptHookType.PROMPT_PRE_FETCH, plugin_ref)
+    hook_ref_post = HookRef(PromptHookType.PROMPT_POST_FETCH, plugin_ref)
 
     def get_hook_refs_side_effect(hook_type):
-        if hook_type == HookType.PROMPT_PRE_FETCH:
+        if hook_type == PromptHookType.PROMPT_PRE_FETCH:
             return [hook_ref_pre]
-        elif hook_type == HookType.PROMPT_POST_FETCH:
+        elif hook_type == PromptHookType.PROMPT_POST_FETCH:
             return [hook_ref_post]
         return []
 
@@ -314,7 +312,7 @@ async def test_manager_local_context_persistence():
         prompt = PromptPrehookPayload(prompt_id="test", args={})
         global_context = GlobalContext(request_id="1")
 
-        result_pre, contexts = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result_pre, contexts = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
         assert result_pre.continue_processing
 
         # Call to post_fetch with same contexts
@@ -322,7 +320,7 @@ async def test_manager_local_context_persistence():
         prompt_result = PromptResult(messages=[message])
         post_payload = PromptPosthookPayload(prompt_id="test", result=prompt_result)
 
-        result_post, _ = await manager.invoke_hook(HookType.PROMPT_POST_FETCH, post_payload, global_context=global_context, local_contexts=contexts)
+        result_post, _ = await manager.invoke_hook(PromptHookType.PROMPT_POST_FETCH, post_payload, global_context=global_context, local_contexts=contexts)
 
         # Should have modified with persisted state
         assert result_post.continue_processing
@@ -336,7 +334,7 @@ async def test_manager_local_context_persistence():
 async def test_manager_plugin_blocking():
     """Test plugin blocking behavior in enforce mode."""
 
-    class BlockingPlugin(MCPPlugin):
+    class BlockingPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             violation = PluginViolation(reason="Content violation", description="Blocked content detected", code="CONTENT_BLOCKED", details={"content": payload.args})
             return PluginResult(continue_processing=False, violation=violation)
@@ -350,13 +348,13 @@ async def test_manager_plugin_blocking():
     plugin = BlockingPlugin(config)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH,  PluginRef(plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH,  PluginRef(plugin))
         mock_get.return_value = [hook_ref]
 
         prompt = PromptPrehookPayload(prompt_id="test", args={"text": "bad content"})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should block the request
         assert not result.continue_processing
@@ -365,7 +363,7 @@ async def test_manager_plugin_blocking():
         assert result.violation.plugin_name == "BlockingPlugin"
 
         with pytest.raises(PluginViolationError) as pve:
-            result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context, violations_as_exceptions=True)
+            result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context, violations_as_exceptions=True)
         assert pve.value.violation
         assert pve.value.message
         assert pve.value.violation.code == "CONTENT_BLOCKED"
@@ -377,7 +375,7 @@ async def test_manager_plugin_blocking():
 async def test_manager_plugin_permissive_blocking():
     """Test plugin behavior when blocking in permissive mode."""
 
-    class BlockingPlugin(MCPPlugin):
+    class BlockingPlugin(Plugin):
         async def prompt_pre_fetch(self, payload, context):
             violation = PluginViolation(reason="Would block", description="Content would be blocked", code="WOULD_BLOCK")
             return PluginResult(continue_processing=False, violation=violation)
@@ -400,13 +398,13 @@ async def test_manager_plugin_permissive_blocking():
 
     # Test permissive mode blocking (covers lines 194-195)
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.PROMPT_PRE_FETCH, PluginRef(plugin))
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(plugin))
         mock_get.return_value = [hook_ref]
 
         prompt = PromptPrehookPayload(prompt_id="test", args={"text": "content"})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
         # Should continue in permissive mode - the permissive logic continues without blocking
         assert result.continue_processing
@@ -446,7 +444,7 @@ async def test_manager_payload_size_validation():
     """Test payload size validation functionality."""
     # First-Party
     from mcpgateway.plugins.framework.manager import MAX_PAYLOAD_SIZE, PayloadSizeError, PluginExecutor
-    from mcpgateway.plugins.mcp.entities import PromptPosthookPayload, PromptPrehookPayload
+    from mcpgateway.plugins.framework import PromptPosthookPayload, PromptPrehookPayload
 
     # Test payload size validation directly on executor (covers lines 252, 258)
     executor = PluginExecutor()
@@ -504,7 +502,7 @@ async def test_manager_initialization_edge_cases():
                 tags=["test"],
                 kind="nonexistent.Plugin",
                 mode=PluginMode.ENFORCE,
-                hooks=[HookType.PROMPT_PRE_FETCH],
+                hooks=[PromptHookType.PROMPT_PRE_FETCH],
                 config={},
             )
         ],
@@ -528,7 +526,7 @@ async def test_manager_initialization_edge_cases():
                 tags=["test"],
                 kind="test.Plugin",
                 mode=PluginMode.DISABLED,  # Disabled mode
-                hooks=[HookType.PROMPT_PRE_FETCH],
+                hooks=[PromptHookType.PROMPT_PRE_FETCH],
                 config={},
             )
         ],
@@ -545,14 +543,13 @@ async def test_base_plugin_coverage():
     # First-Party
     from mcpgateway.common.models import Message, PromptResult, Role, TextContent
     from mcpgateway.plugins.framework.base import PluginRef
-    from mcpgateway.plugins.framework.models import (
+    from mcpgateway.plugins.framework import (
         GlobalContext,
         PluginConfig,
         PluginContext,
         PluginMode,
-    )
-    from mcpgateway.plugins.mcp.entities import (
-        HookType,
+        PromptHookType,
+        ToolHookType,
         PromptPosthookPayload,
         PromptPrehookPayload,
         ToolPostInvokePayload,
@@ -567,11 +564,11 @@ async def test_base_plugin_coverage():
         version="1.0",
         tags=["test", "coverage"],  # Tags to be accessed
         kind="test.Plugin",
-        hooks=[HookType.PROMPT_PRE_FETCH],
+        hooks=[PromptHookType.PROMPT_PRE_FETCH],
         config={},
     )
 
-    plugin = MCPPlugin(config)
+    plugin = Plugin(config)
 
     # Test tags property
     assert plugin.tags == ["test", "coverage"]
@@ -587,7 +584,7 @@ async def test_base_plugin_coverage():
     context = PluginContext(global_context=GlobalContext(request_id="test"))
     payload = PromptPrehookPayload(prompt_id="test", args={})
 
-    with pytest.raises(NotImplementedError, match="'prompt_pre_fetch' not implemented"):
+    with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'prompt_pre_fetch'"):
         await plugin.prompt_pre_fetch(payload, context)
 
     # Test NotImplementedError for prompt_post_fetch (covers lines 167-171)
@@ -595,17 +592,17 @@ async def test_base_plugin_coverage():
     result = PromptResult(messages=[message])
     post_payload = PromptPosthookPayload(prompt_id="test", result=result)
 
-    with pytest.raises(NotImplementedError, match="'prompt_post_fetch' not implemented"):
+    with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'prompt_post_fetch'"):
         await plugin.prompt_post_fetch(post_payload, context)
 
     # Test default tool_pre_invoke implementation (covers line 191)
     tool_payload = ToolPreInvokePayload(name="test_tool", args={"key": "value"})
-    with pytest.raises(NotImplementedError, match="'tool_pre_invoke' not implemented"):
+    with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'tool_pre_invoke'"):
         await plugin.tool_pre_invoke(tool_payload, context)
 
     # Test default tool_post_invoke implementation (covers line 211)
     tool_post_payload = ToolPostInvokePayload(name="test_tool", result={"result": "success"})
-    with pytest.raises(NotImplementedError, match="'tool_post_invoke' not implemented"):
+    with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'tool_post_invoke'"):
         await plugin.tool_post_invoke(tool_post_payload, context)
 
 
@@ -651,12 +648,11 @@ async def test_plugin_loader_return_none():
     # First-Party
     from mcpgateway.plugins.framework.loader.plugin import PluginLoader
     from mcpgateway.plugins.framework import PluginConfig
-    from mcpgateway.plugins.mcp.entities import HookType
 
     loader = PluginLoader()
 
     # Test return None when plugin_type is None (covers line 90)
-    config = PluginConfig(name="TestPlugin", description="Test", author="Test", version="1.0", tags=["test"], kind="test.plugin.TestPlugin", hooks=[HookType.PROMPT_PRE_FETCH], config={})
+    config = PluginConfig(name="TestPlugin", description="Test", author="Test", version="1.0", tags=["test"], kind="test.plugin.TestPlugin", hooks=[PromptHookType.PROMPT_PRE_FETCH], config={})
 
     # Mock the plugin_types dict to contain None for this kind
     loader._plugin_types[config.kind] = None
@@ -697,7 +693,7 @@ async def test_manager_compare_function_wrapper():
 
     # The compare function is used internally in _run_plugins
     # Test by using plugins with conditions
-    class TestPlugin(MCPPlugin):
+    class TestPlugin(Plugin):
         async def tool_pre_invoke(self, payload, context):
             return PluginResult(continue_processing=True)
 
@@ -715,19 +711,19 @@ async def test_manager_compare_function_wrapper():
     plugin = TestPlugin(config)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.TOOL_PRE_INVOKE, PluginRef(plugin))
+        hook_ref = HookRef(ToolHookType.TOOL_PRE_INVOKE, PluginRef(plugin))
         mock_get.return_value = [hook_ref]
 
         # Test with matching tool
         tool_payload = ToolPreInvokePayload(name="calculator", args={})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.invoke_hook(HookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
+        result, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
         assert result.continue_processing
 
         # Test with non-matching tool
         tool_payload2 = ToolPreInvokePayload(name="other_tool", args={})
-        result2, _ = await manager.invoke_hook(HookType.TOOL_PRE_INVOKE, tool_payload2, global_context=global_context)
+        result2, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload2, global_context=global_context)
         assert result2.continue_processing
 
     await manager.shutdown()
@@ -739,7 +735,7 @@ async def test_manager_tool_post_invoke_coverage():
     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
     await manager.initialize()
 
-    class ModifyingPlugin(MCPPlugin):
+    class ModifyingPlugin(Plugin):
         async def tool_post_invoke(self, payload, context):
             payload.result["modified"] = True
             return PluginResult(continue_processing=True, modified_payload=payload)
@@ -748,13 +744,13 @@ async def test_manager_tool_post_invoke_coverage():
     plugin = ModifyingPlugin(config)
 
     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-        hook_ref = HookRef(HookType.TOOL_POST_INVOKE, PluginRef(plugin))
+        hook_ref = HookRef(ToolHookType.TOOL_POST_INVOKE, PluginRef(plugin))
         mock_get.return_value = [hook_ref]
 
         tool_payload = ToolPostInvokePayload(name="test_tool", result={"original": "data"})
         global_context = GlobalContext(request_id="1")
 
-        result, _ = await manager.invoke_hook(HookType.TOOL_POST_INVOKE, tool_payload, global_context=global_context)
+        result, _ = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, tool_payload, global_context=global_context)
 
         assert result.continue_processing
         assert result.modified_payload is not None

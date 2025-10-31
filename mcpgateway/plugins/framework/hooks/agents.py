@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/plugins/agent/models.py
+"""Location: ./mcpgateway/plugins/models/agents.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
@@ -19,7 +19,7 @@ from pydantic import Field
 # First-Party
 from mcpgateway.common.models import Message
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
-from mcpgateway.plugins.mcp.entities.models import HttpHeaderPayload
+from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
 
 
 class AgentHookType(str, Enum):
@@ -121,3 +121,21 @@ class AgentPostInvokePayload(PluginPayload):
 
 AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
 AgentPostInvokeResult = PluginResult[AgentPostInvokePayload]
+
+def _register_agent_hooks():
+    """Register agent hooks in the global registry.
+
+    This is called lazily to avoid circular import issues.
+    """
+    # Import here to avoid circular dependency at module load time
+    # First-Party
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry  # pylint: disable=import-outside-toplevel
+
+    registry = get_hook_registry()
+
+    # Only register if not already registered (idempotent)
+    if not registry.is_registered(AgentHookType.AGENT_PRE_INVOKE):
+        registry.register_hook(AgentHookType.AGENT_PRE_INVOKE, AgentPreInvokePayload, AgentPreInvokeResult)
+        registry.register_hook(AgentHookType.AGENT_POST_INVOKE, AgentPostInvokePayload, AgentPostInvokeResult)
+
+_register_agent_hooks()

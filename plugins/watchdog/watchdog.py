@@ -26,9 +26,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -50,7 +48,7 @@ class WatchdogConfig(BaseModel):
     tool_overrides: Dict[str, Dict[str, Any]] = {}
 
 
-class WatchdogPlugin(MCPPlugin):
+class WatchdogPlugin(Plugin):
     """Records tool execution duration and enforces maximum runtime policy."""
 
     def __init__(self, config: PluginConfig) -> None:

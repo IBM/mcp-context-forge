@@ -8,9 +8,9 @@ Authors: Mihai Criveti
 Error plugin.
 """
 
-from mcpgateway.plugins.framework import PluginContext
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+from mcpgateway.plugins.framework import (
+    PluginContext,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -26,7 +26,7 @@ from mcpgateway.plugins.mcp.entities import (
 )
 
 
-class ErrorPlugin(MCPPlugin):
+class ErrorPlugin(Plugin):
     """A simple error plugin."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:

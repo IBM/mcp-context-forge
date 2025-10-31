@@ -30,9 +30,7 @@ from pydantic import BaseModel, Field
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -125,7 +123,7 @@ class _Entry:
     expires_at: float
 
 
-class ResponseCacheByPromptPlugin(MCPPlugin):
+class ResponseCacheByPromptPlugin(Plugin):
     """Approximate response cache keyed by prompt similarity."""
 
     def __init__(self, config: PluginConfig) -> None:

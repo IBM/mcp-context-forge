@@ -30,9 +30,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -119,7 +117,7 @@ class WebhookNotificationConfig(BaseModel):
     max_payload_size: int = Field(default=1000, description="Max payload size to include in notifications")
 
 
-class WebhookNotificationPlugin(MCPPlugin):
+class WebhookNotificationPlugin(Plugin):
     """Plugin for sending webhook notifications on events and violations."""
 
     def __init__(self, config: PluginConfig) -> None:

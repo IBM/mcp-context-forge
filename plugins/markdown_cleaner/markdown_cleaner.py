@@ -22,9 +22,7 @@ from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
@@ -54,7 +52,7 @@ def _clean_md(text: str) -> str:
     return text.strip()
 
 
-class MarkdownCleanerPlugin(MCPPlugin):
+class MarkdownCleanerPlugin(Plugin):
     """Clean Markdown in prompts and resources."""
 
     def __init__(self, config: PluginConfig) -> None:

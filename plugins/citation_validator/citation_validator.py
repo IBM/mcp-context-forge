@@ -27,9 +27,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -118,7 +116,7 @@ def _extract_links(text: str, limit: int) -> List[str]:
     return out
 
 
-class CitationValidatorPlugin(MCPPlugin):
+class CitationValidatorPlugin(Plugin):
     """Validates citations by checking URL reachability and content."""
 
     def __init__(self, config: PluginConfig) -> None:

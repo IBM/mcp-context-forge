@@ -20,7 +20,7 @@ We implemented a comprehensive plugin framework with the following key architect
 ```python
 from mcpgateway.plugins.framework import Plugin
 
-class MyInProcessPlugin(MCPPlugin):
+class MyInProcessPlugin(Plugin):
     async def prompt_pre_fetch(self, payload, context):
         ...  # in‑process logic
 

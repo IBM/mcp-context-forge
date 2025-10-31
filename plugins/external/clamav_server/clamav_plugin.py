@@ -34,9 +34,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
@@ -121,7 +119,7 @@ def _clamd_instream_scan_unix(path: str, data: bytes, timeout: float) -> str:
         s.close()
 
 
-class ClamAVRemotePlugin(MCPPlugin):
+class ClamAVRemotePlugin(Plugin):
     """External ClamAV plugin for scanning resources and content."""
 
     def __init__(self, config: PluginConfig) -> None:

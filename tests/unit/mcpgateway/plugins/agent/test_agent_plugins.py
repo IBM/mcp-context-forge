@@ -13,7 +13,7 @@ import pytest
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PluginViolationError
-from mcpgateway.plugins.agent import (
+from mcpgateway.plugins.framework import (
     AgentHookType,
     AgentPreInvokePayload,
     AgentPostInvokePayload,
@@ -28,7 +28,7 @@ async def test_agent_passthrough_plugin():
 
     # Verify plugin loaded
     assert manager.config.plugins[0].name == "PassThroughAgent"
-    assert manager.config.plugins[0].kind == "tests.unit.mcpgateway.plugins.fixtures.plugins.agent_test.PassThroughAgentPlugin"
+    assert manager.config.plugins[0].kind == "tests.unit.mcpgateway.plugins.fixtures.plugins.agent_plugins.PassThroughAgentPlugin"
     assert AgentHookType.AGENT_PRE_INVOKE.value in manager.config.plugins[0].hooks
     assert AgentHookType.AGENT_POST_INVOKE.value in manager.config.plugins[0].hooks
 

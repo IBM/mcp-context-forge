@@ -27,10 +27,8 @@ from mcpgateway.plugins.framework import (
     PluginManager,
     PluginMode,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
-    MCPPlugin,
+    ResourceHookType,
+    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -64,14 +62,14 @@ class TestResourceHooks:
             author="test",
             kind="test.Plugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["test"],
         )
-        plugin = MCPPlugin(config)
+        plugin = Plugin(config)
         payload = ResourcePreFetchPayload(uri="file:///test.txt", metadata={})
         context = PluginContext(global_context=GlobalContext(request_id="test-123"))
 
-        with pytest.raises(NotImplementedError, match="'resource_pre_fetch' not implemented"):
+        with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'resource_pre_fetch'"):
             await plugin.resource_pre_fetch(payload, context)
 
     @pytest.mark.asyncio
@@ -83,22 +81,22 @@ class TestResourceHooks:
             author="test",
             kind="test.Plugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_POST_FETCH],
             tags=["test"],
         )
-        plugin = MCPPlugin(config)
+        plugin = Plugin(config)
         content = ResourceContent(type="resource",  id="123",uri="file:///test.txt", text="Test content")
         payload = ResourcePostFetchPayload(uri="file:///test.txt", content=content)
         context = PluginContext(global_context=GlobalContext(request_id="test-123"))
 
-        with pytest.raises(NotImplementedError, match="'resource_post_fetch' not implemented"):
+        with pytest.raises(AttributeError, match="'Plugin' object has no attribute 'resource_post_fetch'"):
             await plugin.resource_post_fetch(payload, context)
 
     @pytest.mark.asyncio
     async def test_resource_hook_blocking(self):
         """Test resource hook that blocks processing."""
 
-        class BlockingResourcePlugin(MCPPlugin):
+        class BlockingResourcePlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 return ResourcePreFetchResult(
                     continue_processing=False,
@@ -116,7 +114,7 @@ class TestResourceHooks:
             author="test",
             kind="test.BlockingPlugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["test"],
             mode=PluginMode.ENFORCE,
         )
@@ -135,7 +133,7 @@ class TestResourceHooks:
     async def test_resource_content_modification(self):
         """Test resource post-fetch content modification."""
 
-        class ContentFilterPlugin(MCPPlugin):
+        class ContentFilterPlugin(Plugin):
             async def resource_post_fetch(self, payload, context):
                 # Modify content to redact sensitive data
                 modified_text = payload.content.text.replace("password: secret123", "password: [REDACTED]")
@@ -160,7 +158,7 @@ class TestResourceHooks:
             author="test",
             kind="test.FilterPlugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_POST_FETCH],
             tags=["filter"],
         )
         plugin = ContentFilterPlugin(config)
@@ -184,7 +182,7 @@ class TestResourceHooks:
     async def test_resource_hook_with_conditions(self):
         """Test resource hooks with conditions."""
 
-        class ConditionalResourcePlugin(MCPPlugin):
+        class ConditionalResourcePlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 # Only process if conditions match
                 return ResourcePreFetchResult(
@@ -201,7 +199,7 @@ class TestResourceHooks:
             author="test",
             kind="test.ConditionalPlugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["conditional"],
             conditions=[
                 PluginCondition(
@@ -276,10 +274,10 @@ class TestResourceHookIntegration:
                 payload = ResourcePreFetchPayload(uri="test://resource", metadata={})
                 global_context = GlobalContext(request_id="test-123")
 
-                result, contexts = await manager.invoke_hook(HookType.RESOURCE_PRE_FETCH, payload, global_context)
+                result, contexts = await manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, global_context)
 
                 assert result.continue_processing is True
-                MockRegistry.return_value.get_hook_refs_for_hook.assert_called_with(hook_type=HookType.RESOURCE_PRE_FETCH)
+                MockRegistry.return_value.get_hook_refs_for_hook.assert_called_with(hook_type=ResourceHookType.RESOURCE_PRE_FETCH)
 
     @pytest.mark.asyncio
     async def test_manager_resource_post_fetch(self):
@@ -287,7 +285,7 @@ class TestResourceHookIntegration:
         # First-Party
         from mcpgateway.plugins.framework.base import HookRef
 
-        class TestResourcePlugin(MCPPlugin):
+        class TestResourcePlugin(Plugin):
             async def resource_post_fetch(self, payload, context):
                 return ResourcePostFetchResult(
                     continue_processing=True,
@@ -300,13 +298,13 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.Plugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_POST_FETCH],
             tags=["test"],
             mode=PluginMode.ENFORCE,
         )
         plugin = TestResourcePlugin(config)
         plugin_ref = PluginRef(plugin)
-        hook_ref = HookRef(HookType.RESOURCE_POST_FETCH, plugin_ref)
+        hook_ref = HookRef(ResourceHookType.RESOURCE_POST_FETCH, plugin_ref)
 
         manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
         await manager.initialize()
@@ -316,10 +314,10 @@ class TestResourceHookIntegration:
             payload = ResourcePostFetchPayload(uri="test://resource", content=content)
             global_context = GlobalContext(request_id="test-123")
 
-            result, contexts = await manager.invoke_hook(HookType.RESOURCE_POST_FETCH, payload, global_context, {})
+            result, contexts = await manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, global_context, {})
 
             assert result.continue_processing is True
-            manager._registry.get_hook_refs_for_hook.assert_called_with(hook_type=HookType.RESOURCE_POST_FETCH)
+            manager._registry.get_hook_refs_for_hook.assert_called_with(hook_type=ResourceHookType.RESOURCE_POST_FETCH)
 
         await manager.shutdown()
 
@@ -327,7 +325,7 @@ class TestResourceHookIntegration:
     async def test_resource_hook_chain_execution(self):
         """Test multiple resource plugins executing in priority order."""
 
-        class FirstPlugin(MCPPlugin):
+        class FirstPlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 # Add metadata
                 payload.metadata["first"] = True
@@ -336,7 +334,7 @@ class TestResourceHookIntegration:
                     modified_payload=payload,
                 )
 
-        class SecondPlugin(MCPPlugin):
+        class SecondPlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 # Check first plugin ran
                 assert payload.metadata.get("first") is True
@@ -352,7 +350,7 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.First",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["test"],
             priority=10,  # Higher priority
         )
@@ -362,7 +360,7 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.Second",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["test"],
             priority=20,  # Lower priority
         )
@@ -383,7 +381,7 @@ class TestResourceHookIntegration:
         # First-Party
         from mcpgateway.plugins.framework.base import HookRef
 
-        class ErrorPlugin(MCPPlugin):
+        class ErrorPlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 raise ValueError("Test error in plugin")
 
@@ -393,13 +391,13 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.ErrorPlugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["test"],
             mode=PluginMode.PERMISSIVE,  # Should continue on error
         )
         plugin = ErrorPlugin(config)
         plugin_ref = PluginRef(plugin)
-        hook_ref = HookRef(HookType.RESOURCE_PRE_FETCH, plugin_ref)
+        hook_ref = HookRef(ResourceHookType.RESOURCE_PRE_FETCH, plugin_ref)
 
         manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
         await manager.initialize()
@@ -409,14 +407,14 @@ class TestResourceHookIntegration:
 
         # Test with permissive mode - should handle error gracefully
         with patch.object(manager._registry, "get_hook_refs_for_hook", return_value=[hook_ref]):
-            result, contexts = await manager.invoke_hook(HookType.RESOURCE_PRE_FETCH, payload, global_context)
+            result, contexts = await manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, global_context)
             assert result.continue_processing is True  # Continues despite error
 
         # Test with enforce mode - should raise PluginError
         config.mode = PluginMode.ENFORCE
         with patch.object(manager._registry, "get_hook_refs_for_hook", return_value=[hook_ref]):
             with pytest.raises(PluginError):
-                result, contexts = await manager.invoke_hook(HookType.RESOURCE_PRE_FETCH, payload, global_context)
+                result, contexts = await manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, global_context)
 
         await manager.shutdown()
 
@@ -424,7 +422,7 @@ class TestResourceHookIntegration:
     async def test_resource_uri_modification(self):
         """Test resource URI modification in pre-fetch."""
 
-        class URIModifierPlugin(MCPPlugin):
+        class URIModifierPlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 # Modify URI to add prefix
                 modified_payload = ResourcePreFetchPayload(
@@ -442,7 +440,7 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.URIModifier",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["modifier"],
         )
         plugin = URIModifierPlugin(config)
@@ -459,7 +457,7 @@ class TestResourceHookIntegration:
     async def test_resource_metadata_enrichment(self):
         """Test resource metadata enrichment in pre-fetch."""
 
-        class MetadataEnricherPlugin(MCPPlugin):
+        class MetadataEnricherPlugin(Plugin):
             async def resource_pre_fetch(self, payload, context):
                 # Add metadata
                 payload.metadata["timestamp"] = "2024-01-01T00:00:00Z"
@@ -476,7 +474,7 @@ class TestResourceHookIntegration:
             author="test",
             kind="test.Enricher",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             tags=["enricher"],
         )
         plugin = MetadataEnricherPlugin(config)

@@ -8,9 +8,9 @@ Authors: Mihai Criveti
 Context plugin.
 """
 
-from mcpgateway.plugins.framework import PluginContext
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+from mcpgateway.plugins.framework import (
+    PluginContext,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -26,7 +26,7 @@ from mcpgateway.plugins.mcp.entities import (
 )
 
 
-class ContextPlugin(MCPPlugin):
+class ContextPlugin(Plugin):
     """A simple Context plugin."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
@@ -111,7 +111,7 @@ class ContextPlugin(MCPPlugin):
         return ResourcePreFetchResult(continue_processing=True)
 
 
-class ContextPlugin2(MCPPlugin):
+class ContextPlugin2(Plugin):
     """A simple Context plugin."""
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:

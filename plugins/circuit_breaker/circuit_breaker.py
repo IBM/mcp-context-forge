@@ -29,9 +29,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -140,7 +138,7 @@ def _is_error(result: Any) -> bool:
     return False
 
 
-class CircuitBreakerPlugin(MCPPlugin):
+class CircuitBreakerPlugin(Plugin):
     """Circuit breaker plugin to prevent cascading failures by tripping on high error rates."""
 
     def __init__(self, config: PluginConfig) -> None:

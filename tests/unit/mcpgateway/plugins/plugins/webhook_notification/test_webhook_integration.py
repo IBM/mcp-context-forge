@@ -16,8 +16,10 @@ import pytest
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework import (
     GlobalContext,
+    PromptHookType,
+    ToolHookType,
+    ToolPostInvokePayload
 )
-from mcpgateway.plugins.mcp.entities import HookType, ToolPostInvokePayload
 
 
 @pytest.mark.asyncio
@@ -80,7 +82,7 @@ plugin_dirs: []
                 )
 
                 # Execute tool post-invoke hook
-                result, final_context = await manager.invoke_hook(HookType.TOOL_POST_INVOKE, payload, context)
+                result, final_context = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, context)
 
                 # Verify result
                 assert result.continue_processing is True
@@ -163,14 +165,14 @@ plugin_dirs: []
                 context = GlobalContext(request_id="violation-test", user="testuser")
 
                 # Create payload with forbidden word that will trigger deny filter
-                from mcpgateway.plugins.mcp.entities import PromptPrehookPayload
+                from mcpgateway.plugins.framework import PromptPrehookPayload
                 payload = PromptPrehookPayload(
                     prompt_id="test_prompt",
                     args={"query": "this contains forbidden word"}
                 )
 
                 # Execute - should be blocked by deny filter
-                result, final_context = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, payload, context)
+                result, final_context = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, context)
 
                 # Verify the request was blocked
                 assert result.continue_processing is False
@@ -247,7 +249,7 @@ plugin_dirs: []
                 )
 
                 # Execute hook
-                result, final_context = await manager.invoke_hook(HookType.TOOL_POST_INVOKE, payload, context)
+                result, final_context = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, context)
 
                 assert result.continue_processing is True
 
@@ -340,7 +342,7 @@ plugin_dirs: []
                     result={"data": "test"}
                 )
 
-                await manager.invoke_hook(HookType.TOOL_POST_INVOKE, payload, context)
+                await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, context)
 
                 # Verify webhook was called with custom template
                 mock_client.post.assert_called_once()

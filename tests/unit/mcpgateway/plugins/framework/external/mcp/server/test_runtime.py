@@ -18,8 +18,6 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
     PromptPosthookPayload,
     PromptPrehookPayload,
     ResourcePostFetchPayload,

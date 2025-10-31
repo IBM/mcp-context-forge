@@ -81,7 +81,7 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_with_pre_fetch_hook(self, resource_service_with_plugins, mock_db):
         """Test read_resource with pre-fetch hook execution."""
         # First-Party
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -113,7 +113,7 @@ class TestResourceServicePluginIntegration:
 
         # Verify context was passed correctly - check first call (pre-fetch)
         first_call = mock_manager.invoke_hook.call_args_list[0]
-        assert first_call[0][0] == HookType.RESOURCE_PRE_FETCH  # hook_type
+        assert first_call[0][0] == ResourceHookType.RESOURCE_PRE_FETCH  # hook_type
         assert first_call[0][1].uri == "test://resource"  # payload
         assert first_call[0][2].request_id == "test-123"  # global_context
         assert first_call[0][2].user == "testuser"
@@ -161,7 +161,7 @@ class TestResourceServicePluginIntegration:
         """Test read_resource with URI modification by plugin."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -184,7 +184,7 @@ class TestResourceServicePluginIntegration:
 
         # Use side_effect to return different results based on hook type
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.RESOURCE_PRE_FETCH:
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                 return (
                     PluginResult(
                         continue_processing=True,
@@ -214,7 +214,7 @@ class TestResourceServicePluginIntegration:
         """Test read_resource with content filtering by post-fetch hook."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -250,7 +250,7 @@ class TestResourceServicePluginIntegration:
 
         # Use side_effect to return different results based on hook type
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.RESOURCE_PRE_FETCH:
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                 return (
                     PluginResult(continue_processing=True),
                     {"context": "data"},
@@ -310,7 +310,7 @@ class TestResourceServicePluginIntegration:
         """Test read_resource blocked by post-fetch hook."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -331,7 +331,7 @@ class TestResourceServicePluginIntegration:
 
         # Use side_effect to allow pre-fetch but block on post-fetch
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.RESOURCE_PRE_FETCH:
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                 return (
                     PluginResult(continue_processing=True),
                     {"context": "data"},
@@ -392,7 +392,7 @@ class TestResourceServicePluginIntegration:
         """Test context propagation from pre-fetch to post-fetch."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
@@ -416,7 +416,7 @@ class TestResourceServicePluginIntegration:
 
         # Use side_effect to return contexts from pre-fetch
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.RESOURCE_PRE_FETCH:
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                 return (
                     PluginResult(continue_processing=True),
                     test_contexts,

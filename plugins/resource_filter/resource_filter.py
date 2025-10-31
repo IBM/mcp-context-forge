@@ -23,9 +23,7 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     PluginMode,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -35,7 +33,7 @@ from mcpgateway.plugins.mcp.entities import (
 )
 
 
-class ResourceFilterPlugin(MCPPlugin):
+class ResourceFilterPlugin(Plugin):
     """Plugin that filters and modifies resources.
 
     This plugin demonstrates the use of resource hooks to:

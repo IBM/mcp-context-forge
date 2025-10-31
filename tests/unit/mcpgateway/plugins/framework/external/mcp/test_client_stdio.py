@@ -29,9 +29,9 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     PluginLoader,
     PluginManager,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
+    PromptHookType,
+    ResourceHookType,
+    ToolHookType,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ResourcePostFetchPayload,
@@ -51,7 +51,7 @@ async def test_client_load_stdio():
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "That was innovative!"})
-    result = await plugin.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
+    result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
     assert result.violation.description == "A deny word was found in the prompt"
@@ -75,7 +75,7 @@ async def test_client_load_stdio_overrides():
     loader = PluginLoader()
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"text": "That was innovative!"})
-    result = await plugin.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
+    result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, PluginContext(global_context=GlobalContext(request_id="1", server_id="2")))
     assert result.violation
     assert result.violation.reason == "Prompt not allowed"
     assert result.violation.description == "A deny word was found in the prompt"
@@ -101,7 +101,7 @@ async def test_client_load_stdio_post_prompt():
     plugin = await loader.load_and_instantiate_plugin(config.plugins[0])
     prompt = PromptPrehookPayload(prompt_id="test_prompt", args = {"user": "What a crapshow!"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
-    result = await plugin.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, context)
+    result = await plugin.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, context)
     assert result.modified_payload.args["user"] == "What a yikesshow!"
     config = plugin.config
     assert config.name == "ReplaceBadWordsPlugin"
@@ -114,7 +114,7 @@ async def test_client_load_stdio_post_prompt():
 
     payload_result = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
 
-    result = await plugin.invoke_hook(HookType.PROMPT_POST_FETCH, payload_result, context=context)
+    result = await plugin.invoke_hook(PromptHookType.PROMPT_POST_FETCH, payload_result, context=context)
     assert len(result.modified_payload.result.messages) == 1
     assert result.modified_payload.result.messages[0].content.text == "What the yikes?"
     await plugin.shutdown()
@@ -188,7 +188,7 @@ async def test_hooks():
     await plugin_manager.initialize()
     payload = PromptPrehookPayload(prompt_id="test_prompt", name="test_prompt", args={"arg0": "This is a crap argument"})
     global_context = GlobalContext(request_id="1")
-    result, _ = await plugin_manager.invoke_hook(HookType.PROMPT_PRE_FETCH, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
     """Test prompt post hook across all registered plugins."""
@@ -196,31 +196,31 @@ async def test_hooks():
     message = Message(content=TextContent(type="text", text="prompt"), role=Role.USER)
     prompt_result = PromptResult(messages=[message])
     payload = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
-    result, _ = await plugin_manager.invoke_hook(HookType.PROMPT_POST_FETCH, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(PromptHookType.PROMPT_POST_FETCH, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
     """Test tool pre hook across all registered plugins."""
     # Customize payload for testing
     payload = ToolPreInvokePayload(name="test_prompt", args={"arg0": "This is an argument"})
-    result, _ = await plugin_manager.invoke_hook(HookType.TOOL_PRE_INVOKE, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
     """Test tool post hook across all registered plugins."""
     # Customize payload for testing
     payload = ToolPostInvokePayload(name="test_tool", result={"output0": "output value"})
-    result, _ = await plugin_manager.invoke_hook(HookType.TOOL_POST_INVOKE, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
 
     payload = ResourcePreFetchPayload(uri="file:///data.txt")
-    result, _ = await plugin_manager.invoke_hook(HookType.RESOURCE_PRE_FETCH, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
 
     content = ResourceContent(type="resource", id="123", uri="file:///data.txt",
            text="Hello World")
     payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
-    result, _ = await plugin_manager.invoke_hook(HookType.RESOURCE_POST_FETCH, payload, global_context)
+    result, _ = await plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
     await plugin_manager.shutdown()
@@ -236,7 +236,7 @@ async def test_errors():
     global_context = GlobalContext(request_id="1")
     escaped_regex = re.escape("ValueError('Sadly! Prompt prefetch is broken!')")
     with pytest.raises(PluginError, match=escaped_regex):
-        await plugin_manager.invoke_hook(HookType.PROMPT_PRE_FETCH, payload, global_context)
+        await plugin_manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context)
 
     await plugin_manager.shutdown()
 
@@ -253,7 +253,7 @@ async def test_shared_context_across_pre_post_hooks_multi_plugins():
     # Test tool pre-invoke with transformation - use correct tool name from config
     tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"})
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.invoke_hook(HookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
 
     assert len(contexts) == 2
     ctxs = [contexts[key] for key in contexts.keys()]
@@ -282,7 +282,7 @@ async def test_shared_context_across_pre_post_hooks_multi_plugins():
     assert result.modified_payload is None
     # Test tool post-invoke with transformation
     tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result was bad", "status": "wrong format"})
-    result, contexts = await manager.invoke_hook(HookType.TOOL_POST_INVOKE, tool_result_payload, global_context=global_context, local_contexts=contexts)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, tool_result_payload, global_context=global_context, local_contexts=contexts)
 
     ctxs = [contexts[key] for key in contexts.keys()]
     assert len(ctxs) == 2

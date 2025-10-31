@@ -26,9 +26,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ResourcePostFetchPayload,
@@ -161,7 +159,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, A
     return total, container, all_findings
 
 
-class SecretsDetectionPlugin(MCPPlugin):
+class SecretsDetectionPlugin(Plugin):
     """Detect and optionally redact secrets in inputs/outputs."""
 
     def __init__(self, config: PluginConfig) -> None:

@@ -23,9 +23,7 @@ from mcpgateway.common.models import Message, Role, TextContent
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
 )
@@ -63,7 +61,7 @@ def _inject_text(existing: str, notice: str, placement: str) -> str:
     return existing
 
 
-class PrivacyNoticeInjectorPlugin(MCPPlugin):
+class PrivacyNoticeInjectorPlugin(Plugin):
     """Inject a privacy notice into prompt messages."""
 
     def __init__(self, config: PluginConfig) -> None:

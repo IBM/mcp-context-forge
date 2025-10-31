@@ -24,9 +24,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -50,7 +48,7 @@ class CodeSafetyConfig(BaseModel):
     )
 
 
-class CodeSafetyLinterPlugin(MCPPlugin):
+class CodeSafetyLinterPlugin(Plugin):
     """Scan text outputs for dangerous code patterns."""
 
     def __init__(self, config: PluginConfig) -> None:

@@ -132,7 +132,7 @@ class TestResourcePluginIntegration:
             # Use real plugin manager but mock its initialization
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 # First-Party
-                from mcpgateway.plugins.mcp.entities import (
+                from mcpgateway.plugins.framework import (
                     ResourcePostFetchPayload,
                     ResourcePostFetchResult,
                     ResourcePreFetchResult,
@@ -152,9 +152,9 @@ class TestResourcePluginIntegration:
 
                     async def invoke_hook(self, hook_type, payload, global_context, local_contexts=None, **kwargs):
                         # First-Party
-                        from mcpgateway.plugins.mcp.entities import HookType
+                        from mcpgateway.plugins.framework import ResourceHookType
 
-                        if hook_type == HookType.RESOURCE_PRE_FETCH:
+                        if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                             # Allow test:// protocol
                             if payload.uri.startswith("test://"):
                                 return (
@@ -177,7 +177,7 @@ class TestResourcePluginIntegration:
                                         details={"protocol": payload.uri.split(":")[0], "uri": payload.uri},
                                     ),
                                 )
-                        elif hook_type == HookType.RESOURCE_POST_FETCH:
+                        elif hook_type == ResourceHookType.RESOURCE_POST_FETCH:
                             # Filter sensitive content
                             if payload.content and payload.content.text:
                                 filtered_text = payload.content.text.replace(
@@ -265,12 +265,12 @@ class TestResourcePluginIntegration:
         # Track context flow
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ResourceHookType
 
         contexts_from_pre = {"plugin_data": "test_value", "validated": True}
 
         async def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.RESOURCE_PRE_FETCH:
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
                 # Verify global context
                 assert global_context.request_id == "integration-test-123"
                 assert global_context.user == "integration-user"
@@ -279,7 +279,7 @@ class TestResourcePluginIntegration:
                     PluginResult(continue_processing=True, modified_payload=None),
                     contexts_from_pre,
                 )
-            elif hook_type == HookType.RESOURCE_POST_FETCH:
+            elif hook_type == ResourceHookType.RESOURCE_POST_FETCH:
                 # Verify contexts from pre-fetch
                 assert local_contexts == contexts_from_pre
                 assert local_contexts["plugin_data"] == "test_value"

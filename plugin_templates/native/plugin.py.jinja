@@ -29,7 +29,7 @@ from mcpgateway.plugins.framework import (
 {% else -%}
 {% set class_name = class_parts|join -%}
 {% endif -%}
-class {{ class_name }}(MCPPlugin):
+class {{ class_name }}(Plugin):
     """{{ description }}."""
 
     def __init__(self, config: PluginConfig):

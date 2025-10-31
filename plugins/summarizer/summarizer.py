@@ -25,9 +25,7 @@ from pydantic import BaseModel, Field
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,
@@ -262,7 +260,7 @@ def _maybe_get_text_from_result(result: Any) -> Optional[str]:
     return result if isinstance(result, str) else None
 
 
-class SummarizerPlugin(MCPPlugin):
+class SummarizerPlugin(Plugin):
     """Plugin to summarize long text content using LLM providers."""
 
     def __init__(self, config: PluginConfig) -> None:

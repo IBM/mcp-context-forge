@@ -34,9 +34,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
@@ -334,7 +332,7 @@ def _apply_overrides(url: str, host: str | None, cfg: VirusTotalConfig) -> str |
     return None
 
 
-class VirusTotalURLCheckerPlugin(MCPPlugin):
+class VirusTotalURLCheckerPlugin(Plugin):
     """Query VirusTotal for URL/domain/IP verdicts and block on policy breaches."""
 
     def __init__(self, config: PluginConfig) -> None:

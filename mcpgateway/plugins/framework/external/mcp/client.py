@@ -43,7 +43,7 @@ from mcpgateway.plugins.framework.constants import (
 )
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
-from mcpgateway.plugins.framework.hook_registry import get_hook_registry
+from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 from mcpgateway.plugins.framework.models import (
     MCPClientTLSConfig,
     PluginConfig,

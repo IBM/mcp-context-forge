@@ -25,9 +25,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPreInvokePayload,
@@ -116,7 +114,7 @@ def _allow(key: str, limit: Optional[str]) -> tuple[bool, dict[str, Any]]:
     return False, {"limited": True, "remaining": 0, "reset_in": window_seconds - (now - wnd.window_start)}
 
 
-class RateLimiterPlugin(MCPPlugin):
+class RateLimiterPlugin(Plugin):
     """Simple fixed-window rate limiter with per-user/tenant/tool buckets."""
 
     def __init__(self, config: PluginConfig) -> None:
