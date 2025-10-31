@@ -1,7 +1,7 @@
 """Use Argon2id for encryption key
 
 Revision ID: a706a3320c56
-Revises: 3c89a45f32e5
+Revises: h2b3c4d5e6f7
 Create Date: 2025-10-30 15:31:25.115536
 
 """
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # revision identifiers, used by Alembic.
 revision: str = "a706a3320c56"
-down_revision: Union[str, Sequence[str], None] = "3c89a45f32e5"
+down_revision: Union[str, Sequence[str], None] = "h2b3c4d5e6f7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
