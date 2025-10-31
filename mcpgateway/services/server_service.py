@@ -1228,7 +1228,7 @@ class ServerService:
             True
         """
         strategy = await self.get_session_strategy(db, server_id)
-        return strategy in ["user-server", "global", "enabled"]   # Handle potential naming variations like "user_server"
+        return settings.session_pooling_enabled and strategy in ["user-server", "global", "enabled"]
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> ServerMetrics:

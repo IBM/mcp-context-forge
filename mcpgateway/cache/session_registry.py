@@ -1234,6 +1234,7 @@ class SessionRegistry(SessionBackend):
                 for session_id, session_data in local_sessions_copy.items():
                     transport = session_data['transport']
                     try:
+                        pooled = session_data.get('pooled', False)
                         if not await transport.is_connected():
                             if pooled:
                                 # For pooled sessions, remove from registry but don't disconnect
@@ -1348,7 +1349,7 @@ class SessionRegistry(SessionBackend):
                         else:
                             await self.remove_session(session_id)
                         self._metrics["sessions_expired"] += 1
-                await asyncio.sleep(60)  # Run every minute
+                await asyncio.sleep(60)  # Run every minute  
             except asyncio.CancelledError:
                 logger.info("Memory cleanup task cancelled")
                 break

@@ -484,12 +484,16 @@ class SSETransport(Transport):
             True
         """
         return self._session_id
-    
+
     @session_id.setter
     def session_id(self, value: str) -> None:
         """
         Set the session ID for this transport.
 
         Args:
-            value (str): The session ID to set"""
+            value (str): The session ID to set
+        """
         self._session_id = value
+
+        
+# Fix Flake8 W293: remove trailing whitespace on blank line at end of file
