@@ -2270,7 +2270,7 @@ async function editTool(toolId) {
             "Schema",
         );
         const outputSchemaValidation = validateJson(
-            JSON.stringify(tool.outputSchema || {}),
+            tool.outputSchema ? JSON.stringify(tool.outputSchema) : "",
             "Output Schema",
         );
         const annotationsValidation = validateJson(
@@ -2293,12 +2293,14 @@ async function editTool(toolId) {
         if (schemaField && schemaValidation.valid) {
             schemaField.value = JSON.stringify(schemaValidation.value, null, 2);
         }
-        if (outputSchemaField && outputSchemaValidation.valid) {
-            outputSchemaField.value = JSON.stringify(
-                outputSchemaValidation.value,
-                null,
-                2,
-            );
+        if (outputSchemaField) {
+            if (tool.outputSchema) {
+                outputSchemaField.value = outputSchemaValidation.valid 
+                    ? JSON.stringify(outputSchemaValidation.value, null, 2)
+                    : "";
+            } else {
+                outputSchemaField.value = "";
+            }
         }
         if (annotationsField && annotationsValidation.valid) {
             annotationsField.value = JSON.stringify(
@@ -2321,10 +2323,14 @@ async function editTool(toolId) {
             );
             window.editToolSchemaEditor.refresh();
         }
-        if (window.editToolOutputSchemaEditor && outputSchemaValidation.valid) {
-            window.editToolOutputSchemaEditor.setValue(
-                JSON.stringify(outputSchemaValidation.value, null, 2),
-            );
+        if (window.editToolOutputSchemaEditor) {
+            if (tool.outputSchema && outputSchemaValidation.valid) {
+                window.editToolOutputSchemaEditor.setValue(
+                    JSON.stringify(outputSchemaValidation.value, null, 2),
+                );
+            } else {
+                window.editToolOutputSchemaEditor.setValue("");
+            }
             window.editToolOutputSchemaEditor.refresh();
         }
 
