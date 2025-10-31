@@ -1241,9 +1241,6 @@ class ToolService:
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
-                            if valid and getattr(tool_result, "structuredContent", None) is not None:
-                                # Remove textual content in favor of structuredContent
-                                tool_result.content = []
                             success = bool(valid)
 
                 elif tool.integration_type == "MCP":
@@ -1358,9 +1355,6 @@ class ToolService:
                     # If output schema is present, validate and attach structured content
                     if getattr(tool, "output_schema", None):
                         valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
-                        if valid and getattr(tool_result, "structuredContent", None) is not None:
-                            # Remove textual content in favor of structuredContent
-                            tool_result.content = []
                         success = bool(valid)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
@@ -1913,11 +1907,7 @@ class ToolService:
             candidate = response_data if isinstance(response_data, (dict, list)) else None
             try:
                 valid = self._extract_and_validate_structured_content(tool, result, candidate=candidate)
-                if valid and getattr(result, "structuredContent", None) is not None:
-                    # Remove textual content when structuredContent is valid
-                    result.content = []
-                else:
-                    result.is_error = True
+                
             except Exception:
                 logger.debug("Validation check failed for A2A result")
         # Note: Metrics are recorded by the calling invoke_tool method, not here
