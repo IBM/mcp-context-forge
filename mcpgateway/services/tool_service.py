@@ -681,6 +681,7 @@ class ToolService:
                 plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
+            logger.info(f"Registering tool: {db_tool.name} (output_schema: {db_tool.output_schema}")
 
             db.add(db_tool)
             db.commit()
@@ -1245,10 +1246,11 @@ class ToolService:
                     else:
                         result = response.json()
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-                        # Keep textual content (serialized JSON) for backward compatibility while
-                        # also exposing structuredContent when an output schema is declared.
-                        tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                        
                         if getattr(tool, "output_schema", None):
+                            # Keep textual content (serialized JSON) for backward compatibility while
+                            # also exposing structuredContent when an output schema is declared.
+                            tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                             # Extract and validate structured content from the filtered response
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                             if valid:
@@ -1260,7 +1262,10 @@ class ToolService:
                             else:
                                 success = False
                         else:
-                            # No schema declared -> success
+                            # No schema declared -> format as consistent JSON structure
+                            # Convert the filtered response to a properly formatted JSON string
+                            json_text = json.dumps(filtered_response, separators=(',', ':'))
+                            tool_result = ToolResult(content=[TextContent(type="text", text=json_text)])
                             success = True
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
@@ -1367,12 +1372,32 @@ class ToolService:
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
                     content = tool_call_result.model_dump(by_alias=True).get("content", [])
+                    # Extract just the text content from TextContent objects for better processing
+                    if content and isinstance(content, list):
+                        text_content = []
+                        for item in content:
+                            if isinstance(item, dict) and item.get("type") == "text" and "text" in item:
+                                try:
+                                    # Try to parse as JSON first, if it's valid JSON use the parsed object
+                                    parsed = json.loads(item["text"])
+                                    text_content.append(parsed)
+                                except (json.JSONDecodeError, TypeError):
+                                    # If not valid JSON, use the text as-is
+                                    text_content.append(item["text"])
+                            else:
+                                text_content.append(item)
+                        # If we only have one item, unwrap it for simpler structure
+                        processed_content = text_content[0] if len(text_content) == 1 else text_content
+                    else:
+                        processed_content = content
+                    
                     # Extract a structured result using jsonpath/jq and present both textual
                     # and structured content to callers when appropriate.
-                    filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    # Normalize to textual content while preserving structured object
-                    tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                    filtered_response = extract_using_jq(processed_content, tool.jsonpath_filter)
+                    
                     if getattr(tool, "output_schema", None):
+                        # Normalize to textual content while preserving structured object
+                        tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         # Extract and validate structured content from the filtered response
                         valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                         if not valid:
@@ -1380,6 +1405,10 @@ class ToolService:
                         else:
                             success = True
                     else:
+                        # No schema declared -> format as consistent JSON structure
+                        # Convert the filtered response to a properly formatted JSON string
+                        json_text = json.dumps(filtered_response, separators=(',', ':'))
+                        tool_result = ToolResult(content=[TextContent(type="text", text=json_text)])
                         success = True
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
@@ -1567,6 +1596,7 @@ class ToolService:
                 tool.version += 1
             else:
                 tool.version = 1
+            logger.info(f"Update tool: {tool.name} (output_schema: {tool.output_schema})")
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
@@ -1927,12 +1957,18 @@ class ToolService:
             response_data = await self._call_a2a_agent(agent, arguments)
 
             # Convert A2A response to MCP ToolResult format
-            if isinstance(response_data, dict) and "response" in response_data:
-                content = [TextContent(type="text", text=str(response_data["response"]))]
+            if getattr(tool, "output_schema", None):
+                # With output schema, provide both textual and structured content
+                if isinstance(response_data, dict) and "response" in response_data:
+                    content = [TextContent(type="text", text=str(response_data["response"]))]
+                else:
+                    content = [TextContent(type="text", text=str(response_data))]
+                result = ToolResult(content=content, is_error=False)
             else:
-                content = [TextContent(type="text", text=str(response_data))]
-
-            result = ToolResult(content=content, is_error=False)
+                # No schema declared -> format as consistent JSON structure
+                json_text = json.dumps(response_data, separators=(',', ':'))
+                content = [TextContent(type="text", text=json_text)]
+                result = ToolResult(content=content, is_error=False)
 
         except Exception as e:
             error_message = str(e)
