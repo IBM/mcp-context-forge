@@ -327,6 +327,8 @@ class SessionRegistry(SessionBackend):
         """
         logger.info(f"Initializing session registry with backend: {self._backend}")
 
+        self._cleanup_task = None
+
         if self._backend == "database":
             # Start database cleanup task
             self._cleanup_task = asyncio.create_task(self._db_cleanup_task())
@@ -536,16 +538,28 @@ class SessionRegistry(SessionBackend):
             if session_entry:
                 logger.info(f"Session {session_id} exists in local cache")
                 # Return the transport object directly, not the dict
-                return session_entry['transport']
+                # DO NOT overwrite self._lock! That was the bug.
+                if isinstance(session_entry, dict):
+                    transport = session_entry.get('transport')
+                    if transport is not None: # Check if transport object actually exists in the dict
+                        return transport
+                    else:
+                        # Log if the structure is unexpected (missing 'transport' key)
+                        logger.warning(f"Session {session_id} found in local cache but missing 'transport' key: {session_entry}")
+                        return None
+                else:
+                    # For backward compatibility - if it's directly a transport object (shouldn't happen with new add_session)
+                    return session_entry
 
-        # If not in local cache, check if it exists in shared backend
+        # If not in local cache (or transport was missing from dict), check if it exists in shared backend
         if self._backend == "redis":
             try:
+                # Check if session marker exists in Redis (using EXISTS command might be better than GET if data is large)
                 session_data = await self._redis.get(f"mcp:session:{session_id}")
                 if session_data:
                     logger.info(f"Session {session_id} exists in Redis but not in local cache")
                     # Return None since we don't have the transport locally
-                return None
+                    return None
             except Exception as e:
                 logger.error(f"Redis error checking session {session_id}: {e}")
                 return None
@@ -571,7 +585,6 @@ class SessionRegistry(SessionBackend):
                     """
                     db_session = next(get_db())
                     try:
-                        # Query with pooled flag if needed
                         record = db_session.query(SessionRecord).filter(SessionRecord.session_id == session_id).first()
                         return record is not None
                     finally:
@@ -847,8 +860,8 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error during broadcast: {e}")
 
-    def get_session_sync(self, session_id: str) -> Any:
-        """Get session synchronously from local cache only.
+    def get_session_sync(self, session_id: str) -> Optional[SSETransport]:
+        """Get session transport synchronously from local cache only.
 
         This is a non-blocking method that only checks the local cache,
         not the distributed backend. Use this when you need quick access
@@ -863,19 +876,19 @@ class SessionRegistry(SessionBackend):
         Examples:
             >>> from mcpgateway.cache.session_registry import SessionRegistry
             >>> import asyncio
-            >>>
+
             >>> class MockTransport:
             ...     pass
-            >>>
+
             >>> reg = SessionRegistry()
             >>> transport = MockTransport()
             >>> asyncio.run(reg.add_session('sync-test', transport))
-            >>>
+
             >>> # Synchronous lookup
             >>> found = reg.get_session_sync('sync-test')
             >>> found is transport
             True
-            >>>
+
             >>> # Not found
             >>> reg.get_session_sync('nonexistent') is None
             True
@@ -884,8 +897,17 @@ class SessionRegistry(SessionBackend):
         if self._backend == "none":
             return None
 
-        return self._sessions.get(session_id)
-
+        # For sync method, just access directly without lock to avoid async/sync mixing
+        session_entry = self._sessions.get(session_id)
+        if session_entry:
+            # Handle the new dict structure: {'transport': t, 'pooled': p, 'created_at': time}
+            if isinstance(session_entry, dict):
+                return session_entry.get('transport') # Return the transport object from the dict
+            else:
+                # For backward compatibility - if it's directly a transport object
+                return session_entry
+        return None
+    
     async def respond(
         self,
         server_id: Optional[str],
@@ -1108,11 +1130,24 @@ class SessionRegistry(SessionBackend):
         """
         try:
             # Check all local sessions
-            local_transports = {}
+            local_sessions_copy = {}
             async with self._lock:
-                local_transports = self._sessions.copy()
+                # Create a copy of session data for checking
+                for sid, entry in self._sessions.items():
+                    if isinstance(entry, dict):
+                        local_sessions_copy[sid] = {
+                            'transport': entry['transport'],
+                            'pooled': entry.get('pooled', False)
+                        }
+                    else:
+                        # For backward compatibility with direct transport storage
+                        local_sessions_copy[sid] = {
+                            'transport': entry,
+                            'pooled': False
+                        }
 
-            for session_id, transport in local_transports.items():
+            for session_id, session_data in local_sessions_copy.items():
+                transport = session_data['transport']
                 try:
                     if await transport.is_connected():
                         # Refresh TTL in Redis
@@ -1180,11 +1215,24 @@ class SessionRegistry(SessionBackend):
                     logger.info(f"Cleaned up {deleted} expired database sessions")
 
                 # Check local sessions against database
-                local_transports = {}
+                local_sessions_copy = {}
                 async with self._lock:
-                    local_transports = self._sessions.copy()
+                    # Create a copy of session data for checking
+                    for sid, entry in self._sessions.items():
+                        if isinstance(entry, dict):
+                            local_sessions_copy[sid] = {
+                                'transport': entry['transport'],
+                                'pooled': entry.get('pooled', False)
+                            }
+                        else:
+                            # For backward compatibility with direct transport storage
+                            local_sessions_copy[sid] = {
+                                'transport': entry,
+                                'pooled': False
+                            }
 
-                for session_id, transport in local_transports.items():
+                for session_id, session_data in local_sessions_copy.items():
+                    transport = session_data['transport']
                     try:
                         if not await transport.is_connected():
                             await self.remove_session(session_id)
@@ -1567,7 +1615,7 @@ class SessionRegistry(SessionBackend):
     # ------------------------------
     # Observability
     # ------------------------------
-    
+
     def get_metrics(self) -> Dict[str, int]:
         """
         Retrieve internal metrics counters for the session registry.

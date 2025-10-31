@@ -483,4 +483,13 @@ class SSETransport(Transport):
             >>> transport1.session_id != transport2.session_id
             True
         """
-        return self.session_id
+        return self._session_id
+    
+    @session_id.setter
+    def session_id(self, value: str) -> None:
+        """
+        Set the session ID for this transport.
+
+        Args:
+            value (str): The session ID to set"""
+        self._session_id = value

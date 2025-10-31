@@ -136,7 +136,16 @@ class Transport(ABC):
         """
 
     async def validate_session(self) -> bool:
-        """Validate session is still usable."""
+        """Validate session is still usable.
+
+        Returns:
+            True if session is valid
+
+        Examples:
+            >>> # This method uses is_connected to validate session
+            >>> import inspect
+            >>> inspect.ismethod(Transport.validate_session)
+            False
+            >>> hasattr(Transport, 'validate_session')
+            True"""
         return await self.is_connected()
-    
-    
