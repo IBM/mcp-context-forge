@@ -13,23 +13,22 @@ plugins:
       - server_ids: []  # Apply to all servers
         tenant_ids: []  # Apply to all tenants
     config:
-      policy_lang: cedar # custom_dsl
-      policy: 
-        - id: allow-admin-tools
-          effect: Permit
-          principal: Role::"admin"
-          action:
-            - Action::"get_users"
-            - Action::"submit_request"
-          resource: Resource::"tools"
+      policy_lang: custom_dsl
+      policy: |
+          [role:admin:agents]
+          customer_service
+          approval
+          
+          [role:admin:tools]
+          get_users
+          submit_request
 
-        - id: allow-users-tools
-          effect: Permit
-          principal: Role::"users"
-          action:
-            - Action::"get_users"
-            - Action::"submit_request"
-          resource: Resource::"tools"
+          [role:users:agents]
+          customer_service
+          
+          [role:users:tools]
+          get_users
+          submit_request
 
 # Plugin directories to scan
 plugin_dirs:
@@ -42,3 +41,5 @@ plugin_settings:
   fail_on_plugin_error: false
   enable_plugin_api: true
   plugin_health_check_interval: 60
+
+

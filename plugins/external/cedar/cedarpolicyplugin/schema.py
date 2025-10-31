@@ -9,7 +9,7 @@ This module defines schema for Cedar plugin.
 """
 
 # Standard
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 # Third-Party
 from pydantic import BaseModel
@@ -24,7 +24,7 @@ class CedarInput(BaseModel):
         resource (str): specifies the resource
         context (Optional[dict[str, Any]]) : context provided for policy evaluation.
     """
-    user: str = ""
+    principal: str = ""
     action: str = ""
     resource: str = ""
     context: Optional[dict[Any,Any]] = None
@@ -35,4 +35,4 @@ class CedarConfig(BaseModel):
 
     # Base url on which opa server is running
     policy_lang: str  = "None"
-    policy: list[dict] = None
+    policy: Union[list,str] = None

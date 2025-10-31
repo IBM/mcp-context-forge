@@ -9,6 +9,7 @@ This module loads configurations for plugins.
 
 # Standard
 from enum import Enum
+import re
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -34,7 +35,7 @@ from mcpgateway.services.logging_service import LoggingService
 
 # Third-Party
 from cedarpolicyplugin.schema import CedarConfig, CedarInput
-from cedarpy import Decision, format_policies
+from cedarpy import is_authorized, AuthzResult, Decision
 
 
 # Initialize logging service first
@@ -70,7 +71,7 @@ class CedarPolicyPlugin(MCPPlugin):
         """
         super().__init__(config)
         self.cedar_config = CedarConfig.model_validate(self._config.config)
-        self.opa_context_key = "cedar_policy_context"
+        self.cedar_context_key = "cedar_policy_context"
 
     def _extract_jwt_info(self) -> dict:
         jwt_info = {}
@@ -84,22 +85,64 @@ class CedarPolicyPlugin(MCPPlugin):
         }
         return jwt_info
 
-    def _evaluate_policy(self,user, action, resource, policies):
-        jwt_info = self._extract_jwt_info()
-        user_role = jwt_info["users"].get(user)
-        if not user_role:
-            return "Deny"  
-
-        for policy in policies:
-            if policy["principal"] == f'Role::"{user_role}"' and \
-            f'Action::"{action}"' in policy["action"] and \
-            policy["resource"] == f'Resource::"{resource}"':
-                return policy["effect"]
-            else:
-                return "Deny"
+    def _evaluate_policy(self,request,policy_expr):
+        result: AuthzResult = is_authorized(request, policy_expr, [])
+        decision = "Permit" if result.decision == Decision.Allow else "Deny"
+        return decision
+            
+    def _yamlpolicy2text(self,yaml_policies):
+        cedar_policy_text = ""
+        for policy in yaml_policies:
+            actions_str = ", ".join(policy["action"])
+            cedar_policy_text += f'permit(\n'
+            cedar_policy_text += f'  principal == {policy["principal"]},\n'
+            cedar_policy_text += f'  action in [{actions_str}],\n'
+            cedar_policy_text += f'  resource == {policy["resource"]}\n'
+            cedar_policy_text += f');\n\n'
+        return cedar_policy_text
 
     def _dsl2cedar(self,policy_string:str) -> str:
-        return "policy"
+        lines = [line.strip() for line in policy_string.splitlines() if line.strip()]
+        policies = []
+        current_role = None
+        current_resource = None
+        current_actions = []
+
+        for line in lines:
+            match = re.match(r'\[role:(\w+):(\w+)\]', line)
+            if match:
+                if current_role and current_resource and current_actions:
+                    policies.append({
+                        "id": f"allow-{current_role}-{current_resource}",
+                        "effect": "Permit",
+                        "principal": f'Role::"{current_role}"',
+                        "action": [f'Action::"{a}"' for a in current_actions],
+                        "resource": f'Resource::"{current_resource}"'
+                    })
+                current_role, current_resource = match.groups()
+                current_actions = []
+            else:
+                current_actions.append(line)
+        if current_role and current_resource and current_actions:
+            policies.append({
+                "id": f"allow-{current_role}-{current_resource}",
+                "effect": "Permit",
+                "principal": f'Role::"{current_role}"',
+                "action": [f'Action::"{a}"' for a in current_actions],
+                "resource": f'Resource::"{current_resource}"'
+            })
+
+        cedar_policy_text = self._yamlpolicy2text(policies)
+        return cedar_policy_text
+    
+    def _preprocess_request(self,user,action,resource):
+        jwt_info = self._extract_jwt_info()
+        user_role = jwt_info["users"].get(user)
+        principal_expr = f'Role::"{user_role}"'
+        action_expr = f'Action::"{action}"'
+        resource_expr = f'Resource::"{resource}"'
+        request = CedarInput(principal=principal_expr,action=action_expr,resource=resource_expr,context={}).model_dump()
+        return request
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook run before a prompt is retrieved and rendered.
@@ -139,23 +182,24 @@ class CedarPolicyPlugin(MCPPlugin):
         logger.info(f"Processing {hook_type} for '{payload.name}' with {len(payload.args) if payload.args else 0} arguments")
         logger.info(f"Processing context {context}")
         
-        if not payload.args:
-            return ToolPreInvokeResult()
 
         policy = None
         user = ""
         if self.cedar_config.policy_lang == "cedar":
             if self.cedar_config.policy:
-                policy = self.cedar_config.policy
+                policy = self._yamlpolicy2text(self.cedar_config.policy)
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy) 
+
         if context.global_context.user:
             user = context.global_context.user
         
-        request = CedarInput(user=user,action=payload.name,resource="tools",context={}).model_dump()
+        request = self._preprocess_request(user,payload.name,"tools")
+        import pdb
+        pdb.set_trace()
         if policy:
-            decision = self._evaluate_policy(request["user"], request["action"], request["resource"],policy)
+            decision = self._evaluate_policy(request,policy)
             if decision == Decision.Deny.value:
                 violation = PluginViolation(
                     reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
