@@ -8299,7 +8299,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
             "url": full_url,
             "headers": headers
         }
-        
+
         if request.body is not None:
             if content_type == "application/x-www-form-urlencoded":
                 # Set proper content type header and use data parameter for form encoding
