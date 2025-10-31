@@ -22,9 +22,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -65,7 +63,7 @@ class OPAResponseTemplates(str, Enum):
 HookPayload: TypeAlias = ToolPreInvokePayload | ToolPostInvokePayload | PromptPosthookPayload | PromptPrehookPayload | ResourcePreFetchPayload | ResourcePostFetchPayload
 
 
-class OPAPluginFilter(MCPPlugin):
+class OPAPluginFilter(Plugin):
     """An OPA plugin that enforces rego policies on requests and allows/denies requests as per policies."""
 
     def __init__(self, config: PluginConfig):

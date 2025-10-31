@@ -23,9 +23,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
@@ -105,7 +103,7 @@ def _validate(data: Any, schema: Dict[str, Any]) -> list[str]:
     return errors
 
 
-class SchemaGuardPlugin(MCPPlugin):
+class SchemaGuardPlugin(Plugin):
     """Validate tool args and results using a simple schema subset."""
 
     def __init__(self, config: PluginConfig) -> None:

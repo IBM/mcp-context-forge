@@ -1,6 +1,6 @@
 plugins:
   - name: ContextTrackingAgent
-    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_test.ContextTrackingAgentPlugin
+    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_plugins.ContextTrackingAgentPlugin
     description: An agent plugin that tracks state in local context
     version: "1.0.0"
     author: Test Suite

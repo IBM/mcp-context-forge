@@ -25,9 +25,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin, 
+    Plugin, 
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -62,7 +60,7 @@ def _ext_from_uri(uri: str) -> str:
     return ""
 
 
-class FileTypeAllowlistPlugin(MCPPlugin):
+class FileTypeAllowlistPlugin(Plugin):
     """Block non-allowed file types for resources."""
 
     def __init__(self, config: PluginConfig) -> None:

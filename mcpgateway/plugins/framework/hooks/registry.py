@@ -115,7 +115,7 @@ class HookRegistry:
 
         Examples:
             >>> registry = HookRegistry()
-            >>> from mcpgateway.plugins.framework import PluginPayload
+            >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
             >>> registry.register_hook("test", PluginPayload, PluginResult)
             >>> payload = registry.json_to_payload("test", "{}")
         """
@@ -142,7 +142,7 @@ class HookRegistry:
 
         Examples:
             >>> registry = HookRegistry()
-            >>> from mcpgateway.plugins.framework import PluginResult
+            >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
             >>> registry.register_hook("test", PluginPayload, PluginResult)
             >>> result = registry.json_to_result("test", '{"continue_processing": true}')
         """

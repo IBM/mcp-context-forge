@@ -18,9 +18,7 @@ from pydantic import BaseModel
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -54,7 +52,7 @@ class SearchReplaceConfig(BaseModel):
     words: list[SearchReplace]
 
 
-class SearchReplacePlugin(MCPPlugin):
+class SearchReplacePlugin(Plugin):
     """Example search replace plugin."""
 
     def __init__(self, config: PluginConfig):

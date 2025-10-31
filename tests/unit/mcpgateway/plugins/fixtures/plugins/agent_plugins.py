@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/agent_test.py
+"""Location: ./tests/unit/mcpgateway/plugins/fixtures/plugins/agent_plugins.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Teryl Taylor
@@ -9,9 +9,9 @@ Test agent plugins for unit testing.
 
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
-from mcpgateway.plugins.framework import PluginContext
-from mcpgateway.plugins.agent import (
-    AgentPlugin,
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginContext,
     AgentPreInvokePayload,
     AgentPreInvokeResult,
     AgentPostInvokePayload,
@@ -19,7 +19,7 @@ from mcpgateway.plugins.agent import (
 )
 
 
-class PassThroughAgentPlugin(AgentPlugin):
+class PassThroughAgentPlugin(Plugin):
     """A simple pass-through agent plugin that doesn't modify anything."""
 
     async def agent_pre_invoke(
@@ -51,7 +51,7 @@ class PassThroughAgentPlugin(AgentPlugin):
         return AgentPostInvokeResult(continue_processing=True)
 
 
-class MessageFilterAgentPlugin(AgentPlugin):
+class MessageFilterAgentPlugin(Plugin):
     """An agent plugin that filters messages containing blocked words."""
 
     async def agent_pre_invoke(
@@ -153,7 +153,7 @@ class MessageFilterAgentPlugin(AgentPlugin):
         return AgentPostInvokeResult(continue_processing=True)
 
 
-class ContextTrackingAgentPlugin(AgentPlugin):
+class ContextTrackingAgentPlugin(Plugin):
     """An agent plugin that tracks state in local context."""
 
     async def agent_pre_invoke(

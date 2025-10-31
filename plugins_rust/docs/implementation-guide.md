@@ -314,7 +314,7 @@ except ImportError:
     RUST_AVAILABLE = False
 
 
-class PIIFilterPlugin(MCPPlugin):
+class PIIFilterPlugin(Plugin):
     """PII Filter with automatic Rust/Python selection."""
 
     def __init__(self, config: PluginConfig):

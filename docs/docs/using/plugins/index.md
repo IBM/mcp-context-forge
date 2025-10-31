@@ -89,7 +89,7 @@ Decide between a native (in‑process) or external (MCP) plugin:
 ```python
 from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PromptPrehookPayload, PromptPrehookResult
 
-class MyPlugin(MCPPlugin):
+class MyPlugin(Plugin):
     def __init__(self, config: PluginConfig):
         super().__init__(config)
 
@@ -539,7 +539,7 @@ from mcpgateway.plugins.framework import (
     ResourcePostFetchResult
 )
 
-class MyPlugin(MCPPlugin):
+class MyPlugin(Plugin):
     """Example plugin implementation."""
 
     def __init__(self, config: PluginConfig):
@@ -813,7 +813,7 @@ Metadata for other entities such as prompts and resources will be added in futur
 ### External Service Plugin Example
 
 ```python
-class LLMGuardPlugin(MCPPlugin):
+class LLMGuardPlugin(Plugin):
     """Example external service integration."""
 
     def __init__(self, config: PluginConfig):
@@ -901,7 +901,7 @@ default_config:
 # plugins/my_plugin/plugin.py
 from mcpgateway.plugins.framework import Plugin
 
-class MyPlugin(MCPPlugin):
+class MyPlugin(Plugin):
     # Implementation here
     pass
 ```
@@ -963,7 +963,7 @@ Errors inside a plugin should be raised as exceptions.  The plugin manager will 
 - Consider async operations for I/O
 
 ```python
-class CachedPlugin(MCPPlugin):
+class CachedPlugin(Plugin):
     def __init__(self, config):
         super().__init__(config)
         self._cache = {}

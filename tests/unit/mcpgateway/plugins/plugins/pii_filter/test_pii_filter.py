@@ -17,9 +17,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginMode,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
+    PromptHookType,
     PromptPosthookPayload,
     PromptPrehookPayload,
 )
@@ -231,7 +229,7 @@ class TestPIIFilterPlugin:
             author="Test",
             kind="plugins.pii_filter.pii_filter.PIIFilterPlugin",
             version="1.0",
-            hooks=[HookType.PROMPT_PRE_FETCH, HookType.PROMPT_POST_FETCH],
+            hooks=[PromptHookType.PROMPT_PRE_FETCH, PromptHookType.PROMPT_POST_FETCH],
             tags=["test", "pii"],
             mode=PluginMode.ENFORCE,
             priority=10,
@@ -416,7 +414,7 @@ async def test_integration_with_manager():
         payload = PromptPrehookPayload(prompt_id="test_prompt", args={"input": "Email: test@example.com, SSN: 123-45-6789"})
 
         global_context = GlobalContext(request_id="test-manager")
-        result, contexts = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, payload, global_context)
+        result, contexts = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, payload, global_context)
 
         # Verify PII was masked
         assert result.modified_payload is not None

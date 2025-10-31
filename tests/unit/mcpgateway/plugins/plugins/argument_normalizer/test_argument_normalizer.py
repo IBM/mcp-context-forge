@@ -15,9 +15,8 @@ from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
+    PromptHookType,
+    ToolHookType,
     PromptPrehookPayload,
     ToolPreInvokePayload,
 )
@@ -32,7 +31,7 @@ def _mk_plugin(config: dict | None = None) -> ArgumentNormalizerPlugin:
     cfg = PluginConfig(
         name="arg_norm",
         kind="plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin",
-        hooks=[HookType.PROMPT_PRE_FETCH, HookType.TOOL_PRE_INVOKE],
+        hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
         priority=30,
         config=config or {},
     )

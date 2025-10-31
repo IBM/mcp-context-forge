@@ -29,9 +29,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPreInvokePayload,
@@ -159,7 +157,7 @@ def _scan_args(args: dict[str, Any] | None, cfg: SQLSanitizerConfig) -> tuple[li
     return issues, scanned
 
 
-class SQLSanitizerPlugin(MCPPlugin):
+class SQLSanitizerPlugin(Plugin):
     """Block or sanitize risky SQL statements in inputs."""
 
     def __init__(self, config: PluginConfig) -> None:

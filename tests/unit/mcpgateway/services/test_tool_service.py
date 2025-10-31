@@ -2233,7 +2233,7 @@ class TestToolService:
         """Test invoking tool with successful plugin post-invoke hook."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ToolHookType
 
         # Configure tool as REST
         mock_tool.integration_type = "REST"
@@ -2261,7 +2261,7 @@ class TestToolService:
         tool_service._plugin_manager = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.TOOL_PRE_INVOKE:
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
             return (mock_post_result, None)
@@ -2309,13 +2309,12 @@ class TestToolService:
         mock_post_result.modified_payload = mock_modified_payload
 
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import PluginResult, ToolHookType
 
         tool_service._plugin_manager = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.TOOL_PRE_INVOKE:
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
             return (mock_post_result, None)
@@ -2364,12 +2363,12 @@ class TestToolService:
 
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ToolHookType
 
         tool_service._plugin_manager = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.TOOL_PRE_INVOKE:
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
             return (mock_post_result, None)
@@ -2410,12 +2409,12 @@ class TestToolService:
         # Mock plugin manager with invoke_hook that raises error on POST_INVOKE
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
-        from mcpgateway.plugins.mcp.entities import HookType
+        from mcpgateway.plugins.framework import ToolHookType
 
         tool_service._plugin_manager = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
-            if hook_type == HookType.TOOL_PRE_INVOKE:
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE - raise error
             raise Exception("Plugin error")

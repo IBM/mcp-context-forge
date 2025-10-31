@@ -1,6 +1,6 @@
 plugins:
   - name: MessageFilterAgent
-    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_test.MessageFilterAgentPlugin
+    kind: tests.unit.mcpgateway.plugins.fixtures.plugins.agent_plugins.MessageFilterAgentPlugin
     description: An agent plugin that filters blocked words
     version: "1.0.0"
     author: Test Suite

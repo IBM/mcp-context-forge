@@ -11,14 +11,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
+    ToolHookType,
     PromptPrehookPayload,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
@@ -55,7 +53,7 @@ def _create_plugin(config_dict=None) -> WebhookNotificationPlugin:
         PluginConfig(
             name="webhook_test",
             kind="plugins.webhook_notification.webhook_notification.WebhookNotificationPlugin",
-            hooks=[HookType.TOOL_POST_INVOKE],
+            hooks=[ToolHookType.TOOL_POST_INVOKE],
             config=default_config,
         )
     )
@@ -465,7 +463,8 @@ class TestWebhookNotificationPlugin:
         # Test post-hook with mock notification
         plugin._notify_webhooks = AsyncMock()
 
-        from mcpgateway.plugins.mcp.entities import PromptPosthookPayload, PromptResult
+        from mcpgateway.plugins.framework import PromptPosthookPayload
+        from mcpgateway.common.models import PromptResult
         post_payload = PromptPosthookPayload(
             prompt_id="test_prompt",
             result=PromptResult(messages=[])

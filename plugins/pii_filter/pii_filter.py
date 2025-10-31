@@ -22,9 +22,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,
@@ -410,7 +408,7 @@ class PIIDetector:
         return self.config.redaction_text
 
 
-class PIIFilterPlugin(MCPPlugin):
+class PIIFilterPlugin(Plugin):
     """PII Filter plugin for detecting and masking sensitive information."""
 
     def __init__(self, config: PluginConfig):

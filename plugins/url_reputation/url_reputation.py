@@ -23,9 +23,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ResourcePreFetchPayload,
     ResourcePreFetchResult,
 )
@@ -43,7 +41,7 @@ class URLReputationConfig(BaseModel):
     blocked_patterns: List[str] = Field(default_factory=list)
 
 
-class URLReputationPlugin(MCPPlugin):
+class URLReputationPlugin(Plugin):
     """Static allow/deny URL reputation checks."""
 
     def __init__(self, config: PluginConfig) -> None:

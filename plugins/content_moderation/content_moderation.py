@@ -27,9 +27,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ToolPostInvokePayload,
@@ -176,7 +174,7 @@ class ModerationResult(BaseModel):
     details: Dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
 
-class ContentModerationPlugin(MCPPlugin):
+class ContentModerationPlugin(Plugin):
     """Plugin for advanced content moderation using multiple AI providers."""
 
     def __init__(self, config: PluginConfig) -> None:

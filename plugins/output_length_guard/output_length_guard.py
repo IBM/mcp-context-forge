@@ -37,9 +37,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
@@ -100,7 +98,7 @@ def _truncate(value: str, max_chars: int, ellipsis: str) -> str:
     return value[:cut] + ell
 
 
-class OutputLengthGuardPlugin(MCPPlugin):
+class OutputLengthGuardPlugin(Plugin):
     """Guard tool outputs by length with block or truncate strategies."""
 
     def __init__(self, config: PluginConfig):

@@ -9,13 +9,11 @@ Tests for HTMLToMarkdownPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    HookType,
+    ResourceHookType,
     ResourcePostFetchPayload,
 )
 from mcpgateway.common.models import ResourceContent
@@ -28,7 +26,7 @@ async def test_html_to_markdown_transforms_basic_html():
         PluginConfig(
             name="html2md",
             kind="plugins.html_to_markdown.html_to_markdown.HTMLToMarkdownPlugin",
-            hooks=[HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_POST_FETCH],
         )
     )
     html = "<h1>Title</h1><p>Hello <a href=\"https://x\">link</a></p><pre><code>print('x')</code></pre>"

@@ -24,9 +24,7 @@ from mcpgateway.db import get_db
 from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     HttpHeaderPayload,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
@@ -77,7 +75,7 @@ class VaultConfig(BaseModel):
     system_handling: SystemHandling = SystemHandling.TAG
 
 
-class Vault(MCPPlugin):
+class Vault(Plugin):
     """Vault plugin that based on OAUTH2 config that protects a tool will generate bearer token based on a vault saved token"""
 
     def __init__(self, config: PluginConfig):

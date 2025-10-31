@@ -496,7 +496,7 @@ try:
 except ImportError:
     RUST_AVAILABLE = False
 
-class MyPlugin(MCPPlugin):
+class MyPlugin(Plugin):
     def __init__(self, config):
         if RUST_AVAILABLE:
             self.impl = RustMyPlugin(config)
@@ -624,7 +624,7 @@ If you have an existing Python plugin you want to optimize:
 You don't need to convert entire plugins at once:
 
 ```python
-class MyPlugin(MCPPlugin):
+class MyPlugin(Plugin):
     def __init__(self, config):
         # Use Rust for expensive operations
         if RUST_AVAILABLE:

@@ -26,9 +26,7 @@ from mcpgateway.plugins.framework import (
     PluginConfig,
     PluginContext,
     PluginViolation,
-)
-from mcpgateway.plugins.mcp.entities import (
-    MCPPlugin,
+    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,
@@ -89,7 +87,7 @@ def _parse_meta(text: str) -> dict[str, str]:
     return found
 
 
-class RobotsLicenseGuardPlugin(MCPPlugin):
+class RobotsLicenseGuardPlugin(Plugin):
     """Honors robots/noai/license meta tags in fetched HTML content."""
 
     def __init__(self, config: PluginConfig) -> None:
