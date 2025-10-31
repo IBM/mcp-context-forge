@@ -8,6 +8,7 @@ Test multi-header authentication functionality.
 """
 
 # Standard
+import base64
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -18,8 +19,10 @@ from starlette.datastructures import FormData
 
 # First-Party
 from mcpgateway.admin import admin_add_gateway
-from mcpgateway.schemas import GatewayCreate, GatewayUpdate
-from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.config import settings
+from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate
+from mcpgateway.services.gateway_service import GatewayService
+from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 
 class TestMultiAuthHeaders:
@@ -260,3 +263,125 @@ class TestMultiAuthHeaders:
         assert decoded["X-API-Key"] == "test1"
         assert decoded["X_API_KEY"] == "test2"
         assert decoded["API-Key-123"] == "test3"
+
+    def test_gateway_read_includes_masked_auth_headers(self, monkeypatch):
+        """Ensure GatewayRead surfaces auth_headers and masks values."""
+        monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
+        auth_map = {"X-API-Key": "secret123", "X-Trace": "trace-value"}
+        gateway_read = GatewayRead(
+            name="Masked Gateway",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_value=encode_auth(auth_map),
+        )
+
+        assert gateway_read.auth_headers is not None
+        assert {header["key"] for header in gateway_read.auth_headers} == set(auth_map.keys())
+        assert gateway_read.auth_headers_unmasked == gateway_read.auth_headers
+
+        masked = gateway_read.masked()
+        assert masked.auth_headers is not None
+        for header in masked.auth_headers:
+            if header["value"]:
+                assert header["value"] == settings.masked_auth_value
+        assert masked.auth_headers_unmasked is not None
+        for header in masked.auth_headers_unmasked:
+            assert header["value"] == auth_map[header["key"]]
+
+    @pytest.mark.asyncio
+    async def test_gateway_update_preserves_masked_header_values(self, monkeypatch):
+        """Confirm updating a gateway retains existing header secrets when masked."""
+        monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
+
+        service = GatewayService()
+        existing_headers = {"X-API-Key": "secret123", "X-Trace": "trace-1"}
+
+        gateway_db_obj = MagicMock()
+        gateway_db_obj.id = "gateway-1"
+        gateway_db_obj.name = "Gateway"
+        gateway_db_obj.slug = "gateway"
+        gateway_db_obj.enabled = True
+        gateway_db_obj.visibility = "public"
+        gateway_db_obj.transport = "SSE"
+        gateway_db_obj.tags = []
+        gateway_db_obj.auth_type = "authheaders"
+        gateway_db_obj.auth_value = encode_auth(existing_headers)
+        gateway_db_obj.url = "http://example.com"
+        gateway_db_obj.tools = []
+        gateway_db_obj.resources = []
+        gateway_db_obj.prompts = []
+        gateway_db_obj.capabilities = {}
+        gateway_db_obj.last_seen = None
+        gateway_db_obj.version = 1
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = gateway_db_obj
+        mock_db.execute.return_value = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        mock_db.add_all = MagicMock()
+        mock_db.delete = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.refresh = MagicMock()
+
+        monkeypatch.setattr(service, "_initialize_gateway", AsyncMock(return_value=({}, [], [], [])))
+        monkeypatch.setattr(service, "_update_or_create_tools", MagicMock(return_value=[]))
+        monkeypatch.setattr(service, "_update_or_create_resources", MagicMock(return_value=[]))
+        monkeypatch.setattr(service, "_update_or_create_prompts", MagicMock(return_value=[]))
+        monkeypatch.setattr(service, "_notify_gateway_updated", AsyncMock())
+        monkeypatch.setattr(service, "_get_team_name", MagicMock(return_value=None))
+        monkeypatch.setattr(service, "_prepare_gateway_for_read", lambda value: value)
+
+        monkeypatch.setattr(GatewayRead, "model_validate", staticmethod(lambda value: value))
+
+        gateway_update = GatewayUpdate(
+            name="Gateway",
+            url="http://example.com",
+            auth_type="authheaders",
+            auth_headers=[
+                {"key": "X-API-Key", "value": settings.masked_auth_value},
+                {"key": "X-Trace", "value": "updated-trace"},
+            ],
+        )
+
+        result = await service.update_gateway(
+            mock_db,
+            "gateway-1",
+            gateway_update,
+            modified_by=None,
+        )
+
+        updated_auth = gateway_db_obj.auth_value
+        if isinstance(updated_auth, str):
+            updated_auth = decode_auth(updated_auth)
+
+        assert updated_auth["X-API-Key"] == "secret123"
+        assert updated_auth["X-Trace"] == "updated-trace"
+        assert result is gateway_db_obj
+
+    def test_gateway_read_unmasked_basic_and_bearer(self, monkeypatch):
+        """Verify GatewayRead retains unmasked values for basic and bearer auth."""
+        monkeypatch.setattr(settings, "auth_encryption_secret", "unit-test-secret")
+
+        # Basic auth
+        creds = base64.b64encode(b"user:secret-pass").decode("utf-8")
+        basic_gateway = GatewayRead(
+            name="Basic Gateway",
+            url="http://example.com",
+            auth_type="basic",
+            auth_value=encode_auth({"Authorization": f"Basic {creds}"}),
+        )
+        assert basic_gateway.auth_password_unmasked == "secret-pass"
+        masked_basic = basic_gateway.masked()
+        assert masked_basic.auth_password == settings.masked_auth_value
+        assert masked_basic.auth_password_unmasked == "secret-pass"
+
+        # Bearer auth
+        bearer_gateway = GatewayRead(
+            name="Bearer Gateway",
+            url="http://example.com",
+            auth_type="bearer",
+            auth_value=encode_auth({"Authorization": "Bearer token-123"}),
+        )
+        assert bearer_gateway.auth_token_unmasked == "token-123"
+        masked_bearer = bearer_gateway.masked()
+        assert masked_bearer.auth_token == settings.masked_auth_value
+        assert masked_bearer.auth_token_unmasked == "token-123"

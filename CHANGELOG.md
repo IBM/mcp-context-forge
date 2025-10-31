@@ -234,6 +234,9 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Non-root Container Users** (#1231) - Added non-root user to scratch Go containers
 * **Container Runtime Detection** - Improved Docker/Podman detection in Makefile
 
+#### **💻 Admin UI Fixes** (#1370)
+* **Saved custom headers not visible** (#1370) - Fixed custom headers not visible to Admins when editing a MCP server using custom headers for auth.
+
 ### Changed
 
 #### **🗄️ Database Schema & Multi-Tenancy Enhancements** (#1246, #1273)
