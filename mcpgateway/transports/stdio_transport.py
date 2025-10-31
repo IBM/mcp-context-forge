@@ -109,19 +109,25 @@ class StdioTransport(Transport):
             True
         """
         loop = asyncio.get_running_loop()
+        try:
+            reader = asyncio.StreamReader()
+            protocol = asyncio.StreamReaderProtocol(reader)
+            await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+            self._stdin_reader = reader
 
-        # Set up stdin reader
-        reader = asyncio.StreamReader()
-        protocol = asyncio.StreamReaderProtocol(reader)
-        await loop.connect_read_pipe(lambda: protocol, sys.stdin)
-        self._stdin_reader = reader
+            transport, protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout)
+            self._stdout_writer = asyncio.StreamWriter(transport, protocol, reader, loop)
 
-        # Set up stdout writer
-        transport, protocol = await loop.connect_write_pipe(asyncio.streams.FlowControlMixin, sys.stdout)
-        self._stdout_writer = asyncio.StreamWriter(transport, protocol, reader, loop)
-
-        self._connected = True
-        logger.info("stdio transport connected")
+            self._connected = True
+            logger.info("stdio transport connected")
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.error(f"Connection lost during stdio setup: {e}")
+            self._connected = False
+            raise RuntimeError("Failed to establish stdio transport connection due to large environment or broken pipe.")
+        except Exception as e:
+            logger.error(f"Unexpected error during stdio connect: {e}")
+            self._connected = False
+            raise
 
     async def disconnect(self) -> None:
         """Clean up stdio streams.
@@ -174,8 +180,15 @@ class StdioTransport(Transport):
 
         try:
             data = json.dumps(message)
-            self._stdout_writer.write(f"{data}\n".encode())
+            encoded = f"{data}\n".encode()
+            if len(encoded) > 10_000_000:  # 10MB safeguard
+                logger.warning("Message size exceeds 10MB; may cause pipe reset.")
+            self._stdout_writer.write(encoded)
             await self._stdout_writer.drain()
+        except (ConnectionResetError, BrokenPipeError) as e:
+            logger.error(f"Connection lost while sending message: {e}")
+            self._connected = False
+            raise RuntimeError("Connection lost while sending message; possible large environment variable overflow.")
         except Exception as e:
             logger.error(f"Failed to send message: {e}")
             raise
