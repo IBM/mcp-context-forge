@@ -2295,7 +2295,7 @@ async function editTool(toolId) {
         }
         if (outputSchemaField) {
             if (tool.outputSchema) {
-                outputSchemaField.value = outputSchemaValidation.valid 
+                outputSchemaField.value = outputSchemaValidation.valid
                     ? JSON.stringify(outputSchemaValidation.value, null, 2)
                     : "";
             } else {
