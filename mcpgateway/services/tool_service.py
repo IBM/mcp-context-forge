@@ -687,13 +687,10 @@ class ToolService:
                 plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
-            logger.info(f"Registering tool: {db_tool.name} (output_schema: {db_tool.output_schema}")
-
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
