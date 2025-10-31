@@ -2756,8 +2756,13 @@ endif
 # Alternative: Always default to docker compose unless explicitly overridden
 # COMPOSE_CMD ?= docker compose
 
+# Profile detection (for platform-specific services)
+ifeq ($(PLATFORM),linux/amd64)
+    PROFILE = --profile with-fast-time 
+endif
+
 define COMPOSE
-$(COMPOSE_CMD) -f $(COMPOSE_FILE)
+$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE) 
 endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
