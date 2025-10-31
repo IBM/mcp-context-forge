@@ -498,8 +498,8 @@ class ToolService:
                         if isinstance(c, dict) and "type" in c and c.get("type") == "text" and "text" in c:
                             structured = json.loads(c.get("text") or "null")
                             break
-                    except Exception:
-                        # ignore parse errors and continue
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        # ignore JSON parse errors and continue
                         continue
 
             # If no structured data found, treat as valid (nothing to validate)
