@@ -44,3 +44,10 @@
 
     !!! quote
         "Learn how ContextForge MCP Gateway works - a secure, unified middleware for scaling agentic AI integrations in the enterprise."
+
+!!! details "QA Automation Gateway — Intelligent Performance & Test Orchestration using IBM MCP Context Forge"
+    **Author:** Sumit Ghosh - Performance/Automation Lead, Agentic AI @ IBM | **Date:** Oct 31, 2025 | **10 min read**
+    [Read on Medium](https://medium.com/@sumitgprofessional01/qa-mcp-gateway-neoload-dynatrace-correlation-tool-using-ibms-mcp-contextforge-gateway-11341a5fc9dd)
+
+    !!! quote
+        "Explore how QA Automation Gateway, built on IBM MCP Context Forge, lays the foundation for AI-driven QA orchestration — enabling self-learning, intelligent test ecosystems that redefine Quality Engineering."
