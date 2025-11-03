@@ -15,8 +15,9 @@ from typing import Any, Optional
 from pydantic import Field
 
 # First-Party
-from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+
 
 class ToolHookType(str, Enum):
     """MCP Forge Gateway hook points.
@@ -96,6 +97,7 @@ class ToolPostInvokePayload(PluginPayload):
 
 ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
 ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
+
 
 def _register_tool_hooks():
     """Register Tool hooks in the global registry.

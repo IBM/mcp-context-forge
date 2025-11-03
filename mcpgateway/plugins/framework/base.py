@@ -414,8 +414,7 @@ class HookRef:
         if not self._func:
             raise PluginError(
                 error=PluginErrorModel(
-                    message=f"Plugin '{plugin_ref.plugin.name}' has no hook: '{hook}'. "
-                    f"Method must either be named '{hook}' or decorated with @hook('{hook}')",
+                    message=f"Plugin '{plugin_ref.plugin.name}' has no hook: '{hook}'. " f"Method must either be named '{hook}' or decorated with @hook('{hook}')",
                     plugin_name=plugin_ref.plugin.name,
                 )
             )
@@ -510,6 +509,7 @@ class HookRef:
         except Exception as e:
             # Type hints might use forward references or unavailable types
             # We'll skip validation rather than fail
+            # Standard
             import logging
 
             logger = logging.getLogger(__name__)
@@ -521,8 +521,7 @@ class HookRef:
         if payload_param_name not in hints:
             raise PluginError(
                 error=PluginErrorModel(
-                    message=f"Plugin '{plugin_name}' hook '{hook}' missing type hint for parameter '{payload_param_name}'. "
-                    f"Expected: {payload_param_name}: {expected_payload_type.__name__}",
+                    message=f"Plugin '{plugin_name}' hook '{hook}' missing type hint for parameter '{payload_param_name}'. " f"Expected: {payload_param_name}: {expected_payload_type.__name__}",
                     plugin_name=plugin_name,
                 )
             )
@@ -539,8 +538,7 @@ class HookRef:
             if expected_type_str not in actual_type_str:
                 raise PluginError(
                     error=PluginErrorModel(
-                        message=f"Plugin '{plugin_name}' hook '{hook}' parameter '{payload_param_name}' "
-                        f"has incorrect type hint. Expected: {expected_type_str}, Got: {actual_type_str}",
+                        message=f"Plugin '{plugin_name}' hook '{hook}' parameter '{payload_param_name}' " f"has incorrect type hint. Expected: {expected_type_str}, Got: {actual_type_str}",
                         plugin_name=plugin_name,
                     )
                 )
@@ -549,8 +547,7 @@ class HookRef:
         if "return" not in hints:
             raise PluginError(
                 error=PluginErrorModel(
-                    message=f"Plugin '{plugin_name}' hook '{hook}' missing return type hint. "
-                    f"Expected: -> {expected_result_type.__name__}",
+                    message=f"Plugin '{plugin_name}' hook '{hook}' missing return type hint. " f"Expected: -> {expected_result_type.__name__}",
                     plugin_name=plugin_name,
                 )
             )
@@ -564,8 +561,7 @@ class HookRef:
         if expected_return_str not in return_type_str and actual_return_type != expected_result_type:
             raise PluginError(
                 error=PluginErrorModel(
-                    message=f"Plugin '{plugin_name}' hook '{hook}' has incorrect return type hint. "
-                    f"Expected: {expected_return_str}, Got: {return_type_str}",
+                    message=f"Plugin '{plugin_name}' hook '{hook}' has incorrect return type hint. " f"Expected: {expected_return_str}, Got: {return_type_str}",
                     plugin_name=plugin_name,
                 )
             )

@@ -49,16 +49,7 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import (
-    GlobalContext,
-    PluginError,
-    PluginManager,
-    PluginViolationError,
-    ToolHookType,
-    HttpHeaderPayload,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload
-)
+from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService

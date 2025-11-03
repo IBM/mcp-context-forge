@@ -18,8 +18,8 @@ from pydantic import Field
 
 # First-Party
 from mcpgateway.common.models import Message
-from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 
 
 class AgentHookType(str, Enum):
@@ -122,6 +122,7 @@ class AgentPostInvokePayload(PluginPayload):
 AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
 AgentPostInvokeResult = PluginResult[AgentPostInvokePayload]
 
+
 def _register_agent_hooks():
     """Register agent hooks in the global registry.
 
@@ -137,5 +138,6 @@ def _register_agent_hooks():
     if not registry.is_registered(AgentHookType.AGENT_PRE_INVOKE):
         registry.register_hook(AgentHookType.AGENT_PRE_INVOKE, AgentPreInvokePayload, AgentPreInvokeResult)
         registry.register_hook(AgentHookType.AGENT_POST_INVOKE, AgentPostInvokePayload, AgentPostInvokeResult)
+
 
 _register_agent_hooks()

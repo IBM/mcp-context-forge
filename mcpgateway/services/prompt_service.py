@@ -36,13 +36,7 @@ from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import (
-     GlobalContext,
-     PluginManager,
-     PromptHookType,
-     PromptPosthookPayload,
-     PromptPrehookPayload
-)
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.metrics_common import build_top_performers

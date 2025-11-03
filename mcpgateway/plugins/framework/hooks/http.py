@@ -7,10 +7,12 @@ Authors: Teryl Taylor
 Pydantic models for http hooks and payloads.
 """
 
+# Third-Party
 from pydantic import RootModel
 
 # First-Party
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
+
 
 class HttpHeaderPayload(RootModel[dict[str, str]], PluginPayload):
     """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""

@@ -56,13 +56,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import (
-        GlobalContext,
-        PluginManager,
-        ResourceHookType,
-        ResourcePostFetchPayload,
-        ResourcePreFetchPayload
-    )
+    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
