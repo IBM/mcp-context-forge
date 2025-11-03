@@ -5467,11 +5467,34 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
                 <div class="flex items-start justify-between">
                   <div class="flex-1">
-                    <h4
-                      class="text-lg font-medium text-gray-900 dark:text-gray-200"
-                    >
-                      {{ agent.name }}
-                    </h4>
+                    <div class="flex items-center gap-2">
+                      <h4 class="text-lg font-medium text-gray-900 dark:text-gray-200">
+                        {{ agent.name }}
+                      </h4>
+                      
+                      <!-- Owner email: show a visible label with fallback so it's obvious in the UI -->
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Owner:
+                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                        {{ agent.ownerEmail or "test@example.com" }}
+                      </span>
+                       <!-- team : show a visible label with fallback so it's obvious in the UI -->
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Team:
+                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                          {{ agent.team or "Unassigned" }}
+                        </span>
+                      </span>
+                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        Visibility:
+                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                          {{ agent.visibility or "Private" }}
+                        </span>
+                      </span>
+                      <span class="text-sm text-gray-600 dark:text-gray-400">
+                        {{ agent.visibility or "Public" }}
+                      </span>
+                    </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400">
                       {{ agent.description or "" }}
                     </p>
