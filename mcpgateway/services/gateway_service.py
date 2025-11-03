@@ -43,12 +43,12 @@ from datetime import datetime, timezone
 import logging
 import mimetypes
 import os
+import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
-import ssl
 
 # Third-Party
 from filelock import FileLock, Timeout
@@ -407,17 +407,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         finally:
             await validation_client.aclose()
 
-    def create_ssl_context(self, ca_bytes: bytes) -> ssl.SSLContext:
+    def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
-            Args:
-                ca_bytes: CA certificate in bytes
+        Args:
+            ca_certificate: CA certificate in PEM format
 
-            Returns:
-                ssl.SSLContext: Configured SSL context
-            """
+        Returns:
+            ssl.SSLContext: Configured SSL context
+        """
         ctx = ssl.create_default_context()
-        ctx.load_verify_locations(cadata=ca_bytes)
+        ctx.load_verify_locations(cadata=ca_certificate)
         return ctx
 
     async def initialize(self) -> None:
@@ -1252,7 +1252,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     try:
                         ca_certificate = getattr(gateway, "ca_certificate", None)
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(
+                            gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
+                        )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
@@ -2064,12 +2066,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             httpx.AsyncClient: Configured HTTPX async client
                         """
                         return httpx.AsyncClient(
-                            verify=ssl_context if ssl_context else True,
+                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
                             follow_redirects=True,
                             headers=headers,
                             timeout=timeout or httpx.Timeout(30.0),
                             auth=auth,
                         )
+
                     async with httpx.AsyncClient(verify=ssl_context) as client:
                         logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
                         try:
@@ -2138,7 +2141,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     if span:
                                         span.set_attribute("http.status_code", response.status_code)
                             elif (gateway.transport).lower() == "streamablehttp":
-                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
                                     async with ClientSession(read_stream, write_stream) as session:
                                         # Initialize the session
                                         response = await session.initialize()
@@ -2287,7 +2294,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._event_subscribers.remove(queue)
 
     async def _initialize_gateway(
-        self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE", auth_type: Optional[str] = None, oauth_config: Optional[Dict[str, Any]] = None, ca_certificate: Optional[bytes] = None
+        self,
+        url: str,
+        authentication: Optional[Dict[str, str]] = None,
+        transport: str = "SSE",
+        auth_type: Optional[str] = None,
+        oauth_config: Optional[Dict[str, Any]] = None,
+        ca_certificate: Optional[bytes] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 

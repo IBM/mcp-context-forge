@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import ssl
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -36,7 +37,6 @@ from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-import ssl
 
 # First-Party
 from mcpgateway.config import settings
@@ -1294,17 +1294,17 @@ class ToolService:
                     if request_headers:
                         headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
-                    def create_ssl_context(ca_bytes: bytes) -> ssl.SSLContext:
+                    def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.
 
                         Args:
-                            ca_bytes: CA certificate in bytes
+                            ca_certificate: CA certificate in PEM format
 
                         Returns:
                             ssl.SSLContext: Configured SSL context
                         """
                         ctx = ssl.create_default_context()
-                        ctx.load_verify_locations(cadata=ca_bytes)
+                        ctx.load_verify_locations(cadata=ca_certificate)
                         return ctx
 
                     def get_httpx_client_factory(
