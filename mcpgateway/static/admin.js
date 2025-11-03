@@ -17577,14 +17577,28 @@ document.head.appendChild(style);
  */
 function validateCACertFile(event) {
     const file = event.target.files[0];
+    const feedbackEl = document.getElementById("ca-cert-feedback");
+    
     if (!file) {
+        if (feedbackEl) {
+            feedbackEl.innerHTML = "";
+            feedbackEl.className = "mt-2 text-sm";
+        }
         return;
     }
 
     // Check file size (max 10MB for cert files)
     const maxSize = 10 * 1024 * 1024; // 10MB
     if (file.size > maxSize) {
-        showNotification('error', 'Certificate file is too large. Maximum size is 10MB.');
+        if (feedbackEl) {
+            feedbackEl.innerHTML = `
+                <div class="flex items-center text-red-600">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    <span>Certificate file is too large. Maximum size is 10MB.</span>
+                </div>
+            `;
+            feedbackEl.className = "mt-2 text-sm";
+        }
         event.target.value = '';
         return;
     }
@@ -17595,7 +17609,15 @@ function validateCACertFile(event) {
     const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
     
     if (!hasValidExtension) {
-        showNotification('error', 'Invalid file type. Please upload a valid certificate file (.pem, .crt, .cer, .cert)');
+        if (feedbackEl) {
+            feedbackEl.innerHTML = `
+                <div class="flex items-center text-red-600">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    <span>Invalid file type. Please upload a valid certificate file (.pem, .crt, .cer, .cert)</span>
+                </div>
+            `;
+            feedbackEl.className = "mt-2 text-sm";
+        }
         event.target.value = '';
         return;
     }
@@ -17607,28 +17629,49 @@ function validateCACertFile(event) {
         
         // Validate PEM format
         if (!isValidCertificate(content)) {
-            showNotification('error', 'Invalid certificate format. The file must contain a valid PEM-encoded certificate.');
+            if (feedbackEl) {
+                feedbackEl.innerHTML = `
+                    <div class="flex items-center text-red-600">
+                        <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                        <span>Invalid certificate format. The file must contain a valid PEM-encoded certificate.</span>
+                    </div>
+                `;
+                feedbackEl.className = "mt-2 text-sm";
+            }
             event.target.value = '';
             return;
         }
 
         // Show success message with file info
-        showNotification('success', `Certificate file "${file.name}" validated successfully (${formatFileSize(file.size)})`);
+        if (feedbackEl) {
+            feedbackEl.innerHTML = `
+                <div class="flex items-center text-green-600">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    <span>Certificate file "${escapeHtml(file.name)}" validated successfully (${formatFileSize(file.size)})</span>
+                </div>
+            `;
+            feedbackEl.className = "mt-2 text-sm";
+        }
         
         // Update the drop zone to show the selected file
         updateDropZoneWithFile(file);
     };
 
     reader.onerror = function() {
-        showNotification('error', 'Error reading certificate file. Please try again.');
+        if (feedbackEl) {
+            feedbackEl.innerHTML = `
+                <div class="flex items-center text-red-600">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    <span>Error reading certificate file. Please try again.</span>
+                </div>
+            `;
+            feedbackEl.className = "mt-2 text-sm";
+        }
         event.target.value = '';
     };
 
     reader.readAsText(file);
 }
-
-// Expose function globally immediately for inline event handlers
-window.validateCACertFile = validateCACertFile;
 
 /**
  * Validate certificate content (PEM format)
@@ -17764,13 +17807,9 @@ function initializeCACertUpload() {
     const dropZone = document.getElementById('ca-cert-upload-drop-zone');
     const fileInput = document.getElementById('upload-ca-cert');
     
-    console.log('Initializing CA cert upload...', { dropZone, fileInput });
-    
     if (dropZone && fileInput) {
-        console.log('Both elements found, adding click listener');
         // Click to upload
         dropZone.addEventListener('click', function(e) {
-            console.log('Drop zone clicked!', e);
             fileInput.click();
         });
 
