@@ -5517,21 +5517,73 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.ownerEmail }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.team }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.visibility|capitalize }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                        <div class="flex flex-col space-y-1">
-                          <button onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')" class="text-purple-600 hover:underline text-xs font-medium text-left">Test</button>
-                          <div class="flex space-x-3">
-                            <button onclick="viewAgent('{{ agent.id }}')" class="text-blue-600 hover:underline text-xs font-medium text-left">View</button>
-                            <button onclick="editA2AAgent('{{ agent.id }}')" class="text-green-600 hover:underline text-xs font-medium text-left">Edit</button>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium w-32">
+                        <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                          <!-- Row 1: Test (full width) -->
+                          <button
+                            
+                            onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                            class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 transition-colors"
+                            x-tooltip="'💡Execute this A2A Agent test'"
+                          >
+                            Test
+                          </button>
+
+                          <!-- Row 2: View | Edit -->
+                          <button
+                            onclick="viewAgent('{{ agent.id }}')"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 transition-colors"
+                            x-tooltip="'💡View agent details'"
+                          >
+                            View
+                          </button>
+                          <button
+                            onclick="editA2AAgent('{{ agent.id }}')"
+                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
+                            x-tooltip="'💡Edit agent configuration'"
+                          >
+                            Edit
+                          </button>
+
+                          <!-- Row 3: Activate/Deactivate | Delete -->
+                          <div class="col-span-2 flex flex-col space-y-1">
+                            {% if agent.enabled %}
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
+                              <input type="hidden" name="activate" value="false" />
+                              <button
+                                type="submit"
+                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 transition-colors"
+                                x-tooltip="'💡Temporarily disable this A2A agent'"
+                              >
+                                Deactivate
+                              </button>
+                            </form>
+                            {% else %}
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
+                              <input type="hidden" name="activate" value="true" />
+                              <button
+                                type="submit"
+                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
+                                x-tooltip="'💡Re-enable this A2A agent'"
+                              >
+                                Activate
+                              </button>
+                            </form>
+                            {% endif %}
+
+                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
+                              <button
+                                type="submit"
+                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
+                                x-tooltip="'💡Permanently delete this A2A agent'"
+                              >
+                                Delete
+                              </button>
+                            </form>
                           </div>
-                          <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="inline">
-                            <input type="hidden" name="activate" value="{% if agent.enabled %}false{% else %}true{% endif %}" />
-                            <button type="submit" class="text-xs font-medium text-left {% if agent.enabled %}text-yellow-700 hover:underline{% else %}text-yellow-700 hover:underline{% endif %}">{% if agent.enabled %}Deactivate{% else %}Activate{% endif %}</button>
-                          </form>
-                          <form method="post" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="inline" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
-                            <button type="submit" class="text-red-600 hover:underline text-xs font-medium text-left">Delete</button>
-                          </form>
                         </div>
+                        <!-- Test result placeholder: updated by admin.js testA2AAgent -->
+                        <div id="test-result-{{ agent.id }}" class="hidden test-result mt-2 text-sm" role="status" aria-live="polite"></div>
                       </td>
                     </tr>
                     {% endfor %}
