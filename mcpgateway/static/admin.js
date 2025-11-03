@@ -2415,7 +2415,10 @@ async function editTool(toolId) {
                     window.editToolSchemaEditor.setOption("readOnly", true);
                 }
                 if (window.editToolOutputSchemaEditor) {
-                    window.editToolOutputSchemaEditor.setOption("readOnly", true);
+                    window.editToolOutputSchemaEditor.setOption(
+                        "readOnly",
+                        true,
+                    );
                 }
             } else {
                 typeField.disabled = false;
@@ -2441,7 +2444,10 @@ async function editTool(toolId) {
                     window.editToolSchemaEditor.setOption("readOnly", false);
                 }
                 if (window.editToolOutputSchemaEditor) {
-                    window.editToolOutputSchemaEditor.setOption("readOnly", false);
+                    window.editToolOutputSchemaEditor.setOption(
+                        "readOnly",
+                        false,
+                    );
                 }
             }
             // Update request types and URL field
