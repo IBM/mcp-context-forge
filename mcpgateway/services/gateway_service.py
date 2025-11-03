@@ -1251,7 +1251,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     prompts_to_add = []
 
                     try:
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
+                        ca_certificate = getattr(gateway, "ca_certificate", None)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate)
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
