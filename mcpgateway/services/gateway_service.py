@@ -419,7 +419,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         ctx = ssl.create_default_context()
         ctx.load_verify_locations(cadata=ca_bytes)
         return ctx
-    
+
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
 
@@ -2054,7 +2054,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         auth: httpx.Auth | None = None,
                     ) -> httpx.AsyncClient:
                         """Factory function to create httpx.AsyncClient with optional CA certificate.
-                        
+
                         Args:
                             headers: Optional headers for the client
                             timeout: Optional timeout for the client
@@ -3018,7 +3018,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         except Exception as e:
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
-    
+
     async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
         """Connect to an MCP server running with SSE transport.
 
@@ -3039,7 +3039,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
             """Factory function to create httpx.AsyncClient with optional CA certificate.
-            
+
             Args:
                 headers: Optional headers for the client
                 timeout: Optional timeout for the client
@@ -3153,14 +3153,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if authentication is None:
             authentication = {}
         # Use authentication directly instead
-        
+
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx.Timeout | None = None,
             auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
             """Factory function to create httpx.AsyncClient with optional CA certificate.
-            
+
             Args:
                 headers: Optional headers for the client
                 timeout: Optional timeout for the client

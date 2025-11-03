@@ -1306,14 +1306,14 @@ class ToolService:
                         ctx = ssl.create_default_context()
                         ctx.load_verify_locations(cadata=ca_bytes)
                         return ctx
-                    
+
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
                         timeout: httpx.Timeout | None = None,
                         auth: httpx.Auth | None = None,
                     ) -> httpx.AsyncClient:
                         """Factory function to create httpx.AsyncClient with optional CA certificate.
-                        
+
                         Args:
                             headers: Optional headers for the client
                             timeout: Optional timeout for the client
@@ -1333,7 +1333,7 @@ class ToolService:
                             timeout=timeout or httpx.Timeout(30.0),
                             auth=auth,
                         )
-                    
+
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
