@@ -1895,7 +1895,7 @@ class ToolService:
             if isinstance(response_data, dict) and "response" in response_data:
                 content = [TextContent(type="text", text=str(response_data["response"]))]
             else:
-                content = [TextContent(type="text", text=json.dumps(response_data, indent=2))]
+                content = [TextContent(type="text", text=str(response_data))]
 
             result = ToolResult(content=content, is_error=False)
 
