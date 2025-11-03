@@ -2414,6 +2414,9 @@ async function editTool(toolId) {
                 if (window.editToolSchemaEditor) {
                     window.editToolSchemaEditor.setOption("readOnly", true);
                 }
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setOption("readOnly", true);
+                }
             } else {
                 typeField.disabled = false;
                 if (authTypeField) {
@@ -2436,6 +2439,9 @@ async function editTool(toolId) {
                 }
                 if (window.editToolSchemaEditor) {
                     window.editToolSchemaEditor.setOption("readOnly", false);
+                }
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setOption("readOnly", false);
                 }
             }
             // Update request types and URL field
@@ -2546,6 +2552,9 @@ async function editTool(toolId) {
             }
             if (window.editToolSchemaEditor) {
                 window.editToolSchemaEditor.refresh();
+            }
+            if (window.editToolOutputSchemaEditor) {
+                window.editToolOutputSchemaEditor.refresh();
             }
         }, 100);
 
@@ -9229,6 +9238,9 @@ async function handleToolFormSubmit(event) {
         if (window.schemaEditor) {
             window.schemaEditor.save();
         }
+        if (window.outputSchemaEditor) {
+            window.outputSchemaEditor.save();
+        }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -9295,6 +9307,9 @@ async function handleEditToolFormSubmit(event) {
         }
         if (window.editToolSchemaEditor) {
             window.editToolSchemaEditor.save();
+        }
+        if (window.editToolOutputSchemaEditor) {
+            window.editToolOutputSchemaEditor.save();
         }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
@@ -10002,6 +10017,16 @@ function initializeCodeMirrorEditors() {
             id: "edit-tool-schema",
             mode: "application/json",
             varName: "editToolSchemaEditor",
+        },
+        {
+            id: "output-schema-editor",
+            mode: "application/json",
+            varName: "outputSchemaEditor",
+        },
+        {
+            id: "edit-tool-output-schema",
+            mode: "application/json",
+            varName: "editToolOutputSchemaEditor",
         },
         {
             id: "edit-resource-content",
