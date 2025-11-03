@@ -1,12 +1,11 @@
 import os
 import sys
 import json
-import logging
-from toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
 
-logger = logging.getLogger('toolops.validation.test_case_generation_utils.combination_modules.all_param_testcase')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # This method generates one testcase with all paramteres #
 def all_param_testcase(transformed_tool_spec, data_generated_through_LLM, number_testcases_to_generate_more, transformed_tool_spec_postprocess, llm_model_id, llm_platform):
@@ -53,6 +52,7 @@ def all_param_testcase(transformed_tool_spec, data_generated_through_LLM, number
             count_failed_execution=count_failed_execution+1
             if (count_failed_execution == 2):
                 break
-    logger.info("One testcase generated with all parameters",extra={'details':data_generated_through_LLM})
+    #logger.info("One testcase generated with all parameters",extra={'details':data_generated_through_LLM})
+    logger.info("One testcase generated with all parameters")
     number_testcases_to_generate_more = number_testcases_to_generate_more - 1
     return(data_generated_through_LLM, number_testcases_to_generate_more)

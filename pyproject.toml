@@ -46,6 +46,7 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
+    "aiofiles>=25.1.0",
     "aiohttp>=3.13.1",
     "alembic>=1.17.0",
     "argon2-cffi>=25.1.0",

@@ -1205,10 +1205,13 @@ def update_url_protocol(request: Request) -> str:
     return str(urlunparse(new_parsed)).rstrip("/")
 
 
-from mcpgateway.toolops.services import validation_generate_test_cases
 # Toolops APIs - Generating test cases , Tool enrichment #
+from mcpgateway.toolops.services import validation_generate_test_cases
 @toolops_router.post("/validation/generate_testcases")
-async def generate_testcases_for_tool(tool_id: str = Query(None, description="Tool ID"),db: Session = Depends(get_db)) -> List[Dict]:
+async def generate_testcases_for_tool(tool_id: str = Query(None, description="Tool ID"),\
+                                      number_of_test_cases: int = Query(2, description="Number of tool test cases"),\
+                                      number_of_nl_variations: int = Query(1, description="Number of tool test cases"), \
+                                      db: Session = Depends(get_db)) -> List[Dict]:
     """
     Generate test cases for a tool
 
@@ -1218,6 +1221,8 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
 
     Args:
         tool_id: Tool ID in context forge.
+        number_of_test_cases: Number of test cases to generate for the given tools (optional)
+        number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         user (str): The authenticated user (from `require_auth` dependency).
 
     Returns:
@@ -1227,9 +1232,8 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        print("Running test case geneation for Tool - ", tool_id)
         #logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db)
+        test_cases = await validation_generate_test_cases(tool_id, tool_service, db , number_of_test_cases , number_of_nl_variations)
         return test_cases
 
     except json.JSONDecodeError:
