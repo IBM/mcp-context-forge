@@ -80,48 +80,24 @@ async def enrich_tool_list(tool_id_list: list[str], tool_service: ToolService, d
 
 
 async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_PLATFORM: str = 'WATSONX',LLM_MODEL_ID: str = 'mistralai/mistral-medium-2505')-> tuple[str, ToolRead]:
-
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     except Exception as e:
         logger.error(f"Failed to convert tool {tool_id} to schema: {e}")   
         raise e
 
-    tool_name = tool_schema.name
-    current_tool_description = ""
-    if tool_schema.description:
-        current_tool_description = tool_schema.description
-    if current_tool_description:
-        current_tool_description = current_tool_description.replace(
-            "\n", "\\n"
-        )
-    input_schema = tool_schema.input_schema
-    debug_mode = True
+    from mcpgateway.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPToolEnrichment
+    toolops_enrichment = ToolOpsMCPToolEnrichment(LLM_MODEL_ID, LLM_PLATFORM)
+    enriched_description = await toolops_enrichment.process(tool_schema)
 
-    logfolder = "log/"
-    if debug_mode:
-        sessionid = get_unique_sessionid()
-        logfolder = "log/" + sessionid
-        os.makedirs(logfolder, exist_ok=True)
-
-
-    enriched_description = await generate_enriched_tool_description(
-        tool_name,
-        current_tool_description,
-        input_schema,
-        LLM_MODEL_ID,
-        LLM_PLATFORM,
-        logfolder,
-        debug_mode
-    )
     if enriched_description:
         try:
             update_data: dict[str, Any] = {
-                "name": tool_name,
+                "name": tool_schema.name,
                 "description": enriched_description,
             }
             updateTool: ToolUpdate = ToolUpdate(**update_data)
-            updateTool.name = tool_name
+            updateTool.name = tool_schema.name
             updateTool.description = enriched_description
             await tool_service.update_tool(db, tool_id, updateTool)
         except Exception as e:
