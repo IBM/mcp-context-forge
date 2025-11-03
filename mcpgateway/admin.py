@@ -6275,11 +6275,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
-        if "ca_cert" in form:
-            file = form["ca_cert"]
+        if "ca_certificate" in form:
+            file = form["ca_certificate"]
             if isinstance(file, StarletteUploadFile):
                 content = await file.read()
-                content.decode("utf-8")
+                ca_certificate = content.decode("utf-8")
                 LOGGER.info("✅ CA certificate file uploaded successfully")
 
         gateway = GatewayCreate(
@@ -6298,6 +6298,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
             visibility=visibility,
+            ca_certificate=ca_certificate if 'ca_certificate' in locals() else None,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response

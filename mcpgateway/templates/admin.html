@@ -5015,16 +5015,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </label>
               <input
                 type="file"
-                id="upload-ca-cert"
-                name="ca_cert"
+                id="upload-ca-certificate"
+                name="ca_certificate"
                 class="hidden"
                 onchange="validateCACertFile(event)"
-                accept=".pem,.crt,.cer,.cert,application/x-x509-ca-cert"
+                accept=".pem,.crt,.cer,.cert,application/x-x509-ca-certificate"
               />
               <div
-                id="ca-cert-upload-drop-zone"
+                id="ca-certificate-upload-drop-zone"
                 class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
-                onclick="document.getElementById('upload-ca-cert').click()"
+                onclick="document.getElementById('upload-ca-certificate').click()"
               >
                 <div class="space-y-2">
                   <svg
@@ -5052,7 +5052,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </p>
                 </div>
               </div>
-              <div id="ca-cert-feedback" class="mt-2 text-sm"></div>
+              <div id="ca-certificate-feedback" class="mt-2 text-sm"></div>
             </div>            
             <div class="mt-6">
               <button

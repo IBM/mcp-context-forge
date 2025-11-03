@@ -17577,7 +17577,7 @@ document.head.appendChild(style);
  */
 function validateCACertFile(event) {
     const file = event.target.files[0];
-    const feedbackEl = document.getElementById("ca-cert-feedback");
+    const feedbackEl = document.getElementById("ca-certificate-feedback");
     
     if (!file) {
         if (feedbackEl) {
@@ -17739,7 +17739,7 @@ function isValidBase64(str) {
  * @param {File} file - The selected file
  */
 function updateDropZoneWithFile(file) {
-    const dropZone = document.getElementById('ca-cert-upload-drop-zone');
+    const dropZone = document.getElementById('ca-certificate-upload-drop-zone');
     if (!dropZone) return;
 
     // Update drop zone content to show file info
@@ -17776,8 +17776,8 @@ function formatFileSize(bytes) {
  * Called on DOMContentLoaded
  */
 function initializeCACertUpload() {
-    const dropZone = document.getElementById('ca-cert-upload-drop-zone');
-    const fileInput = document.getElementById('upload-ca-cert');
+    const dropZone = document.getElementById('ca-certificate-upload-drop-zone');
+    const fileInput = document.getElementById('upload-ca-certificate');
     
     if (dropZone && fileInput) {
         // Click to upload

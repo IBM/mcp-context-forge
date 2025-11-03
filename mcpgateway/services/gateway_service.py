@@ -48,6 +48,7 @@ import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
+import ssl
 
 # Third-Party
 from filelock import FileLock, Timeout
@@ -585,7 +586,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 authentication_headers = None
 
             oauth_config = getattr(gateway, "oauth_config", None)
-            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config)
+            ca_certificate = getattr(gateway, "ca_certificate", None)
+            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
 
             tools = [
                 DbTool(
@@ -2244,7 +2246,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._event_subscribers.remove(queue)
 
     async def _initialize_gateway(
-        self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE", auth_type: Optional[str] = None, oauth_config: Optional[Dict[str, Any]] = None
+        self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE", auth_type: Optional[str] = None, oauth_config: Optional[Dict[str, Any]] = None, ca_certificate: Optional[bytes] = None
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -2258,6 +2260,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             transport: Transport protocol - "SSE" or "StreamableHTTP"
             auth_type: Authentication type - "basic", "bearer", "headers", "oauth" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
+            ca_certificate: CA certificate for SSL verification
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -2324,9 +2327,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate)
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate)
 
             return capabilities, tools, resources, prompts
         except Exception as e:
@@ -2975,23 +2978,53 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
-    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+    def create_ssl_context(self, ca_bytes: bytes) -> ssl.SSLContext:
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=ca_bytes)
+        return ctx
+    
+    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
         """Connect to an MCP server running with SSE transport.
 
         Args:
             server_url: The URL of the SSE MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
+            ca_certificate: Optional CA certificate for SSL verification.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
         """
         if authentication is None:
             authentication = {}
-        # Use authentication directly instead
+
+        def get_httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx.AsyncClient: Configured HTTPX async client
+            """
+            if ca_certificate:
+                ctx = self.create_ssl_context(ca_certificate)
+            return httpx.AsyncClient(
+                verify=ctx if 'ctx' in locals() else True,
+                follow_redirects=True,
+                headers=headers,
+                timeout=timeout or httpx.Timeout(30.0),
+                auth=auth,
+            )
 
         if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="SSE"):
             # Use async with for both sse_client and ClientSession
-            async with sse_client(url=server_url, headers=authentication) as streams:
+            async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
                 async with ClientSession(*streams) as session:
                     # Initialize the session
                     response = await session.initialize()
@@ -3068,12 +3101,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
 
-    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
         """Connect to an MCP server running with Streamable HTTP transport.
 
         Args:
             server_url: The URL of the Streamable HTTP MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
+            ca_certificate: Optional CA certificate for SSL verification.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -3081,24 +3115,33 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if authentication is None:
             authentication = {}
         # Use authentication directly instead
-
-        # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
-        # and go straight to the client connection. The outer try/except in
-        # _initialize_gateway will handle any connection errors.
-        def my_client_factory(
+        
+        def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx.Timeout | None = None,
             auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
+            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx.AsyncClient: Configured HTTPX async client
+            """
+            if ca_certificate:
+                ctx = self.create_ssl_context(ca_certificate)
             return httpx.AsyncClient(
-                verify=not settings.skip_ssl_verify,  # set your toggle here
+                verify=ctx if 'ctx' in locals() else True,
                 follow_redirects=True,
                 headers=headers,
                 timeout=timeout or httpx.Timeout(30.0),
                 auth=auth,
             )
 
-        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=my_client_factory) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Initialize the session
                 response = await session.initialize()
