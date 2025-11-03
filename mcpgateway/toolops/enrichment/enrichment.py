@@ -3,7 +3,6 @@ from pathlib import Path
 import base64
 import datetime
 import os
-import json 
 import tomli as tomllib
 from typing import Any
 from mcpgateway.schemas import ToolRead
