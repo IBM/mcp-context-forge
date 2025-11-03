@@ -2004,6 +2004,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateways = [MagicMock()]
+            >>> gateways[0].ca_certificate = None
             >>> import asyncio
             >>> result = asyncio.run(service.check_health_of_gateways(db, gateways))
             >>> isinstance(result, bool)
@@ -2023,6 +2024,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     gw.enabled = True
             ...     gw.reachable = True
             ...     gw.auth_value = {}
+            ...     gw.ca_certificate = None
             >>> multi_result = asyncio.run(service.check_health_of_gateways(db, multiple_gateways))
             >>> isinstance(multi_result, bool)
             True
