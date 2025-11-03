@@ -55,7 +55,6 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared._httpx_utils import McpHttpClientFactory
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -3092,7 +3091,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth: httpx.Auth | None = None,
         ) -> httpx.AsyncClient:
             return httpx.AsyncClient(
-                verify=not settings.skip_ssl_verify,   # set your toggle here
+                verify=not settings.skip_ssl_verify,  # set your toggle here
                 follow_redirects=True,
                 headers=headers,
                 timeout=timeout or httpx.Timeout(30.0),

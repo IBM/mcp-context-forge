@@ -17772,34 +17772,6 @@ function formatFileSize(bytes) {
 }
 
 /**
- * Show notification helper
- * @param {string} type - 'success' or 'error'
- * @param {string} message - The message to display
- */
-function showNotification(type, message) {
-    const notificationDiv = document.getElementById('global-notification');
-    if (!notificationDiv) {
-        // Fallback to alert if notification div not found
-        alert(message);
-        return;
-    }
-
-    const bgColor = type === 'success' 
-        ? 'bg-green-50 border-green-300 text-green-700 dark:bg-green-800 dark:border-green-600 dark:text-green-200'
-        : 'bg-red-50 border-red-300 text-red-700 dark:bg-red-800 dark:border-red-600 dark:text-red-200';
-    const icon = type === 'success' ? '✅' : '❌';
-
-    notificationDiv.innerHTML = `<div class="${bgColor} border px-4 py-3 rounded">${icon} ${escapeHtml(message)}</div>`;
-    notificationDiv.style.display = 'block';
-
-    // Auto-dismiss after 5 seconds
-    setTimeout(() => {
-        notificationDiv.style.display = 'none';
-        notificationDiv.innerHTML = '';
-    }, 5000);
-}
-
-/**
  * Initialize drag and drop for CA cert upload
  * Called on DOMContentLoaded
  */

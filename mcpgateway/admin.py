@@ -6275,11 +6275,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
-        if "ca_cert_file" in form:
-            file = form["ca_cert_file"]
+        if "ca_cert" in form:
+            file = form["ca_cert"]
             if isinstance(file, StarletteUploadFile):
                 content = await file.read()
-                ca_cert_file_content = content.decode("utf-8")
+                content.decode("utf-8")
                 LOGGER.info("✅ CA certificate file uploaded successfully")
 
         gateway = GatewayCreate(
