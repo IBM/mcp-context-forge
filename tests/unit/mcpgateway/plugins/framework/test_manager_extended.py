@@ -177,57 +177,267 @@ async def test_manager_exception_handling():
     await manager.shutdown()
 
 
-# @pytest.mark.asyncio
-# async def test_manager_condition_filtering():
-#     """Test that plugins are filtered based on conditions."""
+@pytest.mark.asyncio
+async def test_manager_condition_filtering():
+    """Test that plugins are filtered based on conditions across all hook types."""
+    from mcpgateway.plugins.framework import (
+        ResourceHookType,
+        ResourcePreFetchPayload,
+        AgentHookType,
+        AgentPreInvokePayload,
+    )
 
-#     class ConditionalPlugin(Plugin):
-#         async def prompt_pre_fetch(self, payload, context):
-#             payload.args["modified"] = "yes"
-#             return PluginResult(continue_processing=True, modified_payload=payload)
+    manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
+    await manager.initialize()
 
-#     manager = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/valid_no_plugin.yaml")
-#     await manager.initialize()
+    # ========== Test 1: Server ID condition (GlobalContext) ==========
+    class ConditionalPlugin(Plugin):
+        async def prompt_pre_fetch(self, payload, context):
+            payload.args["modified"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
 
-#     # Plugin with server_id condition
-#     plugin_config = PluginConfig(
-#         name="ConditionalPlugin",
-#         description="Test conditional plugin",
-#         author="Test",
-#         version="1.0",
-#         tags=["test"],
-#         kind="ConditionalPlugin",
-#         hooks=["prompt_pre_fetch"],
-#         config={},
-#         conditions=[PluginCondition(server_ids={"server1"})],
-#     )
-#     plugin = ConditionalPlugin(plugin_config)
+    plugin_config = PluginConfig(
+        name="ConditionalPlugin",
+        description="Test conditional plugin",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="ConditionalPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={},
+        conditions=[PluginCondition(server_ids={"server1"})],
+    )
+    plugin = ConditionalPlugin(plugin_config)
 
-#     with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
-#         plugin_ref = PluginRef(plugin)
-#         mock_get.return_value = [plugin_ref]
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        plugin_ref = PluginRef(plugin)
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, plugin_ref)
+        mock_get.return_value = [hook_ref]
 
-#         prompt = PromptPrehookPayload(prompt_id="test", args={})
+        prompt = PromptPrehookPayload(prompt_id="test", args={})
 
-#         # Test with matching server_id
-#         global_context = GlobalContext(request_id="1", server_id="server1")
-#         result, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+        # Test with matching server_id
+        global_context = GlobalContext(request_id="1", server_id="server1")
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
 
-#         # Plugin should execute
-#         assert result.continue_processing
-#         assert result.modified_payload is not None
-#         assert result.modified_payload.args.get("modified") == "yes"
+        # Plugin should execute
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.args.get("modified") == "yes"
 
-#         # Test with non-matching server_id
-#         prompt2 = PromptPrehookPayload(prompt_id="test", args={})
-#         global_context2 = GlobalContext(request_id="2", server_id="server2")
-#         result2, _ = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt2, global_context=global_context2)
+        # Test with non-matching server_id
+        prompt2 = PromptPrehookPayload(prompt_id="test", args={})
+        global_context2 = GlobalContext(request_id="2", server_id="server2")
+        result2, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt2, global_context=global_context2)
 
-#         # Plugin should be skipped
-#         assert result2.continue_processing
-#         assert result2.modified_payload is None  # No modification
+        # Plugin should be skipped
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # No modification
 
-#     await manager.shutdown()
+    # ========== Test 2: Prompt-specific filtering ==========
+    class PromptFilterPlugin(Plugin):
+        async def prompt_pre_fetch(self, payload, context):
+            payload.args["prompt_filtered"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
+
+    prompt_plugin_config = PluginConfig(
+        name="PromptFilterPlugin",
+        description="Test prompt filtering",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="PromptFilterPlugin",
+        hooks=["prompt_pre_fetch"],
+        config={},
+        conditions=[PluginCondition(prompts={"greeting", "welcome"})],
+    )
+    prompt_plugin = PromptFilterPlugin(prompt_plugin_config)
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(PromptHookType.PROMPT_PRE_FETCH, PluginRef(prompt_plugin))
+        mock_get.return_value = [hook_ref]
+
+        # Test with matching prompt
+        prompt_match = PromptPrehookPayload(prompt_id="greeting", args={})
+        global_context = GlobalContext(request_id="3")
+        result, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt_match, global_context=global_context)
+
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.args.get("prompt_filtered") == "yes"
+
+        # Test with non-matching prompt
+        prompt_no_match = PromptPrehookPayload(prompt_id="other", args={})
+        result2, _ = await manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, prompt_no_match, global_context=global_context)
+
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # Plugin skipped
+
+    # ========== Test 3: Tool filtering ==========
+    class ToolFilterPlugin(Plugin):
+        async def tool_pre_invoke(self, payload, context):
+            payload.args["tool_filtered"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
+
+    tool_plugin_config = PluginConfig(
+        name="ToolFilterPlugin",
+        description="Test tool filtering",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="ToolFilterPlugin",
+        hooks=["tool_pre_invoke"],
+        config={},
+        conditions=[PluginCondition(tools={"calculator", "converter"})],
+    )
+    tool_plugin = ToolFilterPlugin(tool_plugin_config)
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(ToolHookType.TOOL_PRE_INVOKE, PluginRef(tool_plugin))
+        mock_get.return_value = [hook_ref]
+
+        # Test with matching tool
+        tool_match = ToolPreInvokePayload(name="calculator", args={})
+        global_context = GlobalContext(request_id="4")
+        result, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_match, global_context=global_context)
+
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.args.get("tool_filtered") == "yes"
+
+        # Test with non-matching tool
+        tool_no_match = ToolPreInvokePayload(name="other_tool", args={})
+        result2, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_no_match, global_context=global_context)
+
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # Plugin skipped
+
+    # ========== Test 4: Resource filtering ==========
+    class ResourceFilterPlugin(Plugin):
+        async def resource_pre_fetch(self, payload, context):
+            payload.metadata["resource_filtered"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
+
+    resource_plugin_config = PluginConfig(
+        name="ResourceFilterPlugin",
+        description="Test resource filtering",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="ResourceFilterPlugin",
+        hooks=["resource_pre_fetch"],
+        config={},
+        conditions=[PluginCondition(resources={"file:///data.txt", "file:///config.json"})],
+    )
+    resource_plugin = ResourceFilterPlugin(resource_plugin_config)
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(ResourceHookType.RESOURCE_PRE_FETCH, PluginRef(resource_plugin))
+        mock_get.return_value = [hook_ref]
+
+        # Test with matching resource
+        resource_match = ResourcePreFetchPayload(uri="file:///data.txt", metadata={})
+        global_context = GlobalContext(request_id="5")
+        result, _ = await manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, resource_match, global_context=global_context)
+
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.metadata.get("resource_filtered") == "yes"
+
+        # Test with non-matching resource
+        resource_no_match = ResourcePreFetchPayload(uri="file:///other.txt", metadata={})
+        result2, _ = await manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, resource_no_match, global_context=global_context)
+
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # Plugin skipped
+
+    # ========== Test 5: Agent filtering ==========
+    class AgentFilterPlugin(Plugin):
+        async def agent_pre_invoke(self, payload, context):
+            payload.parameters["agent_filtered"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
+
+    agent_plugin_config = PluginConfig(
+        name="AgentFilterPlugin",
+        description="Test agent filtering",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="AgentFilterPlugin",
+        hooks=["agent_pre_invoke"],
+        config={},
+        conditions=[PluginCondition(agents={"agent1", "agent2"})],
+    )
+    agent_plugin = AgentFilterPlugin(agent_plugin_config)
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(AgentHookType.AGENT_PRE_INVOKE, PluginRef(agent_plugin))
+        mock_get.return_value = [hook_ref]
+
+        # Test with matching agent
+        agent_match = AgentPreInvokePayload(agent_id="agent1", messages=[], parameters={})
+        global_context = GlobalContext(request_id="6")
+        result, _ = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, agent_match, global_context=global_context)
+
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.parameters.get("agent_filtered") == "yes"
+
+        # Test with non-matching agent
+        agent_no_match = AgentPreInvokePayload(agent_id="agent3", messages=[], parameters={})
+        result2, _ = await manager.invoke_hook(AgentHookType.AGENT_PRE_INVOKE, agent_no_match, global_context=global_context)
+
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # Plugin skipped
+
+    # ========== Test 6: Combined conditions (server_id + tool name) ==========
+    class CombinedFilterPlugin(Plugin):
+        async def tool_pre_invoke(self, payload, context):
+            payload.args["combined_filtered"] = "yes"
+            return PluginResult(continue_processing=True, modified_payload=payload)
+
+    combined_plugin_config = PluginConfig(
+        name="CombinedFilterPlugin",
+        description="Test combined filtering",
+        author="Test",
+        version="1.0",
+        tags=["test"],
+        kind="CombinedFilterPlugin",
+        hooks=["tool_pre_invoke"],
+        config={},
+        conditions=[PluginCondition(server_ids={"server1"}, tools={"calculator"})],
+    )
+    combined_plugin = CombinedFilterPlugin(combined_plugin_config)
+
+    with patch.object(manager._registry, "get_hook_refs_for_hook") as mock_get:
+        hook_ref = HookRef(ToolHookType.TOOL_PRE_INVOKE, PluginRef(combined_plugin))
+        mock_get.return_value = [hook_ref]
+
+        # Test with both conditions matching
+        tool_payload = ToolPreInvokePayload(name="calculator", args={})
+        global_context = GlobalContext(request_id="7", server_id="server1")
+        result, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
+
+        assert result.continue_processing
+        assert result.modified_payload is not None
+        assert result.modified_payload.args.get("combined_filtered") == "yes"
+
+        # Test with server_id mismatch
+        global_context2 = GlobalContext(request_id="8", server_id="server2")
+        result2, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context2)
+
+        assert result2.continue_processing
+        assert result2.modified_payload is None  # Plugin skipped
+
+        # Test with tool name mismatch
+        tool_payload2 = ToolPreInvokePayload(name="other_tool", args={})
+        global_context3 = GlobalContext(request_id="9", server_id="server1")
+        result3, _ = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload2, global_context=global_context3)
+
+        assert result3.continue_processing
+        assert result3.modified_payload is None  # Plugin skipped
+
+    await manager.shutdown()
 
 
 @pytest.mark.asyncio

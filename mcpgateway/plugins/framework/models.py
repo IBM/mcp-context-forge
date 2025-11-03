@@ -173,6 +173,7 @@ class PluginCondition(BaseModel):
         tools (Optional[set[str]]): set of tool names.
         prompts (Optional[set[str]]): set of prompt names.
         resources (Optional[set[str]]): set of resource URIs.
+        agents (Optional[set[str]]): set of agent IDs.
         user_pattern (Optional[list[str]]): list of user patterns.
         content_types (Optional[list[str]]): list of content types.
 
@@ -193,10 +194,11 @@ class PluginCondition(BaseModel):
     tools: Optional[set[str]] = None
     prompts: Optional[set[str]] = None
     resources: Optional[set[str]] = None
+    agents: Optional[set[str]] = None
     user_patterns: Optional[list[str]] = None
     content_types: Optional[list[str]] = None
 
-    @field_serializer("server_ids", "tenant_ids", "tools", "prompts")
+    @field_serializer("server_ids", "tenant_ids", "tools", "prompts", "resources", "agents")
     def serialize_set(self, value: set[str] | None) -> list[str] | None:
         """Serialize set objects in PluginCondition for MCP.
 

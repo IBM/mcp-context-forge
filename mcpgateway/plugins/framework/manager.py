@@ -49,6 +49,7 @@ from mcpgateway.plugins.framework.models import (
     PluginResult,
 )
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
+from mcpgateway.plugins.framework.utils import payload_matches
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)
@@ -105,15 +106,17 @@ class PluginExecutor:
         hook_refs: list[HookRef],
         payload: PluginPayload,
         global_context: GlobalContext,
+        hook_type: str,
         local_contexts: Optional[PluginContextTable] = None,
         violations_as_exceptions: bool = False,
     ) -> tuple[PluginResult, PluginContextTable | None]:
         """Execute plugins in priority order with timeout protection.
 
         Args:
-            plugins: List of plugins to execute, sorted by priority.
+            hook_refs: List of hook references to execute, sorted by priority.
             payload: The payload to be processed by plugins.
             global_context: Shared context for all plugins containing request metadata.
+            hook_type: The hook type identifier (e.g., "tool_pre_invoke").
             local_contexts: Optional existing contexts from previous hook executions.
             violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
@@ -158,9 +161,9 @@ class PluginExecutor:
                 continue
 
             # Check if plugin conditions match current context
-            # if pluginref.conditions and not compare(payload, pluginref.conditions, global_context):
-            #    logger.debug(f"Skipping plugin {pluginref.name} - conditions not met")
-            #    continue
+            if hook_ref.plugin_ref.conditions and not payload_matches(payload, hook_type, hook_ref.plugin_ref.conditions, global_context):
+                logger.debug("Skipping plugin %s - conditions not met", hook_ref.plugin_ref.name)
+                continue
 
             tmp_global_context = GlobalContext(
                 request_id=global_context.request_id,
@@ -552,7 +555,7 @@ class PluginManager:
         hook_refs = self._registry.get_hook_refs_for_hook(hook_type=hook_type)
 
         # Execute plugins
-        result = await self._executor.execute(hook_refs, payload, global_context, local_contexts, violations_as_exceptions)
+        result = await self._executor.execute(hook_refs, payload, global_context, hook_type, local_contexts, violations_as_exceptions)
 
         return result
 

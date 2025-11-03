@@ -13,6 +13,7 @@ plugins.
 from functools import cache
 import importlib
 from types import ModuleType
+from typing import Any, Optional
 
 # First-Party
 from mcpgateway.plugins.framework.models import (
@@ -112,6 +113,120 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
         if not any(pattern in context.user for pattern in condition.user_patterns):
             return False
     return True
+
+
+def get_matchable_value(payload: Any, hook_type: str) -> Optional[str]:
+    """Extract the matchable value from a payload based on hook type.
+
+    This function maps hook types to their corresponding payload attributes
+    that should be used for conditional matching.
+
+    Args:
+        payload: The payload object (e.g., ToolPreInvokePayload, AgentPreInvokePayload).
+        hook_type: The hook type identifier.
+
+    Returns:
+        The matchable value (e.g., tool name, agent ID, resource URI) or None.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework import GlobalContext
+        >>> from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
+        >>> payload = ToolPreInvokePayload(name="calculator", args={})
+        >>> get_matchable_value(payload, "tool_pre_invoke")
+        'calculator'
+        >>> get_matchable_value(payload, "unknown_hook")
+    """
+    # Mapping: hook_type -> payload attribute name
+    field_map = {
+        "tool_pre_invoke": "name",
+        "tool_post_invoke": "name",
+        "prompt_pre_fetch": "prompt_id",
+        "prompt_post_fetch": "prompt_id",
+        "resource_pre_fetch": "uri",
+        "resource_post_fetch": "uri",
+        "agent_pre_invoke": "agent_id",
+        "agent_post_invoke": "agent_id",
+    }
+
+    field_name = field_map.get(hook_type)
+    if field_name:
+        return getattr(payload, field_name, None)
+    return None
+
+
+def payload_matches(
+    payload: Any,
+    hook_type: str,
+    conditions: list[PluginCondition],
+    context: GlobalContext,
+) -> bool:
+    """Check if a payload matches any of the plugin conditions.
+
+    This function provides generic conditional matching for all hook types.
+    It checks both GlobalContext conditions (via matches()) and payload-specific
+    conditions (tools, prompts, resources, agents).
+
+    Args:
+        payload: The payload object.
+        hook_type: The hook type identifier.
+        conditions: List of conditions to check against.
+        context: The global context.
+
+    Returns:
+        True if the payload matches any condition or if no conditions are specified.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+        >>> from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
+        >>> payload = ToolPreInvokePayload(name="calculator", args={})
+        >>> cond = PluginCondition(tools={"calculator"})
+        >>> ctx = GlobalContext(request_id="req1")
+        >>> payload_matches(payload, "tool_pre_invoke", [cond], ctx)
+        True
+        >>> cond2 = PluginCondition(tools={"other_tool"})
+        >>> payload_matches(payload, "tool_pre_invoke", [cond2], ctx)
+        False
+        >>> payload_matches(payload, "tool_pre_invoke", [], ctx)
+        True
+    """
+    # Mapping: hook_type -> PluginCondition attribute name
+    condition_attr_map = {
+        "tool_pre_invoke": "tools",
+        "tool_post_invoke": "tools",
+        "prompt_pre_fetch": "prompts",
+        "prompt_post_fetch": "prompts",
+        "resource_pre_fetch": "resources",
+        "resource_post_fetch": "resources",
+        "agent_pre_invoke": "agents",
+        "agent_post_invoke": "agents",
+    }
+
+    # If no conditions, match everything
+    if not conditions:
+        return True
+
+    # Check each condition (OR logic between conditions)
+    for condition in conditions:
+        # First check GlobalContext conditions
+        if not matches(condition, context):
+            continue
+
+        # Then check payload-specific conditions
+        condition_attr = condition_attr_map.get(hook_type)
+        if condition_attr:
+            condition_set = getattr(condition, condition_attr, None)
+            if condition_set:
+                # Extract the matchable value from the payload
+                payload_value = get_matchable_value(payload, hook_type)
+                if payload_value and payload_value not in condition_set:
+                    # Payload value doesn't match this condition's set
+                    continue
+
+        # If we get here, this condition matched
+        return True
+
+    # No conditions matched
+    return False
 
 
 # def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
