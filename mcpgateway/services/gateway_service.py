@@ -698,6 +698,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 team_id=team_id,
                 owner_email=owner_email,
                 visibility=visibility,
+                ca_certificate=gateway.ca_certificate,
             )
 
             # Add to DB
@@ -2979,6 +2980,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
     def create_ssl_context(self, ca_bytes: bytes) -> ssl.SSLContext:
+        """Create an SSL context with the provided CA certificate.
+
+            Args:
+                ca_bytes: CA certificate in bytes
+
+            Returns:
+                ssl.SSLContext: Configured SSL context
+            """
         ctx = ssl.create_default_context()
         ctx.load_verify_locations(cadata=ca_bytes)
         return ctx
