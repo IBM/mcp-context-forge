@@ -1,0 +1,3 @@
+[default]
+OUTPUT_DIR = "log"
+DEFAULT_MODEL_ID = "mistralai/mistral-medium-2505"

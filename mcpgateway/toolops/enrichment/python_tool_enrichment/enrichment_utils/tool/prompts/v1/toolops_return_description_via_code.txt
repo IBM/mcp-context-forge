@@ -1,0 +1,21 @@
+Task: Improve Tool Return Description
+
+Consider an LLM (Large Language Model) agent that utilizes a suite of tools to handle user utterances. The agent selects the most suitable tool for the task specified in the user's input utterance. Each tool is associated with a python method which the tool calls to handle the task specified in the user's input utterance.  Your task is to improve the return description of these tools.
+
+Your task is to refine and improve the description of what information these tools return.
+
+As input you will receive information about the tool and the method associated with this tool. Following information is provided
+- "tool_name": the name of the tool
+- "current tool description": the existing description of the tool's purpose and functionality.
+- "method_name": the name of the python method associated with the tool
+- "method_signature": the signature of this method
+- "method_body": the python code associated with the method
+- "declarations" : Information about class or parameter declarations in the code.
+- "current_return_description": the existing description of what information the tool returns
+
+Generate a clear and concise description of what information the tool returns.
+(i) Use the word "tool" instead of "method" or "function", when referring to the tool.
+(ii) Improve on the current return description, if provided. If current return description is missing, generate a new one.
+(iii) Output the improved description in JSON format where the key is mentioned as 'new_return_description'
+
+ 

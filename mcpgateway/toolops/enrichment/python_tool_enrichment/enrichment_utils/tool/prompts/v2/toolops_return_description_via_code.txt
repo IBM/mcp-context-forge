@@ -1,0 +1,24 @@
+Task: Improve Tool Return Description
+
+Consider an LLM (Large Language Model) agent that utilizes a suite of tools to handle user utterances. The agent selects the most suitable tool for the task specified in the user's input utterance. Each tool is associated with a python method which the tool calls to handle the task specified in the user's input utterance. Your task is to produce clear, concise and accurate description of the information each tool returns.
+
+As input you will receive information about a tool and the method associated with this tool. Following information is provided
+- "tool_name": the name of the tool
+- "current tool description": the existing description of the tool's purpose and functionality.
+- "method_name": the name of the python method associated with the tool
+- "method_signature": the signature of this method
+- "method_body": the python code associated with the method
+- "declarations" : Information about class or parameter declarations in the code.
+- "current_return_description": the existing description of what information the tool returns
+
+Instructions
+Generate a clear and concise description of what information the tool returns
+(i) Respect Terminology: Use the word "tool" instead of "method" or "function", when referring to the tool.
+(ii) Improve on the current return description, if provided. If return description is missing, generate a new one.
+(iii) Focus only on return information: Analyze the code provided, declarations, and return statements to understand what data, structure and values the tool returns. Do not include details about what the tool does or how the tool works.
+(iv) Avoid Redundancy and Guesswork: Do not add speculative details not supported by the code or existing description. Make sure no information repeats in the description. Further do not describe what each individual field represents (eg., HTTP status code helps in determining if the creation process was successful, system ID uniquely identifies the user within ServiceNow)
+(v) Identify Return Object - If the tool returns an object, make sure to include the name of the object being returned.
+(vi) Use User-friendly Terms -  Do not list the raw field names as they appear in code. Instead, provide the full set of information being returned using clear, human-readable terms rather than code-specific identifiers (eg, use HTTP status code instead of http_code).
+(vii) Possible Variations: If applicable, describe alternative return cases such as, when errors occur or when empty results are returned etc.
+(viii) Output Format: Output the improved description in JSON format where the key is mentioned as 'new_return_description'
+
