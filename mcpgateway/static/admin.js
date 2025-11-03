@@ -107,6 +107,20 @@ document.addEventListener("DOMContentLoaded", function () {
         // Set initial state
         updateEditToolUrl();
     }
+
+    // Initialize CA certificate upload immediately
+    initializeCACertUpload();
+    
+    // Also try to initialize after a short delay (in case the panel loads later)
+    setTimeout(initializeCACertUpload, 500);
+    
+    // Re-initialize when switching to gateways tab
+    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
+    if (gatewaysTab) {
+        gatewaysTab.addEventListener('click', function() {
+            setTimeout(initializeCACertUpload, 100);
+        });
+    }
 });
 /**
  * ====================================================================
@@ -17552,6 +17566,245 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
+
+// ============================================================================
+// CA Certificate Validation Functions
+// ============================================================================
+
+/**
+ * Validate CA certificate file on upload
+ * @param {Event} event - The file input change event
+ */
+function validateCACertFile(event) {
+    const file = event.target.files[0];
+    if (!file) {
+        return;
+    }
+
+    // Check file size (max 10MB for cert files)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (file.size > maxSize) {
+        showNotification('error', 'Certificate file is too large. Maximum size is 10MB.');
+        event.target.value = '';
+        return;
+    }
+
+    // Check file extension
+    const fileName = file.name.toLowerCase();
+    const validExtensions = ['.pem', '.crt', '.cer', '.cert'];
+    const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+    
+    if (!hasValidExtension) {
+        showNotification('error', 'Invalid file type. Please upload a valid certificate file (.pem, .crt, .cer, .cert)');
+        event.target.value = '';
+        return;
+    }
+
+    // Read and validate file content
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const content = e.target.result;
+        
+        // Validate PEM format
+        if (!isValidCertificate(content)) {
+            showNotification('error', 'Invalid certificate format. The file must contain a valid PEM-encoded certificate.');
+            event.target.value = '';
+            return;
+        }
+
+        // Show success message with file info
+        showNotification('success', `Certificate file "${file.name}" validated successfully (${formatFileSize(file.size)})`);
+        
+        // Update the drop zone to show the selected file
+        updateDropZoneWithFile(file);
+    };
+
+    reader.onerror = function() {
+        showNotification('error', 'Error reading certificate file. Please try again.');
+        event.target.value = '';
+    };
+
+    reader.readAsText(file);
+}
+
+// Expose function globally immediately for inline event handlers
+window.validateCACertFile = validateCACertFile;
+
+/**
+ * Validate certificate content (PEM format)
+ * @param {string} content - The certificate file content
+ * @returns {boolean} - True if valid certificate
+ */
+function isValidCertificate(content) {
+    // Trim whitespace
+    content = content.trim();
+
+    // Check for PEM certificate markers
+    const beginCertPattern = /-----BEGIN CERTIFICATE-----/;
+    const endCertPattern = /-----END CERTIFICATE-----/;
+    
+    if (!beginCertPattern.test(content) || !endCertPattern.test(content)) {
+        return false;
+    }
+
+    // Check for proper structure
+    const certPattern = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
+    const matches = content.match(certPattern);
+    
+    if (!matches || matches.length === 0) {
+        return false;
+    }
+
+    // Validate base64 content between markers
+    for (const cert of matches) {
+        const base64Content = cert
+            .replace(/-----BEGIN CERTIFICATE-----/, '')
+            .replace(/-----END CERTIFICATE-----/, '')
+            .replace(/\s/g, '');
+        
+        // Check if content is valid base64
+        if (!isValidBase64(base64Content)) {
+            return false;
+        }
+
+        // Basic length check (certificates are typically > 100 chars of base64)
+        if (base64Content.length < 100) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * Check if string is valid base64
+ * @param {string} str - The string to validate
+ * @returns {boolean} - True if valid base64
+ */
+function isValidBase64(str) {
+    if (str.length === 0) {
+        return false;
+    }
+    
+    // Base64 regex pattern
+    const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
+    return base64Pattern.test(str);
+}
+
+/**
+ * Update drop zone UI with selected file info
+ * @param {File} file - The selected file
+ */
+function updateDropZoneWithFile(file) {
+    const dropZone = document.getElementById('ca-cert-upload-drop-zone');
+    if (!dropZone) return;
+
+    // Update drop zone content to show file info
+    dropZone.innerHTML = `
+        <div class="space-y-2">
+            <svg class="mx-auto h-12 w-12 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+            <div class="text-sm text-gray-700 dark:text-gray-300">
+                <span class="font-medium">Selected: ${escapeHtml(file.name)}</span>
+            </div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">
+                ${formatFileSize(file.size)} • Click to change
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Format file size for display
+ * @param {number} bytes - File size in bytes
+ * @returns {string} - Formatted file size
+ */
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+/**
+ * Show notification helper
+ * @param {string} type - 'success' or 'error'
+ * @param {string} message - The message to display
+ */
+function showNotification(type, message) {
+    const notificationDiv = document.getElementById('global-notification');
+    if (!notificationDiv) {
+        // Fallback to alert if notification div not found
+        alert(message);
+        return;
+    }
+
+    const bgColor = type === 'success' 
+        ? 'bg-green-50 border-green-300 text-green-700 dark:bg-green-800 dark:border-green-600 dark:text-green-200'
+        : 'bg-red-50 border-red-300 text-red-700 dark:bg-red-800 dark:border-red-600 dark:text-red-200';
+    const icon = type === 'success' ? '✅' : '❌';
+
+    notificationDiv.innerHTML = `<div class="${bgColor} border px-4 py-3 rounded">${icon} ${escapeHtml(message)}</div>`;
+    notificationDiv.style.display = 'block';
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+        notificationDiv.style.display = 'none';
+        notificationDiv.innerHTML = '';
+    }, 5000);
+}
+
+/**
+ * Initialize drag and drop for CA cert upload
+ * Called on DOMContentLoaded
+ */
+function initializeCACertUpload() {
+    const dropZone = document.getElementById('ca-cert-upload-drop-zone');
+    const fileInput = document.getElementById('upload-ca-cert');
+    
+    console.log('Initializing CA cert upload...', { dropZone, fileInput });
+    
+    if (dropZone && fileInput) {
+        console.log('Both elements found, adding click listener');
+        // Click to upload
+        dropZone.addEventListener('click', function(e) {
+            console.log('Drop zone clicked!', e);
+            fileInput.click();
+        });
+
+        // Drag and drop handlers
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+        });
+
+        dropZone.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+        });
+
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                // Trigger the validation
+                const event = new Event('change', { bubbles: true });
+                fileInput.dispatchEvent(event);
+            }
+        });
+    }
+}
+
+// Make functions available globally for inline event handlers
+window.validateCACertFile = validateCACertFile;
 
 // Function to update body label based on content type selection
 function updateBodyLabel() {

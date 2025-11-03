@@ -6059,7 +6059,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -6274,6 +6274,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             LOGGER.info("✅ Auto-detected OAuth configuration, setting auth_type='oauth'")
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
+
+        if "ca_cert_file" in form:
+            file = form["ca_cert_file"]
+            if isinstance(file, StarletteUploadFile):
+                content = await file.read()
+                ca_cert_file_content = content.decode("utf-8")
+                LOGGER.info("✅ CA certificate file uploaded successfully")
 
         gateway = GatewayCreate(
             name=str(form["name"]),
