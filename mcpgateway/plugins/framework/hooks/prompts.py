@@ -105,6 +105,7 @@ class PromptPosthookPayload(PluginPayload):
 PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
 
+
 def _register_prompt_hooks():
     """Register prompt hooks in the global registry.
 
@@ -121,12 +122,5 @@ def _register_prompt_hooks():
         registry.register_hook(PromptHookType.PROMPT_PRE_FETCH, PromptPrehookPayload, PromptPrehookResult)
         registry.register_hook(PromptHookType.PROMPT_POST_FETCH, PromptPosthookPayload, PromptPosthookResult)
 
+
 _register_prompt_hooks()
-
-
-
-
-
-
-
-

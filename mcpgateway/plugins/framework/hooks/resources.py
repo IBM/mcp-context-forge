@@ -39,6 +39,7 @@ class ResourceHookType(str, Enum):
     RESOURCE_PRE_FETCH = "resource_pre_fetch"
     RESOURCE_POST_FETCH = "resource_post_fetch"
 
+
 class ResourcePreFetchPayload(PluginPayload):
     """A resource payload for a resource pre-fetch hook.
 
@@ -94,6 +95,7 @@ class ResourcePostFetchPayload(PluginPayload):
 ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
 ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
 
+
 def _register_resource_hooks():
     """Register resource hooks in the global registry.
 
@@ -109,5 +111,6 @@ def _register_resource_hooks():
     if not registry.is_registered(ResourceHookType.RESOURCE_PRE_FETCH):
         registry.register_hook(ResourceHookType.RESOURCE_PRE_FETCH, ResourcePreFetchPayload, ResourcePreFetchResult)
         registry.register_hook(ResourceHookType.RESOURCE_POST_FETCH, ResourcePostFetchPayload, ResourcePostFetchResult)
+
 
 _register_resource_hooks()
