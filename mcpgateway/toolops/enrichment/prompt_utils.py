@@ -2,19 +2,14 @@ import json
 import logging
 import ast
 from typing import Any
-
 import aiofiles as aiof
-from dotenv import load_dotenv
 import os
+import re
 
 from langchain_core.utils.json import parse_json_markdown
 from mcpgateway.toolops.utils.llm_util import execute_prompt
-import re
-from mcpgateway.services.mcp_client_chat_service import OpenAIConfig
 
 logger = logging.getLogger(__name__)
-
-
 
 def split_str_by_given_list_of_str(input_str, str_lst):  # type: ignore # noqa: D103
     # add a '|' between the substrings to create the pattern for splitting
@@ -123,29 +118,7 @@ async def generate_enriched_tool_description(
             await out.write(prompt_gen_str)
             await out.flush()
 
-    # def configure_env_vars():
-    #     env_file = os.path.join(currrent_dir, ".env")
-    #     logger.info ("env_file: " + env_file)
-    #     load_dotenv(env_file, override=True, verbose=True)
-
-    # configure_env_vars()
-    # api_key = os.getenv("RITS_API_KEY", "")
-    # rits_base_url = os.getenv("RITS_BASE_URL", "")
-    # rits_model_id = os.getenv("RITS_MODEL_ID", "")
-
-    # logger.info ("RITS_API_KEY: " + api_key)
-    # logger.info ("rits_base_url: " + rits_base_url)
-    # logger.info ("rits_model_id: " + rits_model_id)
-    # stop_seq = ["###STOP###", "\n\n", "\n\n\n", "<|endoftext|>"]
-    # config = OpenAIConfig(api_key=api_key, base_url = rits_base_url, temperature = 0.7, 
-    #             model=rits_model_id, max_tokens=1000, timeout=None)
-    # provider = OpenAIProvider(config)
-    # provider.get_model_name()
-    # llm_instance = provider.get_llm()
-    # # response = llm_instance.invoke(prompt_gen_str)
-    # responses = llm_instance.invoke(prompt_gen_str, stop=stop_seq)
-    # logger.info ("response: " + responses)
-
+    logger.debug("prompt_gen_str: " + prompt_gen_str)
     responses = execute_prompt(
         prompt_gen_str,
         model_id=params_dict["llm_model_name"],
@@ -153,6 +126,7 @@ async def generate_enriched_tool_description(
         max_new_tokens=params_dict["max_new_tokens"],
         stop_sequences=params_dict["stop_sequences"],
     )
+    logger.debug("enrichment responses: " + str(responses))
 
     try:
         if debug_mode:

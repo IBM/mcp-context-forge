@@ -1,12 +1,12 @@
 import json
 import os
-from mcpgateway.toolops.tool_format_conversion import convert_to_wxo_tool_spec
+from mcpgateway.toolops.utils.tool_format_conversion import convert_to_wxo_tool_spec
 from toolops.validation.test_case_generation import TestcaseGeneration
 from toolops.validation.nl_utterance_generation import NlUtteranceGeneration
+from mcpgateway.toolops.enrichment.enrichment import ToolOpsEnrichment
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.schemas import ToolRead, ToolUpdate
-from mcpgateway.toolops.prompt_utils import generate_enriched_tool_description
 from sqlalchemy.orm import Session
 import base64
 import datetime
@@ -86,8 +86,7 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_
         logger.error(f"Failed to convert tool {tool_id} to schema: {e}")   
         raise e
 
-    from mcpgateway.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPToolEnrichment
-    toolops_enrichment = ToolOpsMCPToolEnrichment(LLM_MODEL_ID, LLM_PLATFORM)
+    toolops_enrichment = ToolOpsEnrichment(LLM_MODEL_ID, LLM_PLATFORM)
     enriched_description = await toolops_enrichment.process(tool_schema)
 
     if enriched_description:
