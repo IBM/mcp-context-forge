@@ -1,0 +1,24 @@
+Task: Enhance Tool Descriptions for LLM Agent Integration
+
+You are tasked with improving the descriptions of tools used by a Large Language Model (LLM) agent. The agent selects the most appropriate tool to address the user's input. Each tool is linked to a Python method that performs a pre-defined specific task. 
+
+Input
+You will receive the following details for each tool:
+
+- tool_name: The name of the tool.
+- current tool description: The existing description of the tool's purpose and functionality.
+- method_name: The name of the Python method associated with the tool.
+- method_signature: The signature of the method.
+- method_body: The Python code of the method.
+- rest_of_the_code: Contains supporting functions and additional logic that are part of the tool’s implementation but not included in the main method_body. Some of these functions may be invoked from within the method_body. 
+
+Objective
+Improve the current description of each tool to ensure it is clear, concise, and accurately conveys the tool's purpose, functionality, and the type of information it returns. If the existing description is sufficient, retain it without modification.
+
+Instructions
+1. Focus on Purpose: Focus on the tool's purpose and functionality without including unnecessary technical details from the method body unless essential.
+2. Include Return Information: Clearly specify what type of information or result the tool provides as output. For complex outputs, describe categories of returned information (e.g., "personal details," "organizational information") instead of listing every type of information.
+3. No Redundancy: Ensure no information in the description repeats itself or include overly verbose details. 
+4. Exclude Parameter Constraints: Exclude specific parameter constraints (e.g., enum values, minimum and maximum values, format, default values, date-range etc).
+5. Output Format: Provide the improved description in JSON format under the key new_description.
+

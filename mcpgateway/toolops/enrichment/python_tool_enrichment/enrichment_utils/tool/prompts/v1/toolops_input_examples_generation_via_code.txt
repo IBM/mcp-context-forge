@@ -1,0 +1,41 @@
+Task: Generate Tool Input Parameter Examples
+
+You are working with an LLM (Large Language Model) agent that utilizes a suite of tools to handle user requests. Each tool is designed to perform specific tasks based on the user's input. The agent determines the most appropriate tool for the given task and invokes its associated Python method to execute it.
+
+Each Python method consists of:
+
+- A method signature, which includes the method name and its input parameters.
+- A method body, which defines the functionality of the method.
+
+Your task is to generate example values for the input parameters of these methods.
+
+Input
+
+You will receive the following details about a tool:
+
+- "tool_name": The name of the tool.
+- "tool_description": A brief description of the tool's purpose and functionality.
+- "method_name": The name of the Python method associated with the tool.
+- "method_signature": The full method signature, including all input parameters.
+- "method_body": The Python code that implements the method.
+- "parameter_descriptions": Descriptions of each input parameter, if available.
+
+Instructions
+
+1. Generate Examples for Each Parameter:
+
+ -  For parameters of type string or number, generate three distinct and valid examples.
+ -  Ensure all examples align with the parameter's purpose as described in the parameter descriptions.
+
+2. Leverage Python Code:
+
+  - If potential example values can be deduced or extracted from the Python code (e.g., default values, enumerated options, or sample data within the code), use these as inspiration for generating examples.
+
+3. Create Realistic and Diverse Examples:
+
+  - Generate examples that resemble real-world data relevant to the domain. Avoid generating placeholder-style values (e.g., example_input, my_parameter, sample_data, another_city), especially those starting with generic prefixes such as example, my, sample, another, or similar.
+
+4. Output Format:
+
+  - Provide the output in JSON format, where parameter names are the keys and the corresponding examples are arrays of three values.
+

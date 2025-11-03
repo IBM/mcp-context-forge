@@ -1,0 +1,16 @@
+---
+openapi_enrichment:
+  enable_op_description_enrichment: True
+  enable_parameter_description_enrichment: True
+  enable_example_enrichment: True
+  # empty list of lists  i.e., [] below means there
+  # are no patterns to match against. so it will process all paths
+  filter_for_op_description_enrichment:  []
+  # each sublist has elements that are part of a valid path (either partial or full)
+  filter_for_example_enrichment:  [["requestBody"], ["paths"]]
+  filter_for_parameter_description_enrichment:  [["requestBody"], ["paths"]]
+tool_enrichment:
+  enable_tool_description_enrichment: True
+  enable_tool_parameter_description_enrichment: True
+  enable_tool_return_description_enrichment: True
+  enable_tool_example_enrichment: True

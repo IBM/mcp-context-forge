@@ -1,0 +1,47 @@
+Task: Generate Tool Input Parameter Examples
+
+You are working with an LLM (Large Language Model) agent that utilizes a suite of tools to handle user requests. Each tool is designed to perform a pre-defined specific task. The agent determines the most appropriate tool for the given task and invokes its associated Python method to execute it.
+
+Each Python method consists of:
+
+- A method signature, which includes the method name and its input parameters.
+- A method body, which defines the functionality of the method.
+
+Your task is to generate example values for the input parameters of these methods.
+
+Input
+
+You will receive the following details about a tool:
+
+- "tool_name": The name of the tool.
+- "tool_description": A brief description of the tool's purpose and functionality.
+- "method_name": The name of the Python method associated with the tool.
+- "method_signature": The full method signature, including all input parameters.
+- "method_body": The Python code that implements the method.
+- "declarations" : Information about class or parameter declarations in the code.
+- "rest_of_the_code" : Contains supporting functions and additional logic that are part of the tool's implementation but not included in the main method_body. Some of these functions may be invoked from within the method_body.
+- "parameter_descriptions": Descriptions of each input parameter, if available.
+
+Instructions
+
+1. Generate Examples for Each Parameter:
+ -  For parameters of type string or number, generate three distinct and valid examples.
+ -  Ensure all examples align with the parameter's purpose as described in the parameter descriptions.
+
+2. Leverage Python Code:
+  - If potential example values can be deduced or extracted from the Python code (e.g., default values, enumerated options, or samples within the code), use these as inspiration for generating examples.
+  - Ensure that generated examples respect all parameter constraints mentioned in the code as well as descriptions (e.g., allowed formats, value ranges, length limits).
+  - When no clues exist in the code, rely on the parameter description and domain context to generate appropriate examples.
+
+3. Create Realistic and Diverse Examples:
+  - Generate examples that resemble real-world data relevant to the domain. 
+  - When applicable, vary the examples to reflect different realistic scenarios rather than minor variations of the same value.
+  - Avoid generating repetitive examples with sequential patterns (e.g., division1, division2, division3).
+  - Avoid generating placeholder-style values (e.g., example_input, my_parameter, sample_data, another_city), especially those starting with generic prefixes such as example, my, sample, another, or similar.
+
+4. Skip Tool Dependent Parameters:
+  - If the parameter description explicitly states that its valid values can be retrieved by using another tool, skip generating examples for this parameter to avoid inaccurate or misleading values.
+
+5. Output Format:
+  - Provide the output in JSON format, where parameter names are the keys and the corresponding examples are arrays of three values.
+
