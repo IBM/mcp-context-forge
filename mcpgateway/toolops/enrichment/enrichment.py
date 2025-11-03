@@ -3,23 +3,22 @@ from pathlib import Path
 import base64
 import datetime
 import os
-
+import json 
 import tomli as tomllib
 from typing import Any
 from mcpgateway.schemas import ToolRead
 
-from mcpgateway.toolops.enrichment.mcp_cf_tool_enrichment.prompt_utils import generate_enriched_tool_description
+from mcpgateway.toolops.enrichment.prompt_utils import generate_enriched_tool_description
 from mcpgateway.toolops.exceptions import ToolEnrichmentError
 
 logger = logging.getLogger(__name__)
 
-
-class ToolOpsMCPToolEnrichment:
+class ToolOpsEnrichment:
     def __init__(self, llm_model_id : str | None, llm_platform : str = "WATSONX"):
         self.llm_config: dict[str, Any] = {}
         file_path = Path(__file__)
         absolute_path = file_path.resolve()
-        cfg_file = absolute_path.parent / "enrichment_utils/conf/llm_config.toml"
+        cfg_file = absolute_path.parent / "conf/llm_config.toml"
         with Path(cfg_file).open(mode="rb") as task_file:
             self.llm_config = tomllib.load(task_file)
 
@@ -27,7 +26,7 @@ class ToolOpsMCPToolEnrichment:
             file_path = Path(__file__)
             absolute_path = file_path.resolve()
             cfg_file = (
-                absolute_path.parent / "enrichment_utils/conf/task_definitions.toml"
+                absolute_path.parent / "conf/task_definitions.toml"
             )
             with Path(cfg_file).open(mode="rb") as task_file:
                 task_definitions = tomllib.load(task_file)
@@ -37,7 +36,8 @@ class ToolOpsMCPToolEnrichment:
             exception = "Please configure the llm model id for ToolOps Enrichment."
             raise ToolEnrichmentError("ToolOpsEnrichment", exception)
 
-        print("Using modelid: " + llm_model_id)
+        # print("Using modelid: " + llm_model_id)
+        logger.info("Using modelid: " + llm_model_id)
         self.llm_model_id = llm_model_id
         self.llm_platform = llm_platform
         self.sessionid = self._get_unique_sessionid()
@@ -50,8 +50,8 @@ class ToolOpsMCPToolEnrichment:
 
         return timestamp
 
-
     async def process(self,tool_schema: ToolRead, debug_mode: bool = False, logfolder:str = "log/")->str:
+        logger.info("in process!!!!")
         tool_name = tool_schema.name
         current_tool_description = ""
         if tool_schema.description:
