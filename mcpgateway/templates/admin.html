@@ -4154,6 +4154,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
                   >
+                    Owner
+                  </th>
+                  <th
+                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
+                  >
                     Team
                   </th>
                   <th
@@ -4269,6 +4274,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
+                  </td>
+                  <td
+                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400"
+                  >
+                    {{ gateway.ownerEmail }}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
@@ -5473,27 +5483,19 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </h4>
                       
                       <!-- Owner email: show a visible label with fallback so it's obvious in the UI -->
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        Owner:
-                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         {{ agent.ownerEmail or "test@example.com" }}
                       </span>
                        <!-- team : show a visible label with fallback so it's obvious in the UI -->
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        Team:
-                        <span class="text-sm text-gray-600 dark:text-gray-400">
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {{ agent.team or "Unassigned" }}
                         </span>
                       </span>
-                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                        Visibility:
-                        <span class="text-sm text-gray-600 dark:text-gray-400">
-                          {{ agent.visibility or "Private" }}
-                        </span>
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            {{ (agent.visibility or 'Private') | capitalize }}
+                          </span>
                       </span>
-                      <span class="text-sm text-gray-600 dark:text-gray-400">
-                        {{ agent.visibility or "Public" }}
-                      </span>
+                      
                     </div>
                     <p class="text-sm text-gray-600 dark:text-gray-400">
                       {{ agent.description or "" }}
