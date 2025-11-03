@@ -1324,8 +1324,10 @@ class ToolService:
                         """
                         if gateway.ca_certificate:
                             ctx = create_ssl_context(gateway.ca_certificate)
+                        else:
+                            ctx = None
                         return httpx.AsyncClient(
-                            verify=ctx if 'ctx' in locals() else True,
+                            verify=ctx if ctx else True,
                             follow_redirects=True,
                             headers=headers,
                             timeout=timeout or httpx.Timeout(30.0),
