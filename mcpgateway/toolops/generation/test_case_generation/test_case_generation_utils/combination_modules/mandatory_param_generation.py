@@ -1,11 +1,10 @@
 import os
 import sys
 import copy
-import logging
 
-logger = logging.getLogger('toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_param_testcase')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # This funcmethodtion generates a testcase with only mandatory paramters derived from all paramter testcase #
 def mandatory_param_testcase(transformed_tool_spec, data_generated_through_LLM, number_testcases_to_generate_more, count_testcases):
@@ -35,5 +34,6 @@ def mandatory_param_testcase(transformed_tool_spec, data_generated_through_LLM, 
                 data_generated_through_LLM["testcase_2"] = temp_mandatory_testcase
                 number_testcases_to_generate_more = number_testcases_to_generate_more-1
                 count_testcases=count_testcases+1
-    logger.info("One testcase generated with only mandatory parameters",extra={'details':{"testcase_2":data_generated_through_LLM["testcase_2"]}})
+    #logger.info("One testcase generated with only mandatory parameters",extra={'details':{"testcase_2":data_generated_through_LLM["testcase_2"]}})
+    logger.info("One testcase generated with only mandatory parameters")
     return(data_generated_through_LLM, number_testcases_to_generate_more, count_testcases)
