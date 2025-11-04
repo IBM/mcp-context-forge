@@ -59,8 +59,6 @@ from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives import serialization
 
 try:
     # Third-Party

@@ -9,20 +9,29 @@ Utility to generate Ed25519 key pairs for JWT or signing use.
 Safely writes PEM-formatted private and public keys to disk.
 """
 
+# Future
 from __future__ import annotations
 
-import argparse
-from pathlib import Path
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives import serialization
+# Standard
 
 # Logging setup
 import logging
+from pathlib import Path
+
+# Third-Party
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 
 logger = logging.getLogger(__name__)
 
+
 def generate_ed25519_keypair(private_path: Path, public_path: Path) -> None:
-    """Generate an Ed25519 key pair and save to PEM files."""
+    """Generate an Ed25519 key pair and save to PEM files.
+
+    Args:
+        private_path: Path to save the private key PEM file.
+        public_path: Path to save the public key PEM file.
+    """
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
@@ -49,7 +58,11 @@ def generate_ed25519_keypair(private_path: Path, public_path: Path) -> None:
 
 
 def generate_ed25519_private_key() -> str:
-    """Generate an Ed25519 private key and return PEM string."""
+    """Generate an Ed25519 private key and return PEM string.
+
+    Returns:
+        str: PEM-formatted Ed25519 private key.
+    """
     private_key = ed25519.Ed25519PrivateKey.generate()
     private_pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
@@ -63,8 +76,16 @@ def generate_ed25519_private_key() -> str:
 # Helper: derive public key from private PEM
 # ---------------------------------------------------------------------------
 
+
 def derive_public_key_from_private(private_pem: str) -> str:
-    """Derive the public key PEM from a given Ed25519 private key PEM string."""
+    """Derive the public key PEM from a given Ed25519 private key PEM string.
+
+    Args:
+        private_pem: PEM-formatted Ed25519 private key string.
+
+    Returns:
+        str: PEM-formatted Ed25519 public key.
+    """
     private_key = serialization.load_pem_private_key(private_pem.encode(), password=None)
     public_key = private_key.public_key()
     public_pem = public_key.public_bytes(
@@ -75,6 +96,7 @@ def derive_public_key_from_private(private_pem: str) -> str:
 
 
 def main() -> None:
+    """Command-line interface to generate Ed25519 private key PEM."""
     private_pem = generate_ed25519_private_key()
     print("Ed25519 private key generated successfully.\n")
     print(private_pem)

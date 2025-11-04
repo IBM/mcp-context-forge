@@ -9,15 +9,19 @@ Utility to validate Ed25519 signatures.
 Given data, signature, and public key PEM, verifies authenticity.
 """
 
+# Future
 from __future__ import annotations
 
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives import serialization
-
-from mcpgateway.config import get_settings
-
+# Standard
 # Logging setup
 import logging
+
+# Third-Party
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+# First-Party
+from mcpgateway.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +39,9 @@ def sign_data(data: bytes, private_key_pem: str) -> str:
 
     Returns:
         str: Hex-encoded signature.
+
+    Raises:
+        TypeError: If the provided key is not an Ed25519 private key.
     """
     private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
     if not isinstance(private_key, ed25519.Ed25519PrivateKey):
@@ -45,6 +52,7 @@ def sign_data(data: bytes, private_key_pem: str) -> str:
 # ---------------------------------------------------------------------------
 # Validate Ed25519 signature
 # ---------------------------------------------------------------------------
+
 
 def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str) -> bool:
     """Validate an Ed25519 signature.
@@ -75,6 +83,7 @@ def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str)
     except Exception as e:
         logger.error(f"Signature validation failed: {e}")
         return False
+
 
 # ---------------------------------------------------------------------------
 # Helper: re-sign data after verifying old signature

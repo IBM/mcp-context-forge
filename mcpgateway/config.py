@@ -59,10 +59,10 @@ import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 
 # Third-Party
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
-from cryptography.hazmat.primitives.asymmetric import ed25519
-from cryptography.hazmat.primitives import serialization
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -408,7 +408,6 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
-
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
@@ -1372,21 +1371,23 @@ Disallow: /
     # Base URL for pagination links (defaults to request URL)
     pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
 
-    #Ed25519 keys for signing
+    # Ed25519 keys for signing
     prev_ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Previous Ed25519 private key for signing")
     prev_ed25519_public_key: Optional[str] = Field(default=None, description="Derived previous Ed25519 public key")
     ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Ed25519 private key for signing")
     ed25519_public_key: Optional[str] = Field(default=None, description="Derived Ed25519 public key")
 
-
     @model_validator(mode="after")
-    def derive_public_keys(self) -> 'Settings':
+    def derive_public_keys(self) -> "Settings":
         """
         Derive public keys after all individual field validations are complete.
+
+        Returns:
+            Settings: The updated Settings instance with derived public keys.
         """
         for private_key_field in ["ed25519_private_key", "prev_ed25519_private_key"]:
             public_key_field = private_key_field.replace("private", "public")
-            
+
             # 1. Get the private key SecretStr object
             private_key_secret: SecretStr = getattr(self, private_key_field)
 
@@ -1401,7 +1402,7 @@ Disallow: /
                 if not isinstance(private_key, ed25519.Ed25519PrivateKey):
                     # This check is useful, though model_validator should not raise
                     # for an invalid key if the field validator has already passed.
-                    continue 
+                    continue
 
                 # Derive and PEM-encode the public key
                 public_key = private_key.public_key()
@@ -1409,15 +1410,15 @@ Disallow: /
                     encoding=serialization.Encoding.PEM,
                     format=serialization.PublicFormat.SubjectPublicKeyInfo,
                 ).decode()
-                
+
                 # 3. Set the public key attribute directly on the model instance (self)
                 setattr(self, public_key_field, public_pem)
                 # logger.info(f"Derived and stored {public_key_field} automatically.")
 
-            except Exception as e:
+            except Exception:
                 # logger.warning(f"Failed to derive public key for {private_key_field}: {e}")
                 # You can choose to raise an error here if a failure should halt model creation
-                pass # Keep the field as its default/passed value if derivation fails
+                pass  # Keep the field as its default/passed value if derivation fails
 
         return self
 
