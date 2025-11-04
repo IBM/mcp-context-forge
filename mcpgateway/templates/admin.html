@@ -5516,8 +5516,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.ownerEmail }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.team }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.visibility|capitalize }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium w-32">
+                      <td class="px-6 py-4 whitespace-nowrap">
+                    {% if agent.visibility == 'private' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
+                      >Private</span
+                    >
+                    {% elif agent.visibility == 'team' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
+                      >Team</span
+                    >
+                    {% elif agent.visibility == 'public' %}
+                    <span
+                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
+                      >Public</span
+                    >
+                    {% else %}
+                    <span class="text-gray-500 dark:text-gray-300 text-xs"
+                      >N/A</span
+                    >
+                    {% endif %}
+                  </td>
+                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium w-32">
                         <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
                           <!-- Row 1: Test (full width) -->
                           <button

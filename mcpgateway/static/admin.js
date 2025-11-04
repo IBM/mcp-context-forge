@@ -11451,15 +11451,8 @@ function filterEntitiesByTags(entityType, tagsInput) {
         .map((tag) => tag.trim().toLowerCase())
         .filter((tag) => tag);
 
-    let rows;
-    if (entityType === "a2a-agents") {
-        const panel = document.querySelector(`#${entityType}-panel`);
-        rows = panel.querySelectorAll(".border.rounded-lg.p-4");
-        // 👆 adjust selector if your agent cards have different class names
-    } else {
-        const tableSelector = `#${entityType}-panel tbody tr`;
-        rows = document.querySelectorAll(tableSelector);
-    }
+    const tableSelector = `#${entityType}-panel tbody tr`;
+    const rows = document.querySelectorAll(tableSelector);
 
     let visibleCount = 0;
 
@@ -11473,20 +11466,6 @@ function filterEntitiesByTags(entityType, tagsInput) {
 
         // Extract tags from this row using specific tag selectors (not status badges)
         const rowTags = new Set();
-
-        /*
-        const tagElements_ver1 = row.querySelectorAll(`
-            span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800,
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-        `);
-
-        const tagElements_ver2 = row.querySelectorAll(`
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-blue-100.text-blue-800,
-            span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700,
-            span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700,
-            span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full
-        `);
-        */
 
         const tagElements = row.querySelectorAll(`
             /* Gateways */
