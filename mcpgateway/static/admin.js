@@ -8060,6 +8060,7 @@ async function handleGatewayTestSubmit(e) {
         const baseUrl = formData.get("url");
         const method = formData.get("method");
         const path = formData.get("path");
+        const contentType = formData.get("content_type") || "application/json";
 
         // Validate URL
         const urlValidation = validateUrl(baseUrl);
@@ -8099,12 +8100,28 @@ async function handleGatewayTestSubmit(e) {
             throw new Error(bodyValidation.error);
         }
 
+        // Process body based on content type
+        let processedBody = bodyValidation.value;
+        if (
+            contentType === "application/x-www-form-urlencoded" &&
+            bodyValidation.value &&
+            typeof bodyValidation.value === "object"
+        ) {
+            // Convert JSON object to URL-encoded string
+            const params = new URLSearchParams();
+            Object.entries(bodyValidation.value).forEach(([key, value]) => {
+                params.append(key, String(value));
+            });
+            processedBody = params.toString();
+        }
+
         const payload = {
             base_url: urlValidation.value,
             method,
             path,
             headers: headersValidation.value,
-            body: bodyValidation.value,
+            body: processedBody,
+            content_type: contentType,
         };
 
         // Make the request with timeout
@@ -17556,3 +17573,21 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
+
+// Function to update body label based on content type selection
+function updateBodyLabel() {
+    const bodyLabel = document.getElementById("gateway-test-body-label");
+    const contentType = document.getElementById(
+        "gateway-test-content-type",
+    )?.value;
+
+    if (bodyLabel) {
+        bodyLabel.innerHTML =
+            contentType === "application/x-www-form-urlencoded"
+                ? 'Body (JSON)<br><small class="text-gray-500">Auto-converts to form data</small>'
+                : "Body (JSON)";
+    }
+}
+
+// Make it available globally for HTML onclick handlers
+window.updateBodyLabel = updateBodyLabel;

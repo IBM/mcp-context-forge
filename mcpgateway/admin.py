@@ -8292,8 +8292,27 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         else:
             headers: dict = decode_auth(gateway.auth_value if gateway else None)
 
+        # Prepare request based on content type
+        content_type = getattr(request, "content_type", "application/json")
+        request_kwargs = {"method": request.method.upper(), "url": full_url, "headers": headers}
+
+        if request.body is not None:
+            if content_type == "application/x-www-form-urlencoded":
+                # Set proper content type header and use data parameter for form encoding
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                if isinstance(request.body, str):
+                    # Body is already form-encoded
+                    request_kwargs["data"] = request.body
+                else:
+                    # Body is a dict, convert to form data
+                    request_kwargs["data"] = request.body
+            else:
+                # Default to JSON
+                headers["Content-Type"] = "application/json"
+                request_kwargs["json"] = request.body
+
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)
+            response: httpx.Response = await client.request(**request_kwargs)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[Dict[str, Any], str] = response.json()
