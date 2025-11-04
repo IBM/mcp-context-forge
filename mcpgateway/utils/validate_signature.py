@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def sign_data(data: bytes, private_key_pem: str) -> bytes:
+def sign_data(data: bytes, private_key_pem: str) -> str:
     """Sign data using an Ed25519 private key.
 
     Args:
@@ -34,36 +34,47 @@ def sign_data(data: bytes, private_key_pem: str) -> bytes:
         private_key_pem: PEM-formatted private key string.
 
     Returns:
-        bytes: Signature bytes.
+        str: Hex-encoded signature.
     """
     private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
     if not isinstance(private_key, ed25519.Ed25519PrivateKey):
         raise TypeError("Expected an Ed25519 private key")
-    return private_key.sign(data)
+    return private_key.sign(data).hex()
 
 
 # ---------------------------------------------------------------------------
 # Validate Ed25519 signature
 # ---------------------------------------------------------------------------
 
-def validate_signature(data: bytes, signature: bytes, public_key_pem: str) -> bool:
+def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str) -> bool:
     """Validate an Ed25519 signature.
 
     Args:
         data: Original message bytes.
-        signature: Signature bytes to verify.
+        signature: Signature bytes or hex string to verify.
         public_key_pem: PEM-formatted public key string.
 
     Returns:
         bool: True if signature is valid, False otherwise.
     """
+    if isinstance(data, str):
+        data = data.encode()
+
+    # Accept hex-encoded signatures
+    if isinstance(signature, str):
+        try:
+            signature = bytes.fromhex(signature)
+        except ValueError:
+            logger.error("Invalid hex signature format.")
+            return False
+
     try:
         public_key = serialization.load_pem_public_key(public_key_pem.encode())
         public_key.verify(signature, data)
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"Signature validation failed: {e}")
         return False
-
 
 # ---------------------------------------------------------------------------
 # Helper: re-sign data after verifying old signature
@@ -107,22 +118,20 @@ def resign_data(
 if __name__ == "__main__":
     # Example usage
     settings = get_settings()
-    print(settings)
 
-    # private_key_pem = settings.ed25519_private_key
-    # print(private_key_pem)
-    # private_key_obj = serialization.load_pem_private_key(
-    #     private_key_pem.encode(),
-    #     password=None,
-    # )
-    # public_key = private_key_obj.public_key()
+    private_key_pem = settings.ed25519_private_key
+    private_key_obj = serialization.load_pem_private_key(
+        private_key_pem.encode(),
+        password=None,
+    )
+    public_key = private_key_obj.public_key()
 
-    # message = b"test message"
-    # sig = private_key_obj.sign(message)
+    message = b"test message"
+    sig = private_key_obj.sign(message)
 
-    # public_pem = public_key.public_bytes(
-    #     encoding=serialization.Encoding.PEM,
-    #     format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    # ).decode()
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
 
-    # logger.info("Signature valid:", validate_signature(message, sig, public_pem))
+    logger.info("Signature valid:", validate_signature(message, sig, public_pem))

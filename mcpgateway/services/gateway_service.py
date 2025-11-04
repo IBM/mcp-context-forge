@@ -59,6 +59,8 @@ from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
 
 try:
     # Third-Party
@@ -683,6 +685,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 )
                 for prompt in prompts
             ]
+
+            from mcpgateway.utils.validate_signature import sign_data, validate_signature
+
+            private_key_pem = settings.ed25519_private_key.get_secret_value()
+            public_key_pem = settings.ed25519_public_key
+            logger.info(f'{public_key_pem=}')
+
+            sig = sign_data(gateway.ca_certificate.encode(), private_key_pem)
+            logger.info(f'{sig=}')
+            valid = validate_signature(gateway.ca_certificate.encode(), sig, public_key_pem)
+            logger.info(f'{valid=}')
 
             # Create DB model
             db_gateway = DbGateway(
