@@ -1495,12 +1495,12 @@ class ResourceCreate(BaseModel):
         content (Union[str, bytes]): Content of the resource, which can be text or binary.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
-    mime_type: Optional[str] = Field(None, description="Resource MIME type")
+    mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
