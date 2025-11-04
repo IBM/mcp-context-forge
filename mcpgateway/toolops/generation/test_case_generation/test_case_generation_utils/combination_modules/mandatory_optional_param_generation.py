@@ -26,6 +26,7 @@ def mandatory_optional_param_testcase(transformed_tool_spec, data_generated_thro
                 incorrectly_generated_data=False
                 for case in data_generated_through_LLM_so_far:
                     count_testcases=count_testcases+1
+                    print("Mandatory and optional test case - ",case)
                     data_generated_through_LLM["testcase_"+str(count_testcases)] = data_generated_through_LLM_so_far[case]
                     data_generated_through_LLM_with_mandatory_and_some_optional_param["testcase_"+str(count_testcases)] = data_generated_through_LLM_so_far[case]
                     if count_testcases == original_number_of_testcases_to_generate_more:
@@ -35,6 +36,7 @@ def mandatory_optional_param_testcase(transformed_tool_spec, data_generated_thro
                 if (correct_number_of_testcases_generated==True):
                     break
             except Exception as e:
+                print("Error:",str(e))
                 logger.info("Error in generating test cases for - mandatory and some optional"+str(e))
                 count_failed_execution=count_failed_execution+1
                 if count_failed_execution==3:
