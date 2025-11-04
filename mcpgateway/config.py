@@ -1416,9 +1416,8 @@ Disallow: /
                 # logger.info(f"Derived and stored {public_key_field} automatically.")
 
             except Exception:
-                # logger.warning(f"Failed to derive public key for {private_key_field}: {e}")
+                logger.warning(f"Failed to derive public key for {private_key_field}: {e}")
                 # You can choose to raise an error here if a failure should halt model creation
-                pass  # Keep the field as its default/passed value if derivation fails
 
         return self
 
