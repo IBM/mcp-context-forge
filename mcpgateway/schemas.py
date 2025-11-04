@@ -2916,6 +2916,8 @@ class GatewayRead(BaseModelWithConfigDict):
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
+    auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -2927,6 +2929,10 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    auth_password_unmasked: Optional[str] = Field(default=None, description="Unmasked password for basic authentication")
+    auth_token_unmasked: Optional[str] = Field(default=None, description="Unmasked bearer token for authentication")
+    auth_header_value_unmasked: Optional[str] = Field(default=None, description="Unmasked single custom header value")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -3040,19 +3046,24 @@ class GatewayRead(BaseModelWithConfigDict):
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             self.auth_username, self.auth_password = u, p
+            self.auth_password_unmasked = p
 
         elif auth_type == "bearer":
             auth = auth_value.get("Authorization")
             if not (isinstance(auth, str) and auth.startswith("Bearer ")):
                 raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
             self.auth_token = auth.removeprefix("Bearer ")
+            self.auth_token_unmasked = self.auth_token
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            self.auth_headers_unmasked = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
+            self.auth_header_value_unmasked = v
 
         return self
 
@@ -3087,7 +3098,19 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
 
+        masked_data["auth_password_unmasked"] = self.auth_password_unmasked
+        masked_data["auth_token_unmasked"] = self.auth_token_unmasked
+        masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
+        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
 
 
