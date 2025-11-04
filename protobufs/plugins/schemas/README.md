@@ -15,7 +15,7 @@ Enable plugin development in **multiple languages** (Python, Rust, Go, Java) whi
 
 ```bash
 # Generate protobuf Python classes
-cd schemas
+cd protobufs/plugins/schemas
 ./generate_python.sh
 
 # Run tests
@@ -26,7 +26,7 @@ pytest tests/unit/mcpgateway/plugins/framework/generated/
 
 **Pydantic models** (`mcpgateway/plugins/framework/models.py`) are the canonical Python implementation.
 
-**Protobuf schemas** (`schemas/contextforge/plugins/`) enable cross-language support (Rust, Go, etc.).
+**Protobuf schemas** (`protobufs/plugins/schemas/`) enable cross-language support (Rust, Go, etc.).
 
 **Conversion methods** bridge the two:
 ```python
@@ -40,13 +40,12 @@ pydantic_model = GlobalContext.model_validate_pb(proto_msg)
 ## Schema Structure
 
 ```
-schemas/contextforge/plugins/
-├── common/types.proto       # Shared types (GlobalContext, PluginViolation, etc.)
-└── hooks/
-    ├── tools.proto          # Tool hook payloads
-    ├── prompts.proto        # Prompt hook payloads
-    ├── resources.proto      # Resource hook payloads
-    └── agents.proto         # Agent hook payloads
+protobufs/plugins/schemas/mcpgateway/plugins/framework/generated/
+├── types.proto       # Shared types (GlobalContext, PluginViolation, etc.)
+├── tools.proto          # Tool hook payloads
+├── prompts.proto        # Prompt hook payloads
+├── resources.proto      # Resource hook payloads
+└── agents.proto         # Agent hook payloads
 ```
 
 ## Field Requirements
@@ -83,10 +82,10 @@ ctx = GlobalContext.model_validate_pb(proto_ctx)
 **Other languages**: Generate code from protos using standard tools:
 ```bash
 # Rust
-protoc --rust_out=. contextforge/plugins/common/types.proto
+protoc --rust_out=. protobufs/plugins/schemas/mcpgateway/plugins/framework/generated/types.proto
 
 # Go
-protoc --go_out=. contextforge/plugins/common/types.proto
+protoc --go_out=. protobufs/plugins/schemas/mcpgateway/plugins/framework/generated/types.proto
 ```
 
 ## Key Features
@@ -95,12 +94,3 @@ protoc --go_out=. contextforge/plugins/common/types.proto
 ✅ Protobuf for wire protocol and cross-language serialization
 ✅ Lazy loading - protobuf only imported when needed
 ✅ Follows Pydantic conventions (`model_dump_pb()`, `model_validate_pb()`)
-
-## Testing
-
-```bash
-# Run conversion tests
-pytest tests/unit/mcpgateway/plugins/framework/generated/test_protobuf_conversions.py -v
-```
-
-19 test cases verify roundtrip conversions, nested objects, and edge cases.
