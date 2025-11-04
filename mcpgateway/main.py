@@ -1267,16 +1267,13 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
         logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
-
-        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        # return {"enriched_tool":{"name":"test"}}
         return result
 
-    except json.JSONDecodeError:
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid JSON in request body",
-        )
+            detail="Invalid JSON in request body" + str(e),
+        ) from e
 
 
 # Protocol APIs #
