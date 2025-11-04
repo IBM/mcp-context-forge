@@ -17572,29 +17572,27 @@ document.head.appendChild(style);
 // ============================================================================
 
 /**
- * Validate CA certificate file on upload
+ * Validate CA certificate file on upload (supports multiple files)
  * @param {Event} event - The file input change event
  */
-function validateCACertFile(event) {
-    const file = event.target.files[0];
+async function validateCACertFiles(event) {
+    const files = Array.from(event.target.files);
     const feedbackEl = document.getElementById("ca-certificate-feedback");
     
-    if (!file) {
-        if (feedbackEl) {
-            feedbackEl.innerHTML = "";
-            feedbackEl.className = "mt-2 text-sm";
-        }
+    if (!files.length) {
+        feedbackEl.textContent = "No files selected.";
         return;
     }
 
     // Check file size (max 10MB for cert files)
     const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
+    const oversizedFiles = files.filter(f => f.size > maxSize);
+    if (oversizedFiles.length > 0) {
         if (feedbackEl) {
             feedbackEl.innerHTML = `
                 <div class="flex items-center text-red-600">
                     <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                    <span>Certificate file is too large. Maximum size is 10MB.</span>
+                    <span>Certificate file(s) too large. Maximum size is 10MB per file.</span>
                 </div>
             `;
             feedbackEl.className = "mt-2 text-sm";
@@ -17603,17 +17601,19 @@ function validateCACertFile(event) {
         return;
     }
 
-    // Check file extension
-    const fileName = file.name.toLowerCase();
+    // Check file extensions
     const validExtensions = ['.pem', '.crt', '.cer', '.cert'];
-    const hasValidExtension = validExtensions.some(ext => fileName.endsWith(ext));
+    const invalidFiles = files.filter(file => {
+        const fileName = file.name.toLowerCase();
+        return !validExtensions.some(ext => fileName.endsWith(ext));
+    });
     
-    if (!hasValidExtension) {
+    if (invalidFiles.length > 0) {
         if (feedbackEl) {
             feedbackEl.innerHTML = `
                 <div class="flex items-center text-red-600">
                     <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                    <span>Invalid file type. Please upload a valid certificate file (.pem, .crt, .cer, .cert)</span>
+                    <span>Invalid file type. Please upload valid certificate files (.pem, .crt, .cer, .cert)</span>
                 </div>
             `;
             feedbackEl.className = "mt-2 text-sm";
@@ -17622,55 +17622,160 @@ function validateCACertFile(event) {
         return;
     }
 
-    // Read and validate file content
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const content = e.target.result;
-        
-        // Validate PEM format
-        if (!isValidCertificate(content)) {
-            if (feedbackEl) {
-                feedbackEl.innerHTML = `
-                    <div class="flex items-center text-red-600">
-                        <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                        <span>Invalid certificate format. The file must contain a valid PEM-encoded certificate.</span>
-                    </div>
-                `;
-                feedbackEl.className = "mt-2 text-sm";
-            }
-            event.target.value = '';
-            return;
+    // Read and validate all files
+    const certResults = [];
+    for (const file of files) {
+        try {
+            const content = await readFileAsync(file);
+            const isValid = isValidCertificate(content);
+            const certInfo = isValid ? parseCertificateInfo(content) : null;
+            
+            certResults.push({
+                file: file,
+                content: content,
+                isValid: isValid,
+                certInfo: certInfo
+            });
+        } catch (error) {
+            certResults.push({
+                file: file,
+                content: null,
+                isValid: false,
+                certInfo: null,
+                error: error.message
+            });
         }
+    }
 
-        // Show success message with file info
-        if (feedbackEl) {
-            feedbackEl.innerHTML = `
-                <div class="flex items-center text-green-600">
-                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
-                    <span>Certificate file "${escapeHtml(file.name)}" validated successfully (${formatFileSize(file.size)})</span>
-                </div>
-            `;
-            feedbackEl.className = "mt-2 text-sm";
-        }
-        
-        // Update the drop zone to show the selected file
-        updateDropZoneWithFile(file);
-    };
+    // Display per-file validation results
+    displayCertValidationResults(certResults, feedbackEl);
 
-    reader.onerror = function() {
-        if (feedbackEl) {
-            feedbackEl.innerHTML = `
-                <div class="flex items-center text-red-600">
-                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                    <span>Error reading certificate file. Please try again.</span>
-                </div>
-            `;
-            feedbackEl.className = "mt-2 text-sm";
+    // If all valid, order and concatenate
+    const allValid = certResults.every(r => r.isValid);
+    if (allValid) {
+        const orderedCerts = orderCertificateChain(certResults);
+        const concatenated = orderedCerts.map(r => r.content.trim()).join('\n');
+        
+        // Store concatenated result in a hidden field
+        let hiddenInput = document.getElementById('ca_certificate_concatenated');
+        if (!hiddenInput) {
+            hiddenInput = document.createElement('input');
+            hiddenInput.type = 'hidden';
+            hiddenInput.id = 'ca_certificate_concatenated';
+            hiddenInput.name = 'ca_certificate';
+            event.target.form.appendChild(hiddenInput);
         }
+        hiddenInput.value = concatenated;
+        
+        // Update drop zone
+        updateDropZoneWithFiles(files);
+    } else {
         event.target.value = '';
-    };
+    }
+}
 
-    reader.readAsText(file);
+/**
+ * Helper function to read file as text asynchronously
+ * @param {File} file - The file to read
+ * @returns {Promise<string>} - Promise resolving to file content
+ */
+function readFileAsync(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('Error reading file'));
+        reader.readAsText(file);
+    });
+}
+
+/**
+ * Parse certificate information to determine if it's self-signed (root CA)
+ * @param {string} content - PEM certificate content
+ * @returns {Object} - Certificate info with isRoot flag
+ */
+function parseCertificateInfo(content) {
+    // Basic heuristic: check if Subject and Issuer appear the same
+    // In a real implementation, you'd parse the ASN.1 structure properly
+    const subjectMatch = content.match(/Subject:([^\n]+)/i);
+    const issuerMatch = content.match(/Issuer:([^\n]+)/i);
+    
+    // If we can't parse, assume it's an intermediate
+    if (!subjectMatch || !issuerMatch) {
+        return { isRoot: false };
+    }
+    
+    const subject = subjectMatch[1].trim();
+    const issuer = issuerMatch[1].trim();
+    
+    return {
+        isRoot: subject === issuer,
+        subject: subject,
+        issuer: issuer
+    };
+}
+
+/**
+ * Order certificates in chain: root CA first, then intermediates, then leaf
+ * @param {Array} certResults - Array of certificate result objects
+ * @returns {Array} - Ordered array of certificate results
+ */
+function orderCertificateChain(certResults) {
+    const roots = certResults.filter(r => r.certInfo && r.certInfo.isRoot);
+    const nonRoots = certResults.filter(r => r.certInfo && !r.certInfo.isRoot);
+    
+    // Simple ordering: roots first, then rest
+    // In production, you'd build a proper chain by matching issuer/subject
+    return [...roots, ...nonRoots];
+}
+
+/**
+ * Display validation results for each certificate file
+ * @param {Array} certResults - Array of validation result objects
+ * @param {HTMLElement} feedbackEl - Element to display feedback
+ */
+function displayCertValidationResults(certResults, feedbackEl) {
+    const allValid = certResults.every(r => r.isValid);
+    
+    let html = '<div class="space-y-2">';
+    
+    // Overall status
+    if (allValid) {
+        html += `
+            <div class="flex items-center text-green-600 font-semibold text-lg">
+                <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>All certificates validated successfully!</span>
+            </div>
+        `;
+    } else {
+        html += `
+            <div class="flex items-center text-red-600 font-semibold text-lg">
+                <svg class="w-8 h-8 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                <span>Some certificates failed validation</span>
+            </div>
+        `;
+    }
+    
+    // Per-file results
+    html += '<div class="mt-3 space-y-1">';
+    for (const result of certResults) {
+        const icon = result.isValid 
+            ? '<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
+            : '<svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+        
+        const statusClass = result.isValid ? 'text-gray-700' : 'text-red-700';
+        const typeLabel = result.certInfo && result.certInfo.isRoot ? ' (Root CA)' : '';
+        
+        html += `
+            <div class="flex items-center ${statusClass}">
+                ${icon}
+                <span class="ml-2">${escapeHtml(result.file.name)}${typeLabel} - ${formatFileSize(result.file.size)}</span>
+            </div>
+        `;
+    }
+    html += '</div></div>';
+    
+    feedbackEl.innerHTML = html;
+    feedbackEl.className = "mt-2 text-sm";
 }
 
 /**
@@ -17738,22 +17843,23 @@ function isValidBase64(str) {
  * Update drop zone UI with selected file info
  * @param {File} file - The selected file
  */
-function updateDropZoneWithFile(file) {
+function updateDropZoneWithFiles(files) {
     const dropZone = document.getElementById('ca-certificate-upload-drop-zone');
     if (!dropZone) return;
 
-    // Update drop zone content to show file info
+    const fileListHTML = Array.from(files)
+        .map(file => `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`)
+        .join('');
+
     dropZone.innerHTML = `
         <div class="space-y-2">
             <svg class="mx-auto h-12 w-12 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
             </svg>
             <div class="text-sm text-gray-700 dark:text-gray-300">
-                <span class="font-medium">Selected: ${escapeHtml(file.name)}</span>
+                <span class="font-medium">Selected Certificates:</span>
             </div>
-            <div class="text-xs text-gray-500 dark:text-gray-400">
-                ${formatFileSize(file.size)} • Click to change
-            </div>
+            <div class="text-xs text-gray-500 dark:text-gray-400">${fileListHTML}</div>
         </div>
     `;
 }

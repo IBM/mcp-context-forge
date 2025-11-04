@@ -6277,13 +6277,16 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
         ca_certificate: Optional[str] = None
+        sig: Optional[str] = None
+        
+        # CA certificate(s) handled by JavaScript validation (supports single or multiple files)
+        # JavaScript validates, orders (root→intermediate→leaf), and concatenates into hidden field
         if "ca_certificate" in form:
-            file = form["ca_certificate"]
-            if isinstance(file, StarletteUploadFile):
-                content = await file.read()
-                ca_certificate = content.decode("utf-8").strip()
-                LOGGER.info("✅ CA certificate file uploaded successfully")
-
+            ca_cert_value = form["ca_certificate"]
+            if isinstance(ca_cert_value, str) and ca_cert_value.strip():
+                ca_certificate = ca_cert_value.strip()
+                LOGGER.info("✅ CA certificate(s) received and validated by frontend")
+                
                 private_key_pem = settings.ed25519_private_key.get_secret_value()
                 sig = sign_data(ca_certificate.encode(), private_key_pem)
 

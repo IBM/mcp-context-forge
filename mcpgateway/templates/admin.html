@@ -5016,10 +5016,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <input
                 type="file"
                 id="upload-ca-certificate"
-                name="ca_certificate"
+                name="ca_certificates[]"
                 class="hidden"
-                onchange="validateCACertFile(event)"
+                onchange="validateCACertFiles(event)"
                 accept=".pem,.crt,.cer,.cert,application/x-x509-ca-certificate"
+                multiple
               />
               <div
                 id="ca-certificate-upload-drop-zone"
