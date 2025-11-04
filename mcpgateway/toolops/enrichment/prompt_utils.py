@@ -1,5 +1,4 @@
 import json
-import logging
 import ast
 from typing import Any
 import aiofiles as aiof
@@ -9,7 +8,9 @@ import re
 from langchain_core.utils.json import parse_json_markdown
 from mcpgateway.toolops.utils.llm_util import execute_prompt
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 def split_str_by_given_list_of_str(input_str, str_lst):  # type: ignore # noqa: D103
     # add a '|' between the substrings to create the pattern for splitting
@@ -118,7 +119,7 @@ async def generate_enriched_tool_description(
             await out.write(prompt_gen_str)
             await out.flush()
 
-    logger.debug("prompt_gen_str: " + prompt_gen_str)
+    #logger.debug("prompt_gen_str: " + prompt_gen_str)
     responses = execute_prompt(
         prompt_gen_str,
         model_id=params_dict["llm_model_name"],
@@ -126,7 +127,7 @@ async def generate_enriched_tool_description(
         max_new_tokens=params_dict["max_new_tokens"],
         stop_sequences=params_dict["stop_sequences"],
     )
-    logger.debug("enrichment responses: " + str(responses))
+    #logger.debug("enrichment responses: " + str(responses))
 
     try:
         if debug_mode:
@@ -138,7 +139,7 @@ async def generate_enriched_tool_description(
         enriched_desc = get_first_value(out_dict, "new_description")
         # logger.info ("out_dict: " + str(out_dict))
         # enriched_desc = out_dict["new_description"]
-        logger.info ("enriched_desc: " + str(enriched_desc))
+        #logger.info ("enriched_desc: " + str(enriched_desc))
 
     except Exception as e1:
         logger.info("error3: " + str(e1) + ": promptfile : " + promptfile)
@@ -162,6 +163,7 @@ async def generate_enriched_tool_description(
             )
             enriched_desc = ""
 
-    logger.info("Return Value from generate_operation_description: %s", enriched_desc)
+    #logger.info("Return Value from generate_operation_description: %s", enriched_desc)
+    logger.info("Tool description enrichment is successful")
 
     return enriched_desc

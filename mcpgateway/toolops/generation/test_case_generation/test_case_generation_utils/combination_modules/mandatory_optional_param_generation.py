@@ -34,7 +34,8 @@ def mandatory_optional_param_testcase(transformed_tool_spec, data_generated_thro
                 number_testcases_to_generate_more = original_number_of_testcases_to_generate_more - count_testcases
                 if (correct_number_of_testcases_generated==True):
                     break
-            except:
+            except Exception as e:
+                logger.info("Error in generating test cases for - mandatory and some optional"+str(e))
                 count_failed_execution=count_failed_execution+1
                 if count_failed_execution==3:
                     break

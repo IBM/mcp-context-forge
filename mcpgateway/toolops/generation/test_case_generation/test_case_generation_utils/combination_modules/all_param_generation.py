@@ -47,7 +47,8 @@ def all_param_testcase(transformed_tool_spec, data_generated_through_LLM, number
                             if key not in list(data_generated_through_LLM["testcase_1"].keys()) and key in all_keys:
                                 data_generated_through_LLM["testcase_1"][key] = data_generated_through_LLM_so_far[case][key]
                         break
-            except:
+            except Exception as e:
+                logger.info("Error is generating test cases for - all params"+str(e))
                 incorrectly_generated_data=True
             count_failed_execution=count_failed_execution+1
             if (count_failed_execution == 2):
