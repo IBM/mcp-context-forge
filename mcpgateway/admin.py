@@ -8293,12 +8293,8 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
             headers: dict = decode_auth(gateway.auth_value if gateway else None)
 
         # Prepare request based on content type
-        content_type = getattr(request, 'content_type', 'application/json')
-        request_kwargs = {
-            "method": request.method.upper(),
-            "url": full_url,
-            "headers": headers
-        }
+        content_type = getattr(request, "content_type", "application/json")
+        request_kwargs = {"method": request.method.upper(), "url": full_url, "headers": headers}
 
         if request.body is not None:
             if content_type == "application/x-www-form-urlencoded":
