@@ -715,6 +715,71 @@ class PluginViolation(BaseModel):
             raise ValueError("Name must be a non-empty string.")
         self._plugin_name = name
 
+    def model_dump_pb(self):
+        """Convert to protobuf PluginViolation message.
+
+        Returns:
+            types_pb2.PluginViolation: Protobuf message.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        # Third-Party
+        from google.protobuf import struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import types_pb2
+
+        # Convert details dict to Struct
+        details_struct = struct_pb2.Struct()
+        if self.details:
+            for key, value in self.details.items():
+                if isinstance(value, dict):
+                    details_struct[key] = value
+                elif isinstance(value, (list, tuple)):
+                    details_struct[key] = list(value)
+                else:
+                    details_struct[key] = value
+
+        return types_pb2.PluginViolation(
+            reason=self.reason,
+            description=self.description,
+            code=self.code,
+            details=details_struct if self.details else None,
+            plugin_name=self._plugin_name,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "PluginViolation":
+        """Create from protobuf PluginViolation message.
+
+        Args:
+            proto: types_pb2.PluginViolation protobuf message.
+
+        Returns:
+            PluginViolation: Pydantic model instance.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict
+        details = {}
+        if proto.HasField("details"):
+            details = json_format.MessageToDict(proto.details)
+
+        violation = cls(
+            reason=proto.reason,
+            description=proto.description,
+            code=proto.code,
+            details=details,
+        )
+        if proto.plugin_name:
+            violation._plugin_name = proto.plugin_name
+        return violation
+
 
 class PluginSettings(BaseModel):
     """Global plugin settings.
@@ -787,6 +852,67 @@ class PluginResult(BaseModel, Generic[T]):
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
+    def model_dump_pb(self):
+        """Convert to protobuf PluginResult message.
+
+        Returns:
+            types_pb2.PluginResult: Protobuf message.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+            The modified_payload will be serialized using google.protobuf.Any.
+        """
+        # Third-Party
+        from google.protobuf import any_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import types_pb2
+
+        # Handle modified_payload - need to convert to Any if present
+        modified_payload_any = None
+        if self.modified_payload is not None:
+            # If modified_payload has model_dump_pb, use it
+            if hasattr(self.modified_payload, "model_dump_pb"):
+                payload_pb = self.modified_payload.model_dump_pb()
+                modified_payload_any = any_pb2.Any()
+                modified_payload_any.Pack(payload_pb)
+
+        return types_pb2.PluginResult(
+            continue_processing=self.continue_processing,
+            modified_payload=modified_payload_any,
+            violation=self.violation.model_dump_pb() if self.violation else None,
+            metadata=self.metadata or {},
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto, payload_type=None) -> "PluginResult":
+        """Create from protobuf PluginResult message.
+
+        Args:
+            proto: types_pb2.PluginResult protobuf message.
+            payload_type: Optional Pydantic class to deserialize modified_payload.
+
+        Returns:
+            PluginResult: Pydantic model instance.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+            If payload_type is provided and has model_validate_pb, it will be used.
+        """
+        modified_payload = None
+        if proto.HasField("modified_payload") and payload_type:
+            # Try to unpack and convert if payload_type has model_validate_pb
+            if hasattr(payload_type, "model_validate_pb"):
+                # This requires knowing the protobuf type - left as future enhancement
+                pass
+
+        return cls(
+            continue_processing=proto.continue_processing,
+            modified_payload=modified_payload,
+            violation=PluginViolation.model_validate_pb(proto.violation) if proto.HasField("violation") else None,
+            metadata=dict(proto.metadata),
+        )
+
 
 class GlobalContext(BaseModel):
     """The global context, which shared across all plugins.
@@ -823,6 +949,49 @@ class GlobalContext(BaseModel):
     server_id: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def model_dump_pb(self):
+        """Convert to protobuf GlobalContext message.
+
+        Returns:
+            types_pb2.GlobalContext: Protobuf message.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import types_pb2
+
+        return types_pb2.GlobalContext(
+            request_id=self.request_id,
+            user=self.user or "",
+            tenant_id=self.tenant_id or "",
+            server_id=self.server_id or "",
+            state=self.state,
+            metadata={k: str(v) for k, v in self.metadata.items()},  # proto expects string values
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "GlobalContext":
+        """Create from protobuf GlobalContext message.
+
+        Args:
+            proto: types_pb2.GlobalContext protobuf message.
+
+        Returns:
+            GlobalContext: Pydantic model instance.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        return cls(
+            request_id=proto.request_id,
+            user=proto.user if proto.user else None,
+            tenant_id=proto.tenant_id if proto.tenant_id else None,
+            server_id=proto.server_id if proto.server_id else None,
+            state=dict(proto.state),
+            metadata=dict(proto.metadata),
+        )
 
 
 class PluginContext(BaseModel):
@@ -882,6 +1051,79 @@ class PluginContext(BaseModel):
             True if the context state and metadata are empty.
         """
         return not (self.state or self.metadata or self.global_context.state)
+
+    def model_dump_pb(self):
+        """Convert to protobuf PluginContext message.
+
+        Returns:
+            types_pb2.PluginContext: Protobuf message.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import types_pb2
+
+        # Convert state dict to map of Struct
+        state_map = {}
+        for key, value in self.state.items():
+            struct = struct_pb2.Struct()
+            if isinstance(value, dict):
+                json_format.ParseDict(value, struct)
+            else:
+                struct.update({key: value})
+            state_map[key] = struct
+
+        # Convert metadata dict to map of Struct
+        metadata_map = {}
+        for key, value in self.metadata.items():
+            struct = struct_pb2.Struct()
+            if isinstance(value, dict):
+                json_format.ParseDict(value, struct)
+            else:
+                struct.update({key: value})
+            metadata_map[key] = struct
+
+        return types_pb2.PluginContext(
+            state=state_map,
+            global_context=self.global_context.model_dump_pb(),
+            metadata=metadata_map,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "PluginContext":
+        """Create from protobuf PluginContext message.
+
+        Args:
+            proto: types_pb2.PluginContext protobuf message.
+
+        Returns:
+            PluginContext: Pydantic model instance.
+
+        Note:
+            Lazy imports protobuf to avoid dependency if not needed.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert state map of Struct to dict
+        state = {}
+        for key, struct_value in proto.state.items():
+            state[key] = json_format.MessageToDict(struct_value)
+
+        # Convert metadata map of Struct to dict
+        metadata = {}
+        for key, struct_value in proto.metadata.items():
+            metadata[key] = json_format.MessageToDict(struct_value)
+
+        return cls(
+            state=state,
+            global_context=GlobalContext.model_validate_pb(proto.global_context),
+            metadata=metadata,
+        )
 
 
 PluginContextTable = dict[str, PluginContext]

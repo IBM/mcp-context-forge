@@ -73,6 +73,35 @@ class PromptPrehookPayload(PluginPayload):
     prompt_id: str
     args: Optional[dict[str, str]] = Field(default_factory=dict)
 
+    def model_dump_pb(self):
+        """Convert to protobuf PromptPreFetchPayload message.
+
+        Returns:
+            prompts_pb2.PromptPreFetchPayload: Protobuf message.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import prompts_pb2
+
+        return prompts_pb2.PromptPreFetchPayload(
+            prompt_id=self.prompt_id,
+            args=self.args or {},
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "PromptPrehookPayload":
+        """Create from protobuf PromptPreFetchPayload message.
+
+        Args:
+            proto: prompts_pb2.PromptPreFetchPayload protobuf message.
+
+        Returns:
+            PromptPrehookPayload: Pydantic model instance.
+        """
+        return cls(
+            prompt_id=proto.prompt_id,
+            args=dict(proto.args) if proto.args else {},
+        )
+
 
 class PromptPosthookPayload(PluginPayload):
     """A prompt payload for a prompt posthook.
@@ -100,6 +129,56 @@ class PromptPosthookPayload(PluginPayload):
 
     prompt_id: str
     result: PromptResult
+
+    def model_dump_pb(self):
+        """Convert to protobuf PromptPostFetchPayload message.
+
+        Returns:
+            prompts_pb2.PromptPostFetchPayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import prompts_pb2
+
+        # Convert PromptResult to Struct
+        result_struct = struct_pb2.Struct()
+        if self.result is not None:
+            # Use Pydantic's model_dump to get dict representation
+            result_dict = self.result.model_dump(mode="json")
+            json_format.ParseDict(result_dict, result_struct)
+
+        return prompts_pb2.PromptPostFetchPayload(
+            prompt_id=self.prompt_id,
+            result=result_struct,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "PromptPosthookPayload":
+        """Create from protobuf PromptPostFetchPayload message.
+
+        Args:
+            proto: prompts_pb2.PromptPostFetchPayload protobuf message.
+
+        Returns:
+            PromptPosthookPayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct back to dict
+        result_dict = None
+        if proto.HasField("result"):
+            result_dict = json_format.MessageToDict(proto.result)
+
+        # Reconstruct PromptResult from dict
+        result = PromptResult.model_validate(result_dict) if result_dict else None
+
+        return cls(
+            prompt_id=proto.prompt_id,
+            result=result,
+        )
 
 
 PromptPrehookResult = PluginResult[PromptPrehookPayload]

@@ -1,0 +1,263 @@
+// schemas/contextforge/plugins/common/types.proto
+// Common types shared across all ContextForge plugin hooks
+// Maps to: mcpgateway/plugins/framework/models.py
+syntax = "proto3";
+
+package contextforge.plugins.common;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/struct.proto";
+
+// Plugin execution modes
+// Maps to: PluginMode enum (models.py:43-68)
+enum PluginMode {
+  PLUGIN_MODE_UNSPECIFIED = 0;
+  ENFORCE = 1;
+  ENFORCE_IGNORE_ERROR = 2;
+  PERMISSIVE = 3;
+  DISABLED = 4;
+}
+
+// Global context shared across all hook invocations
+// Maps to: GlobalContext (models.py:791-826)
+message GlobalContext {
+  string request_id = 1;  // REQUIRED
+  string user = 2;  // OPTIONAL
+  string tenant_id = 3;  // OPTIONAL
+  string server_id = 4;  // OPTIONAL
+  map<string, string> state = 5;  // OPTIONAL - defaults to empty dict
+  map<string, string> metadata = 6;  // OPTIONAL - defaults to empty dict
+}
+
+// Plugin violation - used when a plugin blocks processing
+// Maps to: PluginViolation (models.py:663-717)
+message PluginViolation {
+  string reason = 1;  // REQUIRED
+  string description = 2;  // REQUIRED
+  string code = 3;  // REQUIRED
+  google.protobuf.Struct details = 4;  // OPTIONAL - defaults to empty dict
+  string plugin_name = 5;  // OPTIONAL - set by plugin manager
+}
+
+// Plugin condition for conditional execution
+// Maps to: PluginCondition (models.py:167-217)
+message PluginCondition {
+  repeated string server_ids = 1;  // OPTIONAL
+  repeated string tenant_ids = 2;  // OPTIONAL
+  repeated string tools = 3;  // OPTIONAL
+  repeated string prompts = 4;  // OPTIONAL
+  repeated string resources = 5;  // OPTIONAL
+  repeated string agents = 6;  // OPTIONAL
+  repeated string user_patterns = 7;  // OPTIONAL
+  repeated string content_types = 8;  // OPTIONAL
+}
+
+// HTTP headers
+message HttpHeaders {
+  map<string, string> headers = 1;  // OPTIONAL
+}
+
+// Generic plugin result for RPC interface (runtime polymorphism)
+// Maps to: PluginResult[T] generic class (models.py:753-789)
+//
+// This message provides a generic container for hook results used in the
+// invoke_hook RPC interface. The modified_payload field uses google.protobuf.Any
+// to support runtime polymorphism - it can hold any specific payload type
+// (ToolPreInvokePayload, PromptPostFetchPayload, etc.) with type information
+// embedded via type URL.
+//
+// For compile-time type safety and documentation, use the specific typed
+// result messages (e.g., ToolPreInvokeResult) which repeat these common fields.
+message PluginResult {
+  // Whether to continue processing through the plugin chain
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+
+  // Modified payload - can be any specific payload type
+  // Type is preserved via google.protobuf.Any type URL
+  google.protobuf.Any modified_payload = 2;  // OPTIONAL
+
+  // Violation information if processing should be blocked
+  PluginViolation violation = 3;  // OPTIONAL
+
+  // Additional metadata from the plugin
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Plugin context for a single request lifecycle
+// Maps to: PluginContext (models.py:828-877)
+message PluginContext {
+  // In-memory state for the request
+  map<string, google.protobuf.Struct> state = 1;  // OPTIONAL - defaults to empty dict
+
+  // Context shared across all plugins
+  GlobalContext global_context = 2;  // REQUIRED
+
+  // Plugin metadata
+  map<string, google.protobuf.Struct> metadata = 3;  // OPTIONAL - defaults to empty dict
+}
+
+// Plugin error model for exceptions in external plugins
+// Maps to: PluginErrorModel (models.py:647-661)
+message PluginErrorModel {
+  // Error message
+  string message = 1;  // REQUIRED
+
+  // Plugin name that raised the error
+  string plugin_name = 2;  // REQUIRED
+
+  // Optional error code
+  string code = 3;  // OPTIONAL - defaults to empty string
+
+  // Additional error details
+  google.protobuf.Struct details = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Transport type for MCP connections
+// Note: This maps to mcpgateway.common.models.TransportType
+enum TransportType {
+  TRANSPORT_TYPE_UNSPECIFIED = 0;
+  SSE = 1;
+  STDIO = 2;
+  STREAMABLEHTTP = 3;
+}
+
+// Base TLS configuration common to client and server
+// Maps to: MCPTransportTLSConfigBase (models.py:235-309)
+message MCPTransportTLSConfigBase {
+  string certfile = 1;  // OPTIONAL
+  string keyfile = 2;  // OPTIONAL
+  string ca_bundle = 3;  // OPTIONAL
+  string keyfile_password = 4;  // OPTIONAL
+}
+
+// Client-side TLS configuration
+// Maps to: MCPClientTLSConfig (models.py:311-354)
+message MCPClientTLSConfig {
+  string certfile = 1;  // OPTIONAL
+  string keyfile = 2;  // OPTIONAL
+  string ca_bundle = 3;  // OPTIONAL
+  string keyfile_password = 4;  // OPTIONAL
+  bool verify = 5;  // OPTIONAL - defaults to true
+  bool check_hostname = 6;  // OPTIONAL - defaults to true
+}
+
+// Server-side TLS configuration
+// Maps to: MCPServerTLSConfig (models.py:356-397)
+message MCPServerTLSConfig {
+  string certfile = 1;  // OPTIONAL
+  string keyfile = 2;  // OPTIONAL
+  string ca_bundle = 3;  // OPTIONAL
+  string keyfile_password = 4;  // OPTIONAL
+  int32 ssl_cert_reqs = 5;  // OPTIONAL - defaults to 2 (REQUIRED)
+}
+
+// Server-side MCP configuration
+// Maps to: MCPServerConfig (models.py:400-469)
+message MCPServerConfig {
+  string host = 1;  // OPTIONAL - defaults to "0.0.0.0"
+  int32 port = 2;  // OPTIONAL - defaults to 8000
+  MCPServerTLSConfig tls = 3;  // OPTIONAL
+}
+
+// Client-side MCP configuration
+// Maps to: MCPClientConfig (models.py:472-543)
+message MCPClientConfig {
+  TransportType proto = 1;  // REQUIRED
+  string url = 2;  // OPTIONAL - required for SSE/STREAMABLEHTTP
+  string script = 3;  // OPTIONAL - required for STDIO
+  MCPClientTLSConfig tls = 4;  // OPTIONAL
+}
+
+// Base template for tool/prompt/resource templates
+// Maps to: BaseTemplate (models.py:71-91)
+message BaseTemplate {
+  repeated string context = 1;  // OPTIONAL
+  google.protobuf.Struct extensions = 2;  // OPTIONAL
+}
+
+// Tool template
+// Maps to: ToolTemplate (models.py:93-117)
+message ToolTemplate {
+  string tool_name = 1;  // REQUIRED
+  repeated string fields = 2;  // OPTIONAL
+  bool result = 3;  // OPTIONAL - defaults to false
+  repeated string context = 4;  // OPTIONAL
+  google.protobuf.Struct extensions = 5;  // OPTIONAL
+}
+
+// Prompt template
+// Maps to: PromptTemplate (models.py:119-141)
+message PromptTemplate {
+  string prompt_name = 1;  // REQUIRED
+  repeated string fields = 2;  // OPTIONAL
+  bool result = 3;  // OPTIONAL - defaults to false
+  repeated string context = 4;  // OPTIONAL
+  google.protobuf.Struct extensions = 5;  // OPTIONAL
+}
+
+// Resource template
+// Maps to: ResourceTemplate (models.py:143-165)
+message ResourceTemplate {
+  string resource_uri = 1;  // REQUIRED
+  repeated string fields = 2;  // OPTIONAL
+  bool result = 3;  // OPTIONAL - defaults to false
+  repeated string context = 4;  // OPTIONAL
+  google.protobuf.Struct extensions = 5;  // OPTIONAL
+}
+
+// Applied to specification
+// Maps to: AppliedTo (models.py:219-233)
+message AppliedTo {
+  repeated ToolTemplate tools = 1;  // OPTIONAL
+  repeated PromptTemplate prompts = 2;  // OPTIONAL
+  repeated ResourceTemplate resources = 3;  // OPTIONAL
+}
+
+// Plugin configuration
+// Maps to: PluginConfig (models.py:546-624)
+message PluginConfig {
+  string name = 1;  // REQUIRED
+  string description = 2;  // OPTIONAL
+  string author = 3;  // OPTIONAL
+  string kind = 4;  // REQUIRED
+  string namespace = 5;  // OPTIONAL
+  string version = 6;  // OPTIONAL
+  repeated string hooks = 7;  // OPTIONAL - defaults to empty list
+  repeated string tags = 8;  // OPTIONAL - defaults to empty list
+  PluginMode mode = 9;  // OPTIONAL - defaults to ENFORCE
+  int32 priority = 10;  // OPTIONAL - defaults to 100
+  repeated PluginCondition conditions = 11;  // OPTIONAL - defaults to empty list
+  AppliedTo applied_to = 12;  // OPTIONAL
+  google.protobuf.Struct config = 13;  // OPTIONAL
+  MCPClientConfig mcp = 14;  // OPTIONAL - required for external plugins
+}
+
+// Plugin manifest
+// Maps to: PluginManifest (models.py:627-645)
+message PluginManifest {
+  string description = 1;  // REQUIRED
+  string author = 2;  // REQUIRED
+  string version = 3;  // REQUIRED
+  repeated string tags = 4;  // REQUIRED
+  repeated string available_hooks = 5;  // REQUIRED
+  google.protobuf.Struct default_config = 6;  // REQUIRED
+}
+
+// Global plugin settings
+// Maps to: PluginSettings (models.py:719-734)
+message PluginSettings {
+  bool parallel_execution_within_band = 1;  // OPTIONAL - defaults to false
+  int32 plugin_timeout = 2;  // OPTIONAL - defaults to 30
+  bool fail_on_plugin_error = 3;  // OPTIONAL - defaults to false
+  bool enable_plugin_api = 4;  // OPTIONAL - defaults to false
+  int32 plugin_health_check_interval = 5;  // OPTIONAL - defaults to 60
+}
+
+// Plugin system configuration
+// Maps to: Config (models.py:737-750)
+message Config {
+  repeated PluginConfig plugins = 1;  // OPTIONAL - defaults to empty list
+  repeated string plugin_dirs = 2;  // OPTIONAL - defaults to empty list
+  PluginSettings plugin_settings = 3;  // REQUIRED
+  MCPServerConfig server_settings = 4;  // OPTIONAL
+}

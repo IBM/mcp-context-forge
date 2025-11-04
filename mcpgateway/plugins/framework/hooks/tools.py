@@ -70,6 +70,71 @@ class ToolPreInvokePayload(PluginPayload):
     args: Optional[dict[str, Any]] = Field(default_factory=dict)
     headers: Optional[HttpHeaderPayload] = None
 
+    def model_dump_pb(self):
+        """Convert to protobuf ToolPreInvokePayload message.
+
+        Returns:
+            tools_pb2.ToolPreInvokePayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import tools_pb2
+
+        # Convert args dict to Struct
+        args_struct = struct_pb2.Struct()
+        if self.args:
+            json_format.ParseDict(self.args, args_struct)
+
+        # Convert headers if present
+        headers_pb = None
+        if self.headers:
+            # First-Party
+            from mcpgateway.plugins.framework.generated import types_pb2
+
+            # HttpHeaderPayload is a RootModel, extract the root dict
+            headers_dict = self.headers.root if hasattr(self.headers, "root") else self.headers
+            headers_pb = types_pb2.HttpHeaders(headers=headers_dict)
+
+        return tools_pb2.ToolPreInvokePayload(
+            name=self.name,
+            args=args_struct,
+            headers=headers_pb,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "ToolPreInvokePayload":
+        """Create from protobuf ToolPreInvokePayload message.
+
+        Args:
+            proto: tools_pb2.ToolPreInvokePayload protobuf message.
+
+        Returns:
+            ToolPreInvokePayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict
+        args = {}
+        if proto.HasField("args"):
+            args = json_format.MessageToDict(proto.args)
+
+        # Convert headers if present
+        headers = None
+        if proto.HasField("headers"):
+            # First-Party
+            from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+
+            headers = HttpHeaderPayload(dict(proto.headers.headers))
+
+        return cls(
+            name=proto.name,
+            args=args,
+            headers=headers,
+        )
+
 
 class ToolPostInvokePayload(PluginPayload):
     """A tool payload for a tool post-invoke hook.
@@ -93,6 +158,60 @@ class ToolPostInvokePayload(PluginPayload):
 
     name: str
     result: Any
+
+    def model_dump_pb(self):
+        """Convert to protobuf ToolPostInvokePayload message.
+
+        Returns:
+            tools_pb2.ToolPostInvokePayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import tools_pb2
+
+        # Convert result to Struct
+        result_struct = struct_pb2.Struct()
+        if self.result is not None:
+            if isinstance(self.result, dict):
+                json_format.ParseDict(self.result, result_struct)
+            else:
+                # For non-dict results, wrap in a dict
+                json_format.ParseDict({"value": self.result}, result_struct)
+
+        return tools_pb2.ToolPostInvokePayload(
+            name=self.name,
+            result=result_struct,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "ToolPostInvokePayload":
+        """Create from protobuf ToolPostInvokePayload message.
+
+        Args:
+            proto: tools_pb2.ToolPostInvokePayload protobuf message.
+
+        Returns:
+            ToolPostInvokePayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict/value
+        result = None
+        if proto.HasField("result"):
+            result_dict = json_format.MessageToDict(proto.result)
+            # If it was wrapped with "value" key, unwrap it
+            if len(result_dict) == 1 and "value" in result_dict:
+                result = result_dict["value"]
+            else:
+                result = result_dict
+
+        return cls(
+            name=proto.name,
+            result=result,
+        )
 
 
 ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]

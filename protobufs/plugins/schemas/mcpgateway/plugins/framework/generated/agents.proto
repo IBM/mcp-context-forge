@@ -1,0 +1,56 @@
+// schemas/contextforge/plugins/hooks/agents.proto
+// Agent hook payloads and results
+// Maps to: mcpgateway/plugins/framework/hooks/agents.py
+syntax = "proto3";
+
+package contextforge.plugins.hooks;
+
+import "google/protobuf/struct.proto";
+import "mcpgateway/plugins/framework/generated/types.proto";
+
+// Agent hook types
+// Maps to: AgentHookType enum (agents.py:25-44)
+enum AgentHookType {
+  AGENT_HOOK_TYPE_UNSPECIFIED = 0;
+  AGENT_PRE_INVOKE = 1;
+  AGENT_POST_INVOKE = 2;
+}
+
+// Agent pre-invoke payload
+// Maps to: AgentPreInvokePayload (agents.py:47-88)
+// Note: messages contains Message objects, using Struct for flexibility
+message AgentPreInvokePayload {
+  string agent_id = 1;  // REQUIRED
+  repeated google.protobuf.Struct messages = 2;  // REQUIRED - List[Message] as Struct
+  repeated string tools = 3;  // REQUIRED
+  contextforge.plugins.common.HttpHeaders headers = 4;  // OPTIONAL
+  string model = 5;  // OPTIONAL
+  string system_prompt = 6;  // OPTIONAL
+  google.protobuf.Struct parameters = 7;  // REQUIRED - Dict[str, Any]
+}
+
+// Agent post-invoke payload
+// Maps to: AgentPostInvokePayload (agents.py:90-...)
+message AgentPostInvokePayload {
+  string agent_id = 1;  // REQUIRED
+  repeated google.protobuf.Struct messages = 2;  // REQUIRED - List[Message] as Struct
+  repeated google.protobuf.Struct tool_calls = 3;  // REQUIRED - List[Dict[str, Any]] as Struct
+}
+
+// Agent pre-invoke result
+// Maps to: AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
+message AgentPreInvokeResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  AgentPreInvokePayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Agent post-invoke result
+// Maps to: AgentPostInvokeResult = PluginResult[AgentPostInvokePayload]
+message AgentPostInvokeResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  AgentPostInvokePayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}

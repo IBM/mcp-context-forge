@@ -1,0 +1,50 @@
+// schemas/contextforge/plugins/hooks/tools.proto
+// Tool hook payloads and results
+// Maps to: mcpgateway/plugins/framework/hooks/tools.py
+syntax = "proto3";
+
+package contextforge.plugins.hooks;
+
+import "google/protobuf/struct.proto";
+import "mcpgateway/plugins/framework/generated/types.proto";
+
+// Tool hook types
+// Maps to: ToolHookType enum (tools.py:22-41)
+enum ToolHookType {
+  TOOL_HOOK_TYPE_UNSPECIFIED = 0;
+  TOOL_PRE_INVOKE = 1;
+  TOOL_POST_INVOKE = 2;
+}
+
+// Tool pre-invoke payload
+// Maps to: ToolPreInvokePayload (tools.py:44-72)
+message ToolPreInvokePayload {
+  string name = 1;  // REQUIRED
+  google.protobuf.Struct args = 2;  // REQUIRED
+  contextforge.plugins.common.HttpHeaders headers = 3;  // OPTIONAL
+}
+
+// Tool post-invoke payload
+// Maps to: ToolPostInvokePayload (tools.py:74-96)
+message ToolPostInvokePayload {
+  string name = 1;  // REQUIRED
+  google.protobuf.Struct result = 2;  // REQUIRED
+}
+
+// Tool pre-invoke result
+// Maps to: ToolPreInvokeResult = PluginResult[ToolPreInvokePayload] (tools.py:98)
+message ToolPreInvokeResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  ToolPreInvokePayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Tool post-invoke result
+// Maps to: ToolPostInvokeResult = PluginResult[ToolPostInvokePayload] (tools.py:99)
+message ToolPostInvokeResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  ToolPostInvokePayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}

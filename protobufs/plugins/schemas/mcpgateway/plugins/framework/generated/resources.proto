@@ -1,0 +1,50 @@
+// schemas/contextforge/plugins/hooks/resources.proto
+// Resource hook payloads and results
+// Maps to: mcpgateway/plugins/framework/hooks/resources.py
+syntax = "proto3";
+
+package contextforge.plugins.hooks;
+
+import "google/protobuf/struct.proto";
+import "mcpgateway/plugins/framework/generated/types.proto";
+
+// Resource hook types
+// Maps to: ResourceHookType enum (resources.py:21-40)
+enum ResourceHookType {
+  RESOURCE_HOOK_TYPE_UNSPECIFIED = 0;
+  RESOURCE_PRE_FETCH = 1;
+  RESOURCE_POST_FETCH = 2;
+}
+
+// Resource pre-fetch payload
+// Maps to: ResourcePreFetchPayload (resources.py:43-66)
+message ResourcePreFetchPayload {
+  string uri = 1;  // REQUIRED
+  google.protobuf.Struct metadata = 2;  // REQUIRED
+}
+
+// Resource post-fetch payload
+// Maps to: ResourcePostFetchPayload (resources.py:68-93)
+// Note: content can be complex ResourceContent object, using Struct for flexibility
+message ResourcePostFetchPayload {
+  string uri = 1;  // REQUIRED
+  google.protobuf.Struct content = 2;  // REQUIRED - ResourceContent serialized to Struct
+}
+
+// Resource pre-fetch result
+// Maps to: ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload] (resources.py:95)
+message ResourcePreFetchResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  ResourcePreFetchPayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Resource post-fetch result
+// Maps to: ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload] (resources.py:96)
+message ResourcePostFetchResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  ResourcePostFetchPayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}

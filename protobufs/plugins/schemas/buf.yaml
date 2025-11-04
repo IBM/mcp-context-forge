@@ -1,0 +1,25 @@
+# schemas/buf.yaml
+# Buf configuration for ContextForge Plugin protobuf schemas
+# See: https://docs.buf.build/configuration/v1/buf-yaml
+
+version: v1
+
+# Breaking change detection
+breaking:
+  use:
+    - FILE
+
+# Linting configuration
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_VERSION_SUFFIX  # We use semantic package names
+  enum_zero_value_suffix: _UNSPECIFIED
+  rpc_allow_same_request_response: false
+  rpc_allow_google_protobuf_empty_requests: true
+  rpc_allow_google_protobuf_empty_responses: true
+  service_suffix: Service
+
+# Module name
+name: buf.build/contextforge/plugin-schemas

@@ -86,6 +86,93 @@ class AgentPreInvokePayload(PluginPayload):
     system_prompt: Optional[str] = None
     parameters: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
+    def model_dump_pb(self):
+        """Convert to protobuf AgentPreInvokePayload message.
+
+        Returns:
+            agents_pb2.AgentPreInvokePayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import agents_pb2
+
+        # Convert messages list to repeated Struct
+        messages_pb = []
+        for msg in self.messages:
+            msg_struct = struct_pb2.Struct()
+            msg_dict = msg.model_dump(mode="json")
+            json_format.ParseDict(msg_dict, msg_struct)
+            messages_pb.append(msg_struct)
+
+        # Convert parameters dict to Struct
+        parameters_struct = struct_pb2.Struct()
+        if self.parameters:
+            json_format.ParseDict(self.parameters, parameters_struct)
+
+        # Convert headers if present
+        headers_pb = None
+        if self.headers:
+            # First-Party
+            from mcpgateway.plugins.framework.generated import types_pb2
+
+            # HttpHeaderPayload is a RootModel, extract the root dict
+            headers_dict = self.headers.root if hasattr(self.headers, "root") else self.headers
+            headers_pb = types_pb2.HttpHeaders(headers=headers_dict)
+
+        return agents_pb2.AgentPreInvokePayload(
+            agent_id=self.agent_id,
+            messages=messages_pb,
+            tools=self.tools or [],
+            headers=headers_pb,
+            model=self.model or "",
+            system_prompt=self.system_prompt or "",
+            parameters=parameters_struct,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "AgentPreInvokePayload":
+        """Create from protobuf AgentPreInvokePayload message.
+
+        Args:
+            proto: agents_pb2.AgentPreInvokePayload protobuf message.
+
+        Returns:
+            AgentPreInvokePayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert repeated Struct to list of Message
+        messages = []
+        for msg_struct in proto.messages:
+            msg_dict = json_format.MessageToDict(msg_struct)
+            messages.append(Message.model_validate(msg_dict))
+
+        # Convert Struct to dict
+        parameters = {}
+        if proto.HasField("parameters"):
+            parameters = json_format.MessageToDict(proto.parameters)
+
+        # Convert headers if present
+        headers = None
+        if proto.HasField("headers"):
+            # First-Party
+            from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+
+            headers = HttpHeaderPayload(dict(proto.headers.headers))
+
+        return cls(
+            agent_id=proto.agent_id,
+            messages=messages,
+            tools=list(proto.tools) if proto.tools else None,
+            headers=headers,
+            model=proto.model if proto.model else None,
+            system_prompt=proto.system_prompt if proto.system_prompt else None,
+            parameters=parameters,
+        )
+
 
 class AgentPostInvokePayload(PluginPayload):
     """Agent payload for post-invoke hook.
@@ -117,6 +204,73 @@ class AgentPostInvokePayload(PluginPayload):
     agent_id: str
     messages: List[Message]
     tool_calls: Optional[List[Dict[str, Any]]] = None
+
+    def model_dump_pb(self):
+        """Convert to protobuf AgentPostInvokePayload message.
+
+        Returns:
+            agents_pb2.AgentPostInvokePayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import agents_pb2
+
+        # Convert messages list to repeated Struct
+        messages_pb = []
+        for msg in self.messages:
+            msg_struct = struct_pb2.Struct()
+            msg_dict = msg.model_dump(mode="json")
+            json_format.ParseDict(msg_dict, msg_struct)
+            messages_pb.append(msg_struct)
+
+        # Convert tool_calls list to repeated Struct
+        tool_calls_pb = []
+        if self.tool_calls:
+            for tool_call in self.tool_calls:
+                tool_call_struct = struct_pb2.Struct()
+                json_format.ParseDict(tool_call, tool_call_struct)
+                tool_calls_pb.append(tool_call_struct)
+
+        return agents_pb2.AgentPostInvokePayload(
+            agent_id=self.agent_id,
+            messages=messages_pb,
+            tool_calls=tool_calls_pb,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "AgentPostInvokePayload":
+        """Create from protobuf AgentPostInvokePayload message.
+
+        Args:
+            proto: agents_pb2.AgentPostInvokePayload protobuf message.
+
+        Returns:
+            AgentPostInvokePayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert repeated Struct to list of Message
+        messages = []
+        for msg_struct in proto.messages:
+            msg_dict = json_format.MessageToDict(msg_struct)
+            messages.append(Message.model_validate(msg_dict))
+
+        # Convert repeated Struct to list of tool calls
+        tool_calls = None
+        if proto.tool_calls:
+            tool_calls = []
+            for tool_call_struct in proto.tool_calls:
+                tool_call_dict = json_format.MessageToDict(tool_call_struct)
+                tool_calls.append(tool_call_dict)
+
+        return cls(
+            agent_id=proto.agent_id,
+            messages=messages,
+            tool_calls=tool_calls,
+        )
 
 
 AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
