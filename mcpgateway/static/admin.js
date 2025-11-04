@@ -1,9 +1,10 @@
+var enrichedDescription;
+
 document.addEventListener("DOMContentLoaded", () => {
     const checkboxes = document.querySelectorAll(".tool-checkbox");
     const selectedList = document.getElementById("selectedList");
     const selectedCount = document.getElementById("selectedCount");
     const searchBox = document.getElementById("searchBox");
-    const showInactive = document.getElementById("showInactive");
     const toolRows = document.querySelectorAll("#toolBody tr");
   
     let selectedTools = [];
@@ -67,7 +68,7 @@ document.addEventListener("DOMContentLoaded", () => {
     responseDiv.textContent = `Running ${endpoint.replace("_", " ")} for ${selectedTools.length} tools...`;
   
     try {
-      const res = await fetch(`/${endpoint}`, {
+      const res = await fetch(`/${endpoint}_util`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tools: selectedTools }),
@@ -79,6 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log(JSON.stringify(data));
         openValidationModal(data.details);
       } else {
+        enrichedDescription = data
         responseDiv.textContent = data.message || "Enrich Tools completed successfully.";
       }
   
@@ -2302,6 +2304,10 @@ async function editTool(toolId) {
         }
 
         const tool = await response.json();
+        if(enrichedDescription != null) {
+            console.log(JSON.stringify(enrichedDescription))
+            tool.description = enrichedDescription['details'][0]['enriched_desc']
+        }
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -2349,6 +2355,7 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
+            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -6385,9 +6392,106 @@ async function testTool(toolId) {
 }
 
 async function enrichTool(toolId) {
-    
+    try {
         console.log(`Enriching tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const enrichButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (enrichButton) {
+            if (enrichButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            enrichButton.disabled = true;
+            enrichButton.textContent = "Enriching...";
+            enrichButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
     
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+    
+       // 5. CREATE NEW REQUEST with longer timeout
+       const controller = new AbortController();
+       toolTestState.activeRequests.set(toolId, controller);
+       toolTestState.lastRequestTime.set(toolId, now);
+
+       // 6. MAKE REQUEST with increased timeout
+       const response = await fetchWithTimeout(`/enrich_tools_util`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tools: [toolId] }),
+        }, toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+    
+        const data = await response.json();
+        enrichedDescription = data;
+        enrichButton.disabled = false;
+        enrichButton.textContent = "Enrich";
+        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        console.log(`Tool ${toolId} enriched successfully`, data);
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+        showSuccessMessage(`Tool enriched successfully`);
+
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+        } finally {
+        const testButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Enrich";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
 }
 
 async function validateTool(toolId) {
@@ -6431,7 +6535,7 @@ async function validateTool(toolId) {
                 return;
             }
             validateButton.disabled = true;
-            validateButton.textContent = "Testing...";
+            validateButton.textContent = "Generating Test Cases...";
             validateButton.classList.add("opacity-50", "cursor-not-allowed");
         }
     
@@ -6504,6 +6608,7 @@ async function validateTool(toolId) {
         if (descElement) {
             if (tool.description) {
                 // Escape HTML and then replace newlines with <br/> tags
+                tool.description = tool.description.slice(0, tool.description.indexOf('*'));
                 descElement.innerHTML = escapeHtml(tool.description).replace(
                     /\n/g,
                     "<br/>",
@@ -6554,13 +6659,30 @@ async function validateTool(toolId) {
         }
     
         // Example validat cases (you can replace this with API-provided cases)
-        const testCases = tool.testCases || [
-            { id: "t1", name: "Test Case 1", inputs: {} },
-            { id: "t2", name: "Test Case 2", inputs: {} },
+        let testCases = tool.testCases || [
+            { id: "t1", name: "Test Case 1", input_parameters: {} },
+            { id: "t2", name: "Test Case 2", input_parameters: {} },
         ];
+
+
+
+        const validationResponse = await fetchWithTimeout(`/tool_validation_util`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tools: [toolId] }),
+        }, toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (validationResponse.ok) {
+            const vres = await validationResponse.json()
+            console.log(JSON.stringify(vres))
+            testCases = await vres['details'][0];
+        }
     
         // Render accordion-style test cases
         testCases.forEach((test, index) => {
+            input_parameters = test['input_parameters']
             const acc = document.createElement("div");
             acc.className =
             "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
@@ -6570,7 +6692,7 @@ async function validateTool(toolId) {
             header.className =
             "w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium";
             header.innerHTML = `
-            <span>${test.name || `Test Case ${index + 1}`}</span>
+            <span>${`Test Case ${index + 1}`}</span>
             <span class="toggle-icon">+</span>
             `;
     
@@ -6616,6 +6738,11 @@ async function validateTool(toolId) {
                 const labelText = document.createElement("span");
                 labelText.textContent = keyValidation.value;
                 label.appendChild(labelText);
+                let default_value = ""
+                if (keyValidation.value in input_parameters) {
+                    default_value = input_parameters[keyValidation.value]
+                }
+
 
                 // Add red star if field is required
                 if (schema.required && schema.required.includes(key)) {
@@ -6772,7 +6899,7 @@ async function validateTool(toolId) {
                             fieldInput.value = prop.default;
                         }
                     }
-
+                    fieldInput.value = default_value
                     fieldDiv.appendChild(fieldInput);
                     if (prop.default !== undefined) {
                         if (fieldInput.type === "checkbox") {
@@ -6784,7 +6911,6 @@ async function validateTool(toolId) {
                         }
                     }
                 }
-    
                 formDiv.appendChild(fieldDiv);
             }
             }
@@ -6815,6 +6941,33 @@ async function validateTool(toolId) {
             headerDiv.appendChild(small);
             headerDiv.appendChild(textarea);
             headerSection.appendChild(headerDiv);
+
+
+            const nlUtteranceSection = document.createElement('div');
+            nlUtteranceSection.className = 'mt-4 border-t pt-4';
+
+            const nlUtteranceDiv = document.createElement('div');
+
+            const nlUtterancelabel = document.createElement('label');
+            nlUtterancelabel.setAttribute('for', 'test-passthrough-nlUtterances');
+            nlUtterancelabel.className = 'block text-sm font-bold text-green-700 dark:text-green-400';
+            nlUtterancelabel.textContent = "Generated Test Utterance";
+
+            const nlUtterancesmall = document.createElement('small');
+            nlUtterancesmall.className = 'text-gray-500 dark:text-gray-400 block mb-2';
+            nlUtterancesmall.textContent = 'Modify or add new utterances to test using the agent.';
+
+            const nlutextarea = document.createElement('textarea');
+            nlutextarea.id = 'validation-passthrough-nlUtterances';
+            nlutextarea.name = 'passthrough_nlUtterances';
+            nlutextarea.rows = 3;
+            nlutextarea.value = test.nl_utterance.join('\n\n');
+            nlutextarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
+
+            nlUtteranceDiv.appendChild(nlUtterancelabel);
+            nlUtteranceDiv.appendChild(nlUtterancesmall);
+            nlUtteranceDiv.appendChild(nlutextarea);
+            nlUtteranceSection.appendChild(nlUtteranceDiv);
     
             // // Result area
             // const resultBox = document.createElement("pre");
@@ -6828,7 +6981,15 @@ async function validateTool(toolId) {
             runBtn.className =
             "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
             runBtn.addEventListener("click", async () => {
-            await runToolValidation(index);
+                await runToolValidation(index);
+            });
+
+            const runAgentBtn = document.createElement("button");
+            runAgentBtn.textContent = "Run Agent Test";
+            runAgentBtn.className =
+            "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+            runAgentBtn.addEventListener("click", async () => {
+                await runToolValidation(index);
             });
 
             // Loading spinner
@@ -6848,7 +7009,9 @@ async function validateTool(toolId) {
     
             body.appendChild(formDiv);
             body.appendChild(headerSection)
+            body.appendChild(nlUtteranceSection)
             body.appendChild(runBtn);
+            // body.appendChild(runAgentBtn);
             body.appendChild(loadingDiv)
             body.appendChild(resultDiv);
         });
@@ -6862,6 +7025,17 @@ async function validateTool(toolId) {
             Run All Tests
             </button>`;
         container.appendChild(runAllDiv);
+
+
+        // Run All Tests wit hAgent button
+        const runAGentAllDiv = document.createElement("div");
+        runAGentAllDiv.className = "mt-6 text-center";
+        runAGentAllDiv.innerHTML = `
+            <button id="run-all-agent-tests-btn"
+            class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
+            Run With Agent
+            </button>`;
+        container.appendChild(runAGentAllDiv);
     
         // Hook up Run All button
         document
@@ -8190,6 +8364,11 @@ async function viewTool(toolId) {
 
         const tool = await response.json();
 
+        if(enrichedDescription != null) {
+            console.log(JSON.stringify(enrichedDescription))
+            tool.description = enrichedDescription['details'][0]['enriched_desc']
+        }
+
         // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
@@ -8470,6 +8649,7 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
+            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
