@@ -14,73 +14,73 @@
       "id": "TC_2",
       "scenario_type": "positive",
       "mandatory_params": [],
-      "input": "ids((string)) := 345687678 \nstep_id((string)) := step_name \ntype((string)) := email \ndue_on[gt]((string)) := 2018-02-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 345696969 \nupdated_at[gt]((string)) := 2018-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.123Z \nsort_by((string)) := created_at \nsort_direction((string)) := ASC \nper_page((integer)) := 100 \npage((integer)) := 2 \ninclude_paging_counts((boolean)) := False \nlimit_paging_counts((boolean)) := False \n",
+      "input": "ids((string)) := 767763892 \nstep_id((string)) := 1234 \ntype((string)) := email \ndue_on[gt]((string)) := 2020-01-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 345696969 \nupdated_at[gt]((string)) := 2018-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 2 \ninclude_paging_counts((boolean)) := True \nlimit_paging_counts((boolean)) := False \n",
       "nl_utterance": [
         ""
       ],
       "input_parameters": {
-        "user_guid": [
-          "12345678-1234-1234-1234-123456789012"
-        ],
-        "ids": [
-          "345687678"
-        ],
-        "person_id": [
-          "319104110"
-        ],
-        "include_paging_counts": [
-          false
-        ],
-        "sort_by": [
-          "created_at"
-        ],
-        "due_on[lte]": [
+        "updated_at[gte]": [
           "2018-01-01T00:00:00Z"
-        ],
-        "page": [
-          2
-        ],
-        "updated_at[lte]": [
-          "2017-01-01T00:00:00.123Z"
         ],
         "updated_at[gt]": [
           "2018-01-01T00:00:00Z"
         ],
-        "cadence_id": [
-          "1030231"
-        ],
-        "updated_at[gte]": [
-          "2018-01-01T00:00:00Z"
+        "sort_direction": [
+          "DESC"
         ],
         "multitouch_group_id": [
           "345696969"
         ],
-        "due_on[gte]": [
-          "2018-02-01T00:00:00Z"
+        "limit_paging_counts": [
+          false
         ],
-        "step_id": [
-          "step_name"
+        "page": [
+          2
+        ],
+        "user_guid": [
+          "12345678-1234-1234-1234-123456789012"
+        ],
+        "due_on[lte]": [
+          "2018-01-01T00:00:00Z"
         ],
         "due_on[lt]": [
           "2018-01-02T00:00:00Z"
         ],
         "due_on[gt]": [
-          "2018-02-01T00:00:00Z"
+          "2020-01-01T00:00:00Z"
         ],
         "updated_at[lt]": [
           "2017-01-01T00:00:00.123Z"
         ],
+        "include_paging_counts": [
+          true
+        ],
+        "ids": [
+          "767763892"
+        ],
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.456Z"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
         "per_page": [
-          100
+          25
+        ],
+        "cadence_id": [
+          "1030231"
+        ],
+        "sort_by": [
+          "created_at"
+        ],
+        "person_id": [
+          "319104110"
         ],
         "type": [
           "email"
         ],
-        "sort_direction": [
-          "ASC"
-        ],
-        "limit_paging_counts": [
-          false
+        "step_id": [
+          "1234"
         ]
       }
     }
@@ -93,7 +93,7 @@
     "nlg-model-id": null
   },
   "llm_platform_details": {
-    "tcg-platform": "OpenAIProvider",
+    "tcg-platform": "OpenAIProvider - https://inference-3scale-apicast-production.apps.rits.fmaas.res.ibm.com/llama-3-3-70b-instruct/v1",
     "nlg-platform": null
   },
   "agent_details": {},
@@ -107,9 +107,9 @@
         "requirements": []
       }
     },
-    "description": "This tool retrieves and manages Salesloft actions based on various filters such as action type, due date, user, and more. It allows for sorting and pagination of results, enabling efficient analysis and management of your actions.",
+    "description": "from Salesloft\n\n\n**Query Parameters:**\n\n- **ids**: the id&#x27;s of actions\n\n- **step_id**: The ID of the step to retrieve. If not provided, all steps for the pipeline will be returned.\n\n- **type**: Filter actions by type. email, phone, integration etc.\n\n- **due_on[gt]**: Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **due_on[gte]**: Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The date should be in iso8601 format.\n\n- **due_on[lt]**: Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **due_on[lte]**: Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **user_guid**: Filters actions by the user&#x27;s guid. Multiple user guids can be applied.\n\n- **person_id**: retrieves the records by using person name.\n\n- **cadence_id**: The cadence id of the action\n\n- **multitouch_group_id**: The ID of the multitouch group to filter by. If not specified, all actions will be returned.\n\n- **updated_at[gt]**: Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[gte]**: Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[lt]**: Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[lte]**: Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **sort_by**: The field to sort by. Defaults to created_at.\n\n- **sort_direction**: The direction to sort the results in. Can be either `asc` or `desc`.\n\n- **per_page**: How many records to show per page in the range [1, 100]. Defaults to 25\n\n- **page**: The current page to fetch results from. Defaults to 1.\n\n- **include_paging_counts**: Whether to include total_pages and total_count in the metadata. Defaults to false\n\n- **limit_paging_counts**: Specifies whether the max limit of 10k records should be applied to pagination counts. Affects the total_count and total_pages data.\n\n\n**Responses:**\n\n- **200** (Success): sucess\n  - Content-Type: `text/plain`\n\n  - **Example:**\n```json\n&quot;success&quot;\n```",
     "display_name": "Getv2Actions",
-    "id": "a872cd2d00ef4c268f052d574b8f5888",
+    "id": "9e6767b0b62b41a08e762dc622ff41a5",
     "input_schema": {
       "description": null,
       "properties": {

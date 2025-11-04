@@ -2059,6 +2059,25 @@ class ResourceSubscription(Base):
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
 
+class ToolOpsTestCases(Base):
+    """
+    ORM model for a registered Tool test cases.
+
+    Represents a tool and the generated test cases.
+    Includes:
+        - tool_id: unique tool identifier 
+        - test_cases: generated test cases.
+        - run_status: status of test case generation
+    """
+
+    __tablename__ = "toolops_test_cases"
+
+    tool_id: Mapped[str] = mapped_column(String(255),primary_key=True)
+    test_cases: Mapped[Dict[str,Any]] = mapped_column(JSON)
+    run_status: Mapped[str] = mapped_column(String(255), nullable=False)
+    
+
+
 
 class Prompt(Base):
     """

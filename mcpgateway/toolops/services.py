@@ -5,6 +5,7 @@ import datetime
 from typing import Any
 from sqlalchemy.orm import Session
 
+from mcpgateway.db import ToolOpsTestCases as TestCaseRecord
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.toolops.enrichment.enrichment import ToolOpsEnrichment
@@ -21,6 +22,23 @@ provider = os.getenv("OPENAI_BASE_URL","")
 LLM_PLATFORM = "OpenAIProvider - "+provider
 
 
+def populate_testcases_table(tool_id,test_cases,run_status,db: Session):
+    test_case_record = TestCaseRecord(
+        tool_id= tool_id,
+        test_cases= test_cases,
+        run_status = run_status
+    )
+    # Add to DB
+    db.add(test_case_record)
+    db.commit()
+    db.refresh(test_case_record)
+    print("Added test case record",tool_id,run_status)
+
+def query_testcases_table(tool_id,db: Session):
+    tool_record = db.get(TestCaseRecord,tool_id)
+    print("tool_record",tool_record)
+            
+
 # Test case generation service method
 async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: Session, number_of_test_cases=2,number_of_nl_variations=1):
     test_cases = []
@@ -33,6 +51,7 @@ async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: 
             with open('wxo_tool_spec.json','w') as wf:
                 json.dump(wxo_tool_spec,wf,indent=2)
             wf.close()
+            #populate_testcases_table(tool_id,test_cases,"in-progress",db)
             tc_generator = TestcaseGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_number_testcases_to_generate=number_of_test_cases)
             ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
             
@@ -43,6 +62,8 @@ async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: 
             nl_generator = NlUtteranceGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_nl_utterances=number_of_nl_variations)
             nl_test_cases = nl_generator.generate_nl(ip_test_cases)
             test_cases = post_process_nl_test_cases(nl_test_cases)
+            populate_testcases_table(tool_id,test_cases,"completed",db)
+            #query_testcases_table(tool_id)
     except Exception as e:
         error_message = "Error in generating test cases for tool - "+str(tool_id)+" , details - "+str(e)
         logger.info(error_message)
@@ -97,6 +118,7 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_
     return enriched_description, tool_schema
 
 if __name__=='__main__':
-    tool_id = "e228725d951f4877bcb80418e7a6f139"
-    test_cases = validation_generate_test_cases(tool_id)
-    print(test_cases)
+    from mcpgateway.main import get_db
+    db = get_db()
+    query_testcases_table("9e6767b0b62b41a08e762dc622ff41a5",db)
+
