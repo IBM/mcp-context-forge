@@ -1,13 +1,13 @@
 import json
 import os
-from sqlalchemy.orm import Session
 import base64
 import datetime
 from typing import Any
+from sqlalchemy.orm import Session
 
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.schemas import ToolRead, ToolUpdate
-from mcpgateway.toolops.utils.prompt_utils import generate_enriched_tool_description
+from mcpgateway.toolops.enrichment.enrichment import ToolOpsEnrichment
 from mcpgateway.toolops.utils.tool_format_conversion import convert_to_wxo_tool_spec,post_process_nl_test_cases
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
 from mcpgateway.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
@@ -64,48 +64,23 @@ async def enrich_tool_list(tool_id_list: list[str], tool_service: ToolService, d
 
 
 async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_PLATFORM: str = 'WATSONX',LLM_MODEL_ID: str = 'mistralai/mistral-medium-2505')-> tuple[str, ToolRead]:
-
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     except Exception as e:
         logger.error(f"Failed to convert tool {tool_id} to schema: {e}")   
         raise e
 
-    tool_name = tool_schema.name
-    current_tool_description = ""
-    if tool_schema.description:
-        current_tool_description = tool_schema.description
-    if current_tool_description:
-        current_tool_description = current_tool_description.replace(
-            "\n", "\\n"
-        )
-    input_schema = tool_schema.input_schema
-    debug_mode = True
+    toolops_enrichment = ToolOpsEnrichment(LLM_MODEL_ID, LLM_PLATFORM)
+    enriched_description = await toolops_enrichment.process(tool_schema)
 
-    logfolder = "log/"
-    if debug_mode:
-        sessionid = get_unique_sessionid()
-        logfolder = "log/" + sessionid
-        os.makedirs(logfolder, exist_ok=True)
-
-
-    enriched_description = await generate_enriched_tool_description(
-        tool_name,
-        current_tool_description,
-        input_schema,
-        LLM_MODEL_ID,
-        LLM_PLATFORM,
-        logfolder,
-        debug_mode
-    )
     if enriched_description:
         try:
             update_data: dict[str, Any] = {
-                "name": tool_name,
+                "name": tool_schema.name,
                 "description": enriched_description,
             }
             updateTool: ToolUpdate = ToolUpdate(**update_data)
-            updateTool.name = tool_name
+            updateTool.name = tool_schema.name
             updateTool.description = enriched_description
             await tool_service.update_tool(db, tool_id, updateTool)
         except Exception as e:
