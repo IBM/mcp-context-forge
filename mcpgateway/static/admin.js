@@ -2270,7 +2270,7 @@ async function editTool(toolId) {
             "Schema",
         );
         const outputSchemaValidation = validateJson(
-            JSON.stringify(tool.outputSchema || {}),
+            tool.outputSchema ? JSON.stringify(tool.outputSchema) : "",
             "Output Schema",
         );
         const annotationsValidation = validateJson(
@@ -2293,12 +2293,14 @@ async function editTool(toolId) {
         if (schemaField && schemaValidation.valid) {
             schemaField.value = JSON.stringify(schemaValidation.value, null, 2);
         }
-        if (outputSchemaField && outputSchemaValidation.valid) {
-            outputSchemaField.value = JSON.stringify(
-                outputSchemaValidation.value,
-                null,
-                2,
-            );
+        if (outputSchemaField) {
+            if (tool.outputSchema) {
+                outputSchemaField.value = outputSchemaValidation.valid
+                    ? JSON.stringify(outputSchemaValidation.value, null, 2)
+                    : "";
+            } else {
+                outputSchemaField.value = "";
+            }
         }
         if (annotationsField && annotationsValidation.valid) {
             annotationsField.value = JSON.stringify(
@@ -2321,10 +2323,14 @@ async function editTool(toolId) {
             );
             window.editToolSchemaEditor.refresh();
         }
-        if (window.editToolOutputSchemaEditor && outputSchemaValidation.valid) {
-            window.editToolOutputSchemaEditor.setValue(
-                JSON.stringify(outputSchemaValidation.value, null, 2),
-            );
+        if (window.editToolOutputSchemaEditor) {
+            if (tool.outputSchema && outputSchemaValidation.valid) {
+                window.editToolOutputSchemaEditor.setValue(
+                    JSON.stringify(outputSchemaValidation.value, null, 2),
+                );
+            } else {
+                window.editToolOutputSchemaEditor.setValue("");
+            }
             window.editToolOutputSchemaEditor.refresh();
         }
 
@@ -2408,6 +2414,12 @@ async function editTool(toolId) {
                 if (window.editToolSchemaEditor) {
                     window.editToolSchemaEditor.setOption("readOnly", true);
                 }
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setOption(
+                        "readOnly",
+                        true,
+                    );
+                }
             } else {
                 typeField.disabled = false;
                 if (authTypeField) {
@@ -2430,6 +2442,12 @@ async function editTool(toolId) {
                 }
                 if (window.editToolSchemaEditor) {
                     window.editToolSchemaEditor.setOption("readOnly", false);
+                }
+                if (window.editToolOutputSchemaEditor) {
+                    window.editToolOutputSchemaEditor.setOption(
+                        "readOnly",
+                        false,
+                    );
                 }
             }
             // Update request types and URL field
@@ -2540,6 +2558,9 @@ async function editTool(toolId) {
             }
             if (window.editToolSchemaEditor) {
                 window.editToolSchemaEditor.refresh();
+            }
+            if (window.editToolOutputSchemaEditor) {
+                window.editToolOutputSchemaEditor.refresh();
             }
         }, 100);
 
@@ -9223,6 +9244,9 @@ async function handleToolFormSubmit(event) {
         if (window.schemaEditor) {
             window.schemaEditor.save();
         }
+        if (window.outputSchemaEditor) {
+            window.outputSchemaEditor.save();
+        }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
         formData.append("is_inactive_checked", isInactiveCheckedBool);
@@ -9289,6 +9313,9 @@ async function handleEditToolFormSubmit(event) {
         }
         if (window.editToolSchemaEditor) {
             window.editToolSchemaEditor.save();
+        }
+        if (window.editToolOutputSchemaEditor) {
+            window.editToolOutputSchemaEditor.save();
         }
 
         const isInactiveCheckedBool = isInactiveChecked("tools");
@@ -9996,6 +10023,16 @@ function initializeCodeMirrorEditors() {
             id: "edit-tool-schema",
             mode: "application/json",
             varName: "editToolSchemaEditor",
+        },
+        {
+            id: "output-schema-editor",
+            mode: "application/json",
+            varName: "outputSchemaEditor",
+        },
+        {
+            id: "edit-tool-output-schema",
+            mode: "application/json",
+            varName: "editToolOutputSchemaEditor",
         },
         {
             id: "edit-resource-content",
