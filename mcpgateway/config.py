@@ -407,6 +407,7 @@ class Settings(BaseSettings):
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
 
+
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
     def validate_secrets(cls, v: Any, info: ValidationInfo) -> SecretStr:
@@ -1368,6 +1369,11 @@ Disallow: /
 
     # Base URL for pagination links (defaults to request URL)
     pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
+
+    #Ed25519 keys for signing
+    prev_ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Previous Ed25519 private key for signing")
+    ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Ed25519 private key for signing")
+
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize Settings with environment variable parsing.
