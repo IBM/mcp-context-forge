@@ -2306,7 +2306,7 @@ async function editTool(toolId) {
         const tool = await response.json();
         if(enrichedDescription != null) {
             console.log(JSON.stringify(enrichedDescription))
-            tool.description = enrichedDescription['details'][0]['enriched_desc']
+            tool.description = enrichedDescription['enriched_desc']
         }
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
@@ -6442,11 +6442,12 @@ async function enrichTool(toolId) {
        toolTestState.lastRequestTime.set(toolId, now);
 
        // 6. MAKE REQUEST with increased timeout
-       const response = await fetchWithTimeout(`/enrich_tools_util`, {
+    //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const response = await fetchWithTimeout(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
             method: "POST",
             headers: { "Cache-Control": "no-cache",
                 Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify({ tools: [toolId] }),
+            body: JSON.stringify({ tool_id: toolId }),
         }, toolTestState.requestTimeout, // Use the increased timeout
         );
 
@@ -6666,18 +6667,18 @@ async function validateTool(toolId) {
 
 
 
-        const validationResponse = await fetchWithTimeout(`/tool_validation_util`, {
+        const validationResponse = await fetchWithTimeout(`/toolops/validation/generate_testcases?tool_id=${toolId}`, {
             method: "POST",
             headers: { "Cache-Control": "no-cache",
                 Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify({ tools: [toolId] }),
+            body: JSON.stringify({ tool_id: toolId }),
         }, toolTestState.requestTimeout, // Use the increased timeout
         );
 
         if (validationResponse.ok) {
             const vres = await validationResponse.json()
             console.log(JSON.stringify(vres))
-            testCases = await vres['details'][0];
+            testCases = await vres;
         }
     
         // Render accordion-style test cases
@@ -8366,7 +8367,7 @@ async function viewTool(toolId) {
 
         if(enrichedDescription != null) {
             console.log(JSON.stringify(enrichedDescription))
-            tool.description = enrichedDescription['details'][0]['enriched_desc']
+            tool.description = enrichedDescription['enriched_desc']
         }
 
         // Build auth HTML safely with new styling
