@@ -181,10 +181,9 @@ llmchat = [
 ]
 
 toolops = [
-    "langchain-core>=1.0.0",
     "aiofiles>=25.1.0",
     "tomli>=2.3.0",
-]
+    ]
 
 # Fuzzing and property-based testing
 fuzz = [

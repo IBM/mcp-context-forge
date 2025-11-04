@@ -1,33 +1,16 @@
 import os
 import sys
 import json
-from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
-from ibm_watsonx_ai.foundation_models.utils.enums import DecodingMethods
-from toolops.utils.llm_util import execute_prompt
-import numpy as np
-import logging
 import re
+from mcpgateway.toolops.utils.llm_util import execute_prompt
 
-logger = logging.getLogger('toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 def data_using_LLM(prompt, model_id, llm_platform):
-    parameters = {
-        # GenParams.DECODING_METHOD: 'sample',
-        GenParams.RANDOM_SEED: np.random.randint(1, 50),
-        GenParams.MIN_NEW_TOKENS: 0,
-        GenParams.MAX_NEW_TOKENS: 1000,
-        GenParams.DECODING_METHOD: DecodingMethods.GREEDY.value,
-        GenParams.REPETITION_PENALTY: 1,
-        GenParams.STOP_SEQUENCES: [],
-        GenParams.TEMPERATURE: 0.7,
-        GenParams.TOP_K: 50,
-        GenParams.TOP_P: 1
-    }
-
-    model_id = os.environ.get('TCG_MODEL_ID', model_id)
-    response_trimmed = execute_prompt(prompt, model_id, llm_platform, parameters=parameters)
+    response_trimmed = execute_prompt(prompt, model_id)
     response_portion = response_trimmed
     if "```" in response_trimmed:
         response_portion = response_trimmed.split("```")[1]

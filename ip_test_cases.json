@@ -1,14 +1,117 @@
-[
-  {
-    "id": "01731d582ee148a39b0ff9b56bc26678",
-    "originalName": "getV2Actions",
-    "url": "http://localhost:9009/sse",
-    "description": "from Salesloft\n\n\n**Query Parameters:**\n\n- **ids**: the id&#x27;s of actions\n\n- **step_id**: The ID of the step to retrieve. If not provided, all steps for the pipeline will be returned.\n\n- **type**: Filter actions by type. email, phone, integration etc.\n\n- **due_on[gt]**: Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **due_on[gte]**: Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The date should be in iso8601 format.\n\n- **due_on[lt]**: Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **due_on[lte]**: Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **user_guid**: Filters actions by the user&#x27;s guid. Multiple user guids can be applied.\n\n- **person_id**: retrieves the records by using person name.\n\n- **cadence_id**: The cadence id of the action\n\n- **multitouch_group_id**: The ID of the multitouch group to filter by. If not specified, all actions will be returned.\n\n- **updated_at[gt]**: Returns all matching records that are greater than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[gte]**: Returns all matching records that are greater than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[lt]**: Returns all matching records that are less than the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **updated_at[lte]**: Returns all matching records that are less than or equal to the provided iso8601 timestamp. The comparison is done using microsecond precision.\n\n- **sort_by**: The field to sort by. Defaults to created_at.\n\n- **sort_direction**: The direction to sort the results in. Can be either `asc` or `desc`.\n\n- **per_page**: How many records to show per page in the range [1, 100]. Defaults to 25\n\n- **page**: The current page to fetch results from. Defaults to 1.\n\n- **include_paging_counts**: Whether to include total_pages and total_count in the metadata. Defaults to false\n\n- **limit_paging_counts**: Specifies whether the max limit of 10k records should be applied to pagination counts. Affects the total_count and total_pages data.\n\n\n**Responses:**\n\n- **200** (Success): All actions were retrieved successfully.\n  - Content-Type: `application/json`\n\n  - **Response Properties:**\n\n    - **data**: A list of objects containing the actions data from Salesloft\n\n  - **Example:**\n```json\n{\n  &quot;data&quot;: [\n    {\n      &quot;action_details&quot;: {\n        &quot;_href&quot;: &quot;https://api.salesloft.com/v2/actions&quot;,\n        &quot;id&quot;: 18\n      },\n      &quot;cadence&quot;: {\n        &quot;_href&quot;: &quot;https://api.salesloft.com/v2/actions&quot;,\n        &quot;id&quot;: 18\n      },\n      &quot;created_at&quot;: &quot;2019-01-01T00:00:00Z&quot;\n    }\n  ],\n  &quot;metadata&quot;: {\n    &quot;filtering&quot;: {\n      &quot;key&quot;: &quot;value&quot;\n    },\n    &quot;paging&quot;: {\n      &quot;current_page&quot;: 1,\n      &quot;next_page&quot;: 1,\n      &quot;per_page&quot;: 10\n    },\n    &quot;sorting&quot;: {\n      &quot;sort_by&quot;: &quot;created_at&quot;,\n      &quot;sort_direction&quot;: &quot;asc&quot;\n    }\n  }\n}\n```\n\n- **401**: The HTTP response status code for unauthorized access. The default is 401.\n  - Content-Type: `application/json`\n\n  - **Response Properties:**\n\n    - **errorCode**: The error code from Salesloft\n\n    - **message**: The message to send to the user.\n\n  - **Example:**\n```json\n{\n  &quot;errorCode&quot;: &quot;ERR_BAD_REQUEST&quot;,\n  &quot;message&quot;: &quot;Hello&quot;\n}\n```\n\n- **404**: The HTTP response status code for a Not Found (404) error.\n  - Content-Type: `application/json`\n\n  - **Response Properties:**\n\n    - **errorCode**: The error code from Salesloft\n\n    - **message**: The message to send to the user.\n\n  - **Example:**\n```json\n{\n  &quot;errorCode&quot;: &quot;ERR_BAD_REQUEST&quot;,\n  &quot;message&quot;: &quot;Hello&quot;\n}\n```",
-    "requestType": "SSE",
-    "integrationType": "MCP",
-    "headers": null,
-    "inputSchema": {
-      "type": "object",
+{
+  "Test_scenarios": [
+    {
+      "id": "TC_1",
+      "scenario_type": "positive",
+      "mandatory_params": [],
+      "input": "",
+      "nl_utterance": [
+        ""
+      ],
+      "input_parameters": {}
+    },
+    {
+      "id": "TC_2",
+      "scenario_type": "positive",
+      "mandatory_params": [],
+      "input": "ids((string)) := 767763892 \nstep_id((string)) := 319104110 \ntype((string)) := email \ndue_on[gt]((string)) := 2023-02-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-01T00:00:00Z \ndue_on[lte]((string)) := 2018-01-02T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 345678993 \ncadence_id((string)) := 1034653 \nmultitouch_group_id((string)) := 767088963 \nupdated_at[gt]((string)) := 2019-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 3 \ninclude_paging_counts((boolean)) := false \nlimit_paging_counts((boolean)) := true \n",
+      "nl_utterance": [
+        ""
+      ],
+      "input_parameters": {
+        "updated_at[lt]": [
+          "2017-01-01T00:00:00.123Z"
+        ],
+        "due_on[gt]": [
+          "2023-02-01T00:00:00Z"
+        ],
+        "due_on[lt]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "ids": [
+          "767763892"
+        ],
+        "user_guid": [
+          "12345678-1234-1234-1234-123456789012"
+        ],
+        "updated_at[gte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "step_id": [
+          "319104110"
+        ],
+        "due_on[lte]": [
+          "2018-01-02T00:00:00Z"
+        ],
+        "include_paging_counts": [
+          "false"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "type": [
+          "email"
+        ],
+        "multitouch_group_id": [
+          "767088963"
+        ],
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.456Z"
+        ],
+        "sort_by": [
+          "created_at"
+        ],
+        "sort_direction": [
+          "DESC"
+        ],
+        "limit_paging_counts": [
+          "true"
+        ],
+        "person_id": [
+          "345678993"
+        ],
+        "per_page": [
+          "25"
+        ],
+        "page": [
+          "3"
+        ],
+        "cadence_id": [
+          "1034653"
+        ],
+        "updated_at[gt]": [
+          "2019-01-01T00:00:00Z"
+        ]
+      }
+    }
+  ],
+  "Number_of_mandatory_parameters_covered": 0,
+  "Number_of_optional_parameters_covered": 21,
+  "Number_of_positive_test_scenarios": 2,
+  "llm_model_details": {
+    "tcg-model-id": "meta-llama/llama-3-3-70b-instruct",
+    "nlg-model-id": null
+  },
+  "llm_platform_details": {
+    "tcg-platform": "OpenAIProvider",
+    "nlg-platform": null
+  },
+  "agent_details": {},
+  "tool_details": {},
+  "Skill_operation": "python -salesloft-all-actions-getv2actions , function - mcp-cf-tool-default",
+  "tool_definition": {
+    "binding": {
+      "python": {
+        "connections": {},
+        "function": "mcp-cf-tool-default",
+        "requirements": []
+      }
+    },
+    "description": "This tool allows you to retrieve and manage Salesloft actions, with options to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group. You can control the sorting and pagination of results. The tool returns a list of actions matching your specified criteria, enabling efficient analysis and management of your Salesloft actions.",
+    "display_name": "Getv2Actions",
+    "id": "a872cd2d00ef4c268f052d574b8f5888",
+    "input_schema": {
+      "description": null,
       "properties": {
         "ids": {
           "type": "string",
@@ -208,8 +311,8 @@
         },
         "per_page": {
           "title": "Per page",
-          "maximum": 100,
-          "minimum": 1,
+          "maximum": 100.0,
+          "minimum": 1.0,
           "type": "integer",
           "description": "How many records to show per page in the range [1, 100]. Defaults to 25",
           "default": 25,
@@ -258,46 +361,24 @@
           "description": "Specifies whether the max limit of 10k records should be applied to pagination counts. Affects the total_count and total_pages data."
         }
       },
-      "required": []
+      "required": [],
+      "type": "object"
     },
-    "annotations": {},
-    "jsonpathFilter": "",
-    "auth": null,
-    "createdAt": "2025-10-16T06:51:21.209380",
-    "updatedAt": "2025-10-16T06:51:21.209385",
-    "enabled": true,
-    "reachable": true,
-    "gatewayId": "26c7544731ae4326a53a9e698c4e7119",
-    "executionCount": 0,
-    "metrics": {
-      "totalExecutions": 0,
-      "successfulExecutions": 0,
-      "failedExecutions": 0,
-      "failureRate": 0,
-      "minResponseTime": null,
-      "maxResponseTime": null,
-      "avgResponseTime": null,
-      "lastExecutionTime": null
-    },
+    "is_async": false,
     "name": "salesloft-all-actions-getv2actions",
-    "displayName": "Getv2Actions",
-    "gatewaySlug": "salesloft-all-actions",
-    "customName": "getV2Actions",
-    "customNameSlug": "getv2actions",
-    "tags": [],
-    "createdBy": "admin@example.com",
-    "createdFromIp": "127.0.0.1",
-    "createdVia": "federation",
-    "createdUserAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
-    "modifiedBy": null,
-    "modifiedFromIp": null,
-    "modifiedVia": null,
-    "modifiedUserAgent": null,
-    "importBatchId": null,
-    "federationSource": "salesloft all actions",
-    "version": 1,
-    "teamId": "a9a443a1e1f24619819a088e24d05e0b",
-    "ownerEmail": "admin@example.com",
-    "visibility": "public"
+    "output_schema": {
+      "description": null,
+      "properties": {
+        "result": {
+          "type": "string",
+          "example": "success"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "permission": "read_only"
   }
-]
+}

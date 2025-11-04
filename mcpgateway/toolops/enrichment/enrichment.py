@@ -6,11 +6,12 @@ import os
 import tomli as tomllib
 from typing import Any
 from mcpgateway.schemas import ToolRead
-
 from mcpgateway.toolops.enrichment.prompt_utils import generate_enriched_tool_description
 from mcpgateway.toolops.exceptions import ToolEnrichmentError
 
-logger = logging.getLogger(__name__)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 class ToolOpsEnrichment:
     def __init__(self, llm_model_id : str | None, llm_platform : str = "WATSONX"):
@@ -36,7 +37,7 @@ class ToolOpsEnrichment:
             raise ToolEnrichmentError("ToolOpsEnrichment", exception)
 
         # print("Using modelid: " + llm_model_id)
-        logger.info("Using modelid: " + llm_model_id)
+        logger.info("Tool enrichment using LLM model: " + llm_model_id)
         self.llm_model_id = llm_model_id
         self.llm_platform = llm_platform
         self.sessionid = self._get_unique_sessionid()
@@ -50,7 +51,7 @@ class ToolOpsEnrichment:
         return timestamp
 
     async def process(self,tool_schema: ToolRead, debug_mode: bool = False, logfolder:str = "log/")->str:
-        logger.info("in process!!!!")
+        #logger.info("in process!!!!")
         tool_name = tool_schema.name
         current_tool_description = ""
         if tool_schema.description:

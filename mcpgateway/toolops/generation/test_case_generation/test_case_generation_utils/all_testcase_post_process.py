@@ -1,4 +1,4 @@
-from toolops.generation.test_case_generation.test_case_generation_utils.utils import generated_testcase_to_nl_template
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.utils import generated_testcase_to_nl_template
 
 def all_testcase_postprocess(positive_testcases, negative_testcases, transformed_tool_spec, original_tool_spec, llm_model_id, llm_platform):
     number_of_mandatory_parameters_covered=0

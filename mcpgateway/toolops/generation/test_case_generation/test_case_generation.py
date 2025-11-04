@@ -3,40 +3,25 @@ import yaml
 import os
 import json
 import sys
-from toolops.generation.test_case_generation.test_case_generation_utils.utils import tool_spec_post_process, check_for_duplicate
-from toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.all_param_generation import all_param_testcase
-from toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_optional_param_generation import mandatory_optional_param_testcase
-from toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_param_generation import mandatory_param_testcase
-from toolops.generation.test_case_generation.test_case_generation_utils.using_optionally_provided_data.testcase_optional_data import generate_testcases_optional_data
-from toolops.generation.test_case_generation.test_case_generation_utils.all_testcase_post_process import all_testcase_postprocess
-from toolops.utils.llm_util import check_llm_env_vars
-from toolops.exceptions import TestCaseCreationError
-import logging
 import copy
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.utils import tool_spec_post_process, check_for_duplicate
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.all_param_generation import all_param_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_optional_param_generation import mandatory_optional_param_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_param_generation import mandatory_param_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.using_optionally_provided_data.testcase_optional_data import generate_testcases_optional_data
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.all_testcase_post_process import all_testcase_postprocess
 
-logger = logging.getLogger('toolops.generation.test_case_generation.test_case_generation.test_case_generation')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 class TestcaseGeneration:
-    def __init__(self, llm_model_id='mistralai/mistral-medium-2505', llm_platform='WATSONX', max_number_testcases_to_generate=10, no_test_data_generation=False, optional_data_scenario_path=None):
+    def __init__(self, llm_model_id, llm_platform, max_number_testcases_to_generate=10, no_test_data_generation=False, optional_data_scenario_path=None):
         self.llm_platform = llm_platform
         self.llm_model_id = llm_model_id
-        if llm_platform=="WATSONX":
-            if llm_model_id==None:
-                self.llm_model_id = 'mistralai/mistral-medium-2505'
-        if llm_platform=="RITS":
-            if llm_model_id==None:
-                self.llm_model_id = 'mixtral-8x22b'
         self.max_number_testcases_to_generate = max_number_testcases_to_generate
         self.no_test_data_generation = no_test_data_generation
         self.optional_data_scenario_path = optional_data_scenario_path
-        
-        check_llm_env_vars(llm_platform)
-        
-        if self.llm_model_id == None:
-            exception = 'Please configure the llm model id for testcase generation.'
-            raise TestCaseCreationError('', exception)
 
     # This method generates postiive testcases 
     def positive_testcase_generation(self,transformed_tool_spec, original_tool_spec, optional_data_scenario):
@@ -117,7 +102,8 @@ class TestcaseGeneration:
             created_data = {**created_testcase_from_optional_data, **created_testcase_with_zero_params, **created_testcases_full_from_LLM}
             test_case_lineage = {**test_case_lineage_from_optional_data, **test_case_lineage_with_zero_params, **test_case_lineage_full_from_LLM}
         if (len(created_data) == max_number_testcases_to_generate):
-            logger.info("Test case generation complete. Successfully generated all the testcases",extra={'details':created_data})
+            #logger.info("Test case generation complete. Successfully generated all the testcases",extra={'details':created_data})
+            logger.info("Test case generation complete. Successfully generated all the testcases")
         return (created_data, test_case_lineage)
 
     # This method generates negative (invalid) testcases by omitting one mandatory parameter 
@@ -237,7 +223,8 @@ class TestcaseGeneration:
                     test_case_lineage=dict()
                     created_data[1] = {}
                     test_case_lineage["Testcase_1"] = {}
-                    logger.info("Test case generation complete. Successfully generated only one testcase",extra={'details':created_data})
+                    #logger.info("Test case generation complete. Successfully generated only one testcase",extra={'details':created_data})
+                    logger.info("Test case generation complete. Successfully generated only one testcase")
                     return (created_data, test_case_lineage)
                 else:
                     positive_testcase, positive_test_case_lineage = self.positive_testcase_generation(transformed_tool_spec, original_tool_spec, optional_data_scenario)
@@ -267,15 +254,18 @@ class TestcaseGeneration:
                 with open(optional_data_scenario_path, 'r') as file:
                     optional_data_scenario = json.load(file)
                 positive_testcases = self.data_generation_from_testfile(optional_data_scenario)
-                logger.info("Testcases obtained from the testfile",extra={'details':positive_testcases})
+                #logger.info("Testcases obtained from the testfile",extra={'details':positive_testcases})
+                logger.info("Testcases obtained from the testfile")
                 test_case_lineage = None
         negative_testcases = self.negative_testcase_generation(positive_testcases, transformed_tool_spec)
         try:
             final_report = all_testcase_postprocess(positive_testcases, negative_testcases, transformed_tool_spec, original_tool_spec, llm_model_id, llm_platform)
-            logger.info("Basic report is created with testcases",extra={'details':final_report})
+            #logger.info("Basic report is created with testcases",extra={'details':final_report})
+            logger.info("Basic report is created with testcases")
             return(final_report, test_case_lineage)
         except:
-            logger.info("Report could not created with testcases",extra={'details':tool_spec})
+            #logger.info("Report could not created with testcases",extra={'details':tool_spec})
+            logger.info("Report could not created with testcases")
             return(None, None)
     
     def generate_testcase_file(self, file):
@@ -289,17 +279,16 @@ class TestcaseGeneration:
             json.dump(final_report, f)
 
 if __name__ == "__main__":
-    file_path = '../data/createIssue_toolspec.yaml'
-    
-    llm_platform = os.environ.get('LLM_PLATFORM')
-    
-    llm_model_id = 'mixtral-8x7b'
-    if llm_platform == 'WATSONX':
-        llm_model_id = 'mistralai/mistral-medium-2505'
-    
+    import json
+    from dotenv import load_dotenv
+    load_dotenv(".env.example")
+    print(os.getenv("OPENAI_BASE_URL"))
+    llm_model_id = 'meta-llama/llama-3-3-70b-instruct'
+    llm_platform = 'OpenAIProvider'
+    wxo_tool_spec = json.load(open('wxo_tool_spec.json','r'))
     max_number_testcases_to_generate, no_test_data_generation, optional_data_scenario_path = 10, False, None
-    #max_number_testcases_to_generate, no_test_data_generation, optional_data_scenario_path = 10, False, "./data/createIssue_optional.json"
-
-    generator = TestcaseGeneration(llm_model_id, llm_platform, max_number_testcases_to_generate, no_test_data_generation, optional_data_scenario_path)
-    generator.generate_testcase_file(file_path)
-    #generator.testcase_generation_full_pipeline({})
+    tc_generator = TestcaseGeneration(llm_model_id, llm_platform, max_number_testcases_to_generate)
+    ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
+    with open('ip_test_cases.json','w') as ipf:
+       json.dump(ip_test_cases,ipf,indent=2)
+    ipf.close()
