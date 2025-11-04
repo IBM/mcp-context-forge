@@ -3059,14 +3059,8 @@ class GatewayRead(BaseModelWithConfigDict):
             # For backward compatibility, populate first header in key/value fields
             if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
-            self.auth_headers = [
-                {"key": str(key), "value": "" if value is None else str(value)}
-                for key, value in auth_value.items()
-            ]
-            self.auth_headers_unmasked = [
-                {"key": str(key), "value": "" if value is None else str(value)}
-                for key, value in auth_value.items()
-            ]
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            self.auth_headers_unmasked = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
             self.auth_header_value_unmasked = v
@@ -3116,11 +3110,7 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_password_unmasked"] = self.auth_password_unmasked
         masked_data["auth_token_unmasked"] = self.auth_token_unmasked
         masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
-        masked_data["auth_headers_unmasked"] = (
-            [header.copy() for header in self.auth_headers_unmasked]
-            if self.auth_headers_unmasked
-            else None
-        )
+        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
 
 

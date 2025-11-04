@@ -2758,11 +2758,11 @@ endif
 
 # Profile detection (for platform-specific services)
 ifeq ($(PLATFORM),linux/amd64)
-    PROFILE = --profile with-fast-time 
+    PROFILE = --profile with-fast-time
 endif
 
 define COMPOSE
-$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE) 
+$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
