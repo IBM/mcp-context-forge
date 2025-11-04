@@ -329,6 +329,6 @@ class ExternalHookRef(HookRef):
         self._plugin_ref = plugin_ref
         self._hook = hook
         if hasattr(plugin_ref.plugin, INVOKE_HOOK):
-            self._func: Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]] = partial(plugin_ref.plugin.invoke_hook, hook)
-        if not self._func:
+            self._func: Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]] = partial(plugin_ref.plugin.invoke_hook, hook)  # type: ignore[attr-defined]
+        else:
             raise PluginError(error=PluginErrorModel(message=f"Plugin: {plugin_ref.plugin.name} is not an external plugin", plugin_name=plugin_ref.plugin.name))

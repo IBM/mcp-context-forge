@@ -235,7 +235,7 @@ class SSLCapableFastMCP(FastMCP):
             await server.serve()
 
 
-async def run():
+async def run() -> None:
     """Run the external plugin server with FastMCP.
 
     Supports both stdio and HTTP transports. Auto-detects transport based on stdin

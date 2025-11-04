@@ -106,7 +106,7 @@ PromptPrehookResult = PluginResult[PromptPrehookPayload]
 PromptPosthookResult = PluginResult[PromptPosthookPayload]
 
 
-def _register_prompt_hooks():
+def _register_prompt_hooks() -> None:
     """Register prompt hooks in the global registry.
 
     This is called lazily to avoid circular import issues.
