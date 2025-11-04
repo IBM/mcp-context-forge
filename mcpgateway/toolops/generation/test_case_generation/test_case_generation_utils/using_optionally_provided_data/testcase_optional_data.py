@@ -1,12 +1,11 @@
 import os
 import sys
 import json
-import logging
-from toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
 
-logger = logging.getLogger('toolops.generation.test_case_generation.test_case_generation_utils.testcases_from_optionally_provided_data')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # This method generates testcases based on optional data provided by the user #
 def generate_testcases_optional_data(transformed_tool_spec, optional_data_scenario, llm_model_id, llm_platform, max_number_testcases_to_generate):
@@ -54,5 +53,6 @@ def generate_testcases_optional_data(transformed_tool_spec, optional_data_scenar
                 if count_failed_execution==3:
                     break
                 incorrectly_generated_data=True
-    logger.info("Testcases generated from optional data provided",extra={'details':data_generated_through_LLM_from_optional_data})
+    #logger.info("Testcases generated from optional data provided",extra={'details':data_generated_through_LLM_from_optional_data})
+    logger.info("Testcases generated from optional data provided")
     return(data_generated_through_LLM) 

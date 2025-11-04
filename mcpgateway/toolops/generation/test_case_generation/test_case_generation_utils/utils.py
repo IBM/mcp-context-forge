@@ -1,11 +1,10 @@
 import json
-import logging 
 import sys
 import os
 
-logger = logging.getLogger('toolops.validation.test_case_generation_utils.utils.tool_spec_post_process')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 def tool_spec_post_process(tool_spec):
     tool_spec_json = json.loads(json.dumps(tool_spec))

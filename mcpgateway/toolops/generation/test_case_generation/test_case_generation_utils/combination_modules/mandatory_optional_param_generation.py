@@ -1,13 +1,11 @@
 import os
 import sys
 import json
-import logging
-from toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.prompt_execution import data_using_LLM, post_process_testcase
 
-logger = logging.getLogger('toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_optional_param_testcase')
-parent_dir = os.path.dirname(os.path.join(os.getcwd(),"src"))
-sys.path.append(parent_dir)
-
+from mcpgateway.services.logging_service import LoggingService
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 # This method generates testcases using all mandatory paramteres and a combination of subset of optional parameters #
 def mandatory_optional_param_testcase(transformed_tool_spec, data_generated_through_LLM, number_testcases_to_generate_more, original_number_of_testcases_to_generate_more, count_testcases, llm_model_id, llm_platform):
@@ -36,10 +34,12 @@ def mandatory_optional_param_testcase(transformed_tool_spec, data_generated_thro
                 number_testcases_to_generate_more = original_number_of_testcases_to_generate_more - count_testcases
                 if (correct_number_of_testcases_generated==True):
                     break
-            except:
+            except Exception as e:
+                logger.info("Error in generating test cases for - mandatory and some optional"+str(e))
                 count_failed_execution=count_failed_execution+1
                 if count_failed_execution==3:
                     break
                 incorrectly_generated_data=True
-    logger.info("Testcases generated with all mandatory and some optional parameters",extra={'details':data_generated_through_LLM_with_mandatory_and_some_optional_param})
+    #logger.info("Testcases generated with all mandatory and some optional parameters",extra={'details':data_generated_through_LLM_with_mandatory_and_some_optional_param})
+    logger.info("Testcases generated with all mandatory and some optional parameters")
     return(data_generated_through_LLM)
