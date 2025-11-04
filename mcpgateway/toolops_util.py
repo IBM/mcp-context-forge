@@ -1,8 +1,10 @@
 from datetime import datetime
 import random
+import json
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+import time
 
 router = APIRouter()
 
@@ -21,20 +23,26 @@ router = APIRouter()
 class ToolList(BaseModel):
     tools: list[str]
 
-@router.post("/enrich_tools")
+@router.post("/enrich_tools_util")
 async def enrich_tools(payload: ToolList):
     enriched = []
     for tool in payload.tools:
         # placeholder enrichment logic
-        enriched.append({"tool": tool, "status": "enriched"})
+        with open('./mcpgateway/enrich_out.json') as json_data:
+            d = json.load(json_data)
+            enriched.append(d)
+    time.sleep(10)
     return {"message": f"Enriched {len(enriched)} tools successfully.", "details": enriched}
 
-@router.post("/tool_validation")
+@router.post("/tool_validation_util")
 async def tool_validation(payload: ToolList):
     validated = []
     for tool in payload.tools:
         # placeholder validation logic
-        validated.append({"tool": tool, "status": "validated"})
+        with open('./mcpgateway/test_cases.json') as json_data:
+            d = json.load(json_data)
+            validated.append(d)
+    time.sleep(10)
     return {"message": f"Validated {len(validated)} tools successfully.", "details": validated}
 
 TOOLS = [

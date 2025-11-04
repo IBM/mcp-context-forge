@@ -114,19 +114,19 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_
         logfolder,
         debug_mode
     )
-    if enriched_description:
-        try:
-            update_data: dict[str, Any] = {
-                "name": tool_name,
-                "description": enriched_description,
-            }
-            updateTool: ToolUpdate = ToolUpdate(**update_data)
-            updateTool.name = tool_name
-            updateTool.description = enriched_description
-            await tool_service.update_tool(db, tool_id, updateTool)
-        except Exception as e:
-            logger.error(f"Failed to update tool {tool_id} with enriched description: {e}")   
-            raise e
+    # if enriched_description:
+    #     try:
+    #         update_data: dict[str, Any] = {
+    #             "name": tool_name,
+    #             "description": enriched_description,
+    #         }
+    #         updateTool: ToolUpdate = ToolUpdate(**update_data)
+    #         updateTool.name = tool_name
+    #         updateTool.description = enriched_description
+    #         await tool_service.update_tool(db, tool_id, updateTool)
+    #     except Exception as e:
+    #         logger.error(f"Failed to update tool {tool_id} with enriched description: {e}")   
+    #         raise e
 
     return enriched_description, tool_schema
 
