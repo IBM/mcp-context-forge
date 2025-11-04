@@ -2422,6 +2422,8 @@ class GatewayCreate(BaseModel):
 
     # CA certificate
     ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
+    signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
 
     @field_validator("tags")
     @classmethod

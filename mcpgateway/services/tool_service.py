@@ -65,6 +65,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1321,9 +1322,17 @@ class ToolService:
 
                         Returns:
                             httpx.AsyncClient: Configured HTTPX async client
+
+                        Raises:
+                            Exception: If CA certificate signature is invalid
                         """
                         if gateway.ca_certificate:
-                            ctx = create_ssl_context(gateway.ca_certificate)
+                            public_key_pem = settings.ed25519_public_key
+                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                            if valid:
+                                ctx = create_ssl_context(gateway.ca_certificate)
+                            else:
+                                raise Exception("Invalid CA certificate signature for gateway")
                         else:
                             ctx = None
                         return httpx.AsyncClient(
