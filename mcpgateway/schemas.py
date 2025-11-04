@@ -1476,6 +1476,7 @@ class ToolResult(BaseModelWithConfigDict):
     """
 
     content: List[Union[TextContent, ImageContent]]
+    structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
 
