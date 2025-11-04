@@ -1,7 +1,6 @@
 import os
 import sys
 import copy
-
 from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)

@@ -25,13 +25,20 @@ LLM_PLATFORM = "OpenAIProvider - "+provider
 async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: Session, number_of_test_cases=2,number_of_nl_variations=1):
     test_cases = []
     try:
-        logger.info("Generating test cases for tool - "+str(tool_id))
+        logger.info("Generating test cases for tool - "+str(tool_id)+","+json.dumps({"number_of_test_cases":number_of_test_cases,"number_of_nl_variations":number_of_nl_variations}) )
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
         mcp_cf_tool = tool_schema.to_dict(use_alias=True)
         if mcp_cf_tool is not None:
             wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
+            with open('wxo_tool_spec.json','w') as wf:
+                json.dump(wxo_tool_spec,wf,indent=2)
+            wf.close()
             tc_generator = TestcaseGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_number_testcases_to_generate=number_of_test_cases)
             ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
+            
+            with open('ip_test_cases.json','w') as ipf:
+                json.dump(ip_test_cases,ipf,indent=2)
+            ipf.close()
 
             nl_generator = NlUtteranceGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_nl_utterances=number_of_nl_variations)
             nl_test_cases = nl_generator.generate_nl(ip_test_cases)

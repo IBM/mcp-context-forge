@@ -1259,17 +1259,18 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        logger.info("Tool - " + tool_id)
+        logger.info("Running tool enrichment for Tool - " + tool_id)
         enriched_tool_description, tool_schema = await enrich_tool(tool_id, tool_service, db)
         result: dict[str, Any] = {}
         result["tool_id"] = tool_id
         result["tool_name"] = tool_schema.name
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
-        logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
+        #logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
         return result
 
     except Exception as e:
+        logger.info("Error in tool enrichment for Tool - " + str(e))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid JSON in request body" + str(e),

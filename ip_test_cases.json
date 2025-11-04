@@ -1,0 +1,384 @@
+{
+  "Test_scenarios": [
+    {
+      "id": "TC_1",
+      "scenario_type": "positive",
+      "mandatory_params": [],
+      "input": "",
+      "nl_utterance": [
+        ""
+      ],
+      "input_parameters": {}
+    },
+    {
+      "id": "TC_2",
+      "scenario_type": "positive",
+      "mandatory_params": [],
+      "input": "ids((string)) := 767763892 \nstep_id((string)) := 319104110 \ntype((string)) := email \ndue_on[gt]((string)) := 2023-02-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-01T00:00:00Z \ndue_on[lte]((string)) := 2018-01-02T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 345678993 \ncadence_id((string)) := 1034653 \nmultitouch_group_id((string)) := 767088963 \nupdated_at[gt]((string)) := 2019-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 3 \ninclude_paging_counts((boolean)) := false \nlimit_paging_counts((boolean)) := true \n",
+      "nl_utterance": [
+        ""
+      ],
+      "input_parameters": {
+        "updated_at[lt]": [
+          "2017-01-01T00:00:00.123Z"
+        ],
+        "due_on[gt]": [
+          "2023-02-01T00:00:00Z"
+        ],
+        "due_on[lt]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "ids": [
+          "767763892"
+        ],
+        "user_guid": [
+          "12345678-1234-1234-1234-123456789012"
+        ],
+        "updated_at[gte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "step_id": [
+          "319104110"
+        ],
+        "due_on[lte]": [
+          "2018-01-02T00:00:00Z"
+        ],
+        "include_paging_counts": [
+          "false"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "type": [
+          "email"
+        ],
+        "multitouch_group_id": [
+          "767088963"
+        ],
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.456Z"
+        ],
+        "sort_by": [
+          "created_at"
+        ],
+        "sort_direction": [
+          "DESC"
+        ],
+        "limit_paging_counts": [
+          "true"
+        ],
+        "person_id": [
+          "345678993"
+        ],
+        "per_page": [
+          "25"
+        ],
+        "page": [
+          "3"
+        ],
+        "cadence_id": [
+          "1034653"
+        ],
+        "updated_at[gt]": [
+          "2019-01-01T00:00:00Z"
+        ]
+      }
+    }
+  ],
+  "Number_of_mandatory_parameters_covered": 0,
+  "Number_of_optional_parameters_covered": 21,
+  "Number_of_positive_test_scenarios": 2,
+  "llm_model_details": {
+    "tcg-model-id": "meta-llama/llama-3-3-70b-instruct",
+    "nlg-model-id": null
+  },
+  "llm_platform_details": {
+    "tcg-platform": "OpenAIProvider",
+    "nlg-platform": null
+  },
+  "agent_details": {},
+  "tool_details": {},
+  "Skill_operation": "python -salesloft-all-actions-getv2actions , function - mcp-cf-tool-default",
+  "tool_definition": {
+    "binding": {
+      "python": {
+        "connections": {},
+        "function": "mcp-cf-tool-default",
+        "requirements": []
+      }
+    },
+    "description": "This tool allows you to retrieve and manage Salesloft actions, with options to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group. You can control the sorting and pagination of results. The tool returns a list of actions matching your specified criteria, enabling efficient analysis and management of your Salesloft actions.",
+    "display_name": "Getv2Actions",
+    "id": "a872cd2d00ef4c268f052d574b8f5888",
+    "input_schema": {
+      "description": null,
+      "properties": {
+        "ids": {
+          "type": "string",
+          "description": "Filter by action id",
+          "example": 18,
+          "x-ibm-examples": [
+            345687678,
+            767763892
+          ]
+        },
+        "step_id": {
+          "title": "Step name",
+          "type": "string",
+          "description": "Filter actions by step name",
+          "x-ibm-category": "An-ID"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "description": "Filter actions by type. Can be one of:email, phone,integration and other",
+          "example": "filter",
+          "x-ibm-enum-descriptions": [
+            "phone",
+            "email",
+            "integration",
+            "other"
+          ],
+          "x-ibm-examples": [
+            "email",
+            "phone"
+          ]
+        },
+        "due_on[gt]": {
+          "title": "Due on after the date",
+          "type": "string",
+          "description": "Returns actions that are due on after the provided date",
+          "format": "date",
+          "x-ibm-category": "Date-Time"
+        },
+        "due_on[gte]": {
+          "title": "Due on greater than or equal to date",
+          "type": "string",
+          "description": "Returns actions that are greater than or equal to the provided date",
+          "format": "date",
+          "example": "2018-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2018-02-01T00:00:00Z",
+            "2018-03-01T00:00:00Z"
+          ]
+        },
+        "due_on[lt]": {
+          "title": "Due on before the date",
+          "type": "string",
+          "description": "Returns actions that are due on before the provided date",
+          "format": "date",
+          "example": "2018-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2018-01-02T00:00:00Z",
+            "2018-01-03T00:00:00Z"
+          ]
+        },
+        "due_on[lte]": {
+          "title": "Due on less than or equal to date",
+          "type": "string",
+          "description": "Returns actions that are less than or equal to the provided date",
+          "format": "date",
+          "example": "2018-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time"
+        },
+        "user_guid": {
+          "title": "User guid",
+          "type": "string",
+          "description": "Filters actions by the user's guid",
+          "example": "12345678-1234-1234-1234-123456789012",
+          "x-ibm-examples": [
+            12345678,
+            12355668
+          ]
+        },
+        "person_id": {
+          "title": "Person name",
+          "type": "string",
+          "description": "Filter actions by person name",
+          "example": "123456",
+          "x-ibm-category": "An-ID",
+          "x-ibm-examples": [
+            "319104110",
+            "345678993"
+          ]
+        },
+        "cadence_id": {
+          "title": "Cadence name",
+          "type": "string",
+          "description": "Filter actions by cadence name",
+          "example": "123456789",
+          "x-ibm-category": "An-ID",
+          "x-ibm-examples": [
+            "1030231",
+            "1034653"
+          ]
+        },
+        "multitouch_group_id": {
+          "title": "Multitouch group id",
+          "type": "string",
+          "description": "Filter actions by multitouch group id",
+          "example": 987667893,
+          "x-ibm-examples": [
+            345696969,
+            767088963
+          ]
+        },
+        "updated_at[gt]": {
+          "title": "Updated on after the date",
+          "type": "string",
+          "description": "Returns actions that are updated after the provided date",
+          "format": "date",
+          "example": "2017-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2018-01-01T00:00:00Z",
+            "2019-01-01T00:00:00Z"
+          ]
+        },
+        "updated_at[gte]": {
+          "title": "Updated at greater than or equal to the date",
+          "type": "string",
+          "description": "Returns actions that are greater than the provided date",
+          "format": "date",
+          "example": "2017-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2018-01-01T00:00:00Z",
+            "2019-01-01T00:00:00Z"
+          ]
+        },
+        "updated_at[lt]": {
+          "title": "Updated on before the date",
+          "type": "string",
+          "description": "Returns actions that are updated before the provided date",
+          "format": "date",
+          "example": "2017-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2017-01-01T00:00:00.123Z",
+            "2017-01-01T00:00:00.456Z"
+          ]
+        },
+        "updated_at[lte]": {
+          "title": "Updated at less than or equal to the date",
+          "type": "string",
+          "description": "Returns actions that are less than or equal to the provided date",
+          "format": "date",
+          "example": "2017-01-01T00:00:00Z",
+          "x-ibm-category": "Date-Time",
+          "x-ibm-examples": [
+            "2017-01-01T00:00:00.123Z",
+            "2017-01-01T00:00:00.456Z"
+          ]
+        },
+        "sort_by": {
+          "title": "Sort by",
+          "enum": [
+            "updated_at",
+            "created_at"
+          ],
+          "type": "string",
+          "description": "Key to sort on, must be one of: created_at, updated_at. Defaults to updated_at",
+          "default": "updated_at",
+          "example": "updated_at",
+          "x-ibm-enum-descriptions": [
+            "updated at",
+            "created at"
+          ],
+          "x-ibm-examples": [
+            "created_at"
+          ]
+        },
+        "sort_direction": {
+          "title": "Sort direction",
+          "enum": [
+            "ASC",
+            "DESC"
+          ],
+          "type": "string",
+          "description": "Direction to sort in, must be one of: ASC, DESC. Defaults to DESC",
+          "default": "DESC",
+          "example": "ASC",
+          "x-ibm-enum-descriptions": [
+            "ASC",
+            "DESC"
+          ],
+          "x-ibm-examples": [
+            "DESC"
+          ]
+        },
+        "per_page": {
+          "title": "Per page",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "integer",
+          "description": "How many records to show per page in the range [1, 100]. Defaults to 25",
+          "default": 25,
+          "example": 1,
+          "x-ibm-examples": [
+            100,
+            25
+          ]
+        },
+        "page": {
+          "title": "Page",
+          "type": "integer",
+          "default": 1,
+          "example": 1,
+          "x-ibm-examples": [
+            2,
+            3
+          ],
+          "description": "The current page to fetch results from. Defaults to 1."
+        },
+        "include_paging_counts": {
+          "title": "Include paging counts",
+          "type": "boolean",
+          "default": false,
+          "example": true,
+          "x-ibm-enum-descriptions": [
+            "True",
+            "False"
+          ],
+          "x-ibm-examples": [
+            false
+          ],
+          "description": "Whether to include total_pages and total_count in the metadata. Defaults to false"
+        },
+        "limit_paging_counts": {
+          "title": "Limit paging counts",
+          "type": "boolean",
+          "example": true,
+          "x-ibm-enum-descriptions": [
+            "True",
+            "False"
+          ],
+          "x-ibm-examples": [
+            false
+          ],
+          "description": "Specifies whether the max limit of 10k records should be applied to pagination counts. Affects the total_count and total_pages data."
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "is_async": false,
+    "name": "salesloft-all-actions-getv2actions",
+    "output_schema": {
+      "description": null,
+      "properties": {
+        "result": {
+          "type": "string",
+          "example": "success"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "type": "object"
+    },
+    "permission": "read_only"
+  }
+}
