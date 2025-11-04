@@ -970,7 +970,7 @@ class TestResourceAPIs:
             assert result["mime_type"] == "application/json"
         elif "mimeType" in result:
             assert result["mimeType"] == "application/json"
-            
+
 
     async def test_create_resource_form_urlencoded(self, client: AsyncClient, mock_auth):
         """
