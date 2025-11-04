@@ -14,73 +14,73 @@
       "id": "TC_2",
       "scenario_type": "positive",
       "mandatory_params": [],
-      "input": "ids((string)) := 767763892 \nstep_id((string)) := 319104110 \ntype((string)) := email \ndue_on[gt]((string)) := 2023-02-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-01T00:00:00Z \ndue_on[lte]((string)) := 2018-01-02T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 345678993 \ncadence_id((string)) := 1034653 \nmultitouch_group_id((string)) := 767088963 \nupdated_at[gt]((string)) := 2019-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 3 \ninclude_paging_counts((boolean)) := false \nlimit_paging_counts((boolean)) := true \n",
+      "input": "ids((string)) := 345687678 \nstep_id((string)) := step_name \ntype((string)) := email \ndue_on[gt]((string)) := 2018-02-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 345696969 \nupdated_at[gt]((string)) := 2018-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.123Z \nsort_by((string)) := created_at \nsort_direction((string)) := ASC \nper_page((integer)) := 100 \npage((integer)) := 2 \ninclude_paging_counts((boolean)) := False \nlimit_paging_counts((boolean)) := False \n",
       "nl_utterance": [
         ""
       ],
       "input_parameters": {
-        "updated_at[lt]": [
-          "2017-01-01T00:00:00.123Z"
-        ],
-        "due_on[gt]": [
-          "2023-02-01T00:00:00Z"
-        ],
-        "due_on[lt]": [
-          "2018-01-01T00:00:00Z"
-        ],
-        "ids": [
-          "767763892"
-        ],
         "user_guid": [
           "12345678-1234-1234-1234-123456789012"
         ],
-        "updated_at[gte]": [
-          "2018-01-01T00:00:00Z"
+        "ids": [
+          "345687678"
         ],
-        "step_id": [
+        "person_id": [
           "319104110"
         ],
-        "due_on[lte]": [
-          "2018-01-02T00:00:00Z"
-        ],
         "include_paging_counts": [
-          "false"
-        ],
-        "due_on[gte]": [
-          "2018-02-01T00:00:00Z"
-        ],
-        "type": [
-          "email"
-        ],
-        "multitouch_group_id": [
-          "767088963"
-        ],
-        "updated_at[lte]": [
-          "2017-01-01T00:00:00.456Z"
+          false
         ],
         "sort_by": [
           "created_at"
         ],
-        "sort_direction": [
-          "DESC"
-        ],
-        "limit_paging_counts": [
-          "true"
-        ],
-        "person_id": [
-          "345678993"
-        ],
-        "per_page": [
-          "25"
+        "due_on[lte]": [
+          "2018-01-01T00:00:00Z"
         ],
         "page": [
-          "3"
+          2
         ],
-        "cadence_id": [
-          "1034653"
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.123Z"
         ],
         "updated_at[gt]": [
-          "2019-01-01T00:00:00Z"
+          "2018-01-01T00:00:00Z"
+        ],
+        "cadence_id": [
+          "1030231"
+        ],
+        "updated_at[gte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "multitouch_group_id": [
+          "345696969"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "step_id": [
+          "step_name"
+        ],
+        "due_on[lt]": [
+          "2018-01-02T00:00:00Z"
+        ],
+        "due_on[gt]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "updated_at[lt]": [
+          "2017-01-01T00:00:00.123Z"
+        ],
+        "per_page": [
+          100
+        ],
+        "type": [
+          "email"
+        ],
+        "sort_direction": [
+          "ASC"
+        ],
+        "limit_paging_counts": [
+          false
         ]
       }
     }
@@ -107,7 +107,7 @@
         "requirements": []
       }
     },
-    "description": "This tool allows you to retrieve and manage Salesloft actions, with options to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group. You can control the sorting and pagination of results. The tool returns a list of actions matching your specified criteria, enabling efficient analysis and management of your Salesloft actions.",
+    "description": "This tool retrieves and manages Salesloft actions based on various filters such as action type, due date, user, and more. It allows for sorting and pagination of results, enabling efficient analysis and management of your actions.",
     "display_name": "Getv2Actions",
     "id": "a872cd2d00ef4c268f052d574b8f5888",
     "input_schema": {

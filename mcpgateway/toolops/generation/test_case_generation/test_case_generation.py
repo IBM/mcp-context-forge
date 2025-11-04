@@ -15,6 +15,7 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+
 class TestcaseGeneration:
     def __init__(self, llm_model_id, llm_platform, max_number_testcases_to_generate=10, no_test_data_generation=False, optional_data_scenario_path=None):
         self.llm_platform = llm_platform
@@ -280,8 +281,6 @@ class TestcaseGeneration:
 
 if __name__ == "__main__":
     import json
-    from dotenv import load_dotenv
-    load_dotenv(".env.example")
     print(os.getenv("OPENAI_BASE_URL"))
     llm_model_id = 'meta-llama/llama-3-3-70b-instruct'
     llm_platform = 'OpenAIProvider'

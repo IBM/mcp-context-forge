@@ -10,7 +10,7 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 def data_using_LLM(prompt, model_id, llm_platform):
-    response_trimmed = execute_prompt(prompt, model_id)
+    response_trimmed = execute_prompt(prompt)
     response_portion = response_trimmed
     if "```" in response_trimmed:
         response_portion = response_trimmed.split("```")[1]
@@ -26,6 +26,7 @@ def data_using_LLM(prompt, model_id, llm_platform):
             response_from_LLM = response_portion.split("json")[1]
     else:
         response_from_LLM = response_portion
+    print("response_from_LLM",response_from_LLM)
     return(response_from_LLM)
 
 def post_process_testcase(response_from_LLM):
@@ -75,4 +76,5 @@ def post_process_testcase(response_from_LLM):
             processed_response_from_LLM[key] = case_json[key]
         except:
             pass
+    print("processed_response_from_LLM",processed_response_from_LLM)
     return(processed_response_from_LLM)

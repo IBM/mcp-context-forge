@@ -6,7 +6,7 @@
       "requirements": []
     }
   },
-  "description": "This tool allows you to retrieve and manage Salesloft actions, with options to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group. You can control the sorting and pagination of results. The tool returns a list of actions matching your specified criteria, enabling efficient analysis and management of your Salesloft actions.",
+  "description": "This tool retrieves and manages Salesloft actions based on various filters such as action type, due date, user, and more. It allows for sorting and pagination of results, enabling efficient analysis and management of your actions.",
   "display_name": "Getv2Actions",
   "id": "a872cd2d00ef4c268f052d574b8f5888",
   "input_schema": {
