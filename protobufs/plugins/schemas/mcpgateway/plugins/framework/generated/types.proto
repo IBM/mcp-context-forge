@@ -57,6 +57,32 @@ message HttpHeaders {
   map<string, string> headers = 1;  // OPTIONAL
 }
 
+// HTTP pre-forwarding payload
+// Maps to: HttpPreForwardingPayload (hooks/http.py:74-97)
+message HttpPreForwardingPayload {
+  string target_type = 1;  // REQUIRED
+  string target_id = 2;  // REQUIRED
+  string path = 3;  // REQUIRED
+  string method = 4;  // REQUIRED
+  string client_host = 5;  // OPTIONAL
+  int32 client_port = 6;  // OPTIONAL
+  HttpHeaders headers = 7;  // REQUIRED
+}
+
+// HTTP post-forwarding payload
+// Maps to: HttpPostForwardingPayload (hooks/http.py:100-112)
+message HttpPostForwardingPayload {
+  string target_type = 1;  // REQUIRED
+  string target_id = 2;  // REQUIRED
+  string path = 3;  // REQUIRED
+  string method = 4;  // REQUIRED
+  string client_host = 5;  // OPTIONAL
+  int32 client_port = 6;  // OPTIONAL
+  HttpHeaders headers = 7;  // REQUIRED
+  HttpHeaders response_headers = 8;  // OPTIONAL
+  int32 status_code = 9;  // OPTIONAL
+}
+
 // Generic plugin result for RPC interface (runtime polymorphism)
 // Maps to: PluginResult[T] generic class (models.py:753-789)
 //
