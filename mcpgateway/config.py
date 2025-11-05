@@ -854,6 +854,9 @@ class Settings(BaseSettings):
         - Empty string or None → []
         - Already-parsed list
 
+        Args:
+            v: The input value to parse.
+
         Returns:
             list[str]: Parsed list of issuer URLs.
 

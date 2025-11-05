@@ -91,6 +91,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -2049,7 +2050,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         "http.url": gateway.url,
                     },
                 ) as span:
+                    valid = False
                     if gateway.ca_certificate:
+                        if settings.enable_ed25519_signing:
+                            public_key_pem = settings.ed25519_public_key
+                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                        else:
+                            valid = True
+                    if valid:
                         ssl_context = self.create_ssl_context(gateway.ca_certificate)
                     else:
                         ssl_context = None
