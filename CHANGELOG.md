@@ -21,6 +21,92 @@ This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Ca
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 - **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
 
+### ⚠️ BREAKING CHANGES
+
+#### **🗄️ PostgreSQL 17 → 18 Upgrade Required**
+
+**Docker Compose users must run the upgrade utility before starting the stack.**
+
+The default PostgreSQL image has been upgraded from version 17 to 18. This is a **major version upgrade** that requires a one-time data migration using `pg_upgrade`.
+
+**Migration Steps:**
+
+1. **Stop your existing stack:**
+   ```bash
+   docker compose down
+   ```
+
+2. **Run the automated upgrade utility:**
+   ```bash
+   make compose-upgrade-pg18
+   ```
+   
+   This will:
+   - Prompt for confirmation (⚠️ **backup recommended**)
+   - Run `pg_upgrade` to migrate data from Postgres 17 → 18
+   - Automatically copy `pg_hba.conf` to preserve network access settings
+   - Create a new `pgdata18` volume with upgraded data
+
+3. **Start the upgraded stack:**
+   ```bash
+   make compose-up
+   ```
+
+4. **(Optional) Run maintenance commands** to update statistics:
+   ```bash
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-in-stages --missing-stats-only -U postgres
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-only -U postgres
+   ```
+
+5. **Verify the upgrade:**
+   ```bash
+   docker compose exec postgres psql -U postgres -c 'SELECT version();'
+   # Should show: PostgreSQL 18.x
+   ```
+
+6. **(Optional) Clean up old volume** after confirming everything works:
+   ```bash
+   docker volume rm mcp-context-forge_pgdata
+   ```
+
+**Manual Upgrade (without Make):**
+
+If you prefer not to use the Makefile:
+
+```bash
+# Stop stack
+docker compose down
+
+# Run upgrade
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade
+
+# Copy pg_hba.conf
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade \
+  sh -c "cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf"
+
+# Start upgraded stack
+docker compose up -d
+```
+
+**Why This Change:**
+
+- Postgres 18 introduces a new directory structure (`/var/lib/postgresql/18/docker`) for better compatibility with `pg_ctlcluster`
+- Enables future upgrades using `pg_upgrade --link` without mount point boundary issues
+- Aligns with official PostgreSQL Docker image best practices (see [postgres#1259](https://github.com/docker-library/postgres/pull/1259))
+
+**What Changed:**
+
+- `docker-compose.yml`: Updated from `postgres:17` → `postgres:18`
+- Volume mount: Changed from `pgdata:/var/lib/postgresql/data` → `pgdata18:/var/lib/postgresql`
+- Added `compose.upgrade.yml` for automated upgrade process
+- Added `make compose-upgrade-pg18` target for one-command upgrades
+
+**Troubleshooting:**
+
+- **Error: "data checksums mismatch"** - Fixed automatically in upgrade script (disables checksums to match old cluster)
+- **Error: "no pg_hba.conf entry"** - Fixed automatically by copying old `pg_hba.conf` during upgrade
+- **Error: "Invalid cross-device link"** - Upgrade uses copy mode (not `--link`) to work across different Docker volumes
+
 ### Added
 
 #### **📄 REST API and UI Pagination** (#1224, #1277)
