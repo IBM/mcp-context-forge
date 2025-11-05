@@ -856,6 +856,9 @@ class Settings(BaseSettings):
 
         Returns:
             list[str]: Parsed list of issuer URLs.
+
+        Raises:
+            ValueError: If the input is not a valid format.
         """
         if v is None:
             return []
