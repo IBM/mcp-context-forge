@@ -55,14 +55,6 @@ import pytest
 # ---------------------------------------------------------------------------#
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Provide a fresh event-loop for pytest-asyncio."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest.fixture()
 def translate():
     """Reload mcpgateway.translate for a pristine state each test."""

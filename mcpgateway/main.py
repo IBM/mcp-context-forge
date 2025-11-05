@@ -63,11 +63,14 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.common.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.common.models import InitializeResult
+from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
+from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
@@ -89,6 +92,7 @@ from mcpgateway.schemas import (
     PromptUpdate,
     ResourceCreate,
     ResourceRead,
+    ResourceSubscription,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -403,6 +407,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+
+        # Initialize elicitation service
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            await elicitation_service.start()
+            logger.info("Elicitation service initialized")
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -461,6 +475,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
+
+        # Add elicitation service if enabled
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            services_to_shutdown.insert(5, elicitation_service)
 
         for service in services_to_shutdown:
             try:
@@ -682,15 +704,16 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
              violation details.
 
     Returns:
-        JSONResponse: A 403 response with access forbidden.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
         >>> from mcpgateway.plugins.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin violation error
         >>> mock_error = PluginViolationError(message="plugin violation",violation = PluginViolation(
         ...     reason="Invalid input",
         ...     description="The input contains prohibited content",
@@ -699,11 +722,31 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         ... ))
         >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
         >>> result.status_code
-        403
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32602
+        >>> "Plugin Violation:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'PROHIBITED_CONTENT'
     """
     policy_violation = exc.violation.model_dump() if exc.violation else {}
+    message = exc.violation.description if exc.violation else "A plugin violation occurred."
     policy_violation["message"] = exc.message
-    return JSONResponse(status_code=403, content=policy_violation)
+    status_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+    violation_details: dict[str, Any] = {}
+    if exc.violation:
+        if exc.violation.description:
+            violation_details["description"] = exc.violation.description
+        if exc.violation.details:
+            violation_details["details"] = exc.violation.details
+        if exc.violation.code:
+            violation_details["plugin_error_code"] = exc.violation.code
+        if exc.violation.plugin_name:
+            violation_details["plugin_name"] = exc.violation.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 @app.exception_handler(PluginError)
@@ -720,15 +763,16 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
              violation details.
 
     Returns:
-        JSONResponse: A 500 response with internal server error.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
+        >>> from mcpgateway.plugins.framework import PluginError
         >>> from mcpgateway.plugins.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin error
         >>> mock_error = PluginError(error = PluginErrorModel(
         ...     message="plugin error",
         ...     code="timeout",
@@ -737,10 +781,29 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         ... ))
         >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
         >>> result.status_code
-        500
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32603
+        >>> "Plugin Error:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'timeout'
+        >>> content["error"]["data"]["plugin_name"]
+        'abc'
     """
-    error_obj = exc.error.model_dump() if exc.error else {}
-    return JSONResponse(status_code=500, content=error_obj)
+    message = exc.error.message if exc.error else "A plugin error occurred."
+    status_code = exc.error.mcp_error_code if exc.error else -32603
+    error_details: dict[str, Any] = {}
+    if exc.error:
+        if exc.error.details:
+            error_details["details"] = exc.error.details
+        if exc.error.code:
+            error_details["plugin_error_code"] = exc.error.code
+        if exc.error.plugin_name:
+            error_details["plugin_name"] = exc.error.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -985,6 +1048,9 @@ else:
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
+app.add_middleware(MCPProtocolVersionMiddleware)
 
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
@@ -1744,10 +1810,34 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 
         message = await request.json()
 
-        await session_registry.broadcast(
-            session_id=session_id,
-            message=message,
-        )
+        # Check if this is an elicitation response (JSON-RPC response with result containing action)
+        is_elicitation_response = False
+        if "result" in message and isinstance(message.get("result"), dict):
+            result_data = message["result"]
+            if "action" in result_data and result_data.get("action") in ["accept", "decline", "cancel"]:
+                # This looks like an elicitation response
+                request_id = message.get("id")
+                if request_id:
+                    # Try to complete the elicitation
+                    # First-Party
+                    from mcpgateway.common.models import ElicitResult  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+                    elicitation_service = get_elicitation_service()
+                    try:
+                        elicit_result = ElicitResult(**result_data)
+                        if elicitation_service.complete_elicitation(request_id, elicit_result):
+                            logger.info(f"Completed elicitation {request_id} from session {session_id}")
+                            is_elicitation_response = True
+                    except Exception as e:
+                        logger.warning(f"Failed to process elicitation response: {e}")
+
+        # If not an elicitation response, broadcast normally
+        if not is_elicitation_response:
+            await session_registry.broadcast(
+                session_id=session_id,
+                message=message,
+            )
 
         return JSONResponse(content={"status": "success"}, status_code=202)
     except ValueError as e:
@@ -2217,7 +2307,7 @@ async def list_tools(
             data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
 
     if apijsonpath is None:
         return data
@@ -2583,7 +2673,7 @@ async def list_resources(
         logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
         if cached := resource_cache.get("resource_list"):
             return cached
-        data = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
         resource_cache.set("resource_list", data)
     return data
 
@@ -2912,7 +3002,7 @@ async def list_prompts(
     else:
         # Use existing method for backward compatibility when no team filtering
         logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
     return data
 
 
@@ -3550,21 +3640,29 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "initialize":
-            result = await session_registry.handle_initialize_logic(body.get("params", {}))
+            # Extract session_id from params or query string (for capability tracking)
+            init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
+            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
@@ -3574,9 +3672,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "resources/list":
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources = await resource_service.list_resources(db)
-            result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
@@ -3595,12 +3696,35 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+        elif method == "resources/subscribe":
+            # MCP spec-compliant resource subscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.subscribe_resource(db, subscription)
+            result = {}
+        elif method == "resources/unsubscribe":
+            # MCP spec-compliant resource unsubscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.unsubscribe_resource(db, subscription)
+            result = {}
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts = await prompt_service.list_prompts(db, cursor=cursor)
-            result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})
@@ -3631,18 +3755,141 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
-            result = {}
+            # MCP spec-compliant resource templates list endpoint
+            resource_templates = await resource_service.list_resource_templates(db)
+            result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
+        elif method == "roots/list":
+            # MCP spec-compliant method name
+            roots = await root_service.list_roots()
+            result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
+            # Catch-all for other roots/* methods (currently unsupported)
+            result = {}
+        elif method == "notifications/initialized":
+            # MCP spec-compliant notification: client initialized
+            logger.info("Client initialized")
+            await logging_service.notify("Client initialized", LogLevel.INFO)
+            result = {}
+        elif method == "notifications/cancelled":
+            # MCP spec-compliant notification: request cancelled
+            request_id = params.get("requestId")
+            logger.info(f"Request cancelled: {request_id}")
+            await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
+            result = {}
+        elif method == "notifications/message":
+            # MCP spec-compliant notification: log message
+            await logging_service.notify(
+                params.get("data"),
+                LogLevel(params.get("level", "info")),
+                params.get("logger"),
+            )
             result = {}
         elif method.startswith("notifications/"):
+            # Catch-all for other notifications/* methods (currently unsupported)
             result = {}
+        elif method == "sampling/createMessage":
+            # MCP spec-compliant sampling endpoint
+            result = await sampling_handler.create_message(db, params)
         elif method.startswith("sampling/"):
+            # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
+        elif method == "elicitation/create":
+            # MCP spec 2025-06-18: Elicitation support (server-to-client requests)
+            # Elicitation allows servers to request structured user input through clients
+
+            # Check if elicitation is enabled
+            if not settings.mcpgateway_elicitation_enabled:
+                raise JSONRPCError(-32601, "Elicitation feature is disabled", {"feature": "elicitation", "config": "MCPGATEWAY_ELICITATION_ENABLED=false"})
+
+            # Validate params
+            # First-Party
+            from mcpgateway.common.models import ElicitRequestParams  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            try:
+                elicit_params = ElicitRequestParams(**params)
+            except Exception as e:
+                raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
+
+            # Get target session (from params or find elicitation-capable session)
+            target_session_id = params.get("session_id") or params.get("sessionId")
+            if not target_session_id:
+                # Find an elicitation-capable session
+                capable_sessions = await session_registry.get_elicitation_capable_sessions()
+                if not capable_sessions:
+                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
+                target_session_id = capable_sessions[0]
+                logger.debug(f"Selected session {target_session_id} for elicitation")
+
+            # Verify session has elicitation capability
+            if not await session_registry.has_elicitation_capability(target_session_id):
+                raise JSONRPCError(-32000, f"Session {target_session_id} does not support elicitation", {"session_id": target_session_id})
+
+            # Get elicitation service and create request
+            elicitation_service = get_elicitation_service()
+
+            # Extract timeout from params or use default
+            timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
+
+            try:
+                # Create elicitation request - this stores it and waits for response
+                # For now, use dummy upstream_session_id - in full bidirectional proxy,
+                # this would be the session that initiated the request
+                upstream_session_id = "gateway"
+
+                # Start the elicitation (creates pending request and future)
+                elicitation_task = asyncio.create_task(
+                    elicitation_service.create_elicitation(
+                        upstream_session_id=upstream_session_id, downstream_session_id=target_session_id, message=elicit_params.message, requested_schema=elicit_params.requestedSchema, timeout=timeout
+                    )
+                )
+
+                # Get the pending elicitation to extract request_id
+                # Wait a moment for it to be created
+                await asyncio.sleep(0.01)
+                pending_elicitations = [e for e in elicitation_service._pending.values() if e.downstream_session_id == target_session_id]  # pylint: disable=protected-access
+                if not pending_elicitations:
+                    raise JSONRPCError(-32000, "Failed to create elicitation request", {})
+
+                pending = pending_elicitations[-1]  # Get most recent
+
+                # Send elicitation request to client via broadcast
+                elicitation_request = {
+                    "jsonrpc": "2.0",
+                    "id": pending.request_id,
+                    "method": "elicitation/create",
+                    "params": {"message": elicit_params.message, "requestedSchema": elicit_params.requestedSchema},
+                }
+
+                await session_registry.broadcast(target_session_id, elicitation_request)
+                logger.debug(f"Sent elicitation request {pending.request_id} to session {target_session_id}")
+
+                # Wait for response
+                elicit_result = await elicitation_task
+
+                # Return result
+                result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+
+            except asyncio.TimeoutError:
+                raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": elicit_params.message, "timeout": timeout})
+            except ValueError as e:
+                raise JSONRPCError(-32000, str(e), {"message": elicit_params.message})
         elif method.startswith("elicitation/"):
+            # Catch-all for other elicitation/* methods
             result = {}
+        elif method == "completion/complete":
+            # MCP spec-compliant completion endpoint
+            result = await completion_service.handle_completion(db, params)
         elif method.startswith("completion/"):
+            # Catch-all for other completion/* methods (currently unsupported)
+            result = {}
+        elif method == "logging/setLevel":
+            # MCP spec-compliant logging endpoint
+            level = LogLevel(params.get("level"))
+            await logging_service.set_level(level)
             result = {}
         elif method.startswith("logging/"):
+            # Catch-all for other logging/* methods (currently unsupported)
             result = {}
         else:
             # Backward compatibility: Try to invoke as a tool directly

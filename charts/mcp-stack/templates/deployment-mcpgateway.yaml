@@ -152,3 +152,20 @@ spec:
           # Resource requests / limits
           resources:
 {{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+          {{- /* Plugins enabled need the plugins configuration */}}
+          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+          volumeMounts:
+            - name: plugin-config-volume
+              mountPath: /app/{{ .Values.mcpContextForge.config.PLUGIN_CONFIG_FILE }}
+              subPath: config.yaml
+          {{- end }}
+{{- if .Values.mcpContextForge.pluginConfig.enabled }}
+      volumes:
+      - name: plugin-config-volume
+        configMap:
+          name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+          items:
+          - key: config.yaml
+            path: config.yaml
+{{- end }}

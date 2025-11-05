@@ -160,7 +160,7 @@ class Settings(BaseSettings):
     app_root_path: str = ""
 
     # Protocol
-    protocol_version: str = "2025-03-26"
+    protocol_version: str = "2025-06-18"
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -344,6 +344,11 @@ class Settings(BaseSettings):
     mcpgateway_catalog_auto_health_check: bool = Field(default=True, description="Automatically health check catalog servers")
     mcpgateway_catalog_cache_ttl: int = Field(default=3600, description="Catalog cache TTL in seconds")
     mcpgateway_catalog_page_size: int = Field(default=100, description="Number of catalog servers per page")
+
+    # Elicitation support (MCP 2025-06-18)
+    mcpgateway_elicitation_enabled: bool = Field(default=True, description="Enable elicitation passthrough support (MCP 2025-06-18)")
+    mcpgateway_elicitation_timeout: int = Field(default=60, description="Default timeout for elicitation requests in seconds")
+    mcpgateway_elicitation_max_concurrent: int = Field(default=100, description="Maximum concurrent elicitation requests")
 
     # Security
     skip_ssl_verify: bool = False

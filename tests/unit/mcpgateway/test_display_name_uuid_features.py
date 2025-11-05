@@ -205,6 +205,9 @@ class TestServerUUIDFeature:
 
     def test_server_uuid_uniqueness(self, db_session):
         """Test that server UUIDs must be unique."""
+        # Standard
+        import warnings
+
         duplicate_uuid = "duplicate-uuid-1234"
 
         # Create first server with UUID
@@ -217,9 +220,11 @@ class TestServerUUIDFeature:
 
         db_session.add(db_server2)
 
-        # This should raise an integrity error
-        with pytest.raises(Exception):  # SQLAlchemy will raise IntegrityError
-            db_session.commit()
+        # This should raise an integrity error and emit an SAWarning
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=Warning)
+            with pytest.raises(Exception):  # SQLAlchemy will raise IntegrityError
+                db_session.commit()
 
 
 class TestSchemaValidation:

@@ -40,53 +40,11 @@ from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
-
-
-def to_camel_case(s: str) -> str:
-    """
-    Convert a string from snake_case to camelCase.
-
-    Args:
-        s (str): The string to be converted, which is assumed to be in snake_case.
-
-    Returns:
-        str: The string converted to camelCase.
-
-    Examples:
-        >>> to_camel_case("hello_world_example")
-        'helloWorldExample'
-        >>> to_camel_case("alreadyCamel")
-        'alreadyCamel'
-        >>> to_camel_case("")
-        ''
-        >>> to_camel_case("single")
-        'single'
-        >>> to_camel_case("_leading_underscore")
-        'LeadingUnderscore'
-        >>> to_camel_case("trailing_underscore_")
-        'trailingUnderscore'
-        >>> to_camel_case("multiple_words_here")
-        'multipleWordsHere'
-        >>> to_camel_case("api_key_value")
-        'apiKeyValue'
-        >>> to_camel_case("user_id")
-        'userId'
-        >>> to_camel_case("created_at")
-        'createdAt'
-        >>> to_camel_case("team_member_role")
-        'teamMemberRole'
-        >>> to_camel_case("oauth_client_id")
-        'oauthClientId'
-        >>> to_camel_case("jwt_token")
-        'jwtToken'
-        >>> to_camel_case("a2a_agent_name")
-        'a2aAgentName'
-    """
-    return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
 
 def encode_datetime(v: datetime) -> str:
@@ -117,72 +75,6 @@ def encode_datetime(v: datetime) -> str:
         '2023-07-20T16:45:30.123456'
     """
     return v.isoformat()
-
-
-# --- Base Model ---
-class BaseModelWithConfigDict(BaseModel):
-    """Base model with common configuration.
-
-    Provides:
-    - ORM mode for SQLAlchemy integration
-    - JSON encoders for datetime handling
-    - Automatic conversion from snake_case to camelCase for output
-    """
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel_case,
-        populate_by_name=True,
-        use_enum_values=True,
-        extra="ignore",
-        json_schema_extra={"nullable": True},
-    )
-
-    def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
-        """
-        Converts the model instance into a dictionary representation.
-
-        Args:
-            use_alias (bool): Whether to use aliases for field names (default is False). If True,
-                               field names will be converted using the alias generator function.
-
-        Returns:
-            Dict[str, Any]: A dictionary where keys are field names and values are corresponding field values,
-                             with any nested models recursively converted to dictionaries.
-
-        Examples:
-            >>> class ExampleModel(BaseModelWithConfigDict):
-            ...     foo: int
-            ...     bar: str
-            >>> m = ExampleModel(foo=1, bar='baz')
-            >>> m.to_dict()
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with alias
-            >>> m.to_dict(use_alias=True)
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with nested model
-            >>> class NestedModel(BaseModelWithConfigDict):
-            ...     nested_field: int
-            >>> class ParentModel(BaseModelWithConfigDict):
-            ...     parent_field: str
-            ...     child: NestedModel
-            >>> nested = NestedModel(nested_field=42)
-            >>> parent = ParentModel(parent_field="test", child=nested)
-            >>> result = parent.to_dict()
-            >>> result['child']
-            {'nested_field': 42}
-        """
-        output: Dict[str, Any] = {}
-        for key, value in self.model_dump(by_alias=use_alias).items():
-            if isinstance(value, BaseModelWithConfigDict):
-                output[key] = value.to_dict(use_alias)
-            elif isinstance(value, BaseModel):
-                output[key] = value.model_dump(by_alias=use_alias)
-            else:
-                output[key] = value
-        return output
 
 
 # --- Metrics Schemas ---
@@ -1426,6 +1318,9 @@ class ToolRead(BaseModelWithConfigDict):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
+    # MCP protocol extension field
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1581,6 +1476,7 @@ class ToolResult(BaseModelWithConfigDict):
     """
 
     content: List[Union[TextContent, ImageContent]]
+    structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
 
@@ -1599,12 +1495,12 @@ class ResourceCreate(BaseModel):
         content (Union[str, bytes]): Content of the resource, which can be text or binary.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
-    mime_type: Optional[str] = Field(None, description="Resource MIME type")
+    mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
@@ -1907,6 +1803,11 @@ class ResourceRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2409,6 +2310,10 @@ class PromptRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 
 class PromptInvocation(BaseModelWithConfigDict):
@@ -3011,6 +2916,8 @@ class GatewayRead(BaseModelWithConfigDict):
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
+    auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -3022,6 +2929,10 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    auth_password_unmasked: Optional[str] = Field(default=None, description="Unmasked password for basic authentication")
+    auth_token_unmasked: Optional[str] = Field(default=None, description="Unmasked bearer token for authentication")
+    auth_header_value_unmasked: Optional[str] = Field(default=None, description="Unmasked single custom header value")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -3135,19 +3046,24 @@ class GatewayRead(BaseModelWithConfigDict):
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             self.auth_username, self.auth_password = u, p
+            self.auth_password_unmasked = p
 
         elif auth_type == "bearer":
             auth = auth_value.get("Authorization")
             if not (isinstance(auth, str) and auth.startswith("Bearer ")):
                 raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
             self.auth_token = auth.removeprefix("Bearer ")
+            self.auth_token_unmasked = self.auth_token
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            self.auth_headers_unmasked = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
+            self.auth_header_value_unmasked = v
 
         return self
 
@@ -3182,7 +3098,19 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
 
+        masked_data["auth_password_unmasked"] = self.auth_password_unmasked
+        masked_data["auth_token_unmasked"] = self.auth_token_unmasked
+        masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
+        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
 
 
@@ -3828,7 +3756,7 @@ class ServerRead(BaseModelWithConfigDict):
 class GatewayTestRequest(BaseModelWithConfigDict):
     """Schema for testing gateway connectivity.
 
-    Includes the HTTP method, base URL, path, optional headers, and body.
+    Includes the HTTP method, base URL, path, optional headers, body, and content type.
     """
 
     method: str = Field(..., description="HTTP method to test (GET, POST, etc.)")
@@ -3836,6 +3764,7 @@ class GatewayTestRequest(BaseModelWithConfigDict):
     path: str = Field(..., description="Path to append to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers for the request")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Optional body for the request, can be a string or JSON object")
+    content_type: Optional[str] = Field("application/json", description="Content type for the request body")
 
 
 class GatewayTestResponse(BaseModelWithConfigDict):

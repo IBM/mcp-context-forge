@@ -41,6 +41,7 @@ Examples:
 import asyncio
 from datetime import datetime, timezone
 import logging
+import mimetypes
 import os
 import tempfile
 import time
@@ -621,24 +622,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Create resource DB models
             db_resources = [
                 DbResource(
-                    uri=resource.uri,
-                    name=resource.name,
-                    description=resource.description,
-                    mime_type=resource.mime_type,
-                    template=resource.template,
-                    # Federation metadata
+                    uri=r.uri,
+                    name=r.name,
+                    description=r.description,
+                    mime_type=(mime_type := (mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream"))),
+                    template=r.template,
+                    text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
+                    binary_content=(
+                        r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
+                    ),
+                    size=len(r.content) if r.content else 0,
+                    tags=getattr(r, "tags", []) or [],
                     created_by=created_by or "system",
                     created_from_ip=created_from_ip,
-                    created_via="federation",  # These are federated resources
+                    created_via="federation",
                     created_user_agent=created_user_agent,
+                    import_batch_id=None,
                     federation_source=gateway.name,
                     version=1,
-                    # Inherit team assignment from gateway
-                    team_id=team_id,
-                    owner_email=owner_email,
-                    visibility=visibility,
+                    team_id=getattr(r, "team_id", None) or team_id,
+                    owner_email=getattr(r, "owner_email", None) or owner_email or created_by,
+                    visibility=getattr(r, "visibility", None) or visibility,
                 )
-                for resource in resources
+                for r in resources
             ]
 
             # Create prompt DB models
@@ -1192,7 +1198,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Support multiple custom headers on update
                 if hasattr(gateway_update, "auth_headers") and gateway_update.auth_headers:
-                    header_dict = {h["key"]: h["value"] for h in gateway_update.auth_headers if h.get("key")}
+                    existing_auth_raw = getattr(gateway, "auth_value", {}) or {}
+                    if isinstance(existing_auth_raw, str):
+                        try:
+                            existing_auth = decode_auth(existing_auth_raw)
+                        except Exception:
+                            existing_auth = {}
+                    elif isinstance(existing_auth_raw, dict):
+                        existing_auth = existing_auth_raw
+                    else:
+                        existing_auth = {}
+
+                    header_dict: Dict[str, str] = {}
+                    for header in gateway_update.auth_headers:
+                        key = header.get("key")
+                        if not key:
+                            continue
+                        value = header.get("value", "")
+                        if value == settings.masked_auth_value and key in existing_auth:
+                            header_dict[key] = existing_auth[key]
+                        else:
+                            header_dict[key] = value
                     gateway.auth_value = header_dict  # Store as dict for DB JSON field
                 elif settings.masked_auth_value not in (token, password, header_value):
                     # Check if values differ from existing ones or if setting for first time

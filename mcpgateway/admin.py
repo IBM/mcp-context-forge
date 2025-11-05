@@ -95,6 +95,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy
@@ -113,7 +114,6 @@ from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
-from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -5408,7 +5408,7 @@ async def admin_add_tool(
         "integration_type": integration_type,
         "headers": json.loads(headers_raw if isinstance(headers_raw, str) and headers_raw else "{}"),
         "input_schema": json.loads(input_schema_raw if isinstance(input_schema_raw, str) and input_schema_raw else "{}"),
-        "output_schema": json.loads(output_schema_raw if isinstance(output_schema_raw, str) and output_schema_raw else "{}"),
+        "output_schema": (json.loads(output_schema_raw) if isinstance(output_schema_raw, str) and output_schema_raw else None),
         "annotations": json.loads(annotations_raw if isinstance(annotations_raw, str) and annotations_raw else "{}"),
         "jsonpath_filter": form.get("jsonpath_filter", ""),
         "auth_type": form.get("auth_type", ""),
@@ -5674,7 +5674,7 @@ async def admin_edit_tool(
         "description": form.get("description"),
         "headers": json.loads(headers_raw2 if isinstance(headers_raw2, str) and headers_raw2 else "{}"),
         "input_schema": json.loads(input_schema_raw2 if isinstance(input_schema_raw2, str) and input_schema_raw2 else "{}"),
-        "output_schema": json.loads(output_schema_raw2 if isinstance(output_schema_raw2, str) and output_schema_raw2 else "{}"),
+        "output_schema": (json.loads(output_schema_raw2) if isinstance(output_schema_raw2, str) and output_schema_raw2 else None),
         "annotations": json.loads(annotations_raw2 if isinstance(annotations_raw2, str) and annotations_raw2 else "{}"),
         "jsonpath_filter": form.get("jsonpathFilter", ""),
         "auth_type": form.get("auth_type", ""),
@@ -6194,7 +6194,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -6231,7 +6231,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -6503,7 +6503,7 @@ async def admin_edit_gateway(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -6540,7 +6540,7 @@ async def admin_edit_gateway(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -8292,8 +8292,27 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         else:
             headers: dict = decode_auth(gateway.auth_value if gateway else None)
 
+        # Prepare request based on content type
+        content_type = getattr(request, "content_type", "application/json")
+        request_kwargs = {"method": request.method.upper(), "url": full_url, "headers": headers}
+
+        if request.body is not None:
+            if content_type == "application/x-www-form-urlencoded":
+                # Set proper content type header and use data parameter for form encoding
+                headers["Content-Type"] = "application/x-www-form-urlencoded"
+                if isinstance(request.body, str):
+                    # Body is already form-encoded
+                    request_kwargs["data"] = request.body
+                else:
+                    # Body is a dict, convert to form data
+                    request_kwargs["data"] = request.body
+            else:
+                # Default to JSON
+                headers["Content-Type"] = "application/json"
+                request_kwargs["json"] = request.body
+
         async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify}) as client:
-            response: httpx.Response = await client.request(method=request.method.upper(), url=full_url, headers=headers, json=request.body)
+            response: httpx.Response = await client.request(**request_kwargs)
         latency_ms = int((time.monotonic() - start_time) * 1000)
         try:
             response_body: Union[Dict[str, Any], str] = response.json()
@@ -9552,7 +9571,7 @@ async def admin_add_a2a_agent(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -9589,7 +9608,7 @@ async def admin_add_a2a_agent(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -9871,7 +9890,7 @@ async def admin_edit_a2a_agent(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -9908,7 +9927,7 @@ async def admin_edit_a2a_agent(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type

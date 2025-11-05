@@ -97,7 +97,7 @@ class TestResourcePluginIntegration:
         assert mock_manager.invoke_hook.call_count >= 2
 
         # 3. List resources
-        resources = await service.list_resources(test_db)
+        resources, _ = await service.list_resources(test_db)
         assert len(resources) == 1
         assert resources[0].uri == "test://integration"
 
@@ -116,7 +116,7 @@ class TestResourcePluginIntegration:
 
         # 5. Delete the resource
         await service.delete_resource(test_db, created.id)
-        resources = await service.list_resources(test_db)
+        resources, _ = await service.list_resources(test_db)
         assert len(resources) == 0
 
     @pytest.mark.asyncio
@@ -246,7 +246,7 @@ class TestResourcePluginIntegration:
 
 
                 # Find the blocked resource by uri to get its id
-                blocked = await service.list_resources(test_db)
+                blocked, _ = await service.list_resources(test_db)
                 blocked_id = None
                 for r in blocked:
                     if r.uri == "file:///etc/passwd":

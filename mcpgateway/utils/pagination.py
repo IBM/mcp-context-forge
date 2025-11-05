@@ -73,6 +73,23 @@ def encode_cursor(data: Dict[str, Any]) -> str:
         True
         >>> len(cursor) > 0
         True
+
+        >>> # Test with simple ID-only cursor
+        >>> simple_cursor = encode_cursor({"id": 42})
+        >>> isinstance(simple_cursor, str)
+        True
+        >>> len(simple_cursor) > 0
+        True
+
+        >>> # Test empty dict
+        >>> empty_cursor = encode_cursor({})
+        >>> isinstance(empty_cursor, str)
+        True
+
+        >>> # Test with numeric values
+        >>> numeric_cursor = encode_cursor({"id": 12345, "offset": 100})
+        >>> len(numeric_cursor) > 0
+        True
     """
     json_str = json.dumps(data, default=str)
     return base64.urlsafe_b64encode(json_str.encode()).decode()
@@ -96,6 +113,36 @@ def decode_cursor(cursor: str) -> Dict[str, Any]:
         >>> decoded = decode_cursor(cursor)
         >>> decoded["id"]
         'tool-123'
+
+        >>> # Test round-trip with numeric ID
+        >>> data = {"id": 42}
+        >>> encoded = encode_cursor(data)
+        >>> decoded = decode_cursor(encoded)
+        >>> decoded["id"]
+        42
+
+        >>> # Test with complex data
+        >>> complex_data = {"id": "abc-123", "page": 5, "filter": "active"}
+        >>> encoded_complex = encode_cursor(complex_data)
+        >>> decoded_complex = decode_cursor(encoded_complex)
+        >>> decoded_complex["id"]
+        'abc-123'
+        >>> decoded_complex["page"]
+        5
+
+        >>> # Test invalid cursor raises ValueError
+        >>> try:
+        ...     decode_cursor("invalid-not-base64")
+        ... except ValueError as e:
+        ...     "Invalid cursor" in str(e)
+        True
+
+        >>> # Test empty string raises ValueError
+        >>> try:
+        ...     decode_cursor("")
+        ... except ValueError as e:
+        ...     "Invalid cursor" in str(e)
+        True
     """
     try:
         json_str = base64.urlsafe_b64decode(cursor.encode()).decode()
@@ -139,6 +186,56 @@ def generate_pagination_links(
         >>> "/admin/tools?page=2" in links.self
         True
         >>> "/admin/tools?page=3" in links.next
+        True
+
+        >>> # Test first page
+        >>> first_page = generate_pagination_links(
+        ...     base_url="/api/resources",
+        ...     page=1,
+        ...     per_page=25,
+        ...     total_pages=10
+        ... )
+        >>> first_page.prev is None
+        True
+        >>> "/api/resources?page=2" in first_page.next
+        True
+
+        >>> # Test last page
+        >>> last_page = generate_pagination_links(
+        ...     base_url="/api/prompts",
+        ...     page=5,
+        ...     per_page=20,
+        ...     total_pages=5
+        ... )
+        >>> last_page.next is None
+        True
+        >>> "/api/prompts?page=4" in last_page.prev
+        True
+
+        >>> # Test cursor-based pagination
+        >>> cursor_links = generate_pagination_links(
+        ...     base_url="/api/tools",
+        ...     page=1,
+        ...     per_page=50,
+        ...     total_pages=0,
+        ...     next_cursor="eyJpZCI6MTIzfQ=="
+        ... )
+        >>> "cursor=" in cursor_links.next
+        True
+        >>> "/api/tools?" in cursor_links.next
+        True
+
+        >>> # Test with query parameters
+        >>> links_with_params = generate_pagination_links(
+        ...     base_url="/api/tools",
+        ...     page=3,
+        ...     per_page=100,
+        ...     total_pages=10,
+        ...     query_params={"filter": "active", "sort": "name"}
+        ... )
+        >>> "filter=active" in links_with_params.self
+        True
+        >>> "sort=name" in links_with_params.self
         True
     """
     query_params = query_params or {}
@@ -512,6 +609,44 @@ def parse_pagination_params(request: Request) -> Dict[str, Any]:
         2
         >>> params['per_page']
         100
+
+        >>> # Test with cursor
+        >>> request_with_cursor = type('Request', (), {
+        ...     'query_params': {'cursor': 'eyJpZCI6IDEyM30=', 'per_page': '25'}
+        ... })()
+        >>> params_cursor = parse_pagination_params(request_with_cursor)
+        >>> params_cursor['cursor']
+        'eyJpZCI6IDEyM30='
+        >>> params_cursor['per_page']
+        25
+
+        >>> # Test with sort parameters
+        >>> request_with_sort = type('Request', (), {
+        ...     'query_params': {'page': '1', 'sort_by': 'name', 'sort_order': 'asc'}
+        ... })()
+        >>> params_sort = parse_pagination_params(request_with_sort)
+        >>> params_sort['sort_by']
+        'name'
+        >>> params_sort['sort_order']
+        'asc'
+
+        >>> # Test with invalid page (negative) - should default to 1
+        >>> request_invalid = type('Request', (), {
+        ...     'query_params': {'page': '-5', 'per_page': '50'}
+        ... })()
+        >>> params_invalid = parse_pagination_params(request_invalid)
+        >>> params_invalid['page']
+        1
+
+        >>> # Test with no parameters - uses defaults
+        >>> request_empty = type('Request', (), {'query_params': {}})()
+        >>> params_empty = parse_pagination_params(request_empty)
+        >>> params_empty['page']
+        1
+        >>> 'cursor' in params_empty
+        True
+        >>> 'sort_by' in params_empty
+        True
     """
     page = int(request.query_params.get("page", 1))
     per_page = int(request.query_params.get("per_page", settings.pagination_default_page_size))

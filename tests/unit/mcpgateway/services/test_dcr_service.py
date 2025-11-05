@@ -429,7 +429,7 @@ class TestUpdateClientRegistration:
     @pytest.mark.asyncio
     async def test_update_client_registration_success(self, test_db):
         """Test successful client registration update."""
-        from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+        from mcpgateway.services.encryption_service import get_encryption_service
         from mcpgateway.config import get_settings
 
         dcr_service = DcrService()
@@ -442,7 +442,7 @@ class TestUpdateClientRegistration:
         test_db.commit()
 
         # Encrypt the registration access token properly
-        encryption = get_oauth_encryption(get_settings().auth_encryption_secret)
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
         encrypted_token = encryption.encrypt_secret("registration-access-token")
 
         client_record = RegisteredOAuthClient(
@@ -474,7 +474,7 @@ class TestUpdateClientRegistration:
     @pytest.mark.asyncio
     async def test_update_client_registration_uses_access_token(self, test_db):
         """Test that update uses registration_access_token."""
-        from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+        from mcpgateway.services.encryption_service import get_encryption_service
         from mcpgateway.config import get_settings
 
         dcr_service = DcrService()
@@ -487,7 +487,7 @@ class TestUpdateClientRegistration:
         test_db.commit()
 
         # Encrypt the registration access token properly
-        encryption = get_oauth_encryption(get_settings().auth_encryption_secret)
+        encryption = get_encryption_service(get_settings().auth_encryption_secret)
         encrypted_token = encryption.encrypt_secret("registration-access-token")
 
         client_record = RegisteredOAuthClient(

@@ -18,13 +18,24 @@ import json
 import logging
 import sys
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from asyncio import Lock
+from typing import cast, Generator
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.cache.session_registry import SessionRegistry
+from mcpgateway.transports.sse_transport import SSETransport
+
+
+@pytest.fixture(name="mock_sse_transport")
+def mock_sse_transport_fixture() -> Generator[SSETransport, None, None]:
+    transport = MagicMock(spec=SSETransport)
+    transport.disconnect = AsyncMock()
+    transport.is_connected = AsyncMock(return_value=True)
+    yield transport
 
 
 class TestImportErrors:
@@ -65,7 +76,7 @@ class TestNoneBackend:
     @pytest.mark.asyncio
     async def test_none_backend_initialization_logging(self, caplog):
         """Test that 'none' backend logs initialization message."""
-        registry = SessionRegistry(backend="none")
+        _ = SessionRegistry(backend="none")
 
         # Check that initialization message is logged
         assert "Session registry initialized with 'none' backend - session tracking disabled" in caplog.text
@@ -86,11 +97,12 @@ class TestRedisBackendErrors:
     """Test Redis backend error scenarios."""
 
     @pytest.mark.asyncio
-    async def test_redis_add_session_error(self, monkeypatch, caplog):
+    async def test_redis_add_session_error(self, monkeypatch, caplog, mock_sse_transport):
         """Test Redis error during add_session."""
         mock_redis = AsyncMock()
         mock_redis.setex = AsyncMock(side_effect=Exception("Redis connection error"))
         mock_redis.publish = AsyncMock()
+        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
@@ -98,15 +110,7 @@ class TestRedisBackendErrors:
 
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
 
-                class DummyTransport:
-                    async def disconnect(self):
-                        pass
-
-                    async def is_connected(self):
-                        return True
-
-                transport = DummyTransport()
-                await registry.add_session("test_session", transport)
+                await registry.add_session("test_session", mock_sse_transport)
 
                 # Should log the Redis error
                 assert "Redis error adding session test_session: Redis connection error" in caplog.text
@@ -116,6 +120,7 @@ class TestRedisBackendErrors:
         """Test Redis error during broadcast."""
         mock_redis = AsyncMock()
         mock_redis.publish = AsyncMock(side_effect=Exception("Redis publish error"))
+        mock_redis.pubsub = Mock(return_value=AsyncMock())  # pubsub() is synchronous
 
         with patch("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True):
             with patch("mcpgateway.cache.session_registry.Redis") as MockRedis:
@@ -133,7 +138,7 @@ class TestDatabaseBackendErrors:
     """Test database backend error scenarios."""
 
     @pytest.mark.asyncio
-    async def test_database_add_session_error(self, monkeypatch, caplog):
+    async def test_database_add_session_error(self, monkeypatch, caplog, mock_sse_transport):
         """Test database error during add_session."""
 
         def mock_get_db():
@@ -151,15 +156,7 @@ class TestDatabaseBackendErrors:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class DummyTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                    transport = DummyTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Should log the database error
                     assert "Database error adding session test_session: Database connection error" in caplog.text
@@ -194,7 +191,7 @@ class TestRedisBackendRespond:
 
     @pytest.mark.skip("Redis pubsub mocking is complex, skipping for now")
     @pytest.mark.asyncio
-    async def test_redis_respond_method_pubsub_flow(self, monkeypatch):
+    async def test_redis_respond_method_pubsub_flow(self, monkeypatch, mock_sse_transport):
         """Test Redis backend respond method with pubsub message flow."""
         mock_redis = AsyncMock()
         mock_pubsub = Mock()  # Not AsyncMock for listen method
@@ -233,21 +230,10 @@ class TestRedisBackendRespond:
 
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
 
-                class MockTransport:
-                    async def disconnect(self):
-                        pass
-
-                    async def is_connected(self):
-                        return True
-
-                    async def send_message(self, msg):
-                        pass
-
-                transport = MockTransport()
-                await registry.add_session("test_session", transport)
+                await registry.add_session("test_session", mock_sse_transport)
 
                 # Mock generate_response to track calls
-                with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
+                with patch.object(registry, "generate_response", new_callable=AsyncMock):
                     # Start respond task and let it process one message
                     respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
 
@@ -267,7 +253,7 @@ class TestRedisBackendRespond:
 
     @pytest.mark.skip("Redis pubsub mocking is complex, skipping for now")
     @pytest.mark.asyncio
-    async def test_redis_respond_method_cancelled_task(self, monkeypatch, caplog):
+    async def test_redis_respond_method_cancelled_task(self, monkeypatch, caplog, mock_sse_transport):
         """Test Redis respond method handles task cancellation."""
         mock_redis = AsyncMock()
 
@@ -293,15 +279,7 @@ class TestRedisBackendRespond:
 
                 registry = SessionRegistry(backend="redis", redis_url="redis://localhost")
 
-                class MockTransport:
-                    async def disconnect(self):
-                        pass
-
-                    async def is_connected(self):
-                        return True
-
-                transport = MockTransport()
-                await registry.add_session("test_session", transport)
+                await registry.add_session("test_session", mock_sse_transport)
 
                 # Start respond task and cancel it
                 respond_task = asyncio.create_task(registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost"))
@@ -323,7 +301,7 @@ class TestDatabaseBackendRespond:
     """Test Database backend respond method."""
 
     @pytest.mark.asyncio
-    async def test_database_respond_message_check_loop(self, monkeypatch):
+    async def test_database_respond_message_check_loop(self, monkeypatch, mock_sse_transport):
         """Test Database backend respond method with message polling."""
         mock_db_session = Mock()
         call_count = 0
@@ -344,7 +322,6 @@ class TestDatabaseBackendRespond:
                 return None
 
         def mock_db_read_session(session_id):
-            nonlocal call_count
             if call_count < 3:  # Session exists for first few calls
                 return Mock()  # Non-None session record
             else:
@@ -371,18 +348,7 @@ class TestDatabaseBackendRespond:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                        async def send_message(self, msg):
-                            pass
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Mock generate_response to track calls
                     with patch.object(registry, "generate_response", new_callable=AsyncMock) as mock_gen:
@@ -396,7 +362,7 @@ class TestDatabaseBackendRespond:
                         mock_gen.assert_called()
 
     @pytest.mark.asyncio
-    async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog):
+    async def test_database_respond_ready_to_respond_logging(self, monkeypatch, caplog, mock_sse_transport):
         """Test database respond logs 'Ready to respond'."""
         mock_db_session = Mock()
 
@@ -433,18 +399,7 @@ class TestDatabaseBackendRespond:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                        async def send_message(self, msg):
-                            pass
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Mock generate_response
                     with patch.object(registry, "generate_response", new_callable=AsyncMock):
@@ -457,7 +412,7 @@ class TestDatabaseBackendRespond:
                         assert "Ready to respond" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_database_respond_message_remove_logging(self, monkeypatch, caplog):
+    async def test_database_respond_message_remove_logging(self, monkeypatch, caplog, mock_sse_transport):
         """Test database message removal logs correctly."""
         mock_db_session = Mock()
 
@@ -495,18 +450,7 @@ class TestDatabaseBackendRespond:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                        async def send_message(self, msg):
-                            pass
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     with patch.object(registry, "generate_response", new_callable=AsyncMock):
                         await registry.respond(server_id=None, user={"token": "test"}, session_id="test_session", base_url="http://localhost")
@@ -521,7 +465,7 @@ class TestDatabaseCleanupTask:
     """Test database cleanup task functionality."""
 
     @pytest.mark.asyncio
-    async def test_db_cleanup_task_expired_sessions(self, monkeypatch, caplog):
+    async def test_db_cleanup_task_expired_sessions(self, monkeypatch, caplog, mock_sse_transport):
         """Test database cleanup task removes expired sessions."""
         mock_db_session = Mock()
         cleanup_call_count = 0
@@ -556,15 +500,7 @@ class TestDatabaseCleanupTask:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Start the cleanup task
                     cleanup_task = asyncio.create_task(registry._db_cleanup_task())
@@ -582,7 +518,7 @@ class TestDatabaseCleanupTask:
                     assert "Cleaned up 5 expired database sessions" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_db_cleanup_task_session_refresh(self, monkeypatch):
+    async def test_db_cleanup_task_session_refresh(self, monkeypatch, mock_sse_transport):
         """Test database cleanup task refreshes active sessions."""
         mock_db_session = Mock()
         refresh_called = False
@@ -614,15 +550,7 @@ class TestDatabaseCleanupTask:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Start the cleanup task
                     cleanup_task = asyncio.create_task(registry._db_cleanup_task())
@@ -640,10 +568,9 @@ class TestDatabaseCleanupTask:
                     assert refresh_called
 
     @pytest.mark.asyncio
-    async def test_db_cleanup_task_removes_stale_sessions(self, monkeypatch):
+    async def test_db_cleanup_task_removes_stale_sessions(self, monkeypatch, mock_sse_transport):
         """Test database cleanup task removes sessions that no longer exist in DB."""
         mock_db_session = Mock()
-        remove_called = False
 
         def mock_get_db():
             yield mock_db_session
@@ -670,15 +597,7 @@ class TestDatabaseCleanupTask:
 
                     registry = SessionRegistry(backend="database", database_url="sqlite:///test.db")
 
-                    class MockTransport:
-                        async def disconnect(self):
-                            pass
-
-                        async def is_connected(self):
-                            return True
-
-                    transport = MockTransport()
-                    await registry.add_session("test_session", transport)
+                    await registry.add_session("test_session", mock_sse_transport)
 
                     # Mock remove_session to track calls
                     with patch.object(registry, "remove_session", new_callable=AsyncMock) as mock_remove:
@@ -766,8 +685,8 @@ class TestMemoryCleanupTask:
         connected_transport = MockTransport(connected=True)
         disconnected_transport = MockTransport(connected=False)
 
-        await registry.add_session("connected", connected_transport)
-        await registry.add_session("disconnected", disconnected_transport)
+        await registry.add_session("connected", cast(SSETransport, connected_transport))
+        await registry.add_session("disconnected", cast(SSETransport, disconnected_transport))
 
         # Mock remove_session to track calls
         with patch.object(registry, "remove_session", new_callable=AsyncMock) as mock_remove:
@@ -799,7 +718,7 @@ class TestMemoryCleanupTask:
                 raise Exception("Transport error")
 
         transport = MockTransport()
-        await registry.add_session("error_session", transport)
+        await registry.add_session("error_session", cast(SSETransport, transport))
 
         # Mock remove_session to track calls
         with patch.object(registry, "remove_session", new_callable=AsyncMock) as mock_remove:
@@ -832,7 +751,7 @@ class TestMemoryCleanupTask:
             async def __aexit__(self, exc_type, exc_val, exc_tb):
                 pass
 
-        registry._lock = MockLock()
+        registry._lock = cast(Lock, MockLock())
 
         # Start cleanup task
         cleanup_task = asyncio.create_task(registry._memory_cleanup_task())
@@ -874,7 +793,7 @@ class TestRedisSessionRefresh:
                     async def __aexit__(self, exc_type, exc_val, exc_tb):
                         pass
 
-                registry._lock = MockLock()
+                registry._lock = cast(Lock, MockLock())
 
                 await registry._refresh_redis_sessions()
 
@@ -950,6 +869,7 @@ class TestInitializationAndShutdown:
         await registry.initialize()
 
         original_task = registry._cleanup_task
+        assert original_task is not None
         assert not original_task.cancelled()
 
         await registry.shutdown()
@@ -964,6 +884,7 @@ class TestInitializationAndShutdown:
         await registry.initialize()
 
         # Cancel task before shutdown
+        assert registry._cleanup_task is not None
         registry._cleanup_task.cancel()
 
         # Shutdown should not raise error

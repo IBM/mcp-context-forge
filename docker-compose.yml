@@ -154,7 +154,7 @@ services:
       - POSTGRES_PASSWORD=mysecretpassword
       - POSTGRES_DB=mcp
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql  # Postgres 18+ uses /var/lib/postgresql (not /data subdirectory)
     networks: [mcpnet]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
@@ -378,6 +378,9 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
+  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
+  # emulation may not work properly. Use profiles to disable:
+  # docker compose --profile with-fast-time up -d
   ###############################################################################
   fast_time_server:
     image: ghcr.io/ibm/fast-time-server:latest
@@ -386,6 +389,7 @@ services:
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
     command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -402,6 +406,7 @@ services:
       - JWT_SECRET_KEY=my-test-key
     # This is a one-shot container that exits after registration
     restart: "no"
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

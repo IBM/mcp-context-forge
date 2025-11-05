@@ -542,6 +542,9 @@ class StdIOEndpoint:
                 text = line.decode(errors="replace")
                 LOGGER.debug(f"← stdio: {text.strip()}")
                 await self._pubsub.publish(text)
+        except ConnectionResetError:  # pragma: no cover --subprocess terminated
+            # Subprocess terminated abruptly - this is expected behavior
+            LOGGER.debug("stdout pump: subprocess connection closed")
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
             raise

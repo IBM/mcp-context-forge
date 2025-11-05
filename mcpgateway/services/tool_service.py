@@ -29,6 +29,7 @@ import uuid
 # Third-Party
 import httpx
 import jq
+import jsonschema
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -58,6 +59,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
@@ -414,6 +416,146 @@ class ToolService:
         db.add(metric)
         db.commit()
 
+    def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
+        """
+        Extract structured content (if any) and validate it against ``tool.output_schema``.
+
+        Args:
+            tool: The tool with an optional output schema to validate against.
+            tool_result: The tool result containing content to validate.
+            candidate: Optional structured payload to validate. If not provided, will attempt
+                      to parse the first TextContent item as JSON.
+
+        Behavior:
+        - If ``candidate`` is provided it is used as the structured payload to validate.
+        - Otherwise the method will try to parse the first ``TextContent`` item in
+            ``tool_result.content`` as JSON and use that as the candidate.
+        - If no output schema is declared on the tool the method returns True (nothing to validate).
+        - On successful validation the parsed value is attached to ``tool_result.structured_content``.
+            When structured content is present and valid callers may drop textual ``content`` in favour
+            of the structured payload.
+        - On validation failure the method sets ``tool_result.content`` to a single ``TextContent``
+            containing a compact JSON object describing the validation error, sets
+            ``tool_result.is_error = True`` and returns False.
+
+        Returns:
+                True when the structured content is valid or when no schema is declared.
+                False when validation fails.
+
+        Examples:
+                >>> from mcpgateway.services.tool_service import ToolService
+                >>> from mcpgateway.common.models import TextContent, ToolResult
+                >>> import json
+                >>> service = ToolService()
+                >>> # No schema declared -> nothing to validate
+                >>> tool = type("T", (object,), {"output_schema": None})()
+                >>> r = ToolResult(content=[TextContent(type="text", text='{"a":1}')])
+                >>> service._extract_and_validate_structured_content(tool, r)
+                True
+
+                >>> # Valid candidate provided -> attaches structured_content and returns True
+                >>> tool = type(
+                ...     "T",
+                ...     (object,),
+                ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
+                ... )()
+                >>> r = ToolResult(content=[])
+                >>> service._extract_and_validate_structured_content(tool, r, candidate={"foo": "bar"})
+                True
+                >>> r.structured_content == {"foo": "bar"}
+                True
+
+                >>> # Invalid candidate -> returns False, marks result as error and emits details
+                >>> tool = type(
+                ...     "T",
+                ...     (object,),
+                ...     {"output_schema": {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}},
+                ... )()
+                >>> r = ToolResult(content=[])
+                >>> ok = service._extract_and_validate_structured_content(tool, r, candidate={"foo": 123})
+                >>> ok
+                False
+                >>> r.is_error
+                True
+                >>> details = json.loads(r.content[0].text)
+                >>> "received" in details
+                True
+        """
+        try:
+            output_schema = getattr(tool, "output_schema", None)
+            # Nothing to do if the tool doesn't declare a schema
+            if not output_schema:
+                return True
+
+            structured: Optional[Any] = None
+            # Prefer explicit candidate
+            if candidate is not None:
+                structured = candidate
+            else:
+                # Try to parse first TextContent text payload as JSON
+                for c in getattr(tool_result, "content", []) or []:
+                    try:
+                        if isinstance(c, dict) and "type" in c and c.get("type") == "text" and "text" in c:
+                            structured = json.loads(c.get("text") or "null")
+                            break
+                    except (json.JSONDecodeError, TypeError, ValueError):
+                        # ignore JSON parse errors and continue
+                        continue
+
+            # If no structured data found, treat as valid (nothing to validate)
+            if structured is None:
+                return True
+
+            # Try to normalize common wrapper shapes to match schema expectations
+            schema_type = None
+            try:
+                if isinstance(output_schema, dict):
+                    schema_type = output_schema.get("type")
+            except Exception:
+                schema_type = None
+
+            # Unwrap single-element list wrappers when schema expects object
+            if isinstance(structured, list) and len(structured) == 1 and schema_type == "object":
+                inner = structured[0]
+                # If inner is a TextContent-like dict with 'text' JSON string, parse it
+                if isinstance(inner, dict) and "text" in inner and "type" in inner and inner.get("type") == "text":
+                    try:
+                        structured = json.loads(inner.get("text") or "null")
+                    except Exception:
+                        # leave as-is if parsing fails
+                        structured = inner
+                else:
+                    structured = inner
+
+            # Attach structured content
+            try:
+                setattr(tool_result, "structured_content", structured)
+            except Exception:
+                logger.debug("Failed to set structured_content on ToolResult")
+
+            # Validate using jsonschema
+            try:
+                jsonschema.validate(instance=structured, schema=output_schema)
+                return True
+            except jsonschema.exceptions.ValidationError as e:
+                details = {
+                    "code": getattr(e, "validator", "validation_error"),
+                    "expected": e.schema.get("type") if isinstance(e.schema, dict) and "type" in e.schema else None,
+                    "received": type(e.instance).__name__.lower() if e.instance is not None else None,
+                    "path": list(e.absolute_path) if hasattr(e, "absolute_path") else list(e.path or []),
+                    "message": e.message,
+                }
+                try:
+                    tool_result.content = [TextContent(type="text", text=json.dumps(details))]
+                except Exception:
+                    tool_result.content = [TextContent(type="text", text=str(details))]
+                tool_result.is_error = True
+                logger.debug(f"structured_content validation failed for tool {getattr(tool, 'name', '<unknown>')}: {details}")
+                return False
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(f"Error extracting/validating structured_content: {exc}")
+            return False
+
     async def register_tool(
         self,
         db: Session,
@@ -545,12 +687,10 @@ class ToolService:
                 plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
             )
-
             db.add(db_tool)
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            logger.info(f"Registered tool: {db_tool.name}")
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
@@ -566,22 +706,24 @@ class ToolService:
 
     async def list_tools(
         self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
-    ) -> List[ToolRead]:
+    ) -> tuple[List[ToolRead], Optional[str]]:
         """
-        Retrieve a list of registered tools from the database.
+        Retrieve a list of registered tools from the database with pagination support.
 
         Args:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive tools in the result.
                 Defaults to False.
-            cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
-                this parameter is ignored. Defaults to None.
+            cursor (Optional[str], optional): An opaque cursor token for pagination.
+                Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
-            List[ToolRead]: A list of registered tools represented as ToolRead objects.
+            tuple[List[ToolRead], Optional[str]]: Tuple containing:
+                - List of tools for current page
+                - Next cursor token if more results exist, None otherwise
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
@@ -592,13 +734,29 @@ class ToolService:
             >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> import asyncio
-            >>> result = asyncio.run(service.list_tools(db))
-            >>> isinstance(result, list)
+            >>> tools, next_cursor = asyncio.run(service.list_tools(db))
+            >>> isinstance(tools, list)
             True
         """
-        query = select(DbTool)
-        cursor = None  # Placeholder for pagination; ignore for now
-        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}")
+        page_size = settings.pagination_default_page_size
+        query = select(DbTool).order_by(DbTool.id)  # Consistent ordering for cursor pagination
+
+        # Decode cursor to get last_id if provided
+        last_id = None
+        if cursor:
+            try:
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                logger.debug(f"Decoded cursor: last_id={last_id}")
+            except ValueError as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
+        # Apply cursor filter (WHERE id > last_id)
+        if last_id:
+            query = query.where(DbTool.id > last_id)
+
+        logger.debug(f"Listing tools with include_inactive={include_inactive}, cursor={cursor}, tags={tags}, page_size={page_size}")
+
         if not include_inactive:
             query = query.where(DbTool.enabled)
 
@@ -606,13 +764,30 @@ class ToolService:
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
+        # Fetch page_size + 1 to determine if there are more results
+        query = query.limit(page_size + 1)
         tools = db.execute(query).scalars().all()
+
+        # Check if there are more results
+        has_more = len(tools) > page_size
+        if has_more:
+            tools = tools[:page_size]  # Trim to page_size
+
+        # Convert to ToolRead objects
         result = []
         for t in tools:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
-        return result
+
+        # Generate next_cursor if there are more results
+        next_cursor = None
+        if has_more and result:
+            last_tool = tools[-1]  # Get last DB object (not ToolRead)
+            next_cursor = encode_cursor({"id": last_tool.id})
+            logger.debug(f"Generated next_cursor for id={last_tool.id}")
+
+        return (result, next_cursor)
 
     async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
         """
@@ -1053,7 +1228,6 @@ class ToolService:
                     # Handle 204 No Content responses that have no body
                     if response.status_code == 204:
                         tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
-                        # Mark as successful only after all operations complete successfully
                         success = True
                     elif response.status_code not in [200, 201, 202, 206]:
                         result = response.json()
@@ -1066,8 +1240,13 @@ class ToolService:
                         result = response.json()
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-                        # Mark as successful only after all operations complete successfully
                         success = True
+
+                        # If output schema is present, validate and attach structured content
+                        if getattr(tool, "output_schema", None):
+                            valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
+                            success = bool(valid)
+
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1177,8 +1356,11 @@ class ToolService:
 
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
                     tool_result = ToolResult(content=filtered_response)
-                    # Mark as successful only after all operations complete successfully
                     success = True
+                    # If output schema is present, validate and attach structured content
+                    if getattr(tool, "output_schema", None):
+                        valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
+                        success = bool(valid)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
@@ -1352,6 +1534,7 @@ class ToolService:
                 tool.version += 1
             else:
                 tool.version = 1
+            logger.info(f"Update tool: {tool.name} (output_schema: {tool.output_schema})")
 
             tool.updated_at = datetime.now(timezone.utc)
             db.commit()
