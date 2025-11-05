@@ -13,7 +13,6 @@ Safely writes PEM-formatted private and public keys to disk.
 from __future__ import annotations
 
 # Standard
-
 # Logging setup
 import logging
 from pathlib import Path
