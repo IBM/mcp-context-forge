@@ -6497,3 +6497,177 @@ class PaginationParams(BaseModel):
     cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
     sort_by: Optional[str] = Field("created_at", description="Sort field")
     sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
+
+
+# ============================================================================
+# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
+# ============================================================================
+
+
+class ObservabilityTraceBase(BaseModel):
+    """Base schema for observability traces."""
+
+    name: str = Field(..., description="Trace name (e.g., 'POST /tools/invoke')")
+    start_time: datetime = Field(..., description="Trace start timestamp")
+    end_time: Optional[datetime] = Field(None, description="Trace end timestamp")
+    duration_ms: Optional[float] = Field(None, description="Total duration in milliseconds")
+    status: str = Field("unset", description="Trace status (unset, ok, error)")
+    status_message: Optional[str] = Field(None, description="Status message or error description")
+    http_method: Optional[str] = Field(None, description="HTTP method")
+    http_url: Optional[str] = Field(None, description="HTTP URL")
+    http_status_code: Optional[int] = Field(None, description="HTTP status code")
+    user_email: Optional[str] = Field(None, description="User email")
+    user_agent: Optional[str] = Field(None, description="User agent string")
+    ip_address: Optional[str] = Field(None, description="Client IP address")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional trace attributes")
+    resource_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Resource attributes")
+
+
+class ObservabilityTraceCreate(ObservabilityTraceBase):
+    """Schema for creating an observability trace."""
+
+    trace_id: Optional[str] = Field(None, description="Trace ID (generated if not provided)")
+
+
+class ObservabilityTraceUpdate(BaseModel):
+    """Schema for updating an observability trace."""
+
+    end_time: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    status: Optional[str] = None
+    status_message: Optional[str] = None
+    http_status_code: Optional[int] = None
+    attributes: Optional[Dict[str, Any]] = None
+
+
+class ObservabilityTraceRead(ObservabilityTraceBase):
+    """Schema for reading an observability trace."""
+
+    trace_id: str = Field(..., description="Trace ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilitySpanBase(BaseModel):
+    """Base schema for observability spans."""
+
+    trace_id: str = Field(..., description="Parent trace ID")
+    parent_span_id: Optional[str] = Field(None, description="Parent span ID (for nested spans)")
+    name: str = Field(..., description="Span name (e.g., 'database_query', 'tool_invocation')")
+    kind: str = Field("internal", description="Span kind (internal, server, client, producer, consumer)")
+    start_time: datetime = Field(..., description="Span start timestamp")
+    end_time: Optional[datetime] = Field(None, description="Span end timestamp")
+    duration_ms: Optional[float] = Field(None, description="Span duration in milliseconds")
+    status: str = Field("unset", description="Span status (unset, ok, error)")
+    status_message: Optional[str] = Field(None, description="Status message")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Span attributes")
+    resource_name: Optional[str] = Field(None, description="Resource name")
+    resource_type: Optional[str] = Field(None, description="Resource type (tool, resource, prompt, gateway, a2a_agent)")
+    resource_id: Optional[str] = Field(None, description="Resource ID")
+
+
+class ObservabilitySpanCreate(ObservabilitySpanBase):
+    """Schema for creating an observability span."""
+
+    span_id: Optional[str] = Field(None, description="Span ID (generated if not provided)")
+
+
+class ObservabilitySpanUpdate(BaseModel):
+    """Schema for updating an observability span."""
+
+    end_time: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    status: Optional[str] = None
+    status_message: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
+
+
+class ObservabilitySpanRead(ObservabilitySpanBase):
+    """Schema for reading an observability span."""
+
+    span_id: str = Field(..., description="Span ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityEventBase(BaseModel):
+    """Base schema for observability events."""
+
+    span_id: str = Field(..., description="Parent span ID")
+    name: str = Field(..., description="Event name (e.g., 'exception', 'log', 'checkpoint')")
+    timestamp: datetime = Field(..., description="Event timestamp")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Event attributes")
+    severity: Optional[str] = Field(None, description="Log severity (debug, info, warning, error, critical)")
+    message: Optional[str] = Field(None, description="Event message")
+    exception_type: Optional[str] = Field(None, description="Exception class name")
+    exception_message: Optional[str] = Field(None, description="Exception message")
+    exception_stacktrace: Optional[str] = Field(None, description="Exception stacktrace")
+
+
+class ObservabilityEventCreate(ObservabilityEventBase):
+    """Schema for creating an observability event."""
+
+
+class ObservabilityEventRead(ObservabilityEventBase):
+    """Schema for reading an observability event."""
+
+    id: int = Field(..., description="Event ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityMetricBase(BaseModel):
+    """Base schema for observability metrics."""
+
+    name: str = Field(..., description="Metric name (e.g., 'http.request.duration', 'tool.invocation.count')")
+    metric_type: str = Field(..., description="Metric type (counter, gauge, histogram)")
+    value: float = Field(..., description="Metric value")
+    timestamp: datetime = Field(..., description="Metric timestamp")
+    unit: Optional[str] = Field(None, description="Metric unit (ms, count, bytes, etc.)")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metric attributes/labels")
+    resource_type: Optional[str] = Field(None, description="Resource type")
+    resource_id: Optional[str] = Field(None, description="Resource ID")
+    trace_id: Optional[str] = Field(None, description="Associated trace ID")
+
+
+class ObservabilityMetricCreate(ObservabilityMetricBase):
+    """Schema for creating an observability metric."""
+
+
+class ObservabilityMetricRead(ObservabilityMetricBase):
+    """Schema for reading an observability metric."""
+
+    id: int = Field(..., description="Metric ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityTraceWithSpans(ObservabilityTraceRead):
+    """Schema for reading a trace with its spans."""
+
+    spans: List[ObservabilitySpanRead] = Field(default_factory=list, description="List of spans in this trace")
+
+
+class ObservabilitySpanWithEvents(ObservabilitySpanRead):
+    """Schema for reading a span with its events."""
+
+    events: List[ObservabilityEventRead] = Field(default_factory=list, description="List of events in this span")
+
+
+class ObservabilityQueryParams(BaseModel):
+    """Query parameters for filtering observability data."""
+
+    start_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics after this time")
+    end_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics before this time")
+    status: Optional[str] = Field(None, description="Filter by status (ok, error, unset)")
+    http_status_code: Optional[int] = Field(None, description="Filter by HTTP status code")
+    user_email: Optional[str] = Field(None, description="Filter by user email")
+    resource_type: Optional[str] = Field(None, description="Filter by resource type")
+    resource_name: Optional[str] = Field(None, description="Filter by resource name")
+    trace_id: Optional[str] = Field(None, description="Filter by trace ID")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
+    offset: int = Field(default=0, ge=0, description="Result offset for pagination")

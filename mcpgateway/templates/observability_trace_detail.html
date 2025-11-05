@@ -1,0 +1,99 @@
+<div class="trace-detail-header">
+    <div>
+        <h2 style="margin: 0; font-size: 1.5rem; color: #1f2937;">Trace Details</h2>
+        <p style="margin: 0.5rem 0 0 0; color: #6b7280;">
+            <code>{{ trace.trace_id }}</code>
+        </p>
+    </div>
+    <button @click="selectedTrace = null" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #6b7280;">✕</button>
+</div>
+
+<div class="trace-detail-body">
+    <!-- Trace Metadata -->
+    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; margin-bottom: 2rem;">
+        <div>
+            <h3 style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">REQUEST</h3>
+            <p style="margin: 0.25rem 0;"><strong>Method:</strong> {{ trace.http_method }}</p>
+            <p style="margin: 0.25rem 0;"><strong>URL:</strong> <code>{{ trace.http_url }}</code></p>
+            <p style="margin: 0.25rem 0;"><strong>Status:</strong>
+                <span class="status-badge status-{{ trace.status }}">
+                    {% if trace.status == 'ok' %}✓{% else %}✗{% endif %} {{ trace.http_status_code }}
+                </span>
+            </p>
+        </div>
+        <div>
+            <h3 style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">TIMING</h3>
+            <p style="margin: 0.25rem 0;"><strong>Start:</strong> {{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] }}</p>
+            <p style="margin: 0.25rem 0;"><strong>End:</strong> {{ trace.end_time.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3] if trace.end_time else 'In Progress' }}</p>
+            <p style="margin: 0.25rem 0;"><strong>Duration:</strong>
+                <span class="duration-badge {% if trace.duration_ms < 100 %}duration-fast{% elif trace.duration_ms < 500 %}duration-medium{% else %}duration-slow{% endif %}">
+                    {{ "%.2f"|format(trace.duration_ms) }} ms
+                </span>
+            </p>
+        </div>
+        <div>
+            <h3 style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">USER CONTEXT</h3>
+            <p style="margin: 0.25rem 0;"><strong>User:</strong> {{ trace.user_email or 'anonymous' }}</p>
+            <p style="margin: 0.25rem 0;"><strong>IP:</strong> {{ trace.ip_address or 'N/A' }}</p>
+            <p style="margin: 0.25rem 0;"><strong>User Agent:</strong> {{ (trace.user_agent[:50] + '...') if trace.user_agent and trace.user_agent|length > 50 else (trace.user_agent or 'N/A') }}</p>
+        </div>
+        {% if trace.status_message %}
+        <div>
+            <h3 style="font-size: 0.875rem; color: #6b7280; margin-bottom: 0.5rem;">STATUS MESSAGE</h3>
+            <p style="margin: 0.25rem 0; color: #ef4444;">{{ trace.status_message }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Spans Waterfall -->
+    {% if trace.spans %}
+    <h3 style="font-size: 1.125rem; color: #1f2937; margin-bottom: 1rem;">Execution Timeline</h3>
+    <div class="waterfall">
+        {% set total_duration = trace.duration_ms %}
+        {% set trace_start = trace.start_time %}
+
+        {% for span in trace.spans|sort(attribute='start_time') %}
+        <div class="span-row">
+            <div class="span-name" title="{{ span.name }}">
+                {{ '  ' * (0 if not span.parent_span_id else 1) }}{{ span.name }}
+            </div>
+            <div class="span-timeline">
+                {% set span_duration_ms = span.duration_ms or 0 %}
+                {% set span_offset_ms = ((span.start_time - trace_start).total_seconds() * 1000) %}
+                {% set left_percent = (span_offset_ms / total_duration * 100) if total_duration > 0 else 0 %}
+                {% set width_percent = (span_duration_ms / total_duration * 100) if total_duration > 0 else 0 %}
+
+                <div class="span-bar {% if span.status == 'error' %}error{% endif %}"
+                     style="left: {{ left_percent }}%; width: {{ width_percent }}%;"
+                     title="{{ span.name }}: {{ '%.2f'|format(span_duration_ms) }}ms">
+                    {% if width_percent > 10 %}{{ span.name }}{% endif %}
+                </div>
+            </div>
+            <div class="span-duration">{{ "%.2f"|format(span_duration_ms) }} ms</div>
+        </div>
+
+        <!-- Show events if any -->
+        {% if span.events %}
+        {% for event in span.events %}
+        <div style="padding-left: 3rem; font-size: 0.875rem; color: #6b7280; padding-top: 0.25rem;">
+            <span style="color: {% if event.severity == 'error' %}#ef4444{% elif event.severity == 'warning' %}#f59e0b{% else %}#6b7280{% endif %};">
+                {{ event.name }}
+                {% if event.message %}: {{ event.message }}{% endif %}
+            </span>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <p style="color: #6b7280; text-align: center; padding: 2rem;">No spans recorded for this trace</p>
+    {% endif %}
+
+    <!-- Attributes -->
+    {% if trace.attributes %}
+    <h3 style="font-size: 1.125rem; color: #1f2937; margin: 2rem 0 1rem 0;">Additional Attributes</h3>
+    <div style="background: #f9fafb; padding: 1rem; border-radius: 0.375rem; font-family: monospace; font-size: 0.875rem;">
+        <pre style="margin: 0; white-space: pre-wrap;">{{ trace.attributes|tojson(indent=2) }}</pre>
+    </div>
+    {% endif %}
+</div>

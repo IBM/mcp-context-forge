@@ -16,7 +16,7 @@ mcpContextForge:
     enabled: false
     plugins: |
       # plugin file
-  
+
   replicaCount: 2                           # horizontal scaling for the gateway
 
   # --- HORIZONTAL POD AUTOSCALER --------------------------------------

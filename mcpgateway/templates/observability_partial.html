@@ -1,0 +1,342 @@
+<!-- Observability Dashboard Partial -->
+<div class="observability-container" x-data="{
+    selectedTrace: null,
+    timeRange: '24h',
+    statusFilter: 'all',
+    loading: false,
+    stats: {},
+    tracesInterval: null,
+    statsInterval: null,
+    refreshTraces() {
+        const url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
+        htmx.ajax('GET', url, {target: '#traces-list', swap: 'innerHTML'});
+    },
+    refreshStats() {
+        htmx.ajax('GET', '{{ root_path }}/admin/observability/stats', {target: '#stats-container', swap: 'innerHTML'});
+    },
+    startPolling() {
+        this.refreshTraces();
+        this.refreshStats();
+        this.tracesInterval = setInterval(() => this.refreshTraces(), 5000);
+        this.statsInterval = setInterval(() => this.refreshStats(), 30000);
+    },
+    stopPolling() {
+        if (this.tracesInterval) clearInterval(this.tracesInterval);
+        if (this.statsInterval) clearInterval(this.statsInterval);
+    }
+}" x-init="
+    startPolling();
+    $watch('timeRange', () => { stopPolling(); startPolling(); });
+    $watch('statusFilter', () => { stopPolling(); startPolling(); });
+">
+    <style>
+        .observability-container {
+            padding: 1rem;
+        }
+        .obs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        .obs-title {
+            font-size: 1.875rem;
+            font-weight: 700;
+            color: #1f2937;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .obs-filters {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+        .obs-filter-btn {
+            padding: 0.5rem 1rem;
+            border-radius: 0.375rem;
+            border: 1px solid #d1d5db;
+            background: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .obs-filter-btn:hover {
+            background: #f3f4f6;
+        }
+        .obs-filter-btn.active {
+            background: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: white;
+            border-radius: 0.5rem;
+            padding: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            border-left: 4px solid #3b82f6;
+        }
+        .stat-card.success {
+            border-left-color: #10b981;
+        }
+        .stat-card.error {
+            border-left-color: #ef4444;
+        }
+        .stat-card.warning {
+            border-left-color: #f59e0b;
+        }
+        .stat-label {
+            font-size: 0.875rem;
+            color: #6b7280;
+            margin-bottom: 0.5rem;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1f2937;
+        }
+        .stat-unit {
+            font-size: 1rem;
+            color: #6b7280;
+            margin-left: 0.25rem;
+        }
+        .traces-table {
+            width: 100%;
+            background: white;
+            border-radius: 0.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .traces-table table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .traces-table th {
+            background: #f9fafb;
+            padding: 0.75rem 1rem;
+            text-align: left;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #6b7280;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .traces-table td {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .traces-table tr:hover {
+            background: #f9fafb;
+            cursor: pointer;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .status-ok {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .status-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .duration-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.25rem;
+            font-size: 0.875rem;
+            font-family: monospace;
+        }
+        .duration-fast {
+            background: #d1fae5;
+            color: #065f46;
+        }
+        .duration-medium {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        .duration-slow {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .trace-detail-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .trace-detail-content {
+            background: white;
+            border-radius: 0.5rem;
+            max-width: 90%;
+            max-height: 90%;
+            overflow: auto;
+            box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+        }
+        .trace-detail-header {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .trace-detail-body {
+            padding: 1.5rem;
+        }
+        .waterfall {
+            margin-top: 1rem;
+        }
+        .span-row {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .span-name {
+            width: 200px;
+            font-size: 0.875rem;
+            color: #374151;
+        }
+        .span-timeline {
+            flex: 1;
+            height: 24px;
+            position: relative;
+            background: #f3f4f6;
+            border-radius: 0.25rem;
+        }
+        .span-bar {
+            position: absolute;
+            height: 100%;
+            background: #3b82f6;
+            border-radius: 0.25rem;
+            display: flex;
+            align-items: center;
+            padding: 0 0.5rem;
+            font-size: 0.75rem;
+            color: white;
+        }
+        .span-bar.error {
+            background: #ef4444;
+        }
+        .span-duration {
+            width: 80px;
+            text-align: right;
+            font-size: 0.875rem;
+            color: #6b7280;
+            font-family: monospace;
+        }
+        .refresh-btn {
+            padding: 0.5rem 1rem;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 0.375rem;
+            cursor: pointer;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        .refresh-btn:hover {
+            background: #2563eb;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: #6b7280;
+        }
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+
+    <!-- Header -->
+    <div class="obs-header">
+        <h1 class="obs-title">
+            <span>🔍</span>
+            Observability Dashboard
+        </h1>
+        <div class="obs-filters">
+            <select
+                x-model="timeRange"
+                class="obs-filter-btn"
+            >
+                <option value="1h">Last Hour</option>
+                <option value="6h">Last 6 Hours</option>
+                <option value="24h" selected>Last 24 Hours</option>
+                <option value="7d">Last 7 Days</option>
+            </select>
+            <select
+                x-model="statusFilter"
+                class="obs-filter-btn"
+            >
+                <option value="all" selected>All Status</option>
+                <option value="ok">Success Only</option>
+                <option value="error">Errors Only</option>
+            </select>
+            <button
+                class="refresh-btn"
+                @click="refreshStats(); refreshTraces();"
+            >
+                🔄 Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Statistics Cards -->
+    <div id="stats-container">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Loading statistics...</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Traces Table -->
+    <div class="traces-table">
+        <table>
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Method</th>
+                    <th>Endpoint</th>
+                    <th>Status</th>
+                    <th>Duration</th>
+                    <th>User</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="traces-list">
+                <tr>
+                    <td colspan="7" style="text-align: center; padding: 2rem;">
+                        Loading traces...
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Trace Detail Modal (shown when trace is selected) -->
+    <div x-show="selectedTrace"
+         x-cloak
+         class="trace-detail-modal"
+         @click.self="selectedTrace = null">
+        <div class="trace-detail-content" id="trace-detail-content">
+            <!-- Loaded via HTMX -->
+        </div>
+    </div>
+</div>

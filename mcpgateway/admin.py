@@ -2456,6 +2456,7 @@ async def admin_ui(
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
+            "observability_enabled": getattr(settings, "observability_enabled", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
@@ -11253,3 +11254,144 @@ async def admin_generate_support_bundle(
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
+
+
+# ============================================================================
+# Observability Routes
+# ============================================================================
+
+
+@admin_router.get("/observability/partial", response_class=HTMLResponse)
+async def get_observability_partial(request: Request, user=Depends(get_current_user_with_permissions)):
+    """Render the observability dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        user: Authenticated user with admin permissions
+
+    Returns:
+        HTMLResponse: Rendered observability dashboard template
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse("observability_partial.html", {"request": request, "root_path": root_path})
+
+
+@admin_router.get("/observability/stats", response_class=HTMLResponse)
+async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), user=Depends(get_current_user_with_permissions)):
+    """Get observability statistics for the dashboard.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back for statistics (1-168)
+        user: Authenticated user with admin permissions
+
+    Returns:
+        HTMLResponse: Rendered statistics template with trace counts and averages
+    """
+    # Standard
+    from datetime import datetime, timedelta
+
+    # Third-Party
+    from sqlalchemy import func
+
+    # First-Party
+    from mcpgateway.db import ObservabilityTrace
+
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar() or 0
+
+        success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar() or 0
+
+        error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar() or 0
+
+        avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
+
+        stats = {
+            "total_traces": total_traces,
+            "success_count": success_count,
+            "error_count": error_count,
+            "avg_duration_ms": avg_duration,
+        }
+
+        return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/traces", response_class=HTMLResponse)
+async def get_observability_traces(request: Request, time_range: str = Query("24h"), status_filter: str = Query("all"), limit: int = Query(50), user=Depends(get_current_user_with_permissions)):
+    """Get list of traces for the dashboard.
+
+    Args:
+        request: FastAPI request object
+        time_range: Time range filter (1h, 6h, 24h, 7d)
+        status_filter: Status filter (all, ok, error)
+        limit: Maximum number of traces to return
+        user: Authenticated user with admin permissions
+
+    Returns:
+        HTMLResponse: Rendered traces list template
+    """
+    # Standard
+    from datetime import datetime, timedelta
+
+    # First-Party
+    from mcpgateway.db import ObservabilityTrace
+
+    db = next(get_db())
+    try:
+        # Parse time range
+        time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+        hours = time_map.get(time_range, 24)
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
+
+        # Apply status filter
+        if status_filter != "all":
+            query = query.filter(ObservabilityTrace.status == status_filter)
+
+        # Get traces ordered by most recent
+        traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
+
+        root_path = request.scope.get("root_path", "")
+        return request.app.state.templates.TemplateResponse("observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
+async def get_observability_trace_detail(request: Request, trace_id: str, user=Depends(get_current_user_with_permissions)):
+    """Get detailed trace information with spans.
+
+    Args:
+        request: FastAPI request object
+        trace_id: UUID of the trace to retrieve
+        user: Authenticated user with admin permissions
+
+    Returns:
+        HTMLResponse: Rendered trace detail template with waterfall view
+
+    Raises:
+        HTTPException: 404 if trace not found
+    """
+    # Third-Party
+    from sqlalchemy.orm import joinedload
+
+    # First-Party
+    from mcpgateway.db import ObservabilitySpan, ObservabilityTrace
+
+    db = next(get_db())
+    try:
+        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
+
+        if not trace:
+            raise HTTPException(status_code=404, detail="Trace not found")
+
+        root_path = request.scope.get("root_path", "")
+        return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
+    finally:
+        db.close()
