@@ -33,7 +33,7 @@ from urllib.parse import urlparse
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
-from mcpgateway.common.models import ImageContent
+from mcpgateway.common.models import Annotations, ImageContent
 from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
