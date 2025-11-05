@@ -137,9 +137,6 @@ async def generate_enriched_tool_description(
         responses = responses.replace("<|eom_id|>", "").strip()
         out_dict = parse_as_json_string(responses, params_dict["stop_sequences"])
         enriched_desc = get_first_value(out_dict, "new_description")
-        # logger.info ("out_dict: " + str(out_dict))
-        # enriched_desc = out_dict["new_description"]
-        #logger.info ("enriched_desc: " + str(enriched_desc))
 
     except Exception as e1:
         logger.info("error3: " + str(e1) + ": promptfile : " + promptfile)
@@ -151,8 +148,6 @@ async def generate_enriched_tool_description(
 
     if debug_mode:
         try:
-            # with open(promptfile, "a", encoding="utf-8") as file:
-            #     file.write("\n\n" + "Refined LLM Output: " + enriched_desc)
             async with aiof.open(promptfile, mode="a", encoding="utf-8") as f:
                 await f.write("\n\n" + "Refined LLM Output: " + enriched_desc)
 
