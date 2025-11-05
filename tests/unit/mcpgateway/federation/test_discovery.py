@@ -366,28 +366,6 @@ async def test_start_exception(monkeypatch):
     DummySettings.federation_discovery = False
 
 
-# @pytest.mark.asyncio
-# @patch("mcpgateway.federation.discovery.settings", new=DummySettings)
-# async def test_stop_exceptions(monkeypatch):
-#     service = discovery.DiscoveryService()
-#     # Simulate browser and zeroconf present
-#     class DummyBrowser:
-#         async def async_cancel(self):
-#             raise Exception("fail")
-#     class DummyZeroconf:
-#         async def async_unregister_service(self, *a, **k):
-#             raise Exception("fail")
-#         async def async_close(self):
-#             raise Exception("fail")
-#     service._browser = DummyBrowser()
-#     service._zeroconf = DummyZeroconf()
-#     # Simulate http client close (do not raise, to match implementation)
-#     service._http_client.aclose = AsyncMock(return_value=None)
-#     # Should not raise
-#     await service.stop()
-
-
-@pytest.mark.asyncio
 def test_stop_exceptions(monkeypatch):
     service = discovery.DiscoveryService()
 
@@ -403,9 +381,11 @@ def test_stop_exceptions(monkeypatch):
         async def async_close(self):
             pass  # Do not raise
 
-    service._browser = DummyBrowser()
-    service._zeroconf = DummyZeroconf()
+    monkeypatch.setattr(service, "_browser", DummyBrowser())
+    monkeypatch.setattr(service, "_zeroconf", DummyZeroconf())
+
     # Patch http client close to NOT raise
     service._http_client.aclose = AsyncMock(return_value=None)
+
     # Should not raise
     asyncio.run(service.stop())

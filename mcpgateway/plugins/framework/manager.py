@@ -566,7 +566,7 @@ class PluginManager:
         payload: Union[PluginPayload, dict[str, Any], str],
         context: PluginContext,
         violations_as_exceptions: bool = False,
-        payload_as_json=False,
+        payload_as_json: bool = False,
     ) -> PluginResult:
         """Invoke a specific hook for a single named plugin.
 

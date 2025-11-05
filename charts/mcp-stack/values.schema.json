@@ -132,6 +132,45 @@
           "maximum": 65535,
           "default": 4444
         },
+        "metrics": {
+          "type": "object",
+          "description": "Metrics configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable metrics collection",
+              "default": true
+            },
+            "port": {
+              "type": "integer",
+              "description": "Metrics port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8000
+            },
+            "serviceMonitor": {
+              "type": "object",
+              "description": "ServiceMonitor configuration for Prometheus Operator",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable ServiceMonitor creation",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "customLabels": {
+              "type": "object",
+              "description": "Custom labels for metrics",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false
+        },
         "probes": {
           "type": "object",
           "description": "Health probe configuration",
@@ -211,6 +250,22 @@
             }
           },
           "additionalProperties": false
+        },
+        
+        "pluginConfig": {
+          "type": "object",
+          "description": "Plugin configuration via ConfigMap",
+          "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Enable plugin configuration loading via ConfigMap",
+                "default": false
+            },
+            "plugins": {
+              "type": "string",
+              "description": "Plugin configuration file contents (YAML)"
+            }
+          }
         },
         "env": {
           "type": "object",

@@ -277,7 +277,7 @@ class ExportService:
         Returns:
             List of exported tool dictionaries
         """
-        tools = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive)
+        tools, _ = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive)
         exported_tools = []
 
         for tool in tools:
@@ -418,7 +418,7 @@ class ExportService:
         Returns:
             List of exported prompt dictionaries
         """
-        prompts = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive)
+        prompts, _ = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive)
         exported_prompts = []
 
         for prompt in prompts:
@@ -458,7 +458,7 @@ class ExportService:
         Returns:
             List of exported resource dictionaries
         """
-        resources = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive)
+        resources, _ = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive)
         exported_resources = []
 
         for resource in resources:

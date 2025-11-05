@@ -22,8 +22,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import get_settings
 from mcpgateway.db import OAuthToken
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError
-from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class TokenStorageService:
         self.db = db
         try:
             settings = get_settings()
-            self.encryption = get_oauth_encryption(settings.auth_encryption_secret)
+            self.encryption = get_encryption_service(settings.auth_encryption_secret)
         except (ImportError, AttributeError):
             logger.warning("OAuth encryption not available, using plain text storage")
             self.encryption = None

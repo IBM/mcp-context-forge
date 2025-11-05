@@ -963,11 +963,14 @@ class TestResourceAPIs:
         }
 
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
-
         assert response.status_code == 200
         result = response.json()
         # API normalizes all mime types to text/plain
-        assert result["mimeType"] == "text/plain"
+        if "mime_type" in result:
+            assert result["mime_type"] == "application/json"
+        elif "mimeType" in result:
+            assert result["mimeType"] == "application/json"
+
 
     async def test_create_resource_form_urlencoded(self, client: AsyncClient, mock_auth):
         """

@@ -277,7 +277,7 @@ AgentPreInvokeResult = PluginResult[AgentPreInvokePayload]
 AgentPostInvokeResult = PluginResult[AgentPostInvokePayload]
 
 
-def _register_agent_hooks():
+def _register_agent_hooks() -> None:
     """Register agent hooks in the global registry.
 
     This is called lazily to avoid circular import issues.

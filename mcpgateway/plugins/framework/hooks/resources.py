@@ -199,7 +199,7 @@ ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
 ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
 
 
-def _register_resource_hooks():
+def _register_resource_hooks() -> None:
     """Register resource hooks in the global registry.
 
     This is called lazily to avoid circular import issues.

@@ -585,7 +585,7 @@ class HookRef:
         return self._hook
 
     @property
-    def hook(self) -> Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]]:
+    def hook(self) -> Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]] | None:
         """The hooking function that can be invoked within the reference.
 
         Returns:

@@ -129,6 +129,7 @@ dev = [
     "pytest-env>=1.1.5",
     "pytest-examples>=0.0.18",
     "pytest-httpx>=0.35.0",
+    "pytest-integration-mark>=0.2.0",
     "pytest-md-report>=0.7.0",
     "pytest-rerunfailures>=16.0.1",
     "pytest-timeout>=2.4.0",
@@ -515,7 +516,6 @@ warn_unreachable = true                # Warn about unreachable code
 warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
 warn_unused_configs = true             # Warn about unused config options
 warn_redundant_casts = true            # Warn if a cast does nothing
-warn_unused_coroutine = true           # Warn if an unused async coroutine is defined
 strict_equality = true                 # Disallow ==/!= between incompatible types
 
 # Output formatting

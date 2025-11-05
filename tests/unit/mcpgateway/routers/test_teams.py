@@ -9,17 +9,14 @@ This module tests all team management endpoints including CRUD operations,
 member management, invitations, and join requests.
 """
 
-# Standard
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-# Third-Party
-import pytest
 from fastapi import HTTPException, status
+import pytest
 from sqlalchemy.orm import Session
 
-# First-Party
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember
 from mcpgateway.schemas import (
     EmailUserResponse,
@@ -32,7 +29,6 @@ from mcpgateway.schemas import (
 from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import TeamManagementService
 
-# Test utilities
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
 
@@ -282,8 +278,8 @@ class TestTeamsRouter:
             team.is_personal = False
             team.visibility = "private"
             team.max_members = 100
-            team.created_at = datetime.utcnow()
-            team.updated_at = datetime.utcnow()
+            team.created_at = datetime.now(timezone.utc)
+            team.updated_at = datetime.now(timezone.utc)
             team.is_active = True
             team.get_member_count = MagicMock(return_value=1)
             teams.append(team)
@@ -334,7 +330,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import TeamResponse
 
             async def mock_get_team(team_id, current_user, db):
-                service = TeamManagementService(db)
+                _ = TeamManagementService(db)
                 team = await mock_service.get_team_by_id(team_id)
                 if not team:
                     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
