@@ -76,7 +76,7 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
 ARG ROOTFS_PATH
-ARG TARGETPLATFORM
+ARG TARGETPLATFORM=linux/amd64
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # ----------------------------------------------------------------------------

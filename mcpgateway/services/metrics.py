@@ -118,4 +118,9 @@ def setup_metrics(app):
 
         @app.get("/metrics/prometheus")
         async def metrics_disabled():
+            """Returns metrics response when metrics collection is disabled.
+
+            Returns:
+                Response: HTTP 503 response indicating metrics are disabled.
+            """
             return Response(content='{"error": "Metrics collection is disabled"}', media_type="application/json", status_code=status.HTTP_503_SERVICE_UNAVAILABLE)

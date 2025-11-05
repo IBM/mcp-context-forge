@@ -95,6 +95,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
 from mcpgateway.services.import_service import ConflictStrategy
@@ -113,7 +114,6 @@ from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
-from mcpgateway.utils.oauth_encryption import get_oauth_encryption
 from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -6194,7 +6194,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -6231,7 +6231,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -6503,7 +6503,7 @@ async def admin_edit_gateway(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -6540,7 +6540,7 @@ async def admin_edit_gateway(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -9571,7 +9571,7 @@ async def admin_add_a2a_agent(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present
                 if oauth_config and "client_secret" in oauth_config:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -9608,7 +9608,7 @@ async def admin_add_a2a_agent(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
@@ -9890,7 +9890,7 @@ async def admin_edit_a2a_agent(
                 oauth_config = json.loads(oauth_config_json)
                 # Encrypt the client secret if present and not empty
                 if oauth_config and "client_secret" in oauth_config and oauth_config["client_secret"]:
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_config["client_secret"])
             except (json.JSONDecodeError, ValueError) as e:
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
@@ -9927,7 +9927,7 @@ async def admin_edit_a2a_agent(
                     oauth_config["client_id"] = oauth_client_id
                 if oauth_client_secret:
                     # Encrypt the client secret
-                    encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                    encryption = get_encryption_service(settings.auth_encryption_secret)
                     oauth_config["client_secret"] = encryption.encrypt_secret(oauth_client_secret)
 
                 # Add username and password for password grant type
