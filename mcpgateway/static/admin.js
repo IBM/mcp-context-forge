@@ -110,14 +110,14 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
-    
+
     // Also try to initialize after a short delay (in case the panel loads later)
     setTimeout(initializeCACertUpload, 500);
-    
+
     // Re-initialize when switching to gateways tab
     const gatewaysTab = document.querySelector('[onclick*="gateways"]');
     if (gatewaysTab) {
-        gatewaysTab.addEventListener('click', function() {
+        gatewaysTab.addEventListener("click", function() {
             setTimeout(initializeCACertUpload, 100);
         });
     }
@@ -17578,7 +17578,7 @@ document.head.appendChild(style);
 async function validateCACertFiles(event) {
     const files = Array.from(event.target.files);
     const feedbackEl = document.getElementById("ca-certificate-feedback");
-    
+
     if (!files.length) {
         feedbackEl.textContent = "No files selected.";
         return;
@@ -17586,7 +17586,7 @@ async function validateCACertFiles(event) {
 
     // Check file size (max 10MB for cert files)
     const maxSize = 10 * 1024 * 1024; // 10MB
-    const oversizedFiles = files.filter(f => f.size > maxSize);
+    const oversizedFiles = files.filter((f) => f.size > maxSize);
     if (oversizedFiles.length > 0) {
         if (feedbackEl) {
             feedbackEl.innerHTML = `
@@ -17597,17 +17597,17 @@ async function validateCACertFiles(event) {
             `;
             feedbackEl.className = "mt-2 text-sm";
         }
-        event.target.value = '';
+        event.target.value = "";
         return;
     }
 
     // Check file extensions
-    const validExtensions = ['.pem', '.crt', '.cer', '.cert'];
-    const invalidFiles = files.filter(file => {
+    const validExtensions = [".pem", ".crt", ".cer", ".cert"];
+    const invalidFiles = files.filter((file) => {
         const fileName = file.name.toLowerCase();
-        return !validExtensions.some(ext => fileName.endsWith(ext));
+        return !validExtensions.some((ext) => fileName.endsWith(ext));
     });
-    
+
     if (invalidFiles.length > 0) {
         if (feedbackEl) {
             feedbackEl.innerHTML = `
@@ -17618,7 +17618,7 @@ async function validateCACertFiles(event) {
             `;
             feedbackEl.className = "mt-2 text-sm";
         }
-        event.target.value = '';
+        event.target.value = "";
         return;
     }
 
@@ -17629,20 +17629,20 @@ async function validateCACertFiles(event) {
             const content = await readFileAsync(file);
             const isValid = isValidCertificate(content);
             const certInfo = isValid ? parseCertificateInfo(content) : null;
-            
+
             certResults.push({
-                file: file,
-                content: content,
-                isValid: isValid,
-                certInfo: certInfo
+                file,
+                content,
+                isValid,
+                certInfo
             });
         } catch (error) {
             certResults.push({
-                file: file,
+                file,
                 content: null,
                 isValid: false,
                 certInfo: null,
-                error: error.message
+                error: error.message,
             });
         }
     }
@@ -17651,26 +17651,30 @@ async function validateCACertFiles(event) {
     displayCertValidationResults(certResults, feedbackEl);
 
     // If all valid, order and concatenate
-    const allValid = certResults.every(r => r.isValid);
+    const allValid = certResults.every((r) => r.isValid);
     if (allValid) {
         const orderedCerts = orderCertificateChain(certResults);
-        const concatenated = orderedCerts.map(r => r.content.trim()).join('\n');
-        
+        const concatenated = orderedCerts
+            .map((r) => r.content.trim())
+            .join("\n");
+
         // Store concatenated result in a hidden field
-        let hiddenInput = document.getElementById('ca_certificate_concatenated');
+        let hiddenInput = document.getElementById(
+            "ca_certificate_concatenated",
+        );
         if (!hiddenInput) {
-            hiddenInput = document.createElement('input');
-            hiddenInput.type = 'hidden';
-            hiddenInput.id = 'ca_certificate_concatenated';
-            hiddenInput.name = 'ca_certificate';
+            hiddenInput = document.createElement("input");
+            hiddenInput.type = "hidden";
+            hiddenInput.id = "ca_certificate_concatenated";
+            hiddenInput.name = "ca_certificate";
             event.target.form.appendChild(hiddenInput);
         }
         hiddenInput.value = concatenated;
-        
+
         // Update drop zone
         updateDropZoneWithFiles(files);
     } else {
-        event.target.value = '';
+        event.target.value = "";
     }
 }
 
@@ -17683,7 +17687,7 @@ function readFileAsync(file) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = (e) => resolve(e.target.result);
-        reader.onerror = () => reject(new Error('Error reading file'));
+        reader.onerror = () => reject(new Error("Error reading file"));
         reader.readAsText(file);
     });
 }
@@ -17698,19 +17702,19 @@ function parseCertificateInfo(content) {
     // In a real implementation, you'd parse the ASN.1 structure properly
     const subjectMatch = content.match(/Subject:([^\n]+)/i);
     const issuerMatch = content.match(/Issuer:([^\n]+)/i);
-    
+
     // If we can't parse, assume it's an intermediate
     if (!subjectMatch || !issuerMatch) {
         return { isRoot: false };
     }
-    
+
     const subject = subjectMatch[1].trim();
     const issuer = issuerMatch[1].trim();
-    
+
     return {
         isRoot: subject === issuer,
-        subject: subject,
-        issuer: issuer
+        subject,
+        issuer
     };
 }
 
@@ -17720,9 +17724,11 @@ function parseCertificateInfo(content) {
  * @returns {Array} - Ordered array of certificate results
  */
 function orderCertificateChain(certResults) {
-    const roots = certResults.filter(r => r.certInfo && r.certInfo.isRoot);
-    const nonRoots = certResults.filter(r => r.certInfo && !r.certInfo.isRoot);
-    
+    const roots = certResults.filter((r) => r.certInfo && r.certInfo.isRoot);
+    const nonRoots = certResults.filter(
+        (r) => r.certInfo && !r.certInfo.isRoot,
+    );
+
     // Simple ordering: roots first, then rest
     // In production, you'd build a proper chain by matching issuer/subject
     return [...roots, ...nonRoots];
@@ -17734,10 +17740,10 @@ function orderCertificateChain(certResults) {
  * @param {HTMLElement} feedbackEl - Element to display feedback
  */
 function displayCertValidationResults(certResults, feedbackEl) {
-    const allValid = certResults.every(r => r.isValid);
-    
+    const allValid = certResults.every((r) => r.isValid);
+
     let html = '<div class="space-y-2">';
-    
+
     // Overall status
     if (allValid) {
         html += `
@@ -17754,17 +17760,18 @@ function displayCertValidationResults(certResults, feedbackEl) {
             </div>
         `;
     }
-    
+
     // Per-file results
     html += '<div class="mt-3 space-y-1">';
     for (const result of certResults) {
-        const icon = result.isValid 
+        const icon = result.isValid
             ? '<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
             : '<svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
-        
-        const statusClass = result.isValid ? 'text-gray-700' : 'text-red-700';
-        const typeLabel = result.certInfo && result.certInfo.isRoot ? ' (Root CA)' : '';
-        
+
+        const statusClass = result.isValid ? "text-gray-700" : "text-red-700";
+        const typeLabel =
+            result.certInfo && result.certInfo.isRoot ? " (Root CA)" : "";
+
         html += `
             <div class="flex items-center ${statusClass}">
                 ${icon}
@@ -17772,8 +17779,8 @@ function displayCertValidationResults(certResults, feedbackEl) {
             </div>
         `;
     }
-    html += '</div></div>';
-    
+    html += "</div></div>";
+
     feedbackEl.innerHTML = html;
     feedbackEl.className = "mt-2 text-sm";
 }
@@ -17790,15 +17797,16 @@ function isValidCertificate(content) {
     // Check for PEM certificate markers
     const beginCertPattern = /-----BEGIN CERTIFICATE-----/;
     const endCertPattern = /-----END CERTIFICATE-----/;
-    
+
     if (!beginCertPattern.test(content) || !endCertPattern.test(content)) {
         return false;
     }
 
     // Check for proper structure
-    const certPattern = /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
+    const certPattern =
+        /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
     const matches = content.match(certPattern);
-    
+
     if (!matches || matches.length === 0) {
         return false;
     }
@@ -17806,10 +17814,10 @@ function isValidCertificate(content) {
     // Validate base64 content between markers
     for (const cert of matches) {
         const base64Content = cert
-            .replace(/-----BEGIN CERTIFICATE-----/, '')
-            .replace(/-----END CERTIFICATE-----/, '')
-            .replace(/\s/g, '');
-        
+            .replace(/-----BEGIN CERTIFICATE-----/, "")
+            .replace(/-----END CERTIFICATE-----/, "")
+            .replace(/\s/g, "");
+
         // Check if content is valid base64
         if (!isValidBase64(base64Content)) {
             return false;
@@ -17833,7 +17841,7 @@ function isValidBase64(str) {
     if (str.length === 0) {
         return false;
     }
-    
+
     // Base64 regex pattern
     const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
     return base64Pattern.test(str);
@@ -17844,12 +17852,15 @@ function isValidBase64(str) {
  * @param {File} file - The selected file
  */
 function updateDropZoneWithFiles(files) {
-    const dropZone = document.getElementById('ca-certificate-upload-drop-zone');
-    if (!dropZone) return;
+    const dropZone = document.getElementById("ca-certificate-upload-drop-zone");
+    if (!dropZone) {return;}
 
     const fileListHTML = Array.from(files)
-        .map(file => `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`)
-        .join('');
+        .map(
+            (file) =>
+                `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`,
+        )
+        .join("");
 
     dropZone.innerHTML = `
         <div class="space-y-2">
@@ -17870,11 +17881,11 @@ function updateDropZoneWithFiles(files) {
  * @returns {string} - Formatted file size
  */
 function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
+    if (bytes === 0) {return '0 Bytes';}
     const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
 }
 
 /**
@@ -17882,38 +17893,38 @@ function formatFileSize(bytes) {
  * Called on DOMContentLoaded
  */
 function initializeCACertUpload() {
-    const dropZone = document.getElementById('ca-certificate-upload-drop-zone');
-    const fileInput = document.getElementById('upload-ca-certificate');
-    
+    const dropZone = document.getElementById("ca-certificate-upload-drop-zone");
+    const fileInput = document.getElementById("upload-ca-certificate");
+
     if (dropZone && fileInput) {
         // Click to upload
-        dropZone.addEventListener('click', function(e) {
+        dropZone.addEventListener("click", function(e) {
             fileInput.click();
         });
 
         // Drag and drop handlers
-        dropZone.addEventListener('dragover', function(e) {
+        dropZone.addEventListener("dragover", function(e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.add('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+            dropZone.classList.add("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
         });
 
-        dropZone.addEventListener('dragleave', function(e) {
+        dropZone.addEventListener("dragleave", function(e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
+            dropZone.classList.remove("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
         });
 
-        dropZone.addEventListener('drop', function(e) {
+        dropZone.addEventListener("drop", function(e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.remove('border-indigo-500', 'bg-indigo-50', 'dark:bg-indigo-900/20');
-            
+            dropZone.classList.remove("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
+
             const files = e.dataTransfer.files;
             if (files.length > 0) {
                 fileInput.files = files;
                 // Trigger the validation
-                const event = new Event('change', { bubbles: true });
+                const event = new Event("change", { bubbles: true });
                 fileInput.dispatchEvent(event);
             }
         });
