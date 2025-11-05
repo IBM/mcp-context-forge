@@ -72,7 +72,9 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
-from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.models import InitializeResult
+from mcpgateway.models import JSONRPCError as PydanticJSONRPCError
+from mcpgateway.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
@@ -702,15 +704,16 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
              violation details.
 
     Returns:
-        JSONResponse: A 403 response with access forbidden.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
         >>> from mcpgateway.plugins.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin violation error
         >>> mock_error = PluginViolationError(message="plugin violation",violation = PluginViolation(
         ...     reason="Invalid input",
         ...     description="The input contains prohibited content",
@@ -719,11 +722,31 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         ... ))
         >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
         >>> result.status_code
-        403
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32602
+        >>> "Plugin Violation:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'PROHIBITED_CONTENT'
     """
     policy_violation = exc.violation.model_dump() if exc.violation else {}
+    message = exc.violation.description if exc.violation else "A plugin violation occurred."
     policy_violation["message"] = exc.message
-    return JSONResponse(status_code=403, content=policy_violation)
+    status_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+    violation_details: dict[str, Any] = {}
+    if exc.violation:
+        if exc.violation.description:
+            violation_details["description"] = exc.violation.description
+        if exc.violation.details:
+            violation_details["details"] = exc.violation.details
+        if exc.violation.code:
+            violation_details["plugin_error_code"] = exc.violation.code
+        if exc.violation.plugin_name:
+            violation_details["plugin_name"] = exc.violation.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 @app.exception_handler(PluginError)
@@ -740,15 +763,16 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
              violation details.
 
     Returns:
-        JSONResponse: A 500 response with internal server error.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
+        >>> from mcpgateway.plugins.framework import PluginError
         >>> from mcpgateway.plugins.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin error
         >>> mock_error = PluginError(error = PluginErrorModel(
         ...     message="plugin error",
         ...     code="timeout",
@@ -757,10 +781,29 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         ... ))
         >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
         >>> result.status_code
-        500
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32603
+        >>> "Plugin Error:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'timeout'
+        >>> content["error"]["data"]["plugin_name"]
+        'abc'
     """
-    error_obj = exc.error.model_dump() if exc.error else {}
-    return JSONResponse(status_code=500, content=error_obj)
+    message = exc.error.message if exc.error else "A plugin error occurred."
+    status_code = exc.error.mcp_error_code if exc.error else -32603
+    error_details: dict[str, Any] = {}
+    if exc.error:
+        if exc.error.details:
+            error_details["details"] = exc.error.details
+        if exc.error.code:
+            error_details["plugin_error_code"] = exc.error.code
+        if exc.error.plugin_name:
+            error_details["plugin_name"] = exc.error.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
