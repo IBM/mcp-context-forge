@@ -4,11 +4,11 @@
 
 ---
 
-## [0.9.0] - 2025-11-04 [WIP] - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
+## [0.9.0] - 2025-11-05 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
 
-This release delivers **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
+This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
 
 - **📄 REST API & UI Pagination** - Comprehensive pagination support for all admin endpoints with HTMX-based UI and performance testing up to 10K records
 - **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
@@ -101,7 +101,32 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Keycloak Integration** (#1217, #1216, #1109) - Full Keycloak support with application/x-www-form-urlencoded
 * **OAuth Timeout Configuration** (#1201) - Configurable `OAUTH_DEFAULT_TIMEOUT` for OAuth providers
 
-#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
+#### **� Ed25519 Certificate Signing** - Enhanced certificate validation and integrity verification
+* **Digital Certificate Signing** - Sign and verify certificates using Ed25519 cryptographic signatures
+  - Ensures certificate authenticity and prevents tampering
+  - Built on proven Ed25519 algorithm (RFC 8032) for high security and performance
+  - Zero-dependency Python implementation using `cryptography` library
+* **Key Generation Utility** - Built-in key generation tool at `mcpgateway/utils/generate_keys.py`
+  - Generates secure Ed25519 private keys in base64 format
+  - Simple command-line interface for development and production use
+* **Key Rotation Support** - Graceful key rotation with zero downtime
+  - Configure both current (`ED25519_PRIVATE_KEY`) and previous (`PREV_ED25519_PRIVATE_KEY`) keys
+  - Automatic fallback to previous key for verification during rotation period
+  - Supports rolling updates in distributed deployments
+* **Environment Variable Configuration** - Three new environment variables for certificate signing
+  - `ENABLE_ED25519_SIGNING` - Enable/disable signing (default: "false")
+  - `ED25519_PRIVATE_KEY` - Current signing key (base64-encoded)
+  - `PREV_ED25519_PRIVATE_KEY` - Previous key for rotation support (base64-encoded)
+* **Kubernetes & Helm Support** - Full integration with Helm chart deployment
+  - Secret management via `values.yaml` configuration
+  - JSON Schema validation in `values.schema.json`
+  - External Secrets Operator integration examples
+* **Production Ready** - Comprehensive documentation and security best practices
+  - Complete documentation in main README.md
+  - Helm chart documentation with Kubernetes examples
+  - Security guidelines for key storage and rotation
+
+#### **�🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
 * **🦀 Rust Plugin Framework** (#1289, #1249) - Optional Rust-accelerated plugins with automatic Python fallback
   - Complete PyO3-based framework for building high-performance plugins
   - **PII Filter (Rust)**: 5-100x faster than Python implementation with identical functionality
