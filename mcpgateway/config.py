@@ -844,32 +844,36 @@ class Settings(BaseSettings):
 
     @field_validator("sso_issuers", mode="before")
     @classmethod
-    def parse_issuers(cls, v: Any) -> set[str]:
+    def parse_issuers(cls, v: Any) -> list[str]:
         """
         Parse and validate the SSO issuers configuration value.
 
-        Accepts either a JSON array string (e.g. '["https://idp1.com", "https://idp2.com"]')
-        or an already-parsed list of issuer URLs. This allows environment variables to
-        provide issuers as JSON while still supporting direct list assignment in code.
-
-        Args:
-            v: The input value for SSO issuers, either a JSON array string
-                or a Python list.
+        Accepts:
+        - JSON array string: '["https://idp1.com", "https://idp2.com"]'
+        - Comma-separated string: "https://idp1.com, https://idp2.com"
+        - Empty string or None → []
+        - Already-parsed list
 
         Returns:
-            list: A list of issuer URLs.
-
-        Raises:
-            ValueError: If the string input cannot be parsed as JSON.
+            list[str]: Parsed list of issuer URLs.
         """
-
-        # Accept either a JSON array string or actual list
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
-            try:
-                return json.loads(v)  # type: ignore[no-any-return]
-            except json.JSONDecodeError:
-                raise ValueError(f"SSO_ISSUERS must be a JSON array of URLs, got: {v!r}")
-        return v  # type: ignore[no-any-return]
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError:
+                    raise ValueError(f"Invalid JSON for SSO_ISSUERS: {v!r}")
+            # Fallback to comma-separated parsing
+            return [item.strip() for item in s.split(",") if item.strip()]
+        raise ValueError("Invalid type for SSO_ISSUERS")
 
     # Resources
     resource_cache_size: int = 1000
