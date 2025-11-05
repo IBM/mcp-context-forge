@@ -1649,20 +1649,31 @@ class TestToolService:
         mock_gateway.enabled = True
         mock_gateway.reachable = True
         mock_gateway.id = mock_tool.gateway_id
+        mock_gateway.slug="test-gateway"
+        mock_gateway.capabilities = {"tools": {"listChanged": True}}
+        mock_gateway.transport = "SSE"
+        mock_gateway.passthrough_headers = []
 
-        # Use a robust side_effect function like other working tests
-        returns = [mock_tool, mock_tool, mock_gateway]
+        # Ensure the service reads headers from the gateway attached to the tool
+        # The invoke path uses `gateway = tool.gateway` for auth header calculation
+        mock_tool.gateway = mock_gateway
+
+        # Two DB selects occur in this path: first for tool, then for gateway
+        # Return the tool on first call and the gateway on second call
+        returns = [mock_tool, mock_gateway]
 
         def execute_side_effect(*_args, **_kwargs):
             if returns:
                 value = returns.pop(0)
             else:
-                # After initial queries, keep returning gateway for any additional queries
                 value = mock_gateway
 
-            m = Mock()
-            m.scalar_one_or_none.return_value = value
-            return m
+            # Return an object whose scalar_one_or_none() returns the real value
+            class Result:
+                def scalar_one_or_none(self_inner):
+                    return value
+
+            return Result()
 
         test_db.execute = Mock(side_effect=execute_side_effect)
 
@@ -1701,6 +1712,7 @@ class TestToolService:
         sse_client_mock.assert_called_once_with(
             url=mock_gateway.url,
             headers={"Authorization": "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="},
+            httpx_client_factory=ANY,
         )
 
     @pytest.mark.asyncio
