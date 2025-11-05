@@ -2704,6 +2704,9 @@
                   <!-- Status Messages -->
                   <div id="dropdown-status" class="hidden mb-4 text-xs"></div>
 
+                  <!-- Import Result Section -->
+                  <div id="dropdown-import-result" class="hidden mb-4"></div>
+
                   <!-- Action Buttons -->
                   <div class="flex justify-between items-center">
                     <button
@@ -11581,6 +11584,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         window.performDropdownImport = async function (data) {
           const importBtn = document.getElementById("dropdown-import-btn");
           const status = document.getElementById("dropdown-status");
+          const sampleSection = document.querySelector('.mt-3.p-3.bg-gray-50');
+          const importResultSection = document.getElementById("dropdown-import-result");
 
           importBtn.disabled = true;
           importBtn.textContent = "Importing...";
@@ -11599,27 +11604,71 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             const result = await response.json();
 
-            if (response.ok) {
-              showDropdownStatus(
-                "success",
-                `✅ Successfully imported ${result.imported} tools`,
-              );
-              resetDropdownImport();
-              setTimeout(() => {
-                window.location.reload();
-              }, 2000);
-            } else {
-              showDropdownStatus(
-                "error",
-                `❌ Import failed: ${result.detail || "Unknown error"}`,
-              );
+            // Collapse sample template section
+            if (sampleSection) {
+              sampleSection.style.display = 'none';
             }
+
+            // Show detailed import results
+            if (importResultSection) {
+              importResultSection.classList.remove('hidden');
+              
+              const totalTools = data.length;
+              const imported = result.imported || 0;
+              const failed = totalTools - imported;
+              
+              let resultHTML = `
+                <div class="bg-white dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+                  <h5 class="text-sm font-semibold mb-3 text-gray-900 dark:text-gray-100">📊 Import Results</h5>
+                  <div class="grid grid-cols-3 gap-3 mb-3">
+                    <div class="text-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
+                      <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">${totalTools}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Total</div>
+                    </div>
+                    <div class="text-center p-2 bg-green-50 dark:bg-green-900/20 rounded">
+                      <div class="text-2xl font-bold text-green-600 dark:text-green-400">${imported}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Uploaded</div>
+                    </div>
+                    <div class="text-center p-2 bg-red-50 dark:bg-red-900/20 rounded">
+                      <div class="text-2xl font-bold text-red-600 dark:text-red-400">${failed}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Failed</div>
+                    </div>
+                  </div>
+              `;
+
+              if (response.ok && imported > 0) {
+                resultHTML += `<div class="text-sm text-green-600 dark:text-green-400 mb-2">✅ Successfully imported ${imported} tool${imported !== 1 ? 's' : ''}</div>`;
+              }
+              
+              if (failed > 0) {
+                resultHTML += `<div class="text-sm text-red-600 dark:text-red-400 mb-2">❌ ${failed} tool${failed !== 1 ? 's' : ''} failed to import</div>`;
+                if (result.detail) {
+                  resultHTML += `<div class="text-xs text-gray-600 dark:text-gray-400 mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded">Error: ${result.detail}</div>`;
+                }
+              }
+
+              resultHTML += `
+                  <button onclick="closeImportResult()" class="mt-3 w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded">
+                    Close & Refresh
+                  </button>
+                </div>
+              `;
+              
+              importResultSection.innerHTML = resultHTML;
+            }
+
+            status.classList.add('hidden');
+            
           } catch (error) {
             showDropdownStatus("error", `❌ Network error: ${error.message}`);
           } finally {
             importBtn.disabled = false;
             importBtn.textContent = "Import Tools";
           }
+        };
+
+        window.closeImportResult = function() {
+          window.location.reload();
         };
 
         // Close dropdown when clicking outside
