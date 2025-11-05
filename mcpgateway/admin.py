@@ -44,13 +44,13 @@ from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.models import LogLevel
@@ -11262,12 +11262,12 @@ async def admin_generate_support_bundle(
 
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
-async def get_observability_partial(request: Request, user=Depends(get_current_user_with_permissions)):
+async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the observability dashboard partial.
 
     Args:
         request: FastAPI request object
-        user: Authenticated user with admin permissions
+        _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
         HTMLResponse: Rendered observability dashboard template
@@ -11277,35 +11277,28 @@ async def get_observability_partial(request: Request, user=Depends(get_current_u
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
-async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), user=Depends(get_current_user_with_permissions)):
+async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics for the dashboard.
 
     Args:
         request: FastAPI request object
         hours: Number of hours to look back for statistics (1-168)
-        user: Authenticated user with admin permissions
+        _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
         HTMLResponse: Rendered statistics template with trace counts and averages
     """
-    # Standard
-    from datetime import datetime, timedelta
-
-    # Third-Party
-    from sqlalchemy import func
-
-    # First-Party
-    from mcpgateway.db import ObservabilityTrace
-
     db = next(get_db())
     try:
         cutoff_time = datetime.now() - timedelta(hours=hours)
 
+        # pylint: disable=not-callable
         total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar() or 0
 
         success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar() or 0
 
         error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar() or 0
+        # pylint: enable=not-callable
 
         avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
 
@@ -11322,7 +11315,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
-async def get_observability_traces(request: Request, time_range: str = Query("24h"), status_filter: str = Query("all"), limit: int = Query(50), user=Depends(get_current_user_with_permissions)):
+async def get_observability_traces(request: Request, time_range: str = Query("24h"), status_filter: str = Query("all"), limit: int = Query(50), _user=Depends(get_current_user_with_permissions)):
     """Get list of traces for the dashboard.
 
     Args:
@@ -11330,17 +11323,11 @@ async def get_observability_traces(request: Request, time_range: str = Query("24
         time_range: Time range filter (1h, 6h, 24h, 7d)
         status_filter: Status filter (all, ok, error)
         limit: Maximum number of traces to return
-        user: Authenticated user with admin permissions
+        _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
         HTMLResponse: Rendered traces list template
     """
-    # Standard
-    from datetime import datetime, timedelta
-
-    # First-Party
-    from mcpgateway.db import ObservabilityTrace
-
     db = next(get_db())
     try:
         # Parse time range
@@ -11364,13 +11351,13 @@ async def get_observability_traces(request: Request, time_range: str = Query("24
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
-async def get_observability_trace_detail(request: Request, trace_id: str, user=Depends(get_current_user_with_permissions)):
+async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
     """Get detailed trace information with spans.
 
     Args:
         request: FastAPI request object
         trace_id: UUID of the trace to retrieve
-        user: Authenticated user with admin permissions
+        _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
         HTMLResponse: Rendered trace detail template with waterfall view
@@ -11378,12 +11365,6 @@ async def get_observability_trace_detail(request: Request, trace_id: str, user=D
     Raises:
         HTTPException: 404 if trace not found
     """
-    # Third-Party
-    from sqlalchemy.orm import joinedload
-
-    # First-Party
-    from mcpgateway.db import ObservabilitySpan, ObservabilityTrace
-
     db = next(get_db())
     try:
         trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
