@@ -251,6 +251,22 @@
           },
           "additionalProperties": false
         },
+        
+        "pluginConfig": {
+          "type": "object",
+          "description": "Plugin configuration via ConfigMap",
+          "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Enable plugin configuration loading via ConfigMap",
+                "default": false
+            },
+            "plugins": {
+              "type": "string",
+              "description": "Plugin configuration file contents (YAML)"
+            }
+          }
+        },
         "env": {
           "type": "object",
           "description": "Environment configuration",
