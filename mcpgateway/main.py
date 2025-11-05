@@ -1213,7 +1213,7 @@ from mcpgateway.toolops.services import validation_generate_test_cases
 async def generate_testcases_for_tool(tool_id: str = Query(None, description="Tool ID"),\
                                       number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),\
                                       number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),\
-                                      mode:str = Query("generate", description= "Two modes: 'generate' for test case generation, 'query' for obtaining test cases from DB"),\
+                                      mode:str = Query("generate", description= "Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),\
                                       db: Session = Depends(get_db)) -> List[Dict]:
     """
     Generate test cases for a tool
