@@ -2704,6 +2704,9 @@
                   <!-- Status Messages -->
                   <div id="dropdown-status" class="hidden mb-4 text-xs"></div>
 
+                  <!-- Import Result Section -->
+                  <div id="dropdown-import-result" class="hidden mb-4"></div>
+
                   <!-- Action Buttons -->
                   <div class="flex justify-between items-center">
                     <button
@@ -4154,11 +4157,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <th
                     class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
                   >
-                    Owner
-                  </th>
-                  <th
-                    class="px-3 py-3 text-left text-xs font-medium text-gray-800 dark:text-gray-200 uppercase tracking-wider"
-                  >
                     Team
                   </th>
                   <th
@@ -4274,11 +4272,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   >
                     {{ gateway.lastSeen.strftime('%Y-%m-%d %H:%M:%S') if
                     gateway.lastSeen else 'Never' }}
-                  </td>
-                  <td
-                    class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400"
-                  >
-                    {{ gateway.ownerEmail }}
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
@@ -5470,153 +5463,144 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             >
               Registered A2A Agents
             </h3>
-            <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200">
-                <thead class="bg-gray-50 dark:bg-gray-700">
-                  <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">ID</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Endpoint</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tags</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Reachability</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Visibility</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
-                    </tr>
-                </thead>
-                <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
-                  {% if a2a_agents %}
-                    {% for agent in a2a_agents %}
-                    <tr>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                        <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.endpointUrl }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        {% if agent.tags %}
-                          {% for tag in agent.tags %}
-                            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1">{{ tag }}</span>
-                          {% endfor %}
-                        {% endif %}
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.agentType }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        <div class="flex flex-col gap-1">
-                          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">{% if agent.enabled %}Active{% else %}Inactive{% endif %}</span>
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                        <div class="flex flex-col gap-1">
-                          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">{% if agent.reachable %}Reachable{% else %}Unreachable{% endif %}</span>
-                        </div>
-                      </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.ownerEmail }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.team }}</td>
-                      <td class="px-6 py-4 whitespace-nowrap">
-                    {% if agent.visibility == 'private' %}
-                    <span
-                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800"
-                      >Private</span
+            <div class="space-y-4">
+              {% if a2a_agents %} {% for agent in a2a_agents %}
+              <div
+                class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 space-y-3"
+              >
+                <div class="flex items-start justify-between">
+                  <div class="flex-1">
+                    <h4
+                      class="text-lg font-medium text-gray-900 dark:text-gray-200"
                     >
-                    {% elif agent.visibility == 'team' %}
-                    <span
-                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800"
-                      >Team</span
-                    >
-                    {% elif agent.visibility == 'public' %}
-                    <span
-                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800"
-                      >Public</span
-                    >
-                    {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs"
-                      >N/A</span
-                    >
+                      {{ agent.name }}
+                    </h4>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                      {{ agent.description or "" }}
+                    </p>
+                    <div class="mt-2 flex flex-wrap gap-2">
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}"
+                      >
+                        {% if agent.enabled %}Active{% else %}Inactive{% endif
+                        %}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}"
+                      >
+                        {% if agent.reachable %}Reachable{% else %}Unreachable{%
+                        endif %}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                      >
+                        {{ agent.agentType }}
+                      </span>
+                      <span
+                        class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800"
+                      >
+                        Auth: {{ agent.authType or "None" }}
+                      </span>
+                    </div>
+                    <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                      <div>Endpoint: {{ agent.endpointUrl }}</div>
+                      <div>
+                        Executions: {{ agent.metrics.totalExecutions }} |
+                        Success Rate: {% if agent.metrics.totalExecutions %}{{
+                        "%.1f"|format(100 - agent.metrics.failureRate) }}%{%
+                        else %}N/A{% endif %}
+                      </div>
+                      <div>
+                        Created: {{ agent.createdAt.strftime('%Y-%m-%d
+                        %H:%M:%S') }}
+                      </div>
+                      {% if agent.lastInteraction %}
+                      <div>
+                        Last Interaction: {{
+                        agent.lastInteraction.strftime('%Y-%m-%d %H:%M:%S') }}
+                      </div>
+                      {% endif %}
+                    </div>
+                    {% if agent.tags %}
+                    <div class="mt-2 flex flex-wrap gap-1">
+                      {% for tag in agent.tags %}
+                      <span
+                        class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300"
+                        >{{ tag }}</span
+                      >
+                      {% endfor %}
+                    </div>
                     {% endif %}
-                  </td>
-                  <td class="px-6 py-4 whitespace-nowrap text-sm font-medium w-32">
-                        <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                          <!-- Row 1: Test (full width) -->
-                          <button
-
-                            onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
-                            class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 transition-colors"
-                            x-tooltip="'💡Execute this A2A Agent test'"
-                          >
-                            Test
-                          </button>
-
-                          <!-- Row 2: View | Edit -->
-                          <button
-                            onclick="viewAgent('{{ agent.id }}')"
-                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 transition-colors"
-                            x-tooltip="'💡View agent details'"
-                          >
-                            View
-                          </button>
-                          <button
-                            onclick="editA2AAgent('{{ agent.id }}')"
-                            class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
-                            x-tooltip="'💡Edit agent configuration'"
-                          >
-                            Edit
-                          </button>
-
-                          <!-- Row 3: Activate/Deactivate | Delete -->
-                          <div class="col-span-2 flex flex-col space-y-1">
-                            {% if agent.enabled %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
-                              <input type="hidden" name="activate" value="false" />
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 transition-colors"
-                                x-tooltip="'💡Temporarily disable this A2A agent'"
-                              >
-                                Deactivate
-                              </button>
-                            </form>
-                            {% else %}
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle" class="contents">
-                              <input type="hidden" name="activate" value="true" />
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 transition-colors"
-                                x-tooltip="'💡Re-enable this A2A agent'"
-                              >
-                                Activate
-                              </button>
-                            </form>
-                            {% endif %}
-
-                            <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" onsubmit="return confirm('Are you sure you want to delete this A2A agent?')">
-                              <button
-                                type="submit"
-                                class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 transition-colors"
-                                x-tooltip="'💡Permanently delete this A2A agent'"
-                              >
-                                Delete
-                              </button>
-                            </form>
-                          </div>
-                        </div>
-                        <!-- Test result placeholder: updated by admin.js testA2AAgent -->
-                        <div id="test-result-{{ agent.id }}" class="hidden test-result mt-2 text-sm" role="status" aria-live="polite"></div>
-                      </td>
-                    </tr>
-                    {% endfor %}
-                  {% else %}
-                    <tr>
-                      <td colspan="12" class="text-center py-8 text-gray-500 dark:text-gray-400">No A2A agents registered yet.</td>
-                    </tr>
-                  {% endif %}
-                </tbody>
-              </table>
+                    <!-- Test result placeholder -->
+                    <div
+                      id="test-result-{{ agent.id }}"
+                      class="mt-2 p-2 rounded-md bg-gray-50 dark:bg-gray-700 hidden"
+                    ></div>
+                  </div>
+                  <div class="flex space-x-2">
+                    <!--- Adding a2a-agents VIEW HERE -->
+                    <button
+                      onclick="viewAgent('{{ agent.id }}')"
+                      class="px-3 py-1 text-sm font-medium text-indigo-700 bg-indigo-100 hover:bg-indigo-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      x-tooltip="'💡View Agent A2A details and configuration'"
+                    >
+                      View
+                    </button>
+                    <!--- Adding a2a-agents EDIT HERE -->
+                    <button
+                      onclick="editA2AAgent('{{ agent.id }}')"
+                      class="px-3 py-1 text-sm font-medium text-green-700 bg-green-100 hover:bg-green-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                      x-tooltip="'Edit Agent A2A details and configuration'"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onclick="testA2AAgent('{{ agent.id }}', '{{ agent.name }}', '{{ agent.endpointUrl }}')"
+                      class="px-3 py-1 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                    >
+                      Test
+                    </button>
+                    <form
+                      method="post"
+                      action="{{ root_path }}/admin/a2a/{{ agent.id }}/toggle"
+                      class="inline"
+                    >
+                      <input
+                        type="hidden"
+                        name="activate"
+                        value="{% if agent.enabled %}false{% else %}true{% endif %}"
+                      />
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium {% if agent.enabled %}text-red-700 bg-red-100 hover:bg-red-200{% else %}text-green-700 bg-green-100 hover:bg-green-200{% endif %} rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                      >
+                        {% if agent.enabled %}Deactivate{% else %}Activate{%
+                        endif %}
+                      </button>
+                    </form>
+                    <form
+                      method="post"
+                      action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete"
+                      class="inline"
+                      onsubmit="return confirm('Are you sure you want to delete this A2A agent?')"
+                    >
+                      <button
+                        type="submit"
+                        class="px-3 py-1 text-sm font-medium text-red-700 bg-red-100 hover:bg-red-200 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                      >
+                        Delete
+                      </button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              {% endfor %} {% else %}
+              <div class="text-center py-8">
+                <p class="text-gray-500 dark:text-gray-400">
+                  No A2A agents registered yet.
+                </p>
+              </div>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -7014,7 +6998,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                         name="output_schema"
                         id="edit-tool-output-schema"
                         class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                        placeholder="{&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;}"
+                        placeholder="{&quot;type&quot;: &quot;object&quot;, &quot;properties&quot;: {}}"
                       ></textarea>
                       <p class="mt-1 text-xs text-gray-500 dark:text-indigo-300">
                         Optional JSON Schema for validating structured tool output. Per MCP spec, servers should return structured results that conform to this schema.
@@ -7800,7 +7784,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <form
             id="gateway-test-form"
             class="space-y-4 text-gray-800 dark:text-gray-100"
-            novalidate
           >
             <div>
               <label
@@ -7864,31 +7847,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             <div>
               <label
-                for="gateway-test-content-type"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                >Content-Type</label
-              >
-              <select
-                id="gateway-test-content-type"
-                name="content_type"
-                class="mt-1 block w-full rounded-md shadow-sm p-1 bg-gray-200 dark:bg-gray-800"
-                onchange="updateBodyLabel()"
-              >
-                <option value="application/json">application/json</option>
-                <option value="application/x-www-form-urlencoded">application/x-www-form-urlencoded</option>
-              </select>
-            </div>
-
-            <div>
-              <label
                 for="gateway-test-body"
                 class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                id="gateway-test-body-label"
                 >Body (JSON)</label
               >
               <textarea
                 id="gateway-test-body"
-                name="body"
                 class="mt-1 block w-full rounded-md shadow-sm p-1 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-300 placeholder-gray-600 dark:placeholder-gray-400"
                 placeholder="Enter request body as JSON"
               ></textarea>
@@ -9635,7 +9599,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       }
 
       function updateSectionHeaders(teamId) {
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
+        const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways'];
 
         sections.forEach(section => {
           const header = document.querySelector('#' + section + '-section h2');
@@ -9729,27 +9693,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           `;
         }
 
-        else if (sectionType === 'a2a-agents') {
-          // Build a row matching the table columns for A2A agents
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(item.id)}</td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <div class="text-sm font-medium text-gray-900 dark:text-gray-200">${escapeHtml(item.name || '')}</div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.description || '')}</div>
-              <div class="mt-1">
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">${escapeHtml(item.ownerEmail || '')}</span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml(item.team || '')}</span>
-                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml((item.visibility || 'Private').charAt(0).toUpperCase() + (item.visibility || 'private').slice(1))}</span>
-              </div>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.endpointUrl || item.endpoint || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.agentType || item.type || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.enabled || item.isActive || item.is_active)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
-          `;
-        }
-
         return row;
       }
 
@@ -9769,16 +9712,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       }
 
       function createActionButtons(sectionType, item) {
-        // Map UI sectionType to backend path when needed (a2a-agents -> a2a)
-        const backendPath = sectionType === 'a2a-agents' ? 'a2a' : sectionType;
-
-        const isActiveFlag = item.isActive || item.enabled || item.is_active;
-        const activeButton = isActiveFlag ?
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+        const activeButton = item.isActive ?
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${sectionType}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="false" />
             <button type="submit" class="text-yellow-600 hover:text-yellow-900">Deactivate</button>
           </form>` :
-          `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
+          `<form method="POST" action="${window.ROOT_PATH}/admin/${sectionType}/${item.id}/toggle" class="inline mr-2" onsubmit="return handleToggleSubmit(event, '${sectionType}')">
             <input type="hidden" name="activate" value="true" />
             <button type="submit" class="text-blue-600 hover:text-blue-900">Activate</button>
           </form>`;
@@ -9792,12 +9731,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           buttons += `<button onclick="viewPrompt('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
         } else if (sectionType === 'servers') {
           buttons += `<button onclick="viewServer('${item.id}')" class="text-indigo-600 dark:text-indigo-500 hover:text-indigo-900 mr-2">View</button>`;
-        } else if (sectionType === 'a2a-agents') {
-          // Add A2A-specific Edit and Test buttons
-          const agentName = item.name || '';
-          const endpoint = item.endpointUrl || item.endpoint || '';
-          buttons += `<button onclick="editA2AAgent('${item.id}')" class="text-green-600 hover:text-green-900 mr-2">Edit</button>`;
-          buttons += `<button onclick="testA2AAgent('${item.id}', '${escapeHtml(agentName)}', '${escapeHtml(endpoint)}')" class="text-blue-600 hover:text-blue-900 mr-2">Test</button>`;
         }
 
         // Show Edit/Delete buttons - check ownership, admin status, and team owner permissions
@@ -9821,25 +9754,15 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         const editDisabled = canEdit ? '' : 'disabled';
         const editTitle = canEdit ? '' : 'title="You can only edit resources you own or resources in teams you manage"';
         const editClass = canEdit ? 'text-green-600 hover:text-green-900' : 'text-gray-400 cursor-not-allowed';
-        // Edit button: special-case for a2a-agents to call editA2AAgent
-        let editOnclick;
-        if (sectionType === 'a2a-agents') {
-          editOnclick = canEdit ? `onclick="editA2AAgent('${item.id}')"` : 'onclick="return false;"';
-        } else {
-          editOnclick = canEdit ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
-        }
+        const editOnclick = canEdit ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
         buttons += `<button ${editDisabled} ${editTitle} ${editOnclick} class="${editClass} mr-2">Edit</button>`;
 
         // Delete button
         const deleteDisabled = canEdit ? '' : 'disabled';
         const deleteTitle = canEdit ? '' : 'title="You can only delete resources you own or resources in teams you manage"';
         const deleteClass = canEdit ? 'text-red-600 hover:text-red-900' : 'text-gray-400 cursor-not-allowed';
-        // Delete: use form POST for backend actions; for a2a map to backendPath
-        if (canEdit) {
-          buttons += `<form method="POST" action="${window.ROOT_PATH}/admin/${backendPath}/${item.id}/delete" class="inline" onsubmit="return confirm('Are you sure you want to delete this item?')"><button type="submit" class="text-red-600 hover:text-red-900">Delete</button></form>`;
-        } else {
-          buttons += `<button disabled title="You can only delete resources you own or resources in teams you manage" class="text-gray-400 cursor-not-allowed">Delete</button>`;
-        }
+        const deleteOnclick = canEdit ? `onclick="delete${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
+        buttons += `<button ${deleteDisabled} ${deleteTitle} ${deleteOnclick} class="${deleteClass}">Delete</button>`;
 
         return buttons;
       }
@@ -10291,7 +10214,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         console.log('Exporting permissions...');
 
         // Collect all current permission data
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
+        const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways'];
         let exportData = {
           export_date: new Date().toISOString(),
           permissions: []
@@ -10339,7 +10262,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       function auditPermissions() {
         console.log('Auditing permissions...');
 
-  const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'];
+        const sections = ['tools', 'resources', 'prompts', 'servers', 'gateways'];
         let auditResults = {
           total_resources: 0,
           private_resources: 0,
@@ -10457,7 +10380,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
       // Initialize tag suggestions when page loads - using functions from admin.js
       document.addEventListener('DOMContentLoaded', function() {
-        ['tools', 'resources', 'prompts', 'servers', 'gateways', 'a2a-agents'].forEach(entityType => {
+        ['tools', 'resources', 'prompts', 'servers', 'gateways'].forEach(entityType => {
           // Use the corrected functions from admin.js
           if (typeof updateAvailableTags === 'function') {
             updateAvailableTags(entityType);
@@ -11661,6 +11584,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         window.performDropdownImport = async function (data) {
           const importBtn = document.getElementById("dropdown-import-btn");
           const status = document.getElementById("dropdown-status");
+          const sampleSection = document.querySelector('.mt-3.p-3.bg-gray-50');
+          const importResultSection = document.getElementById("dropdown-import-result");
 
           importBtn.disabled = true;
           importBtn.textContent = "Importing...";
@@ -11679,27 +11604,108 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
             const result = await response.json();
 
-            if (response.ok) {
-              showDropdownStatus(
-                "success",
-                `✅ Successfully imported ${result.imported} tools`,
-              );
-              resetDropdownImport();
-              setTimeout(() => {
-                window.location.reload();
-              }, 2000);
-            } else {
-              showDropdownStatus(
-                "error",
-                `❌ Import failed: ${result.detail || "Unknown error"}`,
-              );
+            // Collapse sample template section
+            if (sampleSection) {
+              sampleSection.style.display = 'none';
             }
+
+            // Show detailed import results
+            if (importResultSection) {
+              importResultSection.classList.remove('hidden');
+              
+              const totalTools = data.length;
+              const imported = result.imported || 0;
+              const failed = totalTools - imported;
+              
+              let resultHTML = `
+                <div class="bg-white dark:bg-gray-700 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+                  <h5 class="text-sm font-semibold mb-3 text-gray-900 dark:text-gray-100">📊 Import Results</h5>
+                  <div class="grid grid-cols-3 gap-3 mb-3">
+                    <div class="text-center p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
+                      <div class="text-2xl font-bold text-blue-600 dark:text-blue-400">${totalTools}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Total</div>
+                    </div>
+                    <div class="text-center p-2 bg-green-50 dark:bg-green-900/20 rounded">
+                      <div class="text-2xl font-bold text-green-600 dark:text-green-400">${imported}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Uploaded</div>
+                    </div>
+                    <div class="text-center p-2 bg-red-50 dark:bg-red-900/20 rounded">
+                      <div class="text-2xl font-bold text-red-600 dark:text-red-400">${failed}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Failed</div>
+                    </div>
+                  </div>
+              `;
+
+              if (response.ok && imported > 0) {
+                resultHTML += `<div class="text-sm text-green-600 dark:text-green-400 mb-2">✅ Successfully imported ${imported} tool${imported !== 1 ? 's' : ''}</div>`;
+              }
+              
+              if (failed > 0) {
+                resultHTML += `<div class="text-sm text-red-600 dark:text-red-400 mb-2">❌ ${failed} tool${failed !== 1 ? 's' : ''} failed to import</div>`;
+                
+                // Show detailed error messages for ALL failed tools in scrollable section
+                if (result.details && result.details.failed && result.details.failed.length > 0) {
+                  resultHTML += `
+                    <div class="mt-3 border-t border-gray-200 dark:border-gray-600 pt-3">
+                      <div class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Failed Tools (${result.details.failed.length}):</div>
+                      <div class="max-h-60 overflow-y-auto border-2 border-red-300 dark:border-red-700 rounded p-3 bg-gray-50 dark:bg-gray-800 space-y-2" style="scrollbar-width: thin; scrollbar-color: #ef4444 #f3f4f6;">
+                  `;
+                  result.details.failed.forEach((failedTool, idx) => {
+                    const toolName = failedTool.name || 'Unknown';
+                    const errorMsg = failedTool.error || 'Unknown error';
+                    resultHTML += `
+                      <div class="p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
+                        <div class="text-xs font-medium text-red-800 dark:text-red-300">${idx + 1}. ${escapeHtml(toolName)}</div>
+                        <div class="text-xs text-red-600 dark:text-red-400 mt-1 break-words">${escapeHtml(errorMsg)}</div>
+                      </div>
+                    `;
+                  });
+                  resultHTML += `</div></div>`;
+                } else if (result.errors && result.errors.length > 0) {
+                  // Fallback to errors array if details.failed is not available
+                  resultHTML += `
+                    <div class="mt-3 border-t border-gray-200 dark:border-gray-600 pt-3">
+                      <div class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2">Failed Tools (${result.errors.length}):</div>
+                      <div class="max-h-60 overflow-y-auto border-2 border-red-300 dark:border-red-700 rounded p-3 bg-gray-50 dark:bg-gray-800 space-y-2" style="scrollbar-width: thin; scrollbar-color: #ef4444 #f3f4f6;">
+                  `;
+                  result.errors.forEach((error, idx) => {
+                    const toolName = error.name || 'Unknown';
+                    const errorMsg = error.error?.message || error.error || 'Unknown error';
+                    resultHTML += `
+                      <div class="p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
+                        <div class="text-xs font-medium text-red-800 dark:text-red-300">${idx + 1}. ${escapeHtml(toolName)}</div>
+                        <div class="text-xs text-red-600 dark:text-red-400 mt-1 break-words">${escapeHtml(errorMsg)}</div>
+                      </div>
+                    `;
+                  });
+                  resultHTML += `</div></div>`;
+                } else if (result.detail) {
+                  resultHTML += `<div class="text-xs text-gray-600 dark:text-gray-400 mt-2 p-2 bg-gray-50 dark:bg-gray-800 rounded">Error: ${escapeHtml(result.detail)}</div>`;
+                }
+              }
+
+              resultHTML += `
+                  <button onclick="closeImportResult()" class="mt-3 w-full px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm rounded">
+                    Close & Refresh
+                  </button>
+                </div>
+              `;
+              
+              importResultSection.innerHTML = resultHTML;
+            }
+
+            status.classList.add('hidden');
+            
           } catch (error) {
             showDropdownStatus("error", `❌ Network error: ${error.message}`);
           } finally {
             importBtn.disabled = false;
             importBtn.textContent = "Import Tools";
           }
+        };
+
+        window.closeImportResult = function() {
+          window.location.reload();
         };
 
         // Close dropdown when clicking outside
