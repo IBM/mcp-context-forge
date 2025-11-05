@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Use Argon2id for encryption key
 
 Revision ID: a706a3320c56
@@ -19,8 +20,8 @@ from argon2.low_level import hash_secret_raw, Type
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from sqlalchemy import text
 import sqlalchemy as sa
+from sqlalchemy import text
 
 # First-Party
 from mcpgateway.config import settings
@@ -263,7 +264,7 @@ def _upgrade_json_client_secret(conn, table):
             continue
 
         old = cfg.get("client_secret")
-        new = _upgrade_value(old)   # your helper
+        new = _upgrade_value(old)  # your helper
         if not new:
             continue
 
@@ -295,7 +296,7 @@ def _downgrade_json_client_secret(conn, table):
             continue
 
         old = cfg.get("client_secret")
-        new = _downgrade_value(old)   # your helper
+        new = _downgrade_value(old)  # your helper
         if not new:
             continue
 

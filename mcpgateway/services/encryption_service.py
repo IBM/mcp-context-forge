@@ -45,7 +45,9 @@ class EncryptionService:
         False
     """
 
-    def __init__(self, encryption_secret: Union[SecretStr, str], time_cost: Optional[int] = None, memory_cost: Optional[int] = None, parallelism: Optional[int] = None, hash_len: int = 32, salt_len: int = 16):
+    def __init__(
+        self, encryption_secret: Union[SecretStr, str], time_cost: Optional[int] = None, memory_cost: Optional[int] = None, parallelism: Optional[int] = None, hash_len: int = 32, salt_len: int = 16
+    ):
         """Initialize the encryption handler.
 
         Args:
@@ -151,9 +153,27 @@ class EncryptionService:
 
         Returns:
             True if the string appears to be encrypted
+
+        Note:
+            Supports both legacy PBKDF2 (base64-wrapped Fernet) and new Argon2id
+            (JSON bundle) formats. Checks JSON format first, then falls back to
+            base64 check for legacy format.
         """
+        if not text:
+            return False
+
+        # Check for new Argon2id JSON bundle format
+        if text.startswith("{"):
+            try:
+                obj = json.loads(text)
+                if isinstance(obj, dict) and obj.get("kdf") == "argon2id":
+                    return True
+            except (json.JSONDecodeError, ValueError, KeyError):
+                # Not valid JSON or missing expected structure - continue to legacy check
+                pass
+
+        # Check for legacy PBKDF2 base64-wrapped Fernet format
         try:
-            # Try to decode as base64 and check if it looks like encrypted data
             decoded = base64.urlsafe_b64decode(text.encode())
             # Encrypted data should be at least 32 bytes (Fernet minimum)
             return len(decoded) >= 32
