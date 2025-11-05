@@ -55,7 +55,7 @@ services:
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
-      dockerfile: Containerfile     # Same one the Makefile builds
+      dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
     ports:
       - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
