@@ -13,5 +13,3 @@ data:
   POSTGRES_DB: mcp
   POSTGRES_USER: postgres
   POSTGRES_PASSWORD: changeme
-
-# Made with Bob
