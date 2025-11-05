@@ -65,22 +65,26 @@ async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: 
                 test_cases = post_process_nl_test_cases(nl_test_cases)
                 populate_testcases_table(tool_id,test_cases,"completed",db)
         elif mode == 'query':
-            # check if tool test cases exists in db
+            # check if tool test cases generation is complete and get test cases
             tool_record = query_testcases_table(tool_id,db)
             if tool_record:
                 if tool_record.run_status == 'completed':
                     test_cases = tool_record.test_cases
                     logger.info("Obtained exisitng test cases from the table for tool "+str(tool_id))
-                elif tool_record.run_status == 'in-progress' and tool_record.test_cases == []:
-                    test_cases = [{'status':'test case generation is in-progress for tool'+str(tool_id)}]
-                    logger.info("Test case generation is in-progress for the tool "+str(tool_id))
+        elif mode == 'status':
+            # check the test case generation status
+            tool_record = query_testcases_table(tool_id,db)
+            if tool_record :
+                status = tool_record.run_status
+                test_cases = [{'status':status,'tool_id':tool_id}]
+                logger.info("Test case generation status for the tool -"+str(tool_id)+", status -"+str(status))
             else:
-                test_cases = [{'status':'test case generation is not initiated for tool'+str(tool_id)+", please use generation mode"}]
+                test_cases = [{'status':'not-initiated','tool_id':tool_id}]
                 logger.info("Test case generation is not initiated for the tool "+str(tool_id))
     except Exception as e:
         error_message = "Error in generating test cases for tool - "+str(tool_id)+" , details - "+str(e)
         logger.info(error_message)
-        test_cases = [{"status":error_message}]
+        test_cases = [{"status":"error","error_message":error_message,"tool_id":tool_id}]
         populate_testcases_table(tool_id,test_cases,"failed",db)
     return test_cases
 
