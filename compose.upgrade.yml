@@ -1,0 +1,11 @@
+services:
+  pg-upgrade:
+    image: tianon/postgres-upgrade:17-to-18
+    environment:
+      PGDATAOLD: /var/lib/postgresql/OLD        # Old v17 data
+      PGDATANEW: /var/lib/postgresql/18/docker  # New v18 (major-version-specific path)
+      POSTGRES_INITDB_ARGS: "--no-data-checksums"  # Disable checksums to match old cluster
+    volumes:
+      - pgdata:/var/lib/postgresql/OLD          # Old v17 volume
+      - pgdata18:/var/lib/postgresql            # New v18 volume (mount at root)
+    networks: [mcpnet]
