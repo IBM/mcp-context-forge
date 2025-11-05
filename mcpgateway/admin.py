@@ -57,6 +57,7 @@ from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, Observa
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -5260,6 +5261,130 @@ async def admin_prompts_partial_html(
 
     return request.app.state.templates.TemplateResponse(
         "prompts_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/resources/partial", response_class=HTMLResponse)
+async def admin_resources_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return HTML partial for paginated resources list (HTMX endpoint).
+
+    Mirrors the tools/prompts partial endpoints and supports render=controls.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+
+    # Normalize per_page
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbResource)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbResource.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    access_conditions.append(DbResource.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))
+    if not include_inactive:
+        count_query = count_query.where(DbResource.is_active.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination ordering and limits
+    offset = (page - 1) * per_page
+    query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
+
+    resources_db = list(db.scalars(query).all())
+
+    # Convert to schemas using ResourceService
+    local_resource_service = ResourceService()
+    resources_data = []
+    for r in resources_db:
+        try:
+            resources_data.append(local_resource_service._convert_resource_to_read(r))
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
+            continue
+
+    data = jsonable_encoder(resources_data)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    base_url = f"{settings.app_root_path}/admin/resources/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#resources-table-body",
+                "hx_indicator": "#resources-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "resources_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "resources_partial.html",
         {
             "request": request,
             "data": data,

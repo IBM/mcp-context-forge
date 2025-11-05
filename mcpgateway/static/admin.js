@@ -6816,13 +6816,87 @@ function toggleInactiveItems(type) {
         return;
     }
 
-    const url = new URL(window.location);
-    if (checkbox.checked) {
-        url.searchParams.set("include_inactive", "true");
-    } else {
-        url.searchParams.delete("include_inactive");
+    // Update URL in address bar (no navigation) so state is reflected
+    try {
+        const urlObj = new URL(window.location);
+        if (checkbox.checked) {
+            urlObj.searchParams.set("include_inactive", "true");
+        } else {
+            urlObj.searchParams.delete("include_inactive");
+        }
+        // Use replaceState to avoid adding history entries for every toggle
+        window.history.replaceState({}, document.title, urlObj.toString());
+    } catch (e) {
+        // ignore (shouldn't happen)
     }
-    window.location = url;
+
+    // Try to find the HTMX container that loads this entity's partial
+    // Prefer an element with hx-get containing the admin partial endpoint
+    let selector = `[hx-get*="/admin/${type}/partial"]`;
+    let container = document.querySelector(selector);
+
+    // Fallback to conventional id naming used in templates
+    if (!container) {
+        const fallbackId = type === 'tools' ? 'tools-table' : `${type}-list-container`;
+        container = document.getElementById(fallbackId);
+    }
+
+    if (!container) {
+        // If we couldn't find a container, fallback to full-page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
+    }
+
+    // Build request URL based on the hx-get attribute or container id
+    let base = container.getAttribute('hx-get') || container.getAttribute('data-hx-get') || '';
+    let reqUrl;
+    try {
+        if (base) {
+            // base may already include query params; construct URL and set include_inactive/page
+            reqUrl = new URL(base, window.location.origin);
+            // reset to page 1 when toggling
+            reqUrl.searchParams.set('page', '1');
+            if (checkbox.checked) reqUrl.searchParams.set('include_inactive', 'true');
+            else reqUrl.searchParams.delete('include_inactive');
+        } else {
+            // construct from known pattern
+            const root = window.ROOT_PATH || '';
+            reqUrl = new URL(`${root}/admin/${type}/partial?page=1&per_page=50`, window.location.origin);
+            if (checkbox.checked) reqUrl.searchParams.set('include_inactive', 'true');
+        }
+    } catch (e) {
+        // fallback to full reload
+        const fallbackUrl2 = new URL(window.location);
+        if (checkbox.checked) fallbackUrl2.searchParams.set('include_inactive', 'true');
+        else fallbackUrl2.searchParams.delete('include_inactive');
+        window.location = fallbackUrl2;
+        return;
+    }
+
+    // Determine indicator selector
+    const indicator = container.getAttribute('hx-indicator') || `#${type}-loading`;
+
+    // Use HTMX to reload only the container (outerHTML swap)
+    if (window.htmx && typeof window.htmx.ajax === 'function') {
+        try {
+            window.htmx.ajax('GET', reqUrl.toString(), { target: container, swap: 'outerHTML', indicator: indicator });
+            return;
+        } catch (e) {
+            // fall through to full reload
+        }
+    }
+
+    // Last resort: reload page with param
+    const finalUrl = new URL(window.location);
+    if (checkbox.checked) finalUrl.searchParams.set('include_inactive', 'true');
+    else finalUrl.searchParams.delete('include_inactive');
+    window.location = finalUrl;
 }
 
 function handleToggleSubmit(event, type) {
