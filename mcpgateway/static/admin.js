@@ -117,7 +117,7 @@ document.addEventListener("DOMContentLoaded", function () {
     // Re-initialize when switching to gateways tab
     const gatewaysTab = document.querySelector('[onclick*="gateways"]');
     if (gatewaysTab) {
-        gatewaysTab.addEventListener("click", function() {
+        gatewaysTab.addEventListener("click", function () {
             setTimeout(initializeCACertUpload, 100);
         });
     }
@@ -17634,7 +17634,7 @@ async function validateCACertFiles(event) {
                 file,
                 content,
                 isValid,
-                certInfo
+                certInfo,
             });
         } catch (error) {
             certResults.push({
@@ -17714,7 +17714,7 @@ function parseCertificateInfo(content) {
     return {
         isRoot: subject === issuer,
         subject,
-        issuer
+        issuer,
     };
 }
 
@@ -17853,7 +17853,9 @@ function isValidBase64(str) {
  */
 function updateDropZoneWithFiles(files) {
     const dropZone = document.getElementById("ca-certificate-upload-drop-zone");
-    if (!dropZone) {return;}
+    if (!dropZone) {
+        return;
+    }
 
     const fileListHTML = Array.from(files)
         .map(
@@ -17881,7 +17883,9 @@ function updateDropZoneWithFiles(files) {
  * @returns {string} - Formatted file size
  */
 function formatFileSize(bytes) {
-    if (bytes === 0) {return '0 Bytes';}
+    if (bytes === 0) {
+        return "0 Bytes";
+    }
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -17898,27 +17902,39 @@ function initializeCACertUpload() {
 
     if (dropZone && fileInput) {
         // Click to upload
-        dropZone.addEventListener("click", function(e) {
+        dropZone.addEventListener("click", function (e) {
             fileInput.click();
         });
 
         // Drag and drop handlers
-        dropZone.addEventListener("dragover", function(e) {
+        dropZone.addEventListener("dragover", function (e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.add("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
+            dropZone.classList.add(
+                "border-indigo-500",
+                "bg-indigo-50",
+                "dark:bg-indigo-900/20",
+            );
         });
 
-        dropZone.addEventListener("dragleave", function(e) {
+        dropZone.addEventListener("dragleave", function (e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.remove("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
+            dropZone.classList.remove(
+                "border-indigo-500",
+                "bg-indigo-50",
+                "dark:bg-indigo-900/20",
+            );
         });
 
-        dropZone.addEventListener("drop", function(e) {
+        dropZone.addEventListener("drop", function (e) {
             e.preventDefault();
             e.stopPropagation();
-            dropZone.classList.remove("border-indigo-500", "bg-indigo-50", "dark:bg-indigo-900/20");
+            dropZone.classList.remove(
+                "border-indigo-500",
+                "bg-indigo-50",
+                "dark:bg-indigo-900/20",
+            );
 
             const files = e.dataTransfer.files;
             if (files.length > 0) {
@@ -17931,8 +17947,10 @@ function initializeCACertUpload() {
     }
 }
 
-// Make functions available globally for inline event handlers
-window.validateCACertFile = validateCACertFile;
+// Expose CA certificate upload/validation functions for usage in admin.html
+// This ensures ESLint recognizes them as used via global handlers.
+window.validateCACertFiles = validateCACertFiles;
+window.initializeCACertUpload = initializeCACertUpload;
 
 // Function to update body label based on content type selection
 function updateBodyLabel() {
