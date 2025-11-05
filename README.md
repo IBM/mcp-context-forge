@@ -1532,7 +1532,6 @@ python mcpgateway/utils/generate_keys.py
 
 # Output will show:
 # - Private key (set this to ED25519_PRIVATE_KEY)
-# - Public key (derived automatically from private key)
 ```
 
 **Key Rotation:**
