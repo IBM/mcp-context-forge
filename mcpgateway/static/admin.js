@@ -6806,6 +6806,112 @@ function initPromptSelect(
     }
 }
 
+function initResourceSelect(
+    selectId,
+    pillsId,
+    warnId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+
+    if (!container || !pillsBox || !warnBox) {
+        console.warn(`Resource select elements not found: ${selectId}, ${pillsId}, ${warnId}`);
+        return;
+    }
+
+    const pillClasses = "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
+
+    function update() {
+        try {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+
+            // Select All handling
+            const selectAllInput = container.querySelector('input[name="selectAllResources"]');
+            const allIdsInput = container.querySelector('input[name="allResourceIds"]');
+
+            let count = checked.length;
+            if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allResourceIds:", e);
+                }
+            }
+
+            pillsBox.innerHTML = "";
+            const maxPillsToShow = 3;
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
+                const span = document.createElement("span");
+                span.className = pillClasses;
+                span.textContent = cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                pillsBox.appendChild(span);
+            });
+
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected resources";
+                span.textContent = `+${count - maxPillsToShow} more`;
+                pillsBox.appendChild(span);
+            }
+
+            if (count > max) {
+                warnBox.textContent = `Selected ${count} resources. Selecting more than ${max} resources can degrade performance.`;
+            } else {
+                warnBox.textContent = "";
+            }
+        } catch (error) {
+            console.error("Error updating resource select:", error);
+        }
+    }
+
+    // Replace and attach clear/select buttons listeners if provided
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach((cb) => (cb.checked = false));
+            update();
+        });
+    }
+
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+
+        newSelectBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach((cb) => (cb.checked = true));
+            update();
+        });
+    }
+
+    update();
+
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                update();
+            }
+        });
+    }
+}
+
 // ===================================================================
 // INACTIVE ITEMS HANDLING
 // ===================================================================

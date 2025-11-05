@@ -2122,30 +2122,19 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=50&render=selector"
+                  hx-trigger="load"
+                  hx-swap="innerHTML"
+                  hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
                 >
-                  {% for resource in resources %}
-                  <label
-                    class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900 rounded-md p-1 resource-item"
-                  >
-                    <input
-                      type="checkbox"
-                      name="associatedResources"
-                      value="{{ resource.id }}"
-                      class="form-checkbox h-5 w-5 text-blue-600 dark:bg-gray-800 dark:border-gray-600"
-                    />
-                    <span class="select-none">{{ resource.name }}</span>
-                  </label>
-                  {% endfor %}
-                  <p
-                    id="noResourcesMessage"
-                    class="text-gray-700 dark:text-gray-300"
-                    style="display: none"
-                  >
-                    No resource found containing "<span
-                      id="searchResourcesQuery"
-                    ></span
-                    >"
-                  </p>
+                  <!-- Resources will be loaded via HTMX -->
+                  <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                    <svg class="animate-spin h-5 w-5 text-blue-600 dark:text-blue-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span class="ml-2">Loading resources...</span>
+                  </div>
                 </div>
                 <div class="flex justify-end gap-3 mt-3">
                   <button
