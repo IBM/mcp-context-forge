@@ -98,18 +98,18 @@ def get_unique_sessionid() -> str:
 
     return timestamp
 
-async def enrich_tool_list(tool_id_list: list[str], tool_service: ToolService, db: Session, LLM_PLATFORM: str = 'WATSONX',LLM_MODEL_ID: str = 'mistralai/mistral-medium-2505')-> tuple[list[str], list[ToolRead]]:
-    enriched_description_lst: list[str] = []
-    tool_schema_lst: list[ToolRead]  = [] 
-    for _idx, tool_id in enumerate(tool_id_list):
-        enriched_description, tool_schema = await enrich_tool(tool_id, tool_service, db, LLM_PLATFORM,LLM_MODEL_ID)
-        enriched_description_lst.append(enriched_description)
-        tool_schema_lst.append(tool_schema)
+# async def enrich_tool_list(tool_id_list: list[str], tool_service: ToolService, db: Session, LLM_PLATFORM: str = 'WATSONX',LLM_MODEL_ID: str = 'mistralai/mistral-medium-2505')-> tuple[list[str], list[ToolRead]]:
+#     enriched_description_lst: list[str] = []
+#     tool_schema_lst: list[ToolRead]  = [] 
+#     for _idx, tool_id in enumerate(tool_id_list):
+#         enriched_description, tool_schema = await enrich_tool(tool_id, tool_service, db, LLM_PLATFORM,LLM_MODEL_ID)
+#         enriched_description_lst.append(enriched_description)
+#         tool_schema_lst.append(tool_schema)
 
-    return enriched_description_lst, tool_schema_lst
+#     return enriched_description_lst, tool_schema_lst
 
 
-async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session, LLM_PLATFORM: str = 'WATSONX',LLM_MODEL_ID: str = 'mistralai/mistral-medium-2505')-> tuple[str, ToolRead]:
+async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session)-> tuple[str, ToolRead]:
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     except Exception as e:
