@@ -2114,7 +2114,7 @@ class TestOAuthFunctionality:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption
-        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret.return_value = "encrypted-secret"
             mock_get_encryption.return_value = mock_encryption
@@ -2175,7 +2175,7 @@ class TestOAuthFunctionality:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption
-        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_encryption.encrypt_secret.return_value = "encrypted-edit-secret"
             mock_get_encryption.return_value = mock_encryption
@@ -2204,7 +2204,7 @@ class TestOAuthFunctionality:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Mock OAuth encryption - should not be called for empty secret
-        with patch("mcpgateway.admin.get_oauth_encryption") as mock_get_encryption:
+        with patch("mcpgateway.admin.get_encryption_service") as mock_get_encryption:
             mock_encryption = MagicMock()
             mock_get_encryption.return_value = mock_encryption
 
