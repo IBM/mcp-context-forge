@@ -17,7 +17,7 @@ from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 class HttpHeaderPayload(RootModel[dict[str, str]], PluginPayload):
     """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
 
-    def __iter__(self):
+    def __iter__(self):  # type: ignore[no-untyped-def]
         """Custom iterator function to override root attribute.
 
         Returns:
@@ -45,7 +45,7 @@ class HttpHeaderPayload(RootModel[dict[str, str]], PluginPayload):
         """
         self.root[key] = value
 
-    def __len__(self):
+    def __len__(self) -> int:
         """Custom len function to override root attribute.
 
         Returns:

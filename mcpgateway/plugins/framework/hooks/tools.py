@@ -99,7 +99,7 @@ ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
 ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
 
 
-def _register_tool_hooks():
+def _register_tool_hooks() -> None:
     """Register Tool hooks in the global registry.
 
     This is called lazily to avoid circular import issues.
