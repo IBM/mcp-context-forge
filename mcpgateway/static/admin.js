@@ -1,3 +1,134 @@
+var enrichedDescription;
+
+document.addEventListener("DOMContentLoaded", () => {
+    const checkboxes = document.querySelectorAll(".tool-checkbox");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const searchBox = document.getElementById("searchBox");
+    const toolRows = document.querySelectorAll("#toolBody tr");
+  
+    let selectedTools = [];
+  
+    // --- Selection logic ---
+    checkboxes.forEach(cb => {
+      cb.addEventListener("change", () => {
+        const toolName = cb.getAttribute("data-tool");
+        if (cb.checked) {
+          if (!selectedTools.includes(toolName)) {
+            selectedTools.push(toolName);
+          }
+        } else {
+          selectedTools = selectedTools.filter(t => t !== toolName);
+        }
+        updateSelectedList();
+      });
+    });
+  
+    function updateSelectedList() {
+      selectedList.innerHTML = "";
+      if (selectedTools.length === 0) {
+        selectedList.textContent = "No tools selected";
+      } else {
+        selectedTools.forEach(tool => {
+          const item = document.createElement("div");
+          item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+          item.innerHTML = `<span>${tool}</span><button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>`;
+          item.querySelector(".remove-btn").addEventListener("click", () => {
+            selectedTools = selectedTools.filter(t => t !== tool);
+            document.querySelector(`.tool-checkbox[data-tool="${tool}"]`).checked = false;
+            updateSelectedList();
+          });
+          selectedList.appendChild(item);
+        });
+      }
+      selectedCount.textContent = selectedTools.length;
+    }
+  
+    // --- Search logic ---
+    searchBox.addEventListener("input", () => {
+      const query = searchBox.value.trim().toLowerCase();
+      toolRows.forEach(row => {
+        const name = row.dataset.name;
+        row.style.display = name.includes(query) ? "" : "none";
+      });
+    });
+  
+  // Generic API call for Enrich/Validate
+  async function callToolOpsAPI(endpoint) {
+    // const selectedTools = getSelectedTools();
+    console.log('global selected Tools...')
+    console.log(selectedTools)
+    const responseDiv = document.getElementById("toolOpsResponse");
+  
+    if (selectedTools.length === 0) {
+      responseDiv.textContent = "⚠️ Please select at least one tool.";
+      return;
+    }
+  
+    responseDiv.textContent = `Running ${endpoint.replace("_", " ")} for ${selectedTools.length} tools...`;
+  
+    try {
+      const res = await fetch(`/${endpoint}_util`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tools: selectedTools }),
+      });
+  
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
+      const data = await res.json();
+      if (endpoint === "tool_validation") {
+        console.log(JSON.stringify(data));
+        openValidationModal(data.details);
+      } else {
+        enrichedDescription = data
+        responseDiv.textContent = data.message || "Enrich Tools completed successfully.";
+      }
+  
+    } catch (err) {
+      responseDiv.textContent = `❌ Error: ${err.message}`;
+    }
+  }
+
+  // Modal Logic
+   function openValidationModal(results) {
+    const modal = document.getElementById("validationModal");
+    const tableBody = document.getElementById("validationResultsTable");
+    tableBody.innerHTML = "";
+  
+    results.forEach(item => {
+      const row = document.createElement("tr");
+      row.innerHTML = `
+        <td class="border px-4 py-2">${item.tool}</td>
+        <td class="border px-4 py-2">${item.status}</td>
+      `;
+      tableBody.appendChild(row);
+    });
+  
+    modal.classList.remove("hidden");
+    modal.classList.add("flex");
+  }
+
+  document.getElementById("closeValidationModal").addEventListener("click", () => {
+    const modal = document.getElementById("validationModal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+
+  document.getElementById("crossValidationModal").addEventListener("click", () => {
+    const modal = document.getElementById("validationModal");
+    modal.classList.add("hidden");
+    modal.classList.remove("flex");
+  });
+  
+  // Button listeners
+  document.getElementById("enrichToolsBtn").addEventListener("click", () => callToolOpsAPI("enrich_tools"));
+  document.getElementById("validateToolsBtn").addEventListener("click", () => callToolOpsAPI("tool_validation"));
+  });
+
+  
+  
+  
+
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -2173,6 +2304,10 @@ async function editTool(toolId) {
         }
 
         const tool = await response.json();
+        if(enrichedDescription != null) {
+            console.log(JSON.stringify(enrichedDescription))
+            tool.description = enrichedDescription['enriched_desc']
+        }
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -2220,6 +2355,7 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
+            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -6255,6 +6391,957 @@ async function testTool(toolId) {
     }
 }
 
+async function enrichTool(toolId) {
+    try {
+        console.log(`Enriching tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const enrichButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (enrichButton) {
+            if (enrichButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            enrichButton.disabled = true;
+            enrichButton.textContent = "Enriching...";
+            enrichButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+    
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+    
+       // 5. CREATE NEW REQUEST with longer timeout
+       const controller = new AbortController();
+       toolTestState.activeRequests.set(toolId, controller);
+       toolTestState.lastRequestTime.set(toolId, now);
+
+       // 6. MAKE REQUEST with increased timeout
+    //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const response = await fetchWithTimeout(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tool_id: toolId }),
+        }, toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+    
+        const data = await response.json();
+        enrichedDescription = data;
+        enrichButton.disabled = false;
+        enrichButton.textContent = "Enrich";
+        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        console.log(`Tool ${toolId} enriched successfully`, data);
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+        showSuccessMessage(`Tool enriched successfully`);
+
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+        } finally {
+        const testButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Enrich";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function validateTool(toolId) {
+    try {
+        console.log(`Validating tool ID: ${toolId}`);
+    
+        // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 2. MODAL PROTECTION: Enhanced check
+        if (AppState.isModalActive("tool-validation-modal")) {
+            console.warn("Tool validation modal is already active");
+            return; // Silent fail for better UX
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const validateButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
+        if (validateButton) {
+            if (validateButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            validateButton.disabled = true;
+            validateButton.textContent = "Generating Test Cases...";
+            validateButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+    
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+    
+       // 5. CREATE NEW REQUEST with longer timeout
+       const controller = new AbortController();
+       toolTestState.activeRequests.set(toolId, controller);
+       toolTestState.lastRequestTime.set(toolId, now);
+
+       // 6. MAKE REQUEST with increased timeout
+       const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            {
+                signal: controller.signal,
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                },
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+    
+        
+    
+        const tool = await response.json();
+        console.log(`Tool ${toolId} fetched successfully`, tool);
+        toolInputSchemaRegistry = tool;
+    
+        // 7. CLEAN STATE before proceeding
+        toolTestState.activeRequests.delete(toolId);
+
+        // Store in safe state
+        AppState.currentTestTool = tool;
+        
+
+        // Set modal title and description safely - NO DOUBLE ESCAPING
+        const titleElement = safeGetElement("tool-validation-modal-title");
+        const descElement = safeGetElement("tool-validation-modal-description");
+
+        if (titleElement) {
+            titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
+        }
+        if (descElement) {
+            if (tool.description) {
+                // Escape HTML and then replace newlines with <br/> tags
+                tool.description = tool.description.slice(0, tool.description.indexOf('*'));
+                descElement.innerHTML = escapeHtml(tool.description).replace(
+                    /\n/g,
+                    "<br/>",
+                );
+            } else {
+                descElement.textContent = "No description available.";
+            }
+        }
+
+        const container = safeGetElement("tool-validation-form-fields");
+        if (!container) {
+            console.error("Tool validation form fields container not found");
+            return;
+        }
+
+        container.innerHTML = ""; // Clear previous fields
+
+        // Parse the input schema safely
+        let schema = tool.inputSchema;
+        if (typeof schema === "string") {
+            try {
+                schema = JSON.parse(schema);
+            } catch (e) {
+                console.error("Invalid JSON schema", e);
+                schema = {};
+            }
+        }
+
+    
+        // Modal setup
+        const title = safeGetElement("tool-validation-modal-title");
+        const desc = safeGetElement("tool-validation-modal-description");
+        if (title) title.textContent = `Test Tool: ${tool.name || "Unknown"}`;
+        if (desc)
+            desc.textContent = tool.description || "No description available.";
+        if (!container) return;
+    
+        container.innerHTML = "";
+    
+        // Parse schema safely
+        if (typeof schema === "string") {
+            try {
+            schema = JSON.parse(schema);
+            } catch (e) {
+            console.error("Invalid schema JSON", e);
+            schema = {};
+            }
+        }
+    
+        // Example validat cases (you can replace this with API-provided cases)
+        let testCases = tool.testCases || [
+            { id: "t1", name: "Test Case 1", input_parameters: {} },
+            { id: "t2", name: "Test Case 2", input_parameters: {} },
+        ];
+
+
+
+        const validationResponse = await fetchWithTimeout(`/toolops/validation/generate_testcases?tool_id=${toolId}`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tool_id: toolId }),
+        }, toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (validationResponse.ok) {
+            const vres = await validationResponse.json()
+            console.log(JSON.stringify(vres))
+            testCases = await vres;
+        }
+    
+        // Render accordion-style test cases
+        testCases.forEach((test, index) => {
+            input_parameters = test['input_parameters']
+            const acc = document.createElement("div");
+            acc.className =
+            "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
+    
+            const header = document.createElement("button");
+            header.type = "button";
+            header.className =
+            "w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium";
+            header.innerHTML = `
+            <span>${`Test Case ${index + 1}`}</span>
+            <span class="toggle-icon">+</span>
+            `;
+    
+            const body = document.createElement("div");
+            body.className = "hidden bg-white dark:bg-gray-900 px-4 py-4 space-y-3";
+    
+            // Toggle open/close
+            header.addEventListener("click", () => {
+            const isOpen = !body.classList.contains("hidden");
+            body.classList.toggle("hidden", isOpen);
+            header.querySelector(".toggle-icon").textContent = isOpen ? "+" : "−";
+            });
+    
+            acc.appendChild(header);
+            acc.appendChild(body);
+            container.appendChild(acc);
+    
+            // Render fields
+            const formDiv = document.createElement("form");
+            formDiv.id = `tool-validation-form-${index}`;
+            formDiv.className = "space-y-3";
+    
+            if (schema && schema.properties) {
+            for (const key in schema.properties) {
+                const prop = schema.properties[key];
+
+                // Validate the property name
+                const keyValidation = validateInputName(key, "schema property");
+                if (!keyValidation.valid) {
+                    console.warn(`Skipping invalid schema property: ${key}`);
+                    continue;
+                }
+                
+                const fieldDiv = document.createElement("div");
+                fieldDiv.className = "mb-4";
+                
+                // Field label - use textContent to avoid double escaping
+                const label = document.createElement("label");
+                label.textContent = key;
+                label.className =
+                "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                // Create span for label text
+                const labelText = document.createElement("span");
+                labelText.textContent = keyValidation.value;
+                label.appendChild(labelText);
+                let default_value = ""
+                if (keyValidation.value in input_parameters) {
+                    default_value = input_parameters[keyValidation.value]
+                }
+
+
+                // Add red star if field is required
+                if (schema.required && schema.required.includes(key)) {
+                    const requiredMark = document.createElement("span");
+                    requiredMark.textContent = " *";
+                    requiredMark.className = "text-red-500";
+                    label.appendChild(requiredMark);
+                }
+
+                fieldDiv.appendChild(label);
+                
+                // Description help text - use textContent
+                if (prop.description) {
+                    const description = document.createElement("small");
+                    description.textContent = prop.description;
+                    description.className = "text-gray-500 block mb-1";
+                    fieldDiv.appendChild(description);
+                }
+
+                // const input = document.createElement("input");
+                // input.name = key;
+                // input.className =
+                // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
+                // input.value = test.inputs[key] || prop.default || "";
+                // fieldDiv.appendChild(input);
+
+                if (prop.type === "array") {
+                    const arrayContainer = document.createElement("div");
+                    arrayContainer.className = "space-y-2";
+
+                    function createArrayInput(value = "") {
+                        const wrapper = document.createElement("div");
+                        wrapper.className = "flex items-center space-x-2";
+
+                        const input = document.createElement("input");
+                        input.name = keyValidation.value;
+                        input.required =
+                            schema.required && schema.required.includes(key);
+                        input.className =
+                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                        const itemTypes = Array.isArray(prop.items?.anyOf)
+                            ? prop.items.anyOf.map((t) => t.type)
+                            : [prop.items?.type];
+
+                        if (
+                            itemTypes.includes("number") ||
+                            itemTypes.includes("integer")
+                        ) {
+                            input.type = "number";
+                            input.step = itemTypes.includes("integer")
+                                ? "1"
+                                : "any";
+                        } else if (itemTypes.includes("boolean")) {
+                            input.type = "checkbox";
+                            input.value = "true";
+                            input.checked = value === true || value === "true";
+                        } else {
+                            input.type = "text";
+                        }
+
+                        if (
+                            typeof value === "string" ||
+                            typeof value === "number"
+                        ) {
+                            input.value = value;
+                        }
+
+                        const delBtn = document.createElement("button");
+                        delBtn.type = "button";
+                        delBtn.className =
+                            "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
+                        delBtn.title = "Delete";
+                        delBtn.textContent = "×";
+                        delBtn.addEventListener("click", () => {
+                            arrayContainer.removeChild(wrapper);
+                        });
+
+                        wrapper.appendChild(input);
+
+                        if (itemTypes.includes("boolean")) {
+                            const hidden = document.createElement("input");
+                            hidden.type = "hidden";
+                            hidden.name = keyValidation.value;
+                            hidden.value = "false";
+                            wrapper.appendChild(hidden);
+                        }
+
+                        wrapper.appendChild(delBtn);
+                        return wrapper;
+                    }
+
+                    const addBtn = document.createElement("button");
+                    addBtn.type = "button";
+                    addBtn.className =
+                        "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
+                    addBtn.textContent = "Add items";
+                    addBtn.addEventListener("click", () => {
+                        arrayContainer.appendChild(createArrayInput());
+                    });
+
+                    if (Array.isArray(prop.default)) {
+                        if (prop.default.length > 0) {
+                            prop.default.forEach((val) => {
+                                arrayContainer.appendChild(
+                                    createArrayInput(val),
+                                );
+                            });
+                        } else {
+                            // Create one empty input for empty default arrays
+                            arrayContainer.appendChild(createArrayInput());
+                        }
+                    } else {
+                        arrayContainer.appendChild(createArrayInput());
+                    }
+
+                    fieldDiv.appendChild(arrayContainer);
+                    fieldDiv.appendChild(addBtn);
+                } else {
+                    // Input field with validation (with multiline support)
+                    let fieldInput;
+                    const isTextType = prop.type === "text";
+                    if (isTextType) {
+                        fieldInput = document.createElement("textarea");
+                        fieldInput.rows = 4;
+                    } else {
+                        fieldInput = document.createElement("input");
+                        if (prop.type === "number" || prop.type === "integer") {
+                            fieldInput.type = "number";
+                        } else if (prop.type === "boolean") {
+                            fieldInput.type = "checkbox";
+                            fieldInput.value = "true";
+                        } else {
+                            fieldInput = document.createElement("textarea");
+                            fieldInput.rows = 1;
+                        }
+                    }
+
+                    fieldInput.name = keyValidation.value;
+                    fieldInput.required =
+                        schema.required && schema.required.includes(key);
+                    fieldInput.className =
+                        prop.type === "boolean"
+                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                    // Set default values here
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            fieldInput.checked = prop.default === true;
+                        } else if (isTextType) {
+                            fieldInput.value = prop.default;
+                        } else {
+                            fieldInput.value = prop.default;
+                        }
+                    }
+                    fieldInput.value = default_value
+                    fieldDiv.appendChild(fieldInput);
+                    if (prop.default !== undefined) {
+                        if (fieldInput.type === "checkbox") {
+                            const hiddenInput = document.createElement("input");
+                            hiddenInput.type = "hidden";
+                            hiddenInput.value = "false";
+                            hiddenInput.name = keyValidation.value;
+                            fieldDiv.appendChild(hiddenInput);
+                        }
+                    }
+                }
+                formDiv.appendChild(fieldDiv);
+            }
+            }
+
+            // First section - Passthrough Headers
+            const headerSection = document.createElement('div');
+            headerSection.className = 'mt-4 border-t pt-4';
+
+            const headerDiv = document.createElement('div');
+
+            const label = document.createElement('label');
+            label.setAttribute('for', 'validation-passthrough-headers');
+            label.className = 'block text-sm font-medium text-gray-700 dark:text-gray-400';
+            label.textContent = 'Passthrough Headers (Optional)';
+
+            const small = document.createElement('small');
+            small.className = 'text-gray-500 dark:text-gray-400 block mb-2';
+            small.textContent = 'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
+
+            const textarea = document.createElement('textarea');
+            textarea.id = 'validation-passthrough-headers';
+            textarea.name = 'passthrough_headers';
+            textarea.rows = 3;
+            textarea.placeholder = 'Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456';
+            textarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
+
+            headerDiv.appendChild(label);
+            headerDiv.appendChild(small);
+            headerDiv.appendChild(textarea);
+            headerSection.appendChild(headerDiv);
+
+
+            const nlUtteranceSection = document.createElement('div');
+            nlUtteranceSection.className = 'mt-4 border-t pt-4';
+
+            const nlUtteranceDiv = document.createElement('div');
+
+            const nlUtterancelabel = document.createElement('label');
+            nlUtterancelabel.setAttribute('for', 'test-passthrough-nlUtterances');
+            nlUtterancelabel.className = 'block text-sm font-bold text-green-700 dark:text-green-400';
+            nlUtterancelabel.textContent = "Generated Test Utterance";
+
+            const nlUtterancesmall = document.createElement('small');
+            nlUtterancesmall.className = 'text-gray-500 dark:text-gray-400 block mb-2';
+            nlUtterancesmall.textContent = 'Modify or add new utterances to test using the agent.';
+
+            const nlutextarea = document.createElement('textarea');
+            nlutextarea.id = 'validation-passthrough-nlUtterances';
+            nlutextarea.name = 'passthrough_nlUtterances';
+            nlutextarea.rows = 3;
+            nlutextarea.value = test.nl_utterance.join('\n\n');
+            nlutextarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
+
+            nlUtteranceDiv.appendChild(nlUtterancelabel);
+            nlUtteranceDiv.appendChild(nlUtterancesmall);
+            nlUtteranceDiv.appendChild(nlutextarea);
+            nlUtteranceSection.appendChild(nlUtteranceDiv);
+    
+            // // Result area
+            // const resultBox = document.createElement("pre");
+            // resultBox.id = `test-result-${index}`;
+            // resultBox.className =
+            // "bg-gray-50 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-200 p-3 rounded overflow-x-auto hidden border border-gray-200 dark:border-gray-700";
+    
+            // Run button
+            const runBtn = document.createElement("button");
+            runBtn.textContent = "Run Test";
+            runBtn.className =
+            "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+            runBtn.addEventListener("click", async () => {
+                await runToolValidation(index);
+            });
+
+            const runAgentBtn = document.createElement("button");
+            runAgentBtn.textContent = "Run Agent Test";
+            runAgentBtn.className =
+            "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+            runAgentBtn.addEventListener("click", async () => {
+                await runToolValidation(index);
+            });
+
+            // Loading spinner
+            const loadingDiv = document.createElement('div');
+            loadingDiv.id = 'tool-validation-loading';
+            loadingDiv.style.display = 'none';
+
+            const spinner = document.createElement('div');
+            spinner.className = 'spinner';
+            loadingDiv.appendChild(spinner);
+
+            // Result area
+            const resultDiv = document.createElement('div');
+            resultDiv.id = `tool-validation-result-${index}`;
+            resultDiv.className = 'mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300';
+            resultDiv.style.height = '400px';
+    
+            body.appendChild(formDiv);
+            body.appendChild(headerSection)
+            body.appendChild(nlUtteranceSection)
+            body.appendChild(runBtn);
+            // body.appendChild(runAgentBtn);
+            body.appendChild(loadingDiv)
+            body.appendChild(resultDiv);
+        });
+    
+        // Run All Tests button
+        const runAllDiv = document.createElement("div");
+        runAllDiv.className = "mt-6 text-center";
+        runAllDiv.innerHTML = `
+            <button id="run-all-tests-btn"
+            class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+            Run All Tests
+            </button>`;
+        container.appendChild(runAllDiv);
+
+
+        // Run All Tests wit hAgent button
+        const runAGentAllDiv = document.createElement("div");
+        runAGentAllDiv.className = "mt-6 text-center";
+        runAGentAllDiv.innerHTML = `
+            <button id="run-all-agent-tests-btn"
+            class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
+            Run With Agent
+            </button>`;
+        container.appendChild(runAGentAllDiv);
+    
+        // Hook up Run All button
+        document
+            .getElementById("run-all-tests-btn")
+            ?.addEventListener("click", async () => {
+            const total = testCases.length;
+            for (let i = 0; i < total; i++) {
+                await runToolValidation(i);
+            }
+            });
+    
+        openModal("tool-validation-modal");
+        console.log("✓ Test modal with accordions loaded successfully");
+        } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+        } finally {
+        const testButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Validate";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+  }
+  
+  async function runToolValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
+    
+    const loadingElement = safeGetElement("tool-validation-loading");
+    const runButton = document.querySelector('button[onclick="runToolValidation()"]');
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const formData = new FormData(form);
+        // const formData = {};
+        // form.querySelectorAll("input, textarea, select").forEach((input) => {
+        // formData[input.name] =
+        //     input.type === "checkbox" ? input.checked : input.value;
+        // });
+        const params = {};
+
+        const schema = toolInputSchemaRegistry.inputSchema;
+
+        if (schema && schema.properties) {
+            for (const key in schema.properties) {
+                const prop = schema.properties[key];
+                const keyValidation = validateInputName(key, "parameter");
+                if (!keyValidation.valid) {
+                    console.warn(`Skipping invalid parameter: ${key}`);
+                    continue;
+                }
+                let value;
+                if (prop.type === "array") {
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items) {
+                            const itemType = Array.isArray(prop.items.anyOf)
+                                ? prop.items.anyOf.map((t) => t.type)
+                                : [prop.items.type];
+
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
+                                value = inputValues.map((v) => {
+                                    const num = Number(v);
+                                    if (isNaN(num)) {
+                                        throw new Error(`Invalid number: ${v}`);
+                                    }
+                                    return num;
+                                });
+                            } else if (itemType.includes("boolean")) {
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
+                            } else if (itemType.includes("object")) {
+                                value = inputValues.map((v) => {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
+                                        }
+                                        return parsed;
+                                    } catch {
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
+                                    }
+                                });
+                            } else {
+                                value = inputValues;
+                            }
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
+                    }
+                } else {
+                    value = formData.get(key);
+                    if (value === null || value === undefined || value === "") {
+                        if (schema.required && schema.required.includes(key)) {
+                            params[keyValidation.value] = "";
+                        }
+                        continue;
+                    }
+                    if (prop.type === "number" || prop.type === "integer") {
+                        params[keyValidation.value] = Number(value);
+                    } else if (prop.type === "boolean") {
+                        params[keyValidation.value] =
+                            value === "true" || value === true;
+                    } else if (prop.enum) {
+                        if (prop.enum.includes(value)) {
+                            params[keyValidation.value] = value;
+                        }
+                    } else {
+                        params[keyValidation.value] = value;
+                    }
+                }
+            }
+        }
+
+        const payload = {
+            jsonrpc: "2.0",
+            id: Date.now(),
+            method: AppState.currentTestTool.name,
+            params,
+        };
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Use longer timeout for test execution
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/rpc`,
+            {
+                method: "POST",
+                headers: requestHeaders,
+                body: JSON.stringify(payload),
+                credentials: "include",
+            },
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
+        }
+    }
+}
+
 async function runToolTest() {
     const form = safeGetElement("tool-test-form");
     const loadingElement = safeGetElement("tool-test-loading");
@@ -7278,6 +8365,11 @@ async function viewTool(toolId) {
 
         const tool = await response.json();
 
+        if(enrichedDescription != null) {
+            console.log(JSON.stringify(enrichedDescription))
+            tool.description = enrichedDescription['enriched_desc']
+        }
+
         // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
@@ -7558,6 +8650,7 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
+            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
@@ -9726,6 +10819,7 @@ window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;
+window.validateTool = validateTool;
 window.viewResource = viewResource;
 window.editResource = editResource;
 window.viewPrompt = viewPrompt;
