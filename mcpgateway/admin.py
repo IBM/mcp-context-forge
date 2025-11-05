@@ -6287,8 +6287,17 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
                 ca_certificate = ca_cert_value.strip()
                 LOGGER.info("✅ CA certificate(s) received and validated by frontend")
 
-                private_key_pem = settings.ed25519_private_key.get_secret_value()
-                sig = sign_data(ca_certificate.encode(), private_key_pem)
+                if settings.enable_ed25519_signing:
+                    try:
+                        private_key_pem = settings.ed25519_private_key.get_secret_value()
+                        sig = sign_data(ca_certificate.encode(), private_key_pem)
+                    except Exception as e:
+                        LOGGER.error(f"Error signing CA certificate: {e}")
+                        sig = None
+                        raise RuntimeError("Failed to sign CA certificate") from e
+                else:
+                    LOGGER.warning("⚠️  Ed25519 signing is disabled; CA certificate will be stored without signature")
+                    sig = None
 
         gateway = GatewayCreate(
             name=str(form["name"]),
@@ -6317,6 +6326,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+
+    except RuntimeError as re:
+        # --- Getting only the custom message from the ValueError ---
+        error_ctx = [str(re)]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)

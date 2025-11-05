@@ -1372,6 +1372,7 @@ Disallow: /
     pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
 
     # Ed25519 keys for signing
+    enable_ed25519_signing: bool = Field(default=False, description="Enable Ed25519 signing for certificates")
     prev_ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Previous Ed25519 private key for signing")
     prev_ed25519_public_key: Optional[str] = Field(default=None, description="Derived previous Ed25519 public key")
     ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Ed25519 private key for signing")

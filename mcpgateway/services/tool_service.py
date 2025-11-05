@@ -1326,13 +1326,15 @@ class ToolService:
                         Raises:
                             Exception: If CA certificate signature is invalid
                         """
+                        valid = False
                         if gateway.ca_certificate:
-                            public_key_pem = settings.ed25519_public_key
-                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
-                            if valid:
-                                ctx = create_ssl_context(gateway.ca_certificate)
+                            if settings.enable_ed25519_signing:
+                                public_key_pem = settings.ed25519_public_key
+                                valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
                             else:
-                                raise Exception("Invalid CA certificate signature for gateway")
+                                valid = True
+                        if valid:
+                            ctx = create_ssl_context(gateway.ca_certificate)
                         else:
                             ctx = None
                         return httpx.AsyncClient(

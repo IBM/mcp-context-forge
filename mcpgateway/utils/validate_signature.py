@@ -43,10 +43,14 @@ def sign_data(data: bytes, private_key_pem: str) -> str:
     Raises:
         TypeError: If the provided key is not an Ed25519 private key.
     """
-    private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
-    if not isinstance(private_key, ed25519.Ed25519PrivateKey):
-        raise TypeError("Expected an Ed25519 private key")
-    return private_key.sign(data).hex()
+    try:
+        private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
+        if not isinstance(private_key, ed25519.Ed25519PrivateKey):
+            raise TypeError("Expected an Ed25519 private key")
+        return private_key.sign(data).hex()
+    except Exception as e:
+        logger.error(f"Error signing data: {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------

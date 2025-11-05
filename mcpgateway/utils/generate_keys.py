@@ -84,14 +84,21 @@ def derive_public_key_from_private(private_pem: str) -> str:
 
     Returns:
         str: PEM-formatted Ed25519 public key.
+
+    Raises:
+        RuntimeError: If the public key cannot be derived.
     """
-    private_key = serialization.load_pem_private_key(private_pem.encode(), password=None)
-    public_key = private_key.public_key()
-    public_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return public_pem.decode()
+    try:
+        private_key = serialization.load_pem_private_key(private_pem.encode(), password=None)
+        public_key = private_key.public_key()
+        public_pem = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        return public_pem.decode()
+    except Exception as e:
+        logger.error(f"Error deriving public key from private PEM: {e}")
+        raise RuntimeError("Failed to derive public key from private PEM") from e
 
 
 def main() -> None:
