@@ -23,53 +23,67 @@ LLM_PLATFORM = "OpenAIProvider - "+provider
 
 
 def populate_testcases_table(tool_id,test_cases,run_status,db: Session):
-    test_case_record = TestCaseRecord(
-        tool_id= tool_id,
-        test_cases= test_cases,
-        run_status = run_status
-    )
-    # Add to DB
-    db.add(test_case_record)
-    db.commit()
-    db.refresh(test_case_record)
-    print("Added test case record",tool_id,run_status)
+    tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
+    if not tool_record:
+        test_case_record = TestCaseRecord(tool_id= tool_id,test_cases= test_cases,run_status = run_status)
+        # Add to DB
+        db.add(test_case_record)
+        db.commit()
+        db.refresh(test_case_record)
+        logger.info("Added tool test case record with empty test cases for tool "+str(tool_id)+" with status "+str(run_status))
+    #elif tool_record and test_cases != [] and run_status == 'completed':
+    elif tool_record:
+        tool_record.test_cases = test_cases
+        tool_record.run_status = run_status
+        db.commit()
+        db.refresh(tool_record)
+        logger.info("Updated tool record in table with test cases for tool "+str(tool_id)+" with status "+str(run_status))
+    
 
 def query_testcases_table(tool_id,db: Session):
-    tool_record = db.get(TestCaseRecord,tool_id)
-    print("tool_record",tool_record)
+    tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
+    logger.info("Tool record obtained from table for tool - "+str(tool_id))
+    return tool_record
             
 
 # Test case generation service method
-async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: Session, number_of_test_cases=2,number_of_nl_variations=1):
+async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: Session, number_of_test_cases=2,number_of_nl_variations=1,mode="generate"):
     test_cases = []
     try:
-        logger.info("Generating test cases for tool - "+str(tool_id)+","+json.dumps({"number_of_test_cases":number_of_test_cases,"number_of_nl_variations":number_of_nl_variations}) )
-        tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
-        mcp_cf_tool = tool_schema.to_dict(use_alias=True)
-        if mcp_cf_tool is not None:
-            wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
-            with open('wxo_tool_spec.json','w') as wf:
-                json.dump(wxo_tool_spec,wf,indent=2)
-            wf.close()
-            #populate_testcases_table(tool_id,test_cases,"in-progress",db)
-            tc_generator = TestcaseGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_number_testcases_to_generate=number_of_test_cases)
-            ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
-            
-            with open('ip_test_cases.json','w') as ipf:
-                json.dump(ip_test_cases,ipf,indent=2)
-            ipf.close()
-
-            nl_generator = NlUtteranceGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_nl_utterances=number_of_nl_variations)
-            nl_test_cases = nl_generator.generate_nl(ip_test_cases)
-            test_cases = post_process_nl_test_cases(nl_test_cases)
-            populate_testcases_table(tool_id,test_cases,"completed",db)
-            #query_testcases_table(tool_id)
+        # check if test case generation is required
+        if mode == "generate":
+            logger.info("Generating test cases for tool - "+str(tool_id)+","+json.dumps({"number_of_test_cases":number_of_test_cases,"number_of_nl_variations":number_of_nl_variations}) )
+            tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
+            mcp_cf_tool = tool_schema.to_dict(use_alias=True)
+            if mcp_cf_tool is not None:
+                wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
+                populate_testcases_table(tool_id,test_cases,"in-progress",db)
+                tc_generator = TestcaseGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_number_testcases_to_generate=number_of_test_cases)
+                ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
+                nl_generator = NlUtteranceGeneration(llm_model_id=LLM_MODEL_ID, llm_platform=LLM_PLATFORM, max_nl_utterances=number_of_nl_variations)
+                nl_test_cases = nl_generator.generate_nl(ip_test_cases)
+                test_cases = post_process_nl_test_cases(nl_test_cases)
+                populate_testcases_table(tool_id,test_cases,"completed",db)
+        elif mode == 'query':
+            # check if tool test cases exists in db
+            tool_record = query_testcases_table(tool_id,db)
+            if tool_record:
+                if tool_record.run_status == 'completed':
+                    test_cases = tool_record.test_cases
+                    logger.info("Obtained exisitng test cases from the table for tool "+str(tool_id))
+                elif tool_record.run_status == 'in-progress' and tool_record.test_cases == []:
+                    test_cases = [{'status':'test case generation is in-progress for tool'+str(tool_id)}]
+                    logger.info("Test case generation is in-progress for the tool "+str(tool_id))
+            else:
+                test_cases = [{'status':'test case generation is not initiated for tool'+str(tool_id)+", please use generation mode"}]
+                logger.info("Test case generation is not initiated for the tool "+str(tool_id))
     except Exception as e:
         error_message = "Error in generating test cases for tool - "+str(tool_id)+" , details - "+str(e)
         logger.info(error_message)
-        test_cases = [{"error":error_message}]
+        test_cases = [{"status":error_message}]
+        populate_testcases_table(tool_id,test_cases,"failed",db)
     return test_cases
-    
+
 
 # Enrichment service method
 def get_unique_sessionid() -> str:

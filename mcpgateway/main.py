@@ -1209,8 +1209,9 @@ def update_url_protocol(request: Request) -> str:
 from mcpgateway.toolops.services import validation_generate_test_cases
 @toolops_router.post("/validation/generate_testcases")
 async def generate_testcases_for_tool(tool_id: str = Query(None, description="Tool ID"),\
-                                      number_of_test_cases: int = Query(2, description="Number of tool test cases"),\
-                                      number_of_nl_variations: int = Query(1, description="Number of tool test cases"), \
+                                      number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),\
+                                      number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),\
+                                      mode:str = Query("generate", description= "Two modes: 'generate' for test case generation, 'query' for obtaining test cases from DB"),\
                                       db: Session = Depends(get_db)) -> List[Dict]:
     """
     Generate test cases for a tool
@@ -1233,7 +1234,7 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
     """
     try:
         #logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db , number_of_test_cases , number_of_nl_variations)
+        test_cases = await validation_generate_test_cases(tool_id, tool_service, db , number_of_test_cases , number_of_nl_variations,mode)
         return test_cases
 
     except json.JSONDecodeError:
