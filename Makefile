@@ -2786,6 +2786,10 @@ compose-upgrade-pg18: compose-validate
 	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	@echo "🔄 Running Postgres upgrade..."
 	$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade
+	@echo "🔧 Copying pg_hba.conf from old cluster..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade sh -c \
+		"cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf && \
+		 echo '✅ pg_hba.conf copied successfully'"
 	@echo "✅ Upgrade complete!"
 	@echo "📝 Next steps:"
 	@echo "   1. Update docker-compose.yml to use postgres:18"
