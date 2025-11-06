@@ -209,7 +209,7 @@ services:
   #     dockerfile: Containerfile
   #   environment:
   #     - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-  #   command: alembic upgrade head
+  #   command: alembic -c mcpgateway/alembic.ini upgrade head
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
