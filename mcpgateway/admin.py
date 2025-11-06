@@ -11430,7 +11430,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
 @admin_router.post("/observability/queries", response_model=dict)
 async def save_observability_query(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     name: str = Body(..., description="Name for the saved query"),
     description: Optional[str] = Body(None, description="Optional description"),
     filter_config: dict = Body(..., description="Filter configuration as JSON"),
@@ -11475,7 +11475,7 @@ async def save_observability_query(
 
 
 @admin_router.get("/observability/queries", response_model=list)
-async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):
+async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
     Returns user's own queries plus any shared queries.
@@ -11518,7 +11518,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
-async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
     Args:
@@ -11561,7 +11561,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
 async def update_observability_query(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     query_id: int,
     name: Optional[str] = Body(None),
     description: Optional[str] = Body(None),
@@ -11628,7 +11628,7 @@ async def update_observability_query(
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
-async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
     Args:
@@ -11656,7 +11656,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
-async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
     Args:

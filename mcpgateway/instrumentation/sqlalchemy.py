@@ -130,7 +130,7 @@ def instrument_sqlalchemy(engine: Engine) -> None:
         >>> engine = create_engine("sqlite:///./mcp.db")  # doctest: +SKIP
         >>> instrument_sqlalchemy(engine)  # doctest: +SKIP
     """
-    global _span_writer_thread
+    global _span_writer_thread  # pylint: disable=global-statement
 
     # Register event listeners
     event.listen(engine, "before_cursor_execute", _before_cursor_execute)

@@ -46,10 +46,26 @@
         {% endif %}
     </div>
 
-    <!-- Spans Waterfall -->
+    <!-- Spans Visualization -->
     {% if trace.spans %}
-    <h3 style="font-size: 1.125rem; color: #1f2937; margin-bottom: 1rem;">Execution Timeline</h3>
-    <div class="waterfall">
+    <div x-data="{ viewMode: 'gantt' }" style="margin-bottom: 1rem;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+            <h3 style="font-size: 1.125rem; color: #1f2937; margin: 0;">Execution Timeline</h3>
+            <div style="display: flex; gap: 0.5rem;">
+                <button @click="viewMode = 'gantt'" :class="viewMode === 'gantt' ? 'active' : ''" class="view-toggle-btn">
+                    📊 Gantt Chart
+                </button>
+                <button @click="viewMode = 'waterfall'" :class="viewMode === 'waterfall' ? 'active' : ''" class="view-toggle-btn">
+                    📋 Simple View
+                </button>
+            </div>
+        </div>
+
+        <!-- Interactive Gantt Chart -->
+        <div x-show="viewMode === 'gantt'" id="gantt-chart-container"></div>
+
+        <!-- Simple Waterfall View -->
+        <div x-show="viewMode === 'waterfall'" class="waterfall">
         {% set total_duration = trace.duration_ms %}
         {% set trace_start = trace.start_time %}
 
@@ -85,7 +101,50 @@
         {% endfor %}
         {% endif %}
         {% endfor %}
-    </div>
+        </div>
+        </div>
+
+        <!-- Initialize Gantt Chart -->
+        <script>
+            // Initialize Gantt chart when the trace detail is loaded
+            (function() {
+                // Wait for DOM to be ready
+                setTimeout(function() {
+                    if (typeof GanttChart === 'undefined') {
+                        console.error('GanttChart class not loaded. Make sure gantt-chart.js is included.');
+                        return;
+                    }
+
+                    const traceData = {
+                        trace_id: "{{ trace.trace_id }}",
+                        duration_ms: {{ trace.duration_ms or 0 }},
+                        start_time: "{{ trace.start_time.isoformat() }}",
+                        end_time: "{{ trace.end_time.isoformat() if trace.end_time else trace.start_time.isoformat() }}",
+                        spans: [
+                            {% for span in trace.spans %}
+                            {
+                                span_id: "{{ span.span_id }}",
+                                name: "{{ span.name|replace('"', '\\"') }}",
+                                kind: "{{ span.kind }}",
+                                status: "{{ span.status }}",
+                                start_time: "{{ span.start_time.isoformat() }}",
+                                end_time: "{{ span.end_time.isoformat() if span.end_time else span.start_time.isoformat() }}",
+                                duration_ms: {{ span.duration_ms or 0 }},
+                                parent_span_id: {{ ('"%s"' % span.parent_span_id) if span.parent_span_id else 'null' }},
+                                attributes: {{ span.attributes|tojson if span.attributes else '{}' }}
+                            }{{ ',' if not loop.last else '' }}
+                            {% endfor %}
+                        ]
+                    };
+
+                    console.log('Initializing Gantt chart with', traceData.spans.length, 'spans');
+
+                    // Initialize the chart
+                    window.ganttChart = new GanttChart('gantt-chart-container', traceData);
+                    console.log('Gantt chart initialized successfully');
+                }, 100);
+            })();
+        </script>
     {% else %}
     <p style="color: #6b7280; text-align: center; padding: 2rem;">No spans recorded for this trace</p>
     {% endif %}
