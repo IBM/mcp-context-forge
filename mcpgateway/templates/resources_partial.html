@@ -58,7 +58,7 @@
 <!-- Out-of-band swap for pagination controls -->
 <div id="resources-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/resources/partial' %}
-  {% set hx_target = '#resources-table-body' %}
+  {% set hx_target = '#resources-table' %}
   {% set hx_indicator = '#resources-loading' %}
   {% set query_params = {'include_inactive': include_inactive} %}
   {% include 'pagination_controls.html' %}
