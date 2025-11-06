@@ -12,9 +12,9 @@ from mcpgateway.common.models import Message, ResourceContent, Role, TextContent
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginManager,
+    PluginResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
-    PromptResult,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
     ToolPostInvokePayload,
@@ -59,7 +59,7 @@ async def test_prompt_post_hook(plugin_manager: PluginManager):
     """
     # Customize payload for testing
     message = Message(content=TextContent(type="text", text="prompt"), role=Role.USER)
-    prompt_result = PromptResult(messages=[message])
+    prompt_result = PluginResult(messages=[message])
     payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
     global_context = GlobalContext(request_id="1")
     result, _ = await plugin_manager.prompt_post_fetch(payload, global_context)
