@@ -54,10 +54,10 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
-from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import utc_now
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -5159,11 +5159,29 @@ async def admin_prompts_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """
-    Return paginated prompts HTML partials for the admin UI.
+    """Return paginated prompts HTML partials for the admin UI.
 
-    Supports render=selector for infinite-scroll selector items, render=controls
-    to return only the pagination controls, or default full table partial.
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    prompts. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive prompts in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded prompt data when templates expect it.
     """
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -5282,10 +5300,27 @@ async def admin_resources_partial_html(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """
-    Return HTML partial for paginated resources list (HTMX endpoint).
+    """Return HTML partial for paginated resources list (HTMX endpoint).
 
-    Mirrors the tools/prompts partial endpoints and supports render=controls.
+    This endpoint mirrors the behavior of the tools and prompts partial
+    endpoints. It returns a template fragment suitable for HTMX-based
+    pagination/infinite-scroll within the admin UI.
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive resources in results.
+        render (Optional[str]): Render mode; when set to "controls" returns only
+            pagination controls. Other supported value: "selector" for selector
+            items used by infinite scroll selectors.
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: Rendered template response with the
+        resources partial (rows + controls), pagination controls only, or selector
+        items depending on the ``render`` parameter.
     """
     LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
 
@@ -5402,7 +5437,21 @@ async def admin_get_all_prompt_ids(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Return all prompt IDs accessible to the current user (select-all helper)."""
+    """Return all prompt IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of prompts the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include prompts that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "prompt_ids": List[str] of accessible prompt IDs.
+            - "count": int number of IDs returned.
+    """
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
@@ -5429,7 +5478,24 @@ async def admin_search_prompts(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Search prompts by name or description for selector search."""
+    """Search prompts by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching prompts suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include prompts that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "prompts": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched prompts returned.
+    """
     user_email = get_user_email(user)
     search_query = q.strip().lower()
     if not search_query:
