@@ -123,8 +123,6 @@ from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
 from mcpgateway.validation.jsonrpc import JSONRPCError
-from mcpgateway.toolops_util import router as toolops_util_router
-
 
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
@@ -4418,7 +4416,6 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
-app.include_router(toolops_util_router)
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:
