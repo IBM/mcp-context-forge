@@ -31,7 +31,9 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, cast, Dict, List, Optional, Union
+from typing import Any
+from typing import cast as typing_cast
+from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
 
@@ -1062,7 +1064,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
 
         # Ensure default visibility is private and assign to personal team when available
-        team_id_cast = cast(Optional[str], team_id)
+        team_id_cast = typing_cast(Optional[str], team_id)
         await server_service.register_server(
             db,
             server,
@@ -6309,7 +6311,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        team_id_cast = cast(Optional[str], team_id)
+        team_id_cast = typing_cast(Optional[str], team_id)
         await gateway_service.register_gateway(
             db,
             gateway,
@@ -8556,7 +8558,7 @@ async def admin_import_tools(
             },
         }
 
-        rd = cast(Dict[str, Any], response_data)
+        rd = typing_cast(Dict[str, Any], response_data)
         if len(errors) == 0:
             rd["message"] = f"Successfully imported all {len(created)} tools"
         else:
@@ -8617,7 +8619,7 @@ async def admin_get_logs(
         HTTPException: If validation fails or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         return {"logs": [], "total": 0, "stats": {}}
 
@@ -8695,7 +8697,7 @@ async def admin_stream_logs(
         HTTPException: If log level is invalid or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
@@ -8914,7 +8916,7 @@ async def admin_export_logs(
         raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
