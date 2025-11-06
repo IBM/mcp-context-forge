@@ -31,14 +31,14 @@ class Plugin(ABC):
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginConfig, PluginMode
-        >>> from mcpgateway.plugins.mcp.entities import HookType
+        >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
         >>> config = PluginConfig(
         ...     name="test_plugin",
         ...     description="Test plugin",
         ...     author="test",
         ...     kind="mcpgateway.plugins.framework.Plugin",
         ...     version="1.0.0",
-        ...     hooks=[HookType.PROMPT_PRE_FETCH],
+        ...     hooks=[PromptHookType.PROMPT_PRE_FETCH],
         ...     tags=["test"],
         ...     mode=PluginMode.ENFORCE,
         ...     priority=50
@@ -50,7 +50,7 @@ class Plugin(ABC):
         50
         >>> plugin.mode
         <PluginMode.ENFORCE: 'enforce'>
-        >>> HookType.PROMPT_PRE_FETCH in plugin.hooks
+        >>> PromptHookType.PROMPT_PRE_FETCH in plugin.hooks
         True
     """
 
@@ -71,14 +71,14 @@ class Plugin(ABC):
 
         Examples:
             >>> from mcpgateway.plugins.framework import PluginConfig
-            >>> from mcpgateway.plugins.mcp.entities import HookType
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
             >>> config = PluginConfig(
             ...     name="simple_plugin",
             ...     description="Simple test",
             ...     author="test",
             ...     kind="test.Plugin",
             ...     version="1.0.0",
-            ...     hooks=[HookType.PROMPT_POST_FETCH],
+            ...     hooks=[PromptHookType.PROMPT_POST_FETCH],
             ...     tags=["simple"]
             ... )
             >>> plugin = Plugin(config)
@@ -234,14 +234,14 @@ class PluginRef:
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginConfig, PluginMode
-        >>> from mcpgateway.plugins.mcp.entities import HookType
+        >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
         >>> config = PluginConfig(
         ...     name="ref_test",
         ...     description="Reference test",
         ...     author="test",
         ...     kind="test.Plugin",
         ...     version="1.0.0",
-        ...     hooks=[HookType.PROMPT_PRE_FETCH],
+        ...     hooks=[PromptHookType.PROMPT_PRE_FETCH],
         ...     tags=["ref", "test"],
         ...     mode=PluginMode.PERMISSIVE,
         ...     priority=100
@@ -268,14 +268,14 @@ class PluginRef:
 
         Examples:
             >>> from mcpgateway.plugins.framework import PluginConfig
-            >>> from mcpgateway.plugins.mcp.entities import HookType
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
             >>> config = PluginConfig(
             ...     name="plugin_ref",
             ...     description="Test",
             ...     author="test",
             ...     kind="test.Plugin",
             ...     version="1.0.0",
-            ...     hooks=[HookType.PROMPT_POST_FETCH],
+            ...     hooks=[PromptHookType.PROMPT_POST_FETCH],
             ...     tags=[]
             ... )
             >>> plugin = Plugin(config)
