@@ -70,6 +70,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
@@ -1060,6 +1061,10 @@ if settings.email_auth_enabled:
 else:
     # Add streamable HTTP middleware for /mcp routes
     app.add_middleware(MCPPathRewriteMiddleware)
+
+# Add HTTP authentication hook middleware for plugins (before auth dependencies)
+if plugin_manager:
+    app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)

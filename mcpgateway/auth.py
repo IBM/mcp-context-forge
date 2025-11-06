@@ -14,7 +14,9 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
+import os
 from typing import Generator, Never, Optional
+import uuid
 
 # Third-Party
 from fastapi import Depends, HTTPException, status
@@ -24,10 +26,27 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginManager, PluginViolationError
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# Plugin manager singleton (lazy initialization)
+_plugin_manager: PluginManager | None = None
+
+
+def _get_plugin_manager() -> PluginManager | None:
+    """Get or initialize the plugin manager singleton.
+
+    Returns:
+        PluginManager instance if plugins are enabled, None otherwise.
+    """
+    global _plugin_manager
+    if _plugin_manager is None and settings.plugins_enabled:
+        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
+        _plugin_manager = PluginManager(config_file)
+    return _plugin_manager
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -51,12 +70,19 @@ def get_db() -> Generator[Session, Never, None]:
         db.close()
 
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme), db: Session = Depends(get_db)) -> EmailUser:
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: Session = Depends(get_db),
+    request: Optional[object] = None,
+) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
+
+    Supports plugin-based custom authentication via HTTP_AUTH_RESOLVE_USER hook.
 
     Args:
         credentials: HTTP authorization credentials
         db: Database session
+        request: Optional request object for plugin hooks
 
     Returns:
         EmailUser: Authenticated user
@@ -66,6 +92,98 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
     """
     logger = logging.getLogger(__name__)
 
+    # NEW: Custom authentication hook - allows plugins to provide alternative auth
+    # This hook is invoked BEFORE standard JWT/API token validation
+    try:
+        # Get plugin manager singleton
+        plugin_manager = _get_plugin_manager()
+
+        if plugin_manager:
+            # Extract client information
+            client_host = None
+            client_port = None
+            if request and hasattr(request, "client") and request.client:
+                client_host = request.client.host
+                client_port = request.client.port
+
+            # Serialize credentials for plugin
+            credentials_dict = None
+            if credentials:
+                credentials_dict = {
+                    "scheme": credentials.scheme,
+                    "credentials": credentials.credentials,
+                }
+
+            # Extract headers from request
+            # Note: Middleware modifies request.scope["headers"], so request.headers
+            # will automatically reflect any modifications made by HTTP_PRE_REQUEST hooks
+            headers = {}
+            if request and hasattr(request, "headers"):
+                headers = dict(request.headers)
+
+            # Get request ID from request state (set by middleware) or generate new one
+            request_id = None
+            if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
+                request_id = request.state.request_id
+            else:
+                request_id = uuid.uuid4().hex
+
+            # Create global context
+            global_context = GlobalContext(
+                request_id=request_id,
+                server_id=None,
+                tenant_id=None,
+            )
+
+            # Invoke custom auth resolution hook
+            # violations_as_exceptions=True so PluginViolationError is raised for explicit denials
+            auth_result, _ = await plugin_manager.invoke_hook(
+                HttpHookType.HTTP_AUTH_RESOLVE_USER,
+                payload=HttpAuthResolveUserPayload(
+                    credentials=credentials_dict,
+                    headers=HttpHeaderPayload(headers),
+                    client_host=client_host,
+                    client_port=client_port,
+                ),
+                global_context=global_context,
+                local_contexts=None,
+                violations_as_exceptions=True,  # Raise PluginViolationError for auth denials
+            )
+
+            # If plugin successfully authenticated user, return it
+            if auth_result.modified_payload and isinstance(auth_result.modified_payload, dict):
+                logger.info("User authenticated via plugin hook")
+                # Create EmailUser from dict returned by plugin
+                user_dict = auth_result.modified_payload
+                user = EmailUser(
+                    email=user_dict.get("email"),
+                    password_hash=user_dict.get("password_hash", ""),
+                    full_name=user_dict.get("full_name"),
+                    is_admin=user_dict.get("is_admin", False),
+                    is_active=user_dict.get("is_active", True),
+                    email_verified_at=user_dict.get("email_verified_at"),
+                    created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
+                    updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
+                )
+                return user
+            # If continue_processing=True (no payload), fall through to standard auth
+
+    except PluginViolationError as e:
+        # Plugin explicitly denied authentication with custom message
+        logger.warning(f"Authentication denied by plugin: {e.message}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=e.message,  # Use plugin's custom error message
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        # Log but don't fail on plugin errors - fall back to standard auth
+        logger.warning(f"HTTP_AUTH_RESOLVE_USER hook failed, falling back to standard auth: {e}")
+
+    # EXISTING: Standard authentication (JWT, API tokens)
     if not credentials:
         logger.warning("No credentials provided")
         raise HTTPException(

@@ -21,7 +21,16 @@ from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_r
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+from mcpgateway.plugins.framework.hooks.http import (
+    HttpAuthResolveUserPayload,
+    HttpAuthResolveUserResult,
+    HttpHeaderPayload,
+    HttpHookType,
+    HttpPostRequestPayload,
+    HttpPostRequestResult,
+    HttpPreRequestPayload,
+    HttpPreRequestResult,
+)
 from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPostInvokeResult, AgentPreInvokePayload, AgentPreInvokeResult
 from mcpgateway.plugins.framework.hooks.resources import ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
 from mcpgateway.plugins.framework.hooks.prompts import (
@@ -55,7 +64,14 @@ __all__ = [
     "ExternalPluginServer",
     "GlobalContext",
     "HookRegistry",
+    "HttpAuthResolveUserPayload",
+    "HttpAuthResolveUserResult",
     "HttpHeaderPayload",
+    "HttpHookType",
+    "HttpPostRequestPayload",
+    "HttpPostRequestResult",
+    "HttpPreRequestPayload",
+    "HttpPreRequestResult",
     "get_hook_registry",
     "MCPServerConfig",
     "Plugin",
