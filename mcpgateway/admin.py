@@ -5207,7 +5207,7 @@ async def admin_prompts_partial_html(
     query = query.where(or_(*access_conditions))
 
     # Count total items
-    count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))
+    count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
     if not include_inactive:
         count_query = count_query.where(DbPrompt.is_active.is_(True))
 
@@ -5350,7 +5350,7 @@ async def admin_resources_partial_html(
     query = query.where(or_(*access_conditions))
 
     # Count total items
-    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))
+    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
     if not include_inactive:
         count_query = count_query.where(DbResource.is_active.is_(True))
 
@@ -5367,7 +5367,7 @@ async def admin_resources_partial_html(
     resources_data = []
     for r in resources_db:
         try:
-            resources_data.append(local_resource_service._convert_resource_to_read(r))
+            resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
