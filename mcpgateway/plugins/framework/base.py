@@ -25,6 +25,8 @@ from mcpgateway.plugins.framework.models import (
     PluginResult,
 )
 
+# pylint: disable=import-outside-toplevel
+
 
 class Plugin(ABC):
     """Base plugin object for pre/post processing of inputs and outputs at various locations throughout the server.
@@ -181,7 +183,7 @@ class Plugin(ABC):
         # Fall back to global registry
         if not hook_payload_type:
             # First-Party
-            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
             registry = get_hook_registry()
             hook_payload_type = registry.get_payload_type(hook)
@@ -216,7 +218,7 @@ class Plugin(ABC):
         # Fall back to global registry
         if not hook_result_type:
             # First-Party
-            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry  # pylint: disable=import-outside-toplevel
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
             registry = get_hook_registry()
             hook_result_type = registry.get_result_type(hook)
