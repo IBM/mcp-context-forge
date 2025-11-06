@@ -6478,7 +6478,18 @@ async function enrichTool(toolId) {
         enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
         console.log(`Tool ${toolId} enriched successfully`, data);
         // showSuccessMessage(`Tool ${toolId} enriched successfully`);
-        showSuccessMessage(`Tool enriched successfully`);
+
+        const newDesc = safeGetElement("view-new-description");
+        const oldDesc = safeGetElement("view-old-description");
+
+        if (newDesc) {
+            newDesc.textContent = "Test Tool: " + (data.enriched_desc || "Unknown");
+        }
+        if (oldDesc) {
+            oldDesc.textContent = "Test Tool: " + (data.original_desc || "Unknown");
+        }
+        openModal('description-view-modal');
+        // showSuccessMessage(`Tool enriched successfully`);
 
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
