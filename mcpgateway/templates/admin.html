@@ -11652,7 +11652,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   `;
                   result.details.failed.forEach((failedTool, idx) => {
                     const toolName = failedTool.name || 'Unknown';
-                    const errorMsg = failedTool.error || 'Unknown error';
+                    let errorMsg = 'Unknown error';
+                    
+                    // Extract detailed error message
+                    if (failedTool.error) {
+                      if (typeof failedTool.error === 'string') {
+                        errorMsg = failedTool.error;
+                      } else if (failedTool.error.message) {
+                        errorMsg = failedTool.error.message;
+                      } else if (failedTool.error.detail) {
+                        errorMsg = failedTool.error.detail;
+                      } else if (failedTool.error.errors && Array.isArray(failedTool.error.errors)) {
+                        // Handle validation errors array
+                        errorMsg = failedTool.error.errors.map(err => {
+                          if (typeof err === 'string') return err;
+                          if (err.msg) return `${err.loc ? err.loc.join('.') + ': ' : ''}${err.msg}`;
+                          if (err.message) return err.message;
+                          return JSON.stringify(err);
+                        }).join('; ');
+                      } else {
+                        errorMsg = JSON.stringify(failedTool.error);
+                      }
+                    }
+                    
                     resultHTML += `
                       <div class="p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
                         <div class="text-xs font-medium text-red-800 dark:text-red-300">${idx + 1}. ${escapeHtml(toolName)}</div>
@@ -11670,7 +11692,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   `;
                   result.errors.forEach((error, idx) => {
                     const toolName = error.name || 'Unknown';
-                    const errorMsg = error.error?.message || error.error || 'Unknown error';
+                    let errorMsg = 'Unknown error';
+                    
+                    // Extract detailed error message from errors array
+                    if (error.error) {
+                      if (typeof error.error === 'string') {
+                        errorMsg = error.error;
+                      } else if (error.error.message) {
+                        errorMsg = error.error.message;
+                      } else if (error.error.detail) {
+                        errorMsg = error.error.detail;
+                      } else if (error.error.errors && Array.isArray(error.error.errors)) {
+                        // Handle validation errors array
+                        errorMsg = error.error.errors.map(err => {
+                          if (typeof err === 'string') return err;
+                          if (err.msg) return `${err.loc ? err.loc.join('.') + ': ' : ''}${err.msg}`;
+                          if (err.message) return err.message;
+                          return JSON.stringify(err);
+                        }).join('; ');
+                      } else {
+                        errorMsg = JSON.stringify(error.error);
+                      }
+                    }
+                    
                     resultHTML += `
                       <div class="p-2 bg-red-50 dark:bg-red-900/20 rounded border border-red-200 dark:border-red-800">
                         <div class="text-xs font-medium text-red-800 dark:text-red-300">${idx + 1}. ${escapeHtml(toolName)}</div>
