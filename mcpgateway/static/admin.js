@@ -6687,6 +6687,21 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Remove any select-all hidden inputs
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllResources"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allResourceIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
             update();
         });
     }
@@ -6697,12 +6712,61 @@ function initResourceSelect(
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
 
-        newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll(
-                'input[type="checkbox"]',
-            );
-            checkboxes.forEach((cb) => (cb.checked = true));
-            update();
+        newSelectBtn.addEventListener("click", async () => {
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all resources...";
+
+            try {
+                const resp = await fetch(`${window.ROOT_PATH}/admin/resources/ids`);
+                if (!resp.ok) {
+                    throw new Error("Failed to fetch resource IDs");
+                }
+                const data = await resp.json();
+                const allIds = data.resource_ids || [];
+
+                // Check all currently loaded checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+
+                // Add hidden select-all flag
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllResources"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllResources";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Store IDs as JSON for backend handling
+                let allIdsInput = container.querySelector(
+                    'input[name="allResourceIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allResourceIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error("Error selecting all resources:", error);
+                alert("Failed to select all resources. Please try again.");
+            } finally {
+                newSelectBtn.disabled = false;
+            }
         });
     }
 
@@ -6713,6 +6777,33 @@ function initResourceSelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // If Select All mode is active, update the stored IDs array
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllResources"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allResourceIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const id = e.target.value;
+                        if (e.target.checked) {
+                            if (!allIds.includes(id)) allIds.push(id);
+                        } else {
+                            allIds = allIds.filter((x) => x !== id);
+                        }
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (err) {
+                        console.error("Error updating allResourceIds:", err);
+                    }
+                }
+
                 update();
             }
         });
@@ -6796,6 +6887,21 @@ function initPromptSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Remove any select-all hidden inputs
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllPrompts"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allPromptIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
             update();
         });
     }
@@ -6805,13 +6911,61 @@ function initPromptSelect(
         const newSelectBtn = selectBtn.cloneNode(true);
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        newSelectBtn.addEventListener("click", async () => {
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all prompts...";
 
-        newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll(
-                'input[type="checkbox"]',
-            );
-            checkboxes.forEach((cb) => (cb.checked = true));
-            update();
+            try {
+                const resp = await fetch(`${window.ROOT_PATH}/admin/prompts/ids`);
+                if (!resp.ok) {
+                    throw new Error("Failed to fetch prompt IDs");
+                }
+                const data = await resp.json();
+                const allIds = data.prompt_ids || [];
+
+                // Check all currently loaded checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+
+                // Add hidden select-all flag
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllPrompts"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllPrompts";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Store IDs as JSON for backend handling
+                let allIdsInput = container.querySelector(
+                    'input[name="allPromptIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allPromptIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error("Error selecting all prompts:", error);
+                alert("Failed to select all prompts. Please try again.");
+            } finally {
+                newSelectBtn.disabled = false;
+            }
         });
     }
 
@@ -6822,6 +6976,33 @@ function initPromptSelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // If Select All mode is active, update the stored IDs array
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllPrompts"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allPromptIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const id = e.target.value;
+                        if (e.target.checked) {
+                            if (!allIds.includes(id)) allIds.push(id);
+                        } else {
+                            allIds = allIds.filter((x) => x !== id);
+                        }
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (err) {
+                        console.error("Error updating allPromptIds:", err);
+                    }
+                }
+
                 update();
             }
         });

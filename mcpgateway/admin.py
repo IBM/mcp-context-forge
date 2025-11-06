@@ -1040,14 +1040,36 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
         )
@@ -1244,14 +1266,36 @@ async def admin_edit_server(
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled for edit: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled for edit: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -5468,6 +5512,35 @@ async def admin_get_all_prompt_ids(
     query = query.where(or_(*access_conditions))
     prompt_ids = [row[0] for row in db.execute(query).all()]
     return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
+
+
+@admin_router.get("/resources/ids", response_class=JSONResponse)
+async def admin_get_all_resource_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all resource IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of resources the requesting user can access (owner, team, or public).
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbResource.id)
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    resource_ids = [row[0] for row in db.execute(query).all()]
+    return {"resource_ids": resource_ids, "count": len(resource_ids)}
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
