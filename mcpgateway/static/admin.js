@@ -6618,14 +6618,22 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            //const count = checked.length;
-            
+            // const count = checked.length;
+
             // Select All handling
-            const selectAllInput = container.querySelector('input[name="selectAllResources"]');
-            const allIdsInput = container.querySelector('input[name="allResourceIds"]');
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllResources"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allResourceIds"]',
+            );
 
             let count = checked.length;
-            if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
                 try {
                     const allIds = JSON.parse(allIdsInput.value);
                     count = allIds.length;
@@ -6846,12 +6854,13 @@ function toggleInactiveItems(type) {
 
     // Try to find the HTMX container that loads this entity's partial
     // Prefer an element with hx-get containing the admin partial endpoint
-    let selector = `[hx-get*="/admin/${type}/partial"]`;
+    const selector = `[hx-get*="/admin/${type}/partial"]`;
     let container = document.querySelector(selector);
 
     // Fallback to conventional id naming used in templates
     if (!container) {
-        const fallbackId = type === 'tools' ? 'tools-table' : `${type}-list-container`;
+        const fallbackId =
+            type === "tools" ? "tools-table" : `${type}-list-container`;
         container = document.getElementById(fallbackId);
     }
 
@@ -6868,38 +6877,57 @@ function toggleInactiveItems(type) {
     }
 
     // Build request URL based on the hx-get attribute or container id
-    let base = container.getAttribute('hx-get') || container.getAttribute('data-hx-get') || '';
+    const base =
+        container.getAttribute("hx-get") ||
+        container.getAttribute("data-hx-get") ||
+        "";
     let reqUrl;
     try {
         if (base) {
             // base may already include query params; construct URL and set include_inactive/page
             reqUrl = new URL(base, window.location.origin);
             // reset to page 1 when toggling
-            reqUrl.searchParams.set('page', '1');
-            if (checkbox.checked) reqUrl.searchParams.set('include_inactive', 'true');
-            else reqUrl.searchParams.delete('include_inactive');
+            reqUrl.searchParams.set("page", "1");
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            } else {
+                reqUrl.searchParams.delete("include_inactive");
+            }
         } else {
             // construct from known pattern
-            const root = window.ROOT_PATH || '';
-            reqUrl = new URL(`${root}/admin/${type}/partial?page=1&per_page=50`, window.location.origin);
-            if (checkbox.checked) reqUrl.searchParams.set('include_inactive', 'true');
+            const root = window.ROOT_PATH || "";
+            reqUrl = new URL(
+                `${root}/admin/${type}/partial?page=1&per_page=50`,
+                window.location.origin,
+            );
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            }
         }
     } catch (e) {
         // fallback to full reload
         const fallbackUrl2 = new URL(window.location);
-        if (checkbox.checked) fallbackUrl2.searchParams.set('include_inactive', 'true');
-        else fallbackUrl2.searchParams.delete('include_inactive');
+        if (checkbox.checked) {
+            fallbackUrl2.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl2.searchParams.delete("include_inactive");
+        }
         window.location = fallbackUrl2;
         return;
     }
 
     // Determine indicator selector
-    const indicator = container.getAttribute('hx-indicator') || `#${type}-loading`;
+    const indicator =
+        container.getAttribute("hx-indicator") || `#${type}-loading`;
 
     // Use HTMX to reload only the container (outerHTML swap)
-    if (window.htmx && typeof window.htmx.ajax === 'function') {
+    if (window.htmx && typeof window.htmx.ajax === "function") {
         try {
-            window.htmx.ajax('GET', reqUrl.toString(), { target: container, swap: 'outerHTML', indicator: indicator });
+            window.htmx.ajax("GET", reqUrl.toString(), {
+                target: container,
+                swap: "outerHTML",
+                indicator,
+            });
             return;
         } catch (e) {
             // fall through to full reload
@@ -6908,8 +6936,11 @@ function toggleInactiveItems(type) {
 
     // Last resort: reload page with param
     const finalUrl = new URL(window.location);
-    if (checkbox.checked) finalUrl.searchParams.set('include_inactive', 'true');
-    else finalUrl.searchParams.delete('include_inactive');
+    if (checkbox.checked) {
+        finalUrl.searchParams.set("include_inactive", "true");
+    } else {
+        finalUrl.searchParams.delete("include_inactive");
+    }
     window.location = finalUrl;
 }
 
@@ -17664,7 +17695,9 @@ async function serverSidePromptSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector
         try {
-            const response = await fetch(`${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`);
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -17675,19 +17708,30 @@ async function serverSidePromptSearch(searchTerm) {
                 }
 
                 // Initialize prompt mapping if needed
-                initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn');
+                initPromptSelect(
+                    "associatedPrompts",
+                    "selectedPromptsPills",
+                    "selectedPromptsWarning",
+                    6,
+                    "selectAllPromptsBtn",
+                    "clearAllPromptsBtn",
+                );
             } else {
-                container.innerHTML = '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
             }
         } catch (error) {
             console.error("Error loading prompts:", error);
-            container.innerHTML = '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
         }
         return;
     }
 
     try {
-        const response = await fetch(`${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`);
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -17718,7 +17762,14 @@ async function serverSidePromptSearch(searchTerm) {
             container.innerHTML = searchResultsHtml;
 
             // Initialize prompt select mapping
-            initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn');
+            initPromptSelect(
+                "associatedPrompts",
+                "selectedPromptsPills",
+                "selectedPromptsWarning",
+                6,
+                "selectAllPromptsBtn",
+                "clearAllPromptsBtn",
+            );
 
             if (noResultsMessage) {
                 noResultsMessage.style.display = "none";
@@ -17734,7 +17785,8 @@ async function serverSidePromptSearch(searchTerm) {
         }
     } catch (error) {
         console.error("Error searching prompts:", error);
-        container.innerHTML = '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
