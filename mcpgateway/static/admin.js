@@ -6718,7 +6718,9 @@ function initResourceSelect(
             newSelectBtn.textContent = "Selecting all resources...";
 
             try {
-                const resp = await fetch(`${window.ROOT_PATH}/admin/resources/ids`);
+                const resp = await fetch(
+                    `${window.ROOT_PATH}/admin/resources/ids`,
+                );
                 if (!resp.ok) {
                     throw new Error("Failed to fetch resource IDs");
                 }
@@ -6794,7 +6796,9 @@ function initResourceSelect(
                         let allIds = JSON.parse(allIdsInput.value);
                         const id = e.target.value;
                         if (e.target.checked) {
-                            if (!allIds.includes(id)) allIds.push(id);
+                            if (!allIds.includes(id)) {
+                                allIds.push(id);
+                            }
                         } else {
                             allIds = allIds.filter((x) => x !== id);
                         }
@@ -6938,7 +6942,9 @@ function initPromptSelect(
             newSelectBtn.textContent = "Selecting all prompts...";
 
             try {
-                const resp = await fetch(`${window.ROOT_PATH}/admin/prompts/ids`);
+                const resp = await fetch(
+                    `${window.ROOT_PATH}/admin/prompts/ids`,
+                );
                 if (!resp.ok) {
                     throw new Error("Failed to fetch prompt IDs");
                 }
@@ -7014,7 +7020,9 @@ function initPromptSelect(
                         let allIds = JSON.parse(allIdsInput.value);
                         const id = e.target.value;
                         if (e.target.checked) {
-                            if (!allIds.includes(id)) allIds.push(id);
+                            if (!allIds.includes(id)) {
+                                allIds.push(id);
+                            }
                         } else {
                             allIds = allIds.filter((x) => x !== id);
                         }

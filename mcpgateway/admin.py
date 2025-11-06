@@ -5524,6 +5524,16 @@ async def admin_get_all_resource_ids(
 
     This endpoint is used by UI "Select All" helpers to fetch only the IDs
     of resources the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): Whether to include inactive resources in the results.
+        db (Session): Database session dependency.
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "resource_ids": List[str] of accessible resource IDs.
+            - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
