@@ -352,6 +352,7 @@ class OpenAIConfig(BaseModel):
     max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
     timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
     max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+    default_headers: Optional[dict] = Field(None, description="optional default headers required by the provider")
 
     model_config = {
         "json_schema_extra": {
@@ -868,11 +869,10 @@ class OpenAIProvider:
 
                 if self.config.base_url:
                     kwargs["base_url"] = self.config.base_url
-
-                # DELETE headers if not required
-                # add RITS API KEY in default headers only if LLM inference url is from RITS 
-                if type(self.config.base_url) == str and 'rits.fmaas.res.ibm.com' in self.config.base_url:
-                    kwargs["default_headers"] = {'RITS_API_KEY': self.config.api_key}
+                
+                # add default headers if present 
+                if self.config.default_headers is not None:
+                    kwargs["default_headers"] = self.config.default_headers
 
                 if model_type == 'chat':
                     self._llm = ChatOpenAI(**kwargs)
