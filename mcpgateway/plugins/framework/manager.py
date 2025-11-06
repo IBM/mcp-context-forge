@@ -305,7 +305,6 @@ class PluginExecutor:
 
         Args:
             hook_ref: Reference to the hook and plugin to execute.
-            plugin_run: Function to execute the plugin.
             payload: Payload to process.
             context: Plugin execution context.
 
@@ -529,6 +528,7 @@ class PluginManager:
         """Invoke a set of plugins configured for the hook point in priority order.
 
         Args:
+            hook_type: The type of hook to execute.
             payload: The plugin payload for which the plugins will analyze and modify.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional existing contexts from previous hook executions.
@@ -586,6 +586,7 @@ class PluginManager:
 
         Raises:
             PluginError: If the plugin or hook type cannot be found in the registry.
+            ValueError: If payload type does not match payload_as_json setting.
 
         Examples:
             >>> manager = PluginManager("plugins/config.yaml")

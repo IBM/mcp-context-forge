@@ -325,6 +325,9 @@ class ExternalHookRef(HookRef):
         Args:
             hook: name of the hook point.
             plugin_ref: The reference to the plugin to hook.
+
+        Raises:
+            PluginError: If the plugin is not an external plugin.
         """
         self._plugin_ref = plugin_ref
         self._hook = hook
