@@ -36,7 +36,11 @@ class LLMGuardBase:
     """
 
     def __init__(self, config: Optional[dict[str, Any]]) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
+
+        Args:
+            config: Configuration for guardrails.
+        """
 
         self.lgconfig = LLMGuardConfig.model_validate(config)
         self.scanners = {"input": {"sanitizers": [], "filters": []}, "output": {"sanitizers": [], "filters": []}}
@@ -65,7 +69,11 @@ class LLMGuardBase:
         return False
 
     def _create_vault(self) -> Vault:
-        """This function creates a new vault and sets it's creation time as it's attribute"""
+        """This function creates a new vault and sets it's creation time as it's attribute
+
+        Returns:
+            Vault: A new vault object with creation time set.
+        """
         logger.info("Vault creation")
         vault = Vault()
         vault.creation_time = datetime.now()
@@ -76,7 +84,11 @@ class LLMGuardBase:
         """This function is responsible for retrieving vault for given sanitizer names
 
         Args:
-            sanitizer_names: list of names for sanitizers"""
+            sanitizer_names: list of names for sanitizers
+
+        Returns:
+            tuple[Vault, int, tuple]: A tuple containing the vault object, vault ID, and vault tuples.
+        """
         vault_id = None
         vault_tuples = None
         length = len(self.scanners["input"]["sanitizers"])
@@ -112,7 +124,9 @@ class LLMGuardBase:
         """This function is responsible for updating vault for given sanitizer names in output
 
         Args:
-            sanitizer_names: list of names for sanitizers"""
+            config: Configuration containing sanitizer settings.
+            sanitizer_names: list of names for sanitizers
+        """
         length = len(self.scanners["output"]["sanitizers"])
         for i in range(length):
             scanner_name = type(self.scanners["output"]["sanitizers"][i]).__name__
@@ -131,7 +145,7 @@ class LLMGuardBase:
             config: configuration for scanner
 
         Returns:
-            policy_filters: Either None or a list of scanners defined in the policy
+            list: Either None or a list of scanners defined in the policy.
         """
         config_keys = get_policy_filters(config)
         if "policy" in config:
@@ -259,9 +273,10 @@ class LLMGuardBase:
 
         Args:
             original_input: The original input prompt for which model produced a response
+            model_response: The model's response to apply filters on
 
         Returns:
-            result: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
+            dict[str, dict[str, Any]]: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
                     "is_valid" which is boolean that says if the prompt is valid or not based on a scanner applied and "risk_score" which gives the risk score assigned by the scanner to the prompt.
         """
         result = {}
@@ -280,10 +295,11 @@ class LLMGuardBase:
         """Takes in model_response and applies sanitizers on it
 
         Args:
-            original_input: The original input prompt for which model produced a response
+            input_prompt: The original input prompt for which model produced a response
+            model_response: The model's response to apply sanitizers on
 
         Returns:
-            result: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
+            dict[str, dict[str, Any]]: A dictionary with key as scanner_name which is the name of the scanner applied to the output and value as a dictionary with keys "sanitized_prompt" which is the actual prompt,
                     "is_valid" which is boolean that says if the prompt is valid or not based on a scanner applied and "risk_score" which gives the risk score assigned by the scanner to the prompt.
         """
         result = scan_output(self.scanners["output"]["sanitizers"], input_prompt, model_response)

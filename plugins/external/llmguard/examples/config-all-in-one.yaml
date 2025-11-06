@@ -5,7 +5,7 @@ plugins:
     description: "A plugin for running input and output through llmguard scanners "
     version: "0.1"
     author: "ContextForge"
-    hooks: ["prompt_pre_fetch","prompt_post_fetch"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre-post", "filters", "sanitizers"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 20
@@ -18,11 +18,11 @@ plugins:
       cache_ttl: 120 #defined in seconds
       input:
         filters:
-            PromptInjection:
-              threshold: 0.6
-              use_onnx: false
-            policy: PromptInjection
-            policy_message: I'm sorry, I cannot allow this input.
+          PromptInjection:
+            threshold: 0.6
+            use_onnx: false
+          policy: PromptInjection
+          policy_message: I'm sorry, I cannot allow this input.
         sanitizers:
           Anonymize:
             language: "en"
@@ -34,7 +34,7 @@ plugins:
             matching_strategy: exact
         filters:
           Toxicity:
-              threshold: 0.5
+            threshold: 0.5
           policy: Toxicity
           policy_message: I'm sorry, I cannot allow this output.
 

@@ -19,9 +19,9 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
-    Plugin,
     PromptPrehookPayload,
     PromptPrehookResult,
     ResourcePostFetchPayload,

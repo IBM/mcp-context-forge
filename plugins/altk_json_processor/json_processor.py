@@ -23,9 +23,9 @@ from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRu
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
-    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )

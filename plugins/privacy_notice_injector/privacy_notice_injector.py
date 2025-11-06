@@ -21,9 +21,9 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.common.models import Message, Role, TextContent
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
-    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
 )

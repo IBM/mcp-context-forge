@@ -19,11 +19,11 @@ from urllib.parse import urlparse
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginMode,
     PluginViolation,
-    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,

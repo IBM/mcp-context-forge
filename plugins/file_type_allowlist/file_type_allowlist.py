@@ -22,10 +22,10 @@ from pydantic import BaseModel, Field
 # First-Party
 from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
-    Plugin, 
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ResourcePreFetchPayload,

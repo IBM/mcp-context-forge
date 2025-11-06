@@ -12,7 +12,7 @@ plugins:
       - agent
     mode: enforce
     priority: 50
-  
+
 # Plugin directories to scan
 plugin_dirs:
   - "plugins/native"      # Built-in plugins

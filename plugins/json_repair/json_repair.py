@@ -18,9 +18,9 @@ import re
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
-    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )

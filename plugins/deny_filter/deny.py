@@ -12,14 +12,7 @@ This module loads configurations for plugins.
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.plugins.framework import (
-    PluginConfig,
-    PluginContext,
-    PluginViolation,
-    Plugin,
-    PromptPrehookPayload,
-    PromptPrehookResult
-)
+from mcpgateway.plugins.framework import Plugin, PluginConfig, PluginContext, PluginViolation, PromptPrehookPayload, PromptPrehookResult
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

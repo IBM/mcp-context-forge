@@ -17,9 +17,9 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
-    Plugin,
     ResourcePostFetchPayload,
     ResourcePostFetchResult,
     ToolPostInvokePayload,

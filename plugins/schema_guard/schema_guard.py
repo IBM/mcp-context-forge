@@ -20,10 +20,10 @@ from pydantic import BaseModel
 
 # First-Party
 from mcpgateway.plugins.framework import (
+    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
-    Plugin,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
     ToolPreInvokePayload,
