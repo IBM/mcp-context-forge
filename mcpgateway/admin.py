@@ -6860,6 +6860,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         ...     ("name", "Test Resource"),
         ...     ("description", "A test resource"),
         ...     ("mimeType", "text/plain"),
+        ...     ("template", ""),
         ...     ("content", "Sample content"),
         ... ])
         >>> mock_request = MagicMock(spec=Request)
@@ -6891,12 +6892,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
+        # Handle template field: convert empty string to None for optional field
+        template_value = form.get("template")
+        template = template_value if template_value else None
+
         resource = ResourceCreate(
             uri=str(form["uri"]),
             name=str(form["name"]),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
-            template=cast(str | None, form.get("template")),
+            template=template,
             content=str(form["content"]),
             tags=tags,
             visibility=visibility,

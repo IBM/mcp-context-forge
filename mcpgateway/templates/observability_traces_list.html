@@ -1,3 +1,4 @@
+<!-- htmlhint doctype-first:false -->
 {% if traces %}
     {% for trace in traces %}
     <tr hx-get="{{ root_path }}/admin/observability/trace/{{ trace.trace_id }}"
