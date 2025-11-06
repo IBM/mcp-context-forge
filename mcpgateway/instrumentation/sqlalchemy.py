@@ -17,6 +17,7 @@ Examples:
 
 # Standard
 import logging
+import queue
 import threading
 import time
 from typing import Any, Optional
@@ -33,6 +34,90 @@ _query_tracking = {}
 # Thread-local flag to prevent recursive instrumentation
 _instrumentation_context = threading.local()
 
+# Background queue for deferred span writes to avoid database locks
+_span_queue: queue.Queue = queue.Queue(maxsize=1000)
+_span_writer_thread: Optional[threading.Thread] = None
+_shutdown_event = threading.Event()
+
+
+def _write_span_to_db(span_data: dict) -> None:
+    """Write a single span to the database.
+
+    Args:
+        span_data: Dictionary containing span information
+    """
+    try:
+        # Import here to avoid circular imports
+        # First-Party
+        # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import ObservabilitySpan, SessionLocal
+        from mcpgateway.services.observability_service import ObservabilityService
+
+        # pylint: enable=import-outside-toplevel
+
+        service = ObservabilityService()
+        db = SessionLocal()
+        try:
+            span_id = service.start_span(
+                db=db,
+                trace_id=span_data["trace_id"],
+                name=span_data["name"],
+                kind=span_data["kind"],
+                resource_type=span_data["resource_type"],
+                resource_name=span_data["resource_name"],
+                attributes=span_data["start_attributes"],
+            )
+
+            # End span with measured duration in attributes
+            service.end_span(
+                db=db,
+                span_id=span_id,
+                status=span_data["status"],
+                attributes=span_data["end_attributes"],
+            )
+
+            # Update the span duration to match what we actually measured
+            span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
+            if span:
+                span.duration_ms = span_data["duration_ms"]
+                db.commit()
+
+            logger.debug(f"Created span for {span_data['resource_name']} query: " f"{span_data['duration_ms']:.2f}ms, {span_data.get('row_count')} rows")
+
+        finally:
+            db.close()
+
+    except Exception as e:  # pylint: disable=broad-except
+        # Don't fail if span creation fails
+        logger.warning(f"Failed to write query span: {e}")
+
+
+def _span_writer_worker() -> None:
+    """Background worker thread that writes spans to the database.
+
+    This runs in a separate thread to avoid blocking the main request thread
+    and to prevent database lock contention.
+    """
+    logger.info("Span writer worker started")
+
+    while not _shutdown_event.is_set():
+        try:
+            # Wait for span data with timeout to allow checking shutdown
+            try:
+                span_data = _span_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            # Write the span to the database
+            _write_span_to_db(span_data)
+            _span_queue.task_done()
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f"Error in span writer worker: {e}")
+            # Continue processing even if one span fails
+
+    logger.info("Span writer worker stopped")
+
 
 def instrument_sqlalchemy(engine: Engine) -> None:
     """Instrument a SQLAlchemy engine to capture query spans.
@@ -45,9 +130,18 @@ def instrument_sqlalchemy(engine: Engine) -> None:
         >>> engine = create_engine("sqlite:///./mcp.db")  # doctest: +SKIP
         >>> instrument_sqlalchemy(engine)  # doctest: +SKIP
     """
+    global _span_writer_thread
+
     # Register event listeners
     event.listen(engine, "before_cursor_execute", _before_cursor_execute)
     event.listen(engine, "after_cursor_execute", _after_cursor_execute)
+
+    # Start background span writer thread if not already running
+    if _span_writer_thread is None or not _span_writer_thread.is_alive():
+        _span_writer_thread = threading.Thread(target=_span_writer_worker, name="SpanWriterThread", daemon=True)
+        _span_writer_thread.start()
+        logger.info("Started background span writer thread")
+
     logger.info("SQLAlchemy instrumentation enabled")
 
 
@@ -152,6 +246,9 @@ def _create_query_span(
 ) -> None:
     """Create an observability span for a database query.
 
+    This function enqueues span data to be written by a background thread,
+    avoiding database lock contention.
+
     Args:
         trace_id: Parent trace ID
         statement: SQL statement
@@ -159,68 +256,44 @@ def _create_query_span(
         row_count: Number of rows affected/returned
         executemany: Whether this is a bulk execution
     """
-    # Set flag to prevent recursive instrumentation
-    _instrumentation_context.inside_span_creation = True
     try:
-        # Import here to avoid circular imports
-        # First-Party
-        # pylint: disable=import-outside-toplevel
-        from mcpgateway.db import ObservabilitySpan, SessionLocal
-        from mcpgateway.services.observability_service import ObservabilityService
-
-        # pylint: enable=import-outside-toplevel
         # Extract query type (SELECT, INSERT, UPDATE, DELETE, etc.)
         query_type = statement.strip().split()[0].upper() if statement else "UNKNOWN"
 
         # Truncate long queries for span name
         span_name = f"db.query.{query_type.lower()}"
 
-        # Create span
-        service = ObservabilityService()
-        db = SessionLocal()
+        # Prepare span data
+        span_data = {
+            "trace_id": trace_id,
+            "name": span_name,
+            "kind": "client",
+            "resource_type": "database",
+            "resource_name": query_type,
+            "duration_ms": duration_ms,
+            "status": "ok",
+            "start_attributes": {
+                "db.statement": statement[:500],  # Truncate long queries
+                "db.operation": query_type,
+                "db.executemany": executemany,
+                "db.duration_measured_ms": duration_ms,  # Store actual measured duration
+            },
+            "end_attributes": {
+                "db.row_count": row_count,
+            },
+            "row_count": row_count,
+        }
+
+        # Enqueue for background processing (non-blocking)
         try:
-            span_id = service.start_span(
-                db=db,
-                trace_id=trace_id,
-                name=span_name,
-                kind="client",
-                resource_type="database",
-                resource_name=query_type,
-                attributes={
-                    "db.statement": statement[:500],  # Truncate long queries
-                    "db.operation": query_type,
-                    "db.executemany": executemany,
-                    "db.duration_measured_ms": duration_ms,  # Store actual measured duration
-                },
-            )
-
-            # End span with measured duration in attributes
-            service.end_span(
-                db=db,
-                span_id=span_id,
-                status="ok",
-                attributes={
-                    "db.row_count": row_count,
-                },
-            )
-
-            # Update the span duration to match what we actually measured
-            span = db.query(ObservabilitySpan).filter_by(span_id=span_id).first()
-            if span:
-                span.duration_ms = duration_ms
-                db.commit()
-
-            logger.debug(f"Created span for {query_type} query: {duration_ms:.2f}ms, {row_count} rows")
-
-        finally:
-            db.close()
+            _span_queue.put_nowait(span_data)
+            logger.debug(f"Enqueued span for {query_type} query: {duration_ms:.2f}ms")
+        except queue.Full:
+            logger.warning("Span queue is full, dropping span data")
 
     except Exception as e:  # pylint: disable=broad-except
         # Don't fail the query if span creation fails
-        logger.warning(f"Failed to create query span: {e}")
-    finally:
-        # Always clear the flag
-        _instrumentation_context.inside_span_creation = False
+        logger.debug(f"Failed to enqueue query span: {e}")
 
 
 def attach_trace_to_session(session: Any, trace_id: str) -> None:

@@ -11468,7 +11468,7 @@ async def save_observability_query(
         return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
     except Exception as e:
         db.rollback()
-        logger.error(f"Failed to save query: {e}")
+        LOGGER.error(f"Failed to save query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         db.close()
@@ -11494,7 +11494,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
         # Get user's own queries + shared queries
         queries = (
             db.query(ObservabilitySavedQuery)
-            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True))
+            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True))
             .order_by(desc(ObservabilitySavedQuery.created_at))
             .all()
         )
@@ -11538,7 +11538,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
         # Can only access own queries or shared queries
         query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True)).first()
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
         )
 
         if not query:
@@ -11621,7 +11621,7 @@ async def update_observability_query(
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Failed to update query: {e}")
+        LOGGER.error(f"Failed to update query: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         db.close()
@@ -11676,7 +11676,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
 
         # Can track usage for own queries or shared queries
         query = (
-            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True)).first()
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
         )
 
         if not query:
@@ -11694,7 +11694,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         raise
     except Exception as e:
         db.rollback()
-        logger.error(f"Failed to track query usage: {e}")
+        LOGGER.error(f"Failed to track query usage: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         db.close()

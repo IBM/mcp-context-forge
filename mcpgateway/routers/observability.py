@@ -135,6 +135,9 @@ def query_traces_advanced(
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
+
+    Raises:
+        HTTPException: 400 error if request body is invalid
     """
     # Third-Party
     from pydantic import ValidationError
@@ -352,6 +355,9 @@ def export_traces(
 
     Returns:
         StreamingResponse or JSONResponse with exported data
+
+    Raises:
+        HTTPException: 400 error if format is invalid or export fails
     """
     # Standard
     import csv

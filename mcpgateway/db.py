@@ -175,10 +175,12 @@ if backend == "sqlite":
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
-        # Set busy timeout to 10 seconds (10000 ms) to handle lock contention
-        cursor.execute("PRAGMA busy_timeout=10000")
+        # Set busy timeout to 30 seconds (30000 ms) to handle lock contention from observability
+        cursor.execute("PRAGMA busy_timeout=30000")
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
+        # Increase cache size for better performance (negative value = KB)
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
         cursor.close()
 
 
