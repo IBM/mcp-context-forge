@@ -31,6 +31,8 @@ class TestcaseGeneration:
         test_case_lineage_from_optional_data = dict()
         created_testcase_with_zero_params = dict()
         test_case_lineage_with_zero_params = dict()
+        created_testcases_full_from_LLM = dict()
+        test_case_lineage_full_from_LLM = dict()
         test_case_lineage = dict()
         if optional_data_scenario != None:
             count=0
