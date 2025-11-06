@@ -2369,6 +2369,14 @@
                           </button>
 
                           <button
+                            onclick="generateToolTestCases('{{ tool.id }}')"
+                            class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
+                            x-tooltip="'💡Execute this Tool with sample inputs'"
+                          >
+                            Generate Test Cases
+                          </button>
+
+                          <button
                             onclick="enrichTool('{{ tool.id }}')"
                             class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors transition-colors"
                             x-tooltip="'💡Execute this Tool with sample inputs'"
@@ -6520,7 +6528,83 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
       </div>
-      
+      <!-- New Modal: Test Case Generation -->
+<div
+id="testcase-gen-modal"
+class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+>
+<div
+  class="bg-white dark:bg-gray-900 w-full max-w-md rounded-lg shadow-lg p-6"
+>
+  <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">
+    Generate Test Cases
+  </h2>
+  
+
+  <form id="testcase-gen-form" class="space-y-4 text-gray-800 dark:text-gray-100">
+    <!-- Number of Test Cases -->
+    <div>
+      <label
+          id="gen-test-tool-id"
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+        ></label>
+      <label
+        for="gen-testcase-count"
+        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+      >
+        Number of Test Cases
+      </label>
+      <input
+        id="gen-testcase-count"
+        name="testCases"
+        type="number"
+        min="1"
+        class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
+        placeholder="e.g., 5"
+        required
+      />
+    </div>
+
+    <!-- Number of NL Variations -->
+    <div>
+      <label
+        for="gen-nl-variation-count"
+        class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+      >
+        Number of NL Variations
+      </label>
+      <input
+        id="gen-nl-variation-count"
+        name="nlVariations"
+        type="number"
+        min="1"
+        class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
+        placeholder="e.g., 3"
+        required
+      />
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="flex justify-between mt-6">
+      <button
+        type="button"
+        onclick="generateTestCases()"
+        id="generate-btn"
+        class="w-1/2 mr-2 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+      >
+        Generate
+      </button>
+      <button
+          onclick="closeModal('testcase-gen-modal')"
+          class="w-1/2 ml-2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
+        >
+          Close
+        </button>
+    </div>
+  </form>
+</div>
+</div>
+
       <div id="tool-validation-modal" class="fixed inset-0 hidden z-50 overflow-y-auto bg-black bg-opacity-50">
     <div
       class="relative bg-white dark:bg-gray-900 w-full max-w-3xl mx-auto my-10 rounded-lg shadow-lg p-6"
@@ -6558,7 +6642,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </button>
     </div>
     
-  </div>
+      </div>
 
   <script>
     function openModal(id) {
