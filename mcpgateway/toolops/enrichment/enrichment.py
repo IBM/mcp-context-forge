@@ -7,14 +7,13 @@ import tomli as tomllib
 from typing import Any
 from mcpgateway.schemas import ToolRead
 from mcpgateway.toolops.enrichment.prompt_utils import generate_enriched_tool_description
-from mcpgateway.toolops.exceptions import ToolEnrichmentError
 
 from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 class ToolOpsEnrichment:
-    def __init__(self, llm_model_id : str | None, llm_platform : str = "WATSONX"):
+    def __init__(self, llm_model_id : str | None, llm_platform : str | None):
         self.llm_config: dict[str, Any] = {}
         file_path = Path(__file__)
         absolute_path = file_path.resolve()
@@ -22,24 +21,9 @@ class ToolOpsEnrichment:
         with Path(cfg_file).open(mode="rb") as task_file:
             self.llm_config = tomllib.load(task_file)
 
-        if llm_model_id:
-            file_path = Path(__file__)
-            absolute_path = file_path.resolve()
-            cfg_file = (
-                absolute_path.parent / "conf/task_definitions.toml"
-            )
-            with Path(cfg_file).open(mode="rb") as task_file:
-                task_definitions = tomllib.load(task_file)
-            llm_model_id = task_definitions["default"]["DEFAULT_MODEL_ID"]
-
-        if not llm_model_id:
-            exception = "Please configure the llm model id for ToolOps Enrichment."
-            raise ToolEnrichmentError("ToolOpsEnrichment", exception)
-
-        # print("Using modelid: " + llm_model_id)
-        logger.info("Tool enrichment using LLM model: " + llm_model_id)
-        self.llm_model_id = llm_model_id
-        self.llm_platform = llm_platform
+        logger.info("Tool enrichment using LLM model: " + str(llm_model_id))
+        self.llm_model_id = llm_model_id if llm_model_id else ""
+        self.llm_platform = llm_platform if llm_platform else ""
         self.sessionid = self._get_unique_sessionid()
 
     def _get_unique_sessionid(self) -> str:

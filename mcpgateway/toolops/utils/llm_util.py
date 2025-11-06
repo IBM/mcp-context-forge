@@ -15,6 +15,9 @@ logger = logging_service.get_logger(__name__)
 
 load_dotenv(".env.example")
 
+# set LLM temperature for toolops modules as low to produce minimally variable model outputs.
+TOOLOPS_TEMPERATURE = 0.1
+
 def get_llm_instance(model_type='completion'):
     llm_provider = os.getenv("LLM_PROVIDER","")
     logger.info("Configuring LLM instance for ToolOps , and LLM provider - "+llm_provider)
@@ -34,18 +37,26 @@ def get_llm_instance(model_type='completion'):
             oai_api_key = os.getenv("OPENAI_API_KEY", "")
             oai_base_url = os.getenv("OPENAI_BASE_URL", "")
             oai_model = os.getenv("OPENAI_MODEL", "")
-            oai_temperature= float(os.getenv("OPENAI_TEMPERATURE","0.7"))
+            #oai_temperature= float(os.getenv("OPENAI_TEMPERATURE","0.7"))
+            oai_temperature= TOOLOPS_TEMPERATURE
             oai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES","2"))
             oai_max_tokens= int(os.getenv("OPENAI_MAX_TOEKNS","600"))
+            # adding default headers for RITS LLM platform as required
+            if type(oai_base_url) == str and 'rits.fmaas.res.ibm.com' in oai_base_url:
+                default_headers = {'RITS_API_KEY': oai_api_key}
+            else:
+                default_headers = None
             llm_config = OpenAIConfig(api_key=oai_api_key, base_url = oai_base_url, temperature = oai_temperature, 
-                        model=oai_model, max_tokens=oai_max_tokens, max_retries = oai_max_retries ,timeout=None)
+                        model=oai_model, max_tokens=oai_max_tokens, max_retries = oai_max_retries , 
+                        default_headers=default_headers, timeout=None)
         elif llm_provider == "azure_openai":
             az_api_key=os.getenv("AZURE_OPENAI_API_KEY","")
             az_url= os.getenv("AZURE_OPENAI_ENDPOINT","")
             az_api_version= os.getenv("AZURE_OPENAI_API_VERSION","")
             az_deployment= os.getenv("AZURE_OPENAI_DEPLOYMENT","")
             az_model= os.getenv("AZURE_OPENAI_MODEL","")
-            az_temperature= float(os.getenv("AZURE_OPENAI_TEMPERATURE",0.7))
+            #az_temperature= float(os.getenv("AZURE_OPENAI_TEMPERATURE",0.7))
+            az_temperature= TOOLOPS_TEMPERATURE
             az_max_retries= int(os.getenv("AZURE_OPENAI_MAX_RETRIES",2))
             az_max_tokens= int(os.getenv("AZURE_OPENAI_MAX_TOEKNS","600"))
             llm_config = AzureOpenAIConfig(api_key= az_api_key,
@@ -60,7 +71,8 @@ def get_llm_instance(model_type='completion'):
         elif llm_provider == "anthropic":
             ant_api_key=os.getenv("ANTHROPIC_API_KEY","")
             ant_model=os.getenv("ANTHROPIC_MODEL","")
-            ant_temperature= float(os.getenv("ANTHROPIC_TEMPERATURE",0.7))
+            #ant_temperature= float(os.getenv("ANTHROPIC_TEMPERATURE",0.7))
+            ant_temperature= TOOLOPS_TEMPERATURE
             ant_max_tokens= int(os.getenv("ANTHROPIC_MAX_TOKENS",4096))
             ant_max_retries= int(os.getenv("ANTHROPIC_MAX_RETRIES",2))
             llm_config = AnthropicConfig(api_key = ant_api_key,
@@ -74,7 +86,8 @@ def get_llm_instance(model_type='completion'):
         elif llm_provider == "aws_bedrock":
             aws_model=os.getenv("AWS_BEDROCK_MODEL_ID","")
             aws_region=os.getenv("AWS_BEDROCK_REGION","")
-            aws_temperatute=float(os.getenv("AWS_BEDROCK_TEMPERATURE",0.7))
+            #aws_temperatute=float(os.getenv("AWS_BEDROCK_TEMPERATURE",0.7))
+            aws_temperatute=TOOLOPS_TEMPERATURE
             aws_max_tokens=int(os.getenv("AWS_BEDROCK_MAX_TOKENS",4096))
             aws_key_id=os.getenv("AWS_ACCESS_KEY_ID","")
             aws_secret=os.getenv("AWS_SECRET_ACCESS_KEY","")
@@ -90,7 +103,8 @@ def get_llm_instance(model_type='completion'):
         elif llm_provider == "ollama":
             ollama_model=os.getenv("OLLAMA_MODEL","")
             ollama_url=os.getenv("OLLAMA_BASE_URL","")
-            ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
+            #ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
+            ollama_temeperature=TOOLOPS_TEMPERATURE
             llm_config = OllamaConfig(base_url=ollama_url,
                                     model=ollama_model,
                                     temperature=ollama_temeperature,
