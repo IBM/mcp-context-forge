@@ -55,6 +55,9 @@
                 <button @click="viewMode = 'gantt'" :class="viewMode === 'gantt' ? 'active' : ''" class="view-toggle-btn">
                     📊 Gantt Chart
                 </button>
+                <button @click="viewMode = 'flame'" :class="viewMode === 'flame' ? 'active' : ''" class="view-toggle-btn">
+                    🔥 Flame Graph
+                </button>
                 <button @click="viewMode = 'waterfall'" :class="viewMode === 'waterfall' ? 'active' : ''" class="view-toggle-btn">
                     📋 Simple View
                 </button>
@@ -63,6 +66,9 @@
 
         <!-- Interactive Gantt Chart -->
         <div x-show="viewMode === 'gantt'" id="gantt-chart-container"></div>
+
+        <!-- Interactive Flame Graph -->
+        <div x-show="viewMode === 'flame'" id="flame-graph-container"></div>
 
         <!-- Simple Waterfall View -->
         <div x-show="viewMode === 'waterfall'" class="waterfall">
@@ -142,6 +148,48 @@
                     // Initialize the chart
                     window.ganttChart = new GanttChart('gantt-chart-container', traceData);
                     console.log('Gantt chart initialized successfully');
+                }, 100);
+            })();
+        </script>
+
+        <!-- Initialize Flame Graph -->
+        <script>
+            // Initialize Flame graph when the trace detail is loaded
+            (function() {
+                // Wait for DOM to be ready
+                setTimeout(function() {
+                    if (typeof FlameGraph === 'undefined') {
+                        console.error('FlameGraph class not loaded. Make sure flame-graph.js is included.');
+                        return;
+                    }
+
+                    const traceData = {
+                        trace_id: "{{ trace.trace_id }}",
+                        duration_ms: {{ trace.duration_ms or 0 }},
+                        start_time: "{{ trace.start_time.isoformat() }}",
+                        end_time: "{{ trace.end_time.isoformat() if trace.end_time else trace.start_time.isoformat() }}",
+                        spans: [
+                            {% for span in trace.spans %}
+                            {
+                                span_id: "{{ span.span_id }}",
+                                name: "{{ span.name|replace('"', '\\"') }}",
+                                kind: "{{ span.kind }}",
+                                status: "{{ span.status }}",
+                                start_time: "{{ span.start_time.isoformat() }}",
+                                end_time: "{{ span.end_time.isoformat() if span.end_time else span.start_time.isoformat() }}",
+                                duration_ms: {{ span.duration_ms or 0 }},
+                                parent_span_id: {{ ('"%s"' % span.parent_span_id) if span.parent_span_id else 'null' }},
+                                attributes: {{ span.attributes|tojson if span.attributes else '{}' }}
+                            }{{ ',' if not loop.last else '' }}
+                            {% endfor %}
+                        ]
+                    };
+
+                    console.log('Initializing Flame graph with', traceData.spans.length, 'spans');
+
+                    // Initialize the flame graph
+                    window.flameGraph = new FlameGraph('flame-graph-container', traceData);
+                    console.log('Flame graph initialized successfully');
                 }, 100);
             })();
         </script>
