@@ -122,6 +122,17 @@ else:
         connect_args=connect_args,
     )
 
+# Initialize SQLAlchemy instrumentation for observability
+if settings.observability_enabled:
+    try:
+        # First-Party
+        from mcpgateway.instrumentation import instrument_sqlalchemy
+
+        instrument_sqlalchemy(engine)
+        logger.info("SQLAlchemy instrumentation enabled for observability")
+    except ImportError:
+        logger.warning("Failed to import SQLAlchemy instrumentation")
+
 
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
@@ -1778,6 +1789,56 @@ class ObservabilityMetric(Base):
         Index("idx_observability_metrics_name_timestamp", "name", "timestamp"),
         Index("idx_observability_metrics_resource_type", "resource_type"),
         Index("idx_observability_metrics_trace_id", "trace_id"),
+    )
+
+
+class ObservabilitySavedQuery(Base):
+    """
+    ORM model for saved observability queries (filter presets).
+
+    Allows users to save their filter configurations for quick access and
+    historical query tracking. Queries can be personal or shared with the team.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        name (str): User-given name for the saved query.
+        description (str): Optional description of what this query finds.
+        user_email (str): Email of the user who created this query.
+        filter_config (dict): JSON containing all filter values (time_range, status_filter, etc.).
+        is_shared (bool): Whether this query is visible to other users.
+        created_at (datetime): When the query was created.
+        updated_at (datetime): When the query was last modified.
+        last_used_at (datetime): When the query was last executed.
+        use_count (int): How many times this query has been used.
+    """
+
+    __tablename__ = "observability_saved_queries"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Query metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Filter configuration (stored as JSON)
+    filter_config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Sharing settings
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps and usage tracking
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_saved_queries_user_email", "user_email"),
+        Index("idx_observability_saved_queries_is_shared", "is_shared"),
+        Index("idx_observability_saved_queries_created_at", "created_at"),
     )
 
 

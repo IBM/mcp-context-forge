@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add_observability_tables
 
 Revision ID: a23a08d61eb0

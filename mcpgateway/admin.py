@@ -36,13 +36,13 @@ import urllib.parse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, case, desc, func, or_, select
+from sqlalchemy import and_, case, cast, desc, func, or_, select, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
@@ -50,8 +50,9 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
@@ -11315,7 +11316,19 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
-async def get_observability_traces(request: Request, time_range: str = Query("24h"), status_filter: str = Query("all"), limit: int = Query(50), _user=Depends(get_current_user_with_permissions)):
+async def get_observability_traces(
+    request: Request,
+    time_range: str = Query("24h"),
+    status_filter: str = Query("all"),
+    limit: int = Query(50),
+    min_duration: Optional[float] = Query(None),
+    max_duration: Optional[float] = Query(None),
+    http_method: Optional[str] = Query(None),
+    user_email: Optional[str] = Query(None),
+    name_search: Optional[str] = Query(None),
+    attribute_search: Optional[str] = Query(None),
+    _user=Depends(get_current_user_with_permissions),
+):
     """Get list of traces for the dashboard.
 
     Args:
@@ -11323,6 +11336,12 @@ async def get_observability_traces(request: Request, time_range: str = Query("24
         time_range: Time range filter (1h, 6h, 24h, 7d)
         status_filter: Status filter (all, ok, error)
         limit: Maximum number of traces to return
+        min_duration: Minimum duration in ms
+        max_duration: Maximum duration in ms
+        http_method: HTTP method filter
+        user_email: User email filter
+        name_search: Trace name search
+        attribute_search: Full-text attribute search
         _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
@@ -11340,6 +11359,30 @@ async def get_observability_traces(request: Request, time_range: str = Query("24
         # Apply status filter
         if status_filter != "all":
             query = query.filter(ObservabilityTrace.status == status_filter)
+
+        # Apply duration filters
+        if min_duration is not None:
+            query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
+        if max_duration is not None:
+            query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
+
+        # Apply HTTP method filter
+        if http_method:
+            query = query.filter(ObservabilityTrace.http_method == http_method)
+
+        # Apply user email filter
+        if user_email:
+            query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
+
+        # Apply name search
+        if name_search:
+            query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
+
+        # Apply attribute search
+        if attribute_search:
+            # Escape special characters for SQL LIKE
+            safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
+            query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
 
         # Get traces ordered by most recent
         traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
@@ -11374,5 +11417,277 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
         root_path = request.scope.get("root_path", "")
         return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
+    finally:
+        db.close()
+
+
+@admin_router.post("/observability/queries", response_model=dict)
+async def save_observability_query(
+    request: Request,
+    name: str = Body(..., description="Name for the saved query"),
+    description: Optional[str] = Body(None, description="Optional description"),
+    filter_config: dict = Body(..., description="Filter configuration as JSON"),
+    is_shared: bool = Body(False, description="Whether query is shared with team"),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Save a new observability query filter configuration.
+
+    Args:
+        request: FastAPI request object
+        name: User-given name for the query
+        description: Optional description
+        filter_config: Dictionary containing all filter values
+        is_shared: Whether this query is visible to other users
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Created query details with id
+
+    Raises:
+        HTTPException: 400 if validation fails
+    """
+    db = next(get_db())
+    try:
+        # Get user email from authenticated user
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Create new saved query
+        query = ObservabilitySavedQuery(name=name, description=description, user_email=user_email, filter_config=filter_config, is_shared=is_shared)
+
+        db.add(query)
+        db.commit()
+        db.refresh(query)
+
+        return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to save query: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/queries", response_model=list)
+async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):
+    """List saved observability queries for the current user.
+
+    Returns user's own queries plus any shared queries.
+
+    Args:
+        request: FastAPI request object
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        list: List of saved query dictionaries
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Get user's own queries + shared queries
+        queries = (
+            db.query(ObservabilitySavedQuery)
+            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True))
+            .order_by(desc(ObservabilitySavedQuery.created_at))
+            .all()
+        )
+
+        return [
+            {
+                "id": q.id,
+                "name": q.name,
+                "description": q.description,
+                "filter_config": q.filter_config,
+                "is_shared": q.is_shared,
+                "user_email": q.user_email,
+                "created_at": q.created_at.isoformat(),
+                "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
+                "use_count": q.use_count,
+            }
+            for q in queries
+        ]
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/queries/{query_id}", response_model=dict)
+async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+    """Get a specific saved query by ID.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the saved query
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Query details
+
+    Raises:
+        HTTPException: 404 if query not found or unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only access own queries or shared queries
+        query = (
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True)).first()
+        )
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        return {
+            "id": query.id,
+            "name": query.name,
+            "description": query.description,
+            "filter_config": query.filter_config,
+            "is_shared": query.is_shared,
+            "user_email": query.user_email,
+            "created_at": query.created_at.isoformat(),
+            "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
+            "use_count": query.use_count,
+        }
+    finally:
+        db.close()
+
+
+@admin_router.put("/observability/queries/{query_id}", response_model=dict)
+async def update_observability_query(
+    request: Request,
+    query_id: int,
+    name: Optional[str] = Body(None),
+    description: Optional[str] = Body(None),
+    filter_config: Optional[dict] = Body(None),
+    is_shared: Optional[bool] = Body(None),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Update an existing saved query.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query to update
+        name: New name (optional)
+        description: New description (optional)
+        filter_config: New filter configuration (optional)
+        is_shared: New sharing status (optional)
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Updated query details
+
+    Raises:
+        HTTPException: 404 if query not found, 403 if unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only update own queries
+        query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        # Update fields if provided
+        if name is not None:
+            query.name = name
+        if description is not None:
+            query.description = description
+        if filter_config is not None:
+            query.filter_config = filter_config
+        if is_shared is not None:
+            query.is_shared = is_shared
+
+        db.commit()
+        db.refresh(query)
+
+        return {
+            "id": query.id,
+            "name": query.name,
+            "description": query.description,
+            "filter_config": query.filter_config,
+            "is_shared": query.is_shared,
+            "updated_at": query.updated_at.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update query: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.delete("/observability/queries/{query_id}", status_code=204)
+async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+    """Delete a saved query.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query to delete
+        user: Authenticated user (required by dependency)
+
+    Raises:
+        HTTPException: 404 if query not found, 403 if unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only delete own queries
+        query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        db.delete(query)
+        db.commit()
+    finally:
+        db.close()
+
+
+@admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
+async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):
+    """Track usage of a saved query (increments use count and updates last_used_at).
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query being used
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Updated query usage stats
+
+    Raises:
+        HTTPException: 404 if query not found or unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can track usage for own queries or shared queries
+        query = (
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared == True)).first()
+        )
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        # Update usage tracking
+        query.use_count += 1
+        query.last_used_at = utc_now()
+
+        db.commit()
+        db.refresh(query)
+
+        return {"use_count": query.use_count, "last_used_at": query.last_used_at.isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to track query usage: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         db.close()

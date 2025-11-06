@@ -1083,6 +1083,7 @@ if settings.observability_enabled:
     logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
 
     # Add authentication context middleware (runs BEFORE observability in execution)
+    # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
     app.add_middleware(AuthContextMiddleware)

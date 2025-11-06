@@ -28,7 +28,8 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
-from mcpgateway.services.observability_service import ObservabilityService
+from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,16 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
             user_email = request.state.user.email
 
+        # Extract W3C Trace Context from headers (for distributed tracing)
+        external_trace_id = None
+        external_parent_span_id = None
+        traceparent_header = request.headers.get("traceparent")
+        if traceparent_header:
+            parsed = parse_traceparent(traceparent_header)
+            if parsed:
+                external_trace_id, external_parent_span_id, _flags = parsed
+                logger.debug(f"Extracted W3C trace context: trace_id={external_trace_id}, parent_span_id={external_parent_span_id}")
+
         db = None
         trace_id = None
         span_id = None
@@ -96,10 +107,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
             # Create database session
             db = SessionLocal()
 
-            # Start trace
+            # Start trace (use external trace_id if provided for distributed tracing)
             trace_id = self.service.start_trace(
                 db=db,
                 name=f"{http_method} {request.url.path}",
+                trace_id=external_trace_id,  # Use external trace ID if provided
+                parent_span_id=external_parent_span_id,  # Track parent span from upstream
                 http_method=http_method,
                 http_url=http_url,
                 user_email=user_email,
@@ -117,6 +130,12 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
             # Store trace_id in request state for use in route handlers
             request.state.trace_id = trace_id
+
+            # Set trace_id in context variable for access throughout async call stack
+            current_trace_id.set(trace_id)
+
+            # Attach trace_id to database session for SQL query instrumentation
+            attach_trace_to_session(db, trace_id)
 
             # Start request span
             span_id = self.service.start_span(db=db, trace_id=trace_id, name="http.request", kind="server", attributes={"http.method": http_method, "http.url": http_url})
