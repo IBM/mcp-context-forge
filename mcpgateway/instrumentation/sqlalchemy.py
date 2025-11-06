@@ -215,7 +215,7 @@ def _after_cursor_execute(
     try:
         if hasattr(cursor, "rowcount") and cursor.rowcount >= 0:
             row_count = cursor.rowcount
-    except Exception:  # pylint: disable=broad-except
+    except Exception:  # pylint: disable=broad-except  # nosec B110 - row_count is optional metadata
         pass
 
     # Try to get trace context from connection info
