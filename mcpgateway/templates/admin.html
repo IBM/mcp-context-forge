@@ -6605,6 +6605,70 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 </div>
 </div>
 
+<!-- View Description Modal -->
+<div
+  id="description-view-modal"
+  class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center hidden"
+>
+  <div
+    class="bg-white dark:bg-gray-900 w-full max-w-3xl rounded-lg shadow-lg p-6"
+  >
+    <h2 class="text-xl font-bold mb-4 text-gray-800 dark:text-gray-100">
+      View Descriptions
+    </h2>
+
+    <form id="description-view-form" class="space-y-4 text-gray-800 dark:text-gray-100">
+      <!-- Old Description -->
+      <div>
+        <label
+          for="view-old-description"
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          Original Description
+        </label>
+        <textarea
+          id="view-old-description"
+          name="oldDescription"
+          rows="5"
+          readonly
+          class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+          placeholder="Old description will appear here"
+        ></textarea>
+      </div>
+
+      <!-- New Description -->
+      <div>
+        <label
+          for="view-new-description"
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+        >
+          Enriched Description
+        </label>
+        <textarea
+          id="view-new-description"
+          name="newDescription"
+          rows="5"
+          readonly
+          class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+          placeholder="Enriched description will appear here"
+        ></textarea>
+      </div>
+
+      <!-- Close Button -->
+      <div class="flex justify-center mt-6">
+        <button
+          onclick="closeModal('description-view-modal')"
+          type="button"
+          id="close-description-view"
+          class="w-1/2 px-4 py-2 border border-blue-600 rounded bg-white text-gray-700 hover:bg-gray-200"
+        >
+          Close
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
       <div id="tool-validation-modal" class="fixed inset-0 hidden z-50 overflow-y-auto bg-black bg-opacity-50">
     <div
       class="relative bg-white dark:bg-gray-900 w-full max-w-3xl mx-auto my-10 rounded-lg shadow-lg p-6"
