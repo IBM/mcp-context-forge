@@ -115,9 +115,9 @@ class HookRegistry:
 
         Examples:
             >>> registry = HookRegistry()
-            >>> from mcpgateway.plugins.framework.hooks import PromptPrehookPayload, PromptPrehookResult
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload, PromptPrehookResult
             >>> registry.register_hook("test", PromptPrehookPayload, PromptPrehookResult)
-            >>> payload = registry.json_to_payload("test", "{}")
+            >>> payload = registry.json_to_payload("test", {"prompt_id": "123"})
         """
         payload_class = self.get_payload_type(hook_type)
         if not payload_class:

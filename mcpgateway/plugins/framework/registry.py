@@ -37,13 +37,13 @@ class PluginInstanceRegistry:
         ...     hooks=[PromptHookType.PROMPT_PRE_FETCH],
         ...     tags=[]
         ... )
-        >>> def prompt_pre_fetch(self, payload, context): ...
+        >>> async def prompt_pre_fetch(payload, context): ...
         >>> plugin = Plugin(config)
         >>> plugin.prompt_pre_fetch = prompt_pre_fetch
         >>> registry.register(plugin)
         >>> registry.get_plugin("test").name
         'test'
-        >>> len(registry.get_plugins_for_hook(PromptHookType.PROMPT_PRE_FETCH))
+        >>> len(registry.get_hook_refs_for_hook(PromptHookType.PROMPT_PRE_FETCH))
         1
         >>> registry.unregister("test")
         >>> registry.get_plugin("test") is None

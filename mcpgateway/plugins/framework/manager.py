@@ -21,8 +21,8 @@ Examples:
 
     >>> # Create test payload and context
     >>> from mcpgateway.plugins.framework.models import GlobalContext
-    >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-    >>> payload = PromptPrehookPayload(name="test", args={"user": "input"})
+    >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload
+    >>> payload = PromptPrehookPayload(prompt_id="123", name="test", args={"user": "input"})
     >>> context = GlobalContext(request_id="123")
     >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)  # Called in async context
 """
@@ -79,8 +79,7 @@ class PluginExecutor:
     - Metadata aggregation from multiple plugins
 
     Examples:
-        >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-        >>> executor = PluginExecutor[PromptPrehookPayload]()
+        >>> executor = PluginExecutor()
         >>> # In async context:
         >>> # result, contexts = await executor.execute(
         >>> #     plugins=[plugin1, plugin2],
@@ -132,14 +131,14 @@ class PluginExecutor:
 
         Examples:
             >>> # Execute plugins with timeout protection
-            >>> from mcpgateway.plugins.mcp.entities.models import HookType
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
             >>> executor = PluginExecutor(timeout=30)
             >>> # Assuming you have a registry instance:
-            >>> # plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+            >>> # plugins = registry.get_plugins_for_hook(PromptHookType.PROMPT_PRE_FETCH)
             >>> # In async context:
             >>> # result, contexts = await executor.execute(
             >>> #     plugins=plugins,
-            >>> #     payload=PromptPrehookPayload(name="test", args={}),
+            >>> #     payload=PromptPrehookPayload(prompt_id="123", name="test", args={}),
             >>> #     global_context=GlobalContext(request_id="123"),
             >>> #     plugin_run=pre_prompt_fetch,
             >>> #     compare=pre_prompt_matches
@@ -364,8 +363,8 @@ class PluginManager:
         >>>
         >>> # Execute prompt hooks
         >>> from mcpgateway.plugins.framework.models import GlobalContext
-        >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-        >>> payload = PromptPrehookPayload(name="test", args={})
+        >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload
+        >>> payload = PromptPrehookPayload(prompt_id="123", name="test", args={})
         >>> context = GlobalContext(request_id="req-123")
         >>> # In async context:
         >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)
