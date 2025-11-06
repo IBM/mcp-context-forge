@@ -3466,74 +3466,43 @@
             </div>
           </div>
         </div>
-        <div
-          id="prompts-list-container"
-          class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800"
-          hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
-          hx-trigger="load"
-          hx-swap="outerHTML"
-          hx-indicator="#prompts-loading"
-        >
-          <div class="text-center py-4 text-gray-500 dark:text-gray-400">
-            <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span class="ml-2">Loading prompts...</span>
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
+          <div class="overflow-x-auto">
+            <!-- HTMX container: will be replaced by /admin/prompts/partial -->
+            <div id="prompts-list-container"
+              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-trigger="load"
+              hx-swap="outerHTML"
+              hx-indicator="#prompts-loading"
+            >
+              <!-- initial content will be swapped out by HTMX on load -->
+              <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2">Loading prompts...</span>
+              </div>
+            </div>
+
+            <!-- Loading Indicator for HTMX (Prompts) -->
+            <div id="prompts-loading" class="htmx-indicator" style="display:none">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-purple-600 dark:text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
+              </div>
+            </div>
+
           </div>
+
+          <!-- Placeholder for out-of-band pagination controls (injected by partial) -->
+          <div id="prompts-pagination-controls"></div>
         </div>
 
-        <!-- Loading Indicator for HTMX (Prompts) -->
-        <div id="prompts-loading" class="htmx-indicator">
-          <div class="flex items-center justify-center p-4">
-            <svg class="animate-spin h-8 w-8 text-purple-600 dark:text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
-          </div>
-        </div>
-
-        <!-- Pagination Controls (placeholder - will be swapped by partial via OOB or fetched separately) -->
-        {# ---- compute safe pagination defaults ---- #}
-        {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
-        {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
-        {% set total_items = (pagination.total_items if pagination is defined else (total_items if total_items is defined else (prompts|length if prompts is defined else 0))) %}
-        {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
-        {% set has_prev = page > 1 %}
-        {% set has_next = (page * per_page) < total_items %}
-
-        {% set pagination = {
-          'page': page,
-          'per_page': per_page,
-          'total_items': total_items,
-          'total_pages': total_pages,
-          'has_prev': has_prev,
-          'has_next': has_next
-        } %}
-
-        {# build the refresh URL for controls #}
-        {% set controls_url = root_path + '/admin/prompts/partial'
-          + '?render=controls'
-          + '&page=' + page|string
-          + '&per_page=' + per_page|string
-          + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
-
-        <div id="prompts-pagination-controls"
-            hx-get="{{ controls_url }}"
-            hx-trigger="refreshControls"
-            hx-target="#prompts-pagination-controls"
-            hx-swap="outerHTML"
-            hx-indicator="#prompts-loading">
-
-          {# helpers used by pagination_controls.html #}
-          {% set base_url = root_path + '/admin/prompts/partial' %}
-          {% set hx_target = '#prompts-table' %}
-          {% set hx_indicator = '#prompts-loading' %}
-          {% set query_params = {'include_inactive': include_inactive} %}
-
-          {% include 'pagination_controls.html' %}
-        </div>
+        
 
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-bold mb-4 dark:text-gray-200">
