@@ -529,6 +529,38 @@ class ToolService:
                 else:
                     structured = inner
 
+            # Transiently normalize common wrapper shapes so validation can proceed
+            # without mutating the stored output_schema. We handle two cases:
+            # 1) {'result': <primitive>} -> unwrap to <primitive> when schema expects a primitive
+            # 2) <primitive> -> wrap to {'result': <primitive>} when schema expects an object
+            try:
+                primitive_types = {"integer", "number", "string", "boolean", "null"}
+
+                # Case 1: unwrap {'result': X} -> X when schema expects a primitive
+                if isinstance(structured, dict) and len(structured) == 1 and "result" in structured and schema_type in primitive_types:
+                    structured = structured["result"]
+                    logger.debug("Transiently unwrapped {'result': ..} to primitive for validation")
+
+                # Case 2: wrap primitive -> {'result': primitive} when schema expects an object with a 'result' prop
+                elif (isinstance(structured, (str, int, float, bool)) or structured is None) and schema_type == "object" and isinstance(output_schema, dict):
+                    prop = output_schema.get("properties", {}).get("result")
+                    if isinstance(prop, dict):
+                        prop_type = prop.get("type")
+                        if prop_type in primitive_types:
+                            compatible = (
+                                (prop_type == "integer" and isinstance(structured, int) and not isinstance(structured, bool))
+                                or (prop_type == "number" and isinstance(structured, (int, float)) and not isinstance(structured, bool))
+                                or (prop_type == "string" and isinstance(structured, str))
+                                or (prop_type == "boolean" and isinstance(structured, bool))
+                                or (prop_type == "null" and structured is None)
+                            )
+                            if compatible:
+                                structured = {"result": structured}
+                                logger.debug("Transiently wrapped primitive into {'result': ..} to match object schema for validation")
+            except Exception:
+                # defensive: don't break validation flow
+                pass
+
             # Attach structured content
             try:
                 setattr(tool_result, "structured_content", structured)
