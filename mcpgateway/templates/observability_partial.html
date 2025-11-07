@@ -11,6 +11,7 @@
     userEmail: '',
     nameSearch: '',
     attributeSearch: '',
+    toolName: '',
     showAdvancedFilters: false,
     loading: false,
     stats: {},
@@ -49,6 +50,33 @@
             }, 10);
         }
     },
+    async loadToolsView() {
+        const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
+        if (response.ok) {
+            const html = await response.text();
+            const container = document.getElementById('tools-container');
+            container.innerHTML = html;
+
+            // Execute any script tags (innerHTML doesn't execute them)
+            const scripts = container.querySelectorAll('script');
+            scripts.forEach(script => {
+                const newScript = document.createElement('script');
+                if (script.src) {
+                    newScript.src = script.src;
+                } else {
+                    newScript.textContent = script.textContent;
+                }
+                document.head.appendChild(newScript);
+            });
+
+            // Wait for scripts to execute, then re-initialize Alpine.js
+            setTimeout(() => {
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+            }, 10);
+        }
+    },
     refreshTraces() {
         let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
         if (this.minDuration) url += `&min_duration=${this.minDuration}`;
@@ -57,6 +85,7 @@
         if (this.userEmail) url += `&user_email=${encodeURIComponent(this.userEmail)}`;
         if (this.nameSearch) url += `&name_search=${encodeURIComponent(this.nameSearch)}`;
         if (this.attributeSearch) url += `&attribute_search=${encodeURIComponent(this.attributeSearch)}`;
+        if (this.toolName) url += `&tool_name=${encodeURIComponent(this.toolName)}`;
         htmx.ajax('GET', url, {target: '#traces-list', swap: 'innerHTML'});
     },
     refreshStats() {
@@ -98,6 +127,7 @@
                 this.statusFilter = config.statusFilter || 'all';
                 this.minDuration = config.minDuration || '';
                 this.maxDuration = config.maxDuration || '';
+                this.toolName = config.toolName || '';
                 this.httpMethod = config.httpMethod || '';
                 this.userEmail = config.userEmail || '';
                 this.nameSearch = config.nameSearch || '';
@@ -119,7 +149,8 @@
             httpMethod: this.httpMethod,
             userEmail: this.userEmail,
             nameSearch: this.nameSearch,
-            attributeSearch: this.attributeSearch
+            attributeSearch: this.attributeSearch,
+            toolName: this.toolName
         };
     },
     async saveCurrentQuery() {
@@ -178,6 +209,7 @@
     $watch('userEmail', () => { if(userEmail) applyFilters(); });
     $watch('nameSearch', () => { if(nameSearch) applyFilters(); });
     $watch('attributeSearch', () => { if(attributeSearch) applyFilters(); });
+    $watch('toolName', () => { if(toolName) applyFilters(); });
     $watch('selectedQueryId', () => { if(selectedQueryId) applySavedQuery(); });
 ">
     <style>
@@ -454,6 +486,13 @@
                 >
                     📊 Advanced Metrics
                 </button>
+                <button
+                    @click="viewMode = 'tools'; loadToolsView()"
+                    :class="{'active': viewMode === 'tools'}"
+                    class="view-toggle-btn"
+                >
+                    🔧 MCP Tools
+                </button>
             </div>
         </div>
         <div class="obs-filters" x-show="viewMode === 'traces'">
@@ -609,6 +648,21 @@
                     @input.debounce.500ms="refreshTraces()"
                 />
             </div>
+
+            <!-- Tool Name Filter -->
+            <div>
+                <label style="display: block; font-size: 0.875rem; font-weight: 500; color: #374151; margin-bottom: 0.25rem;">
+                    🔧 MCP Tool Name
+                </label>
+                <input
+                    type="text"
+                    x-model="toolName"
+                    placeholder="Filter by tool name..."
+                    class="obs-filter-btn"
+                    style="width: 100%;"
+                    @input.debounce.500ms="refreshTraces()"
+                />
+            </div>
         </div>
 
         <!-- Clear Filters Button -->
@@ -757,6 +811,13 @@
     <div x-show="viewMode === 'metrics'" id="metrics-container">
         <div style="padding: 2rem; text-align: center; color: #6b7280;">
             Loading metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Tools View -->
+    <div x-show="viewMode === 'tools'" id="tools-container">
+        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+            Loading tool metrics dashboard...
         </div>
     </div>
 </div>

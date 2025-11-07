@@ -11349,6 +11349,7 @@ async def get_observability_traces(
     user_email: Optional[str] = Query(None),
     name_search: Optional[str] = Query(None),
     attribute_search: Optional[str] = Query(None),
+    tool_name: Optional[str] = Query(None),
     _user=Depends(get_current_user_with_permissions),
 ):
     """Get list of traces for the dashboard.
@@ -11364,6 +11365,7 @@ async def get_observability_traces(
         user_email: User email filter
         name_search: Trace name search
         attribute_search: Full-text attribute search
+        tool_name: Filter by tool name (shows traces that invoked this tool)
         _user: Authenticated user with admin permissions (required by dependency)
 
     Returns:
@@ -11405,6 +11407,20 @@ async def get_observability_traces(
             # Escape special characters for SQL LIKE
             safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
             query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
+
+        # Apply tool name filter (join with spans to find traces that invoked a specific tool)
+        if tool_name:
+            # Subquery to find trace_ids that have tool invocations matching the tool name
+            tool_trace_ids = (
+                db.query(ObservabilitySpan.trace_id)
+                .filter(
+                    ObservabilitySpan.name == "tool.invoke",
+                    func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),  # pylint: disable=not-callable
+                )
+                .distinct()
+                .subquery()
+            )
+            query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
 
         # Get traces ordered by most recent
         traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
@@ -12134,3 +12150,288 @@ async def get_latency_heatmap(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()
+
+
+@admin_router.get("/observability/tools/usage", response_model=dict)
+async def get_tool_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool usage frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query tool invocations from spans
+        # Note: Using $."tool.name" because the JSON key contains a dot
+        tool_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_invocations = sum(row.count for row in tool_usage)
+
+        tools = [
+            {
+                "tool_name": row.tool_name,
+                "count": row.count,
+                "percentage": round((row.count / total_invocations * 100) if total_invocations > 0 else 0, 2),
+            }
+            for row in tool_usage
+        ]
+
+        return {"tools": tools, "total_invocations": total_invocations, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/performance", response_model=dict)
+async def get_tool_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query tool performance metrics
+        tool_performance = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
+                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
+                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        tools = [
+            {
+                "tool_name": row.tool_name,
+                "count": row.count,
+                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
+                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
+                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
+            }
+            for row in tool_performance
+        ]
+
+        return {"tools": tools, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/errors", response_model=dict)
+async def get_tool_errors(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool error rates and statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool error statistics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query tool error rates
+        tool_errors = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .order_by(func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        tools = [
+            {
+                "tool_name": row.tool_name,
+                "total_count": row.total_count,
+                "error_count": row.error_count or 0,
+                "error_rate": round((row.error_count / row.total_count * 100) if row.total_count > 0 and row.error_count else 0, 2),
+            }
+            for row in tool_errors
+        ]
+
+        return {"tools": tools, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool error statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/chains", response_model=dict)
+async def get_tool_chains(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of chains to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool chain analysis (which tools are invoked together in the same trace).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of chains to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool chain statistics showing common tool sequences
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all tool invocations grouped by trace_id
+        tool_spans = (
+            db.query(
+                ObservabilitySpan.trace_id,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                ObservabilitySpan.start_time,
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
+            .all()
+        )
+
+        # Group tools by trace and create chains
+        trace_tools = {}
+        for span in tool_spans:
+            if span.trace_id not in trace_tools:
+                trace_tools[span.trace_id] = []
+            trace_tools[span.trace_id].append(span.tool_name)
+
+        # Count tool chain frequencies
+        chain_counts = {}
+        for tools in trace_tools.values():
+            if len(tools) > 1:
+                # Create a chain string (sorted to treat [A,B] and [B,A] as same chain)
+                chain = " -> ".join(tools)
+                chain_counts[chain] = chain_counts.get(chain, 0) + 1
+
+        # Sort by frequency and take top N
+        sorted_chains = sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        chains = [{"chain": chain, "count": count} for chain, count in sorted_chains]
+
+        return {"chains": chains, "total_traces_with_tools": len(trace_tools), "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool chain statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
+async def get_tools_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the tool invocation metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered tool metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_tools.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
