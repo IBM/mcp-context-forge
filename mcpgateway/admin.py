@@ -11284,6 +11284,21 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
     return request.app.state.templates.TemplateResponse("observability_partial.html", {"request": request, "root_path": root_path})
 
 
+@admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
+async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
+    """Render the advanced metrics dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered metrics dashboard template
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse("observability_metrics.html", {"request": request, "root_path": root_path})
+
+
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics for the dashboard.
@@ -11696,5 +11711,427 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
         db.rollback()
         LOGGER.error(f"Failed to track query usage: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/percentiles", response_model=dict)
+async def get_latency_percentiles(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get latency percentiles (p50, p90, p95, p99) over time.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Time-series data with percentiles
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        interval_delta = timedelta(minutes=interval_minutes)
+
+        # Query all traces with duration in time range
+        traces = (
+            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+            .order_by(ObservabilityTrace.start_time)
+            .all()
+        )
+
+        if not traces:
+            return {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
+
+        # Group traces into time buckets
+        buckets: Dict[datetime, List[float]] = defaultdict(list)
+        for trace in traces:
+            # Round down to nearest interval
+            bucket_time = trace.start_time.replace(second=0, microsecond=0)
+            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
+            buckets[bucket_time].append(trace.duration_ms)
+
+        # Calculate percentiles for each bucket
+        timestamps = []
+        p50_values = []
+        p90_values = []
+        p95_values = []
+        p99_values = []
+
+        for bucket_time in sorted(buckets.keys()):
+            durations = sorted(buckets[bucket_time])
+            n = len(durations)
+
+            if n > 0:
+                # Calculate percentile indices
+                p50_idx = max(0, int(n * 0.50) - 1)
+                p90_idx = max(0, int(n * 0.90) - 1)
+                p95_idx = max(0, int(n * 0.95) - 1)
+                p99_idx = max(0, int(n * 0.99) - 1)
+
+                timestamps.append(bucket_time.isoformat())
+                p50_values.append(round(durations[p50_idx], 2))
+                p90_values.append(round(durations[p90_idx], 2))
+                p95_values.append(round(durations[p95_idx], 2))
+                p99_values.append(round(durations[p99_idx], 2))
+
+        return {"timestamps": timestamps, "p50": p50_values, "p90": p90_values, "p95": p95_values, "p99": p99_values}
+    except Exception as e:
+        LOGGER.error(f"Failed to calculate latency percentiles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/timeseries", response_model=dict)
+async def get_timeseries_metrics(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get time-series metrics (request rate, error rate, throughput).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Time-series data with request counts, error rates, and throughput
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query traces grouped by time bucket
+        traces = db.query(ObservabilityTrace.start_time, ObservabilityTrace.status).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
+
+        if not traces:
+            return {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
+
+        # Group traces into time buckets
+        buckets: Dict[datetime, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "error": 0})
+        for trace in traces:
+            # Round down to nearest interval
+            bucket_time = trace.start_time.replace(second=0, microsecond=0)
+            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
+
+            buckets[bucket_time]["total"] += 1
+            if trace.status == "ok":
+                buckets[bucket_time]["success"] += 1
+            elif trace.status == "error":
+                buckets[bucket_time]["error"] += 1
+
+        # Build time-series arrays
+        timestamps = []
+        request_counts = []
+        success_counts = []
+        error_counts = []
+        error_rates = []
+
+        for bucket_time in sorted(buckets.keys()):
+            bucket = buckets[bucket_time]
+            error_rate = (bucket["error"] / bucket["total"] * 100) if bucket["total"] > 0 else 0
+
+            timestamps.append(bucket_time.isoformat())
+            request_counts.append(bucket["total"])
+            success_counts.append(bucket["success"])
+            error_counts.append(bucket["error"])
+            error_rates.append(round(error_rate, 2))
+
+        return {
+            "timestamps": timestamps,
+            "request_count": request_counts,
+            "success_count": success_counts,
+            "error_count": error_counts,
+            "error_rate": error_rates,
+        }
+    except Exception as e:
+        LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-slow", response_model=dict)
+async def get_top_slow_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N slowest endpoints by average duration.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of slowest endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and calculate average duration
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("count"),
+                func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
+                func.max(ObservabilityTrace.duration_ms).label("max_duration"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .order_by(desc("avg_duration"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "count": row.count,
+                    "avg_duration_ms": round(row.avg_duration, 2),
+                    "max_duration_ms": round(row.max_duration, 2),
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top slow endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-volume", response_model=dict)
+async def get_top_volume_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N highest volume endpoints by request count.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of highest volume endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and count requests
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("count"),
+                func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time)
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .order_by(desc("count"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "count": row.count,
+                    "avg_duration_ms": round(row.avg_duration, 2) if row.avg_duration else 0,
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top volume endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-errors", response_model=dict)
+async def get_top_error_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N error-prone endpoints by error count and rate.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of error-prone endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and count errors
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("total_count"),
+                func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time)
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .having(func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)) > 0)
+            .order_by(desc("error_count"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            error_rate = (row.error_count / row.total_count * 100) if row.total_count > 0 else 0
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "total_count": row.total_count,
+                    "error_count": row.error_count,
+                    "error_rate": round(error_rate, 2),
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top error endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/heatmap", response_model=dict)
+async def get_latency_heatmap(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    time_buckets: int = Query(24, ge=10, le=100, description="Number of time buckets"),
+    latency_buckets: int = Query(20, ge=5, le=50, description="Number of latency buckets"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get latency distribution heatmap data.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        time_buckets: Number of time buckets (10-100)
+        latency_buckets: Number of latency buckets (5-50)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Heatmap data with time and latency dimensions
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        # Remove timezone info for SQLite compatibility
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query all traces with duration
+        traces = (
+            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+            .filter(ObservabilityTrace.start_time >= cutoff_time_naive, ObservabilityTrace.duration_ms.isnot(None))
+            .order_by(ObservabilityTrace.start_time)
+            .all()
+        )
+
+        if not traces:
+            return {"time_labels": [], "latency_labels": [], "data": []}
+
+        # Calculate time bucket size
+        time_range = hours * 60  # minutes
+        time_bucket_minutes = time_range / time_buckets
+
+        # Find latency range and create buckets
+        durations = [t.duration_ms for t in traces]
+        min_duration = min(durations)
+        max_duration = max(durations)
+        latency_range = max_duration - min_duration
+        latency_bucket_size = latency_range / latency_buckets if latency_range > 0 else 1
+
+        # Initialize heatmap matrix
+        heatmap = [[0 for _ in range(time_buckets)] for _ in range(latency_buckets)]
+
+        # Populate heatmap
+        for trace in traces:
+            # Calculate time bucket index
+            time_diff = (trace.start_time - cutoff_time_naive).total_seconds() / 60  # minutes
+            time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
+
+            # Calculate latency bucket index
+            latency_idx = min(int((trace.duration_ms - min_duration) / latency_bucket_size), latency_buckets - 1)
+
+            heatmap[latency_idx][time_idx] += 1
+
+        # Generate labels
+        time_labels = []
+        for i in range(time_buckets):
+            bucket_time = cutoff_time_naive + timedelta(minutes=i * time_bucket_minutes)
+            time_labels.append(bucket_time.strftime("%H:%M"))
+
+        latency_labels = []
+        for i in range(latency_buckets):
+            bucket_min = min_duration + i * latency_bucket_size
+            bucket_max = bucket_min + latency_bucket_size
+            latency_labels.append(f"{bucket_min:.0f}-{bucket_max:.0f}ms")
+
+        return {"time_labels": time_labels, "latency_labels": latency_labels, "data": heatmap}
+    except Exception as e:
+        LOGGER.error(f"Failed to generate latency heatmap: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
     finally:
         db.close()

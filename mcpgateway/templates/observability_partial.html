@@ -1,6 +1,7 @@
 <!-- htmlhint doctype-first:false -->
 <!-- Observability Dashboard Partial -->
 <div class="observability-container" x-data="{
+    viewMode: 'traces',
     selectedTrace: null,
     timeRange: '24h',
     statusFilter: 'all',
@@ -21,6 +22,33 @@
     saveQueryName: '',
     saveQueryDescription: '',
     saveQueryIsShared: false,
+    async loadMetricsView() {
+        const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
+        if (response.ok) {
+            const html = await response.text();
+            const container = document.getElementById('metrics-container');
+            container.innerHTML = html;
+
+            // Execute any script tags (innerHTML doesn't execute them)
+            const scripts = container.querySelectorAll('script');
+            scripts.forEach(script => {
+                const newScript = document.createElement('script');
+                if (script.src) {
+                    newScript.src = script.src;
+                } else {
+                    newScript.textContent = script.textContent;
+                }
+                document.head.appendChild(newScript);
+            });
+
+            // Wait for scripts to execute, then re-initialize Alpine.js
+            setTimeout(() => {
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+            }, 10);
+        }
+    },
     refreshTraces() {
         let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
         if (this.minDuration) url += `&min_duration=${this.minDuration}`;
@@ -406,11 +434,29 @@
 
     <!-- Header -->
     <div class="obs-header">
-        <h1 class="obs-title">
-            <span>🔍</span>
-            Observability Dashboard
-        </h1>
-        <div class="obs-filters">
+        <div>
+            <h1 class="obs-title">
+                <span>🔍</span>
+                Observability Dashboard
+            </h1>
+            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
+                <button
+                    @click="viewMode = 'traces'"
+                    :class="{'active': viewMode === 'traces'}"
+                    class="view-toggle-btn"
+                >
+                    📋 Traces
+                </button>
+                <button
+                    @click="viewMode = 'metrics'; loadMetricsView()"
+                    :class="{'active': viewMode === 'metrics'}"
+                    class="view-toggle-btn"
+                >
+                    📊 Advanced Metrics
+                </button>
+            </div>
+        </div>
+        <div class="obs-filters" x-show="viewMode === 'traces'">
             <select
                 x-model="selectedQueryId"
                 class="obs-filter-btn"
@@ -461,6 +507,8 @@
         </div>
     </div>
 
+    <!-- Traces View -->
+    <div x-show="viewMode === 'traces'">
     <!-- Advanced Filters Panel -->
     <div x-show="showAdvancedFilters"
          x-transition
@@ -701,6 +749,14 @@
                     </button>
                 </div>
             </div>
+        </div>
+    </div>
+    </div> <!-- End Traces View -->
+
+    <!-- Metrics View -->
+    <div x-show="viewMode === 'metrics'" id="metrics-container">
+        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+            Loading metrics dashboard...
         </div>
     </div>
 </div>
