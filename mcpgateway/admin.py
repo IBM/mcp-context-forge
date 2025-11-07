@@ -11739,7 +11739,6 @@ async def get_latency_percentiles(
     db = next(get_db())
     try:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        interval_delta = timedelta(minutes=interval_minutes)
 
         # Query all traces with duration in time range
         traces = (
