@@ -11896,7 +11896,7 @@ async def get_top_slow_endpoints(
             db.query(
                 ObservabilityTrace.http_url,
                 ObservabilityTrace.http_method,
-                func.count(ObservabilityTrace.trace_id).label("count"),
+                func.count(ObservabilityTrace.trace_id).label("count"),  # pylint: disable=not-callable
                 func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
                 func.max(ObservabilityTrace.duration_ms).label("max_duration"),
             )
@@ -11958,7 +11958,7 @@ async def get_top_volume_endpoints(
             db.query(
                 ObservabilityTrace.http_url,
                 ObservabilityTrace.http_method,
-                func.count(ObservabilityTrace.trace_id).label("count"),
+                func.count(ObservabilityTrace.trace_id).label("count"),  # pylint: disable=not-callable
                 func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
             )
             .filter(ObservabilityTrace.start_time >= cutoff_time)
@@ -12018,7 +12018,7 @@ async def get_top_error_endpoints(
             db.query(
                 ObservabilityTrace.http_url,
                 ObservabilityTrace.http_method,
-                func.count(ObservabilityTrace.trace_id).label("total_count"),
+                func.count(ObservabilityTrace.trace_id).label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(ObservabilityTrace.start_time >= cutoff_time)
