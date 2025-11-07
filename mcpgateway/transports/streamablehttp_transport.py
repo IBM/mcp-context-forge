@@ -389,11 +389,34 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return [types.TextContent(type=content.type, text=content.text) for content in result.content]
+           # Normalize unstructured content to MCP SDK types
+            unstructured = [types.TextContent(type=content.type, text=content.text) for content in result.content]
+
+            # If the tool produced structured content (ToolResult.structured_content / structuredContent),
+            # return a combination (unstructured, structured) so the server can validate against outputSchema.
+            # The ToolService may populate structured_content (snake_case) or the model may expose
+            # an alias 'structuredContent' when dumped via model_dump(by_alias=True).
+            structured = None
+            try:
+                # Prefer attribute if present
+                structured = getattr(result, "structured_content", None)
+            except Exception:
+                structured = None
+
+            # Fallback to by-alias dump (in case the result is a pydantic model with alias fields)
+            if structured is None:
+                try:
+                    structured = result.model_dump(by_alias=True).get("structuredContent") if hasattr(result, "model_dump") else None
+                except Exception:
+                    structured = None
+
+            if structured:
+                return (unstructured, structured)
+
+            return unstructured
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
-
 
 @mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:
