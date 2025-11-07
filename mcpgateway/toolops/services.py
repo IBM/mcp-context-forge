@@ -8,10 +8,18 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import ToolOpsTestCases as TestCaseRecord
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.schemas import ToolRead, ToolUpdate
-from mcpgateway.toolops.enrichment.enrichment import ToolOpsEnrichment
 from mcpgateway.toolops.utils.tool_format_conversion import convert_to_wxo_tool_spec,post_process_nl_test_cases
+
+from mcpgateway.toolops.enrichment.enrichment import ToolOpsEnrichment
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
 from mcpgateway.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
+
+'''
+from altk.test_case_generation_toolkit.src.toolops.enrichment.enrichment import ToolOpsEnrichment
+from altk.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
+from altk.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
+'''
+
 
 from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
@@ -20,6 +28,30 @@ logger = logging_service.get_logger(__name__)
 LLM_MODEL_ID = os.getenv("OPENAI_MODEL","")
 provider = os.getenv("OPENAI_BASE_URL","")
 LLM_PLATFORM = "OpenAIProvider - "+provider
+
+
+# overriding methods (replace with ALTK imports)
+from mcpgateway.toolops.utils import llm_util
+from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
+from mcpgateway.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
+from mcpgateway.toolops.utils.llm_util import completion_llm_instance
+
+def custom_execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600, stop_sequences=["\n\n", "<|endoftext|>","###STOP###"]):
+    try:
+        logger.info("#"*30)
+        logger.info("Using custom execute prompt method after overriding")
+        logger.info("Inferencing OpenAI provider LLM with the given prompt")
+        llm_response = completion_llm_instance.invoke(prompt, stop=stop_sequences)
+        response = llm_response.replace("<|eom_id|>", "").strip()
+        #logger.info("Successful - Inferencing OpenAI provider LLM")
+        return response
+    except Exception as e:
+        logger.error('Error in configuring LLM using OpenAI service provider - '+json.dumps({'Error': str(e)}))
+        return ""
+
+llm_util.execute_prompt = custom_execute_prompt
+prompt_execution.execute_prompt = custom_execute_prompt
+nlg_util.execute_prompt = custom_execute_prompt
 
 
 def populate_testcases_table(tool_id,test_cases,run_status,db: Session):

@@ -1,14 +1,15 @@
 import json
 import re
 from mcpgateway.toolops.utils.llm_util import execute_prompt
-
-
 from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-def data_using_LLM(prompt, model_id, llm_platform):
+from mcpgateway.toolops.exceptions import LLMPlatformError
 
+def data_using_LLM(prompt, model_id, llm_platform):
+    logger.info("#"*30)
+    logger.info("Using original data using LLM method")
     response_trimmed = execute_prompt(prompt)
     response_portion = response_trimmed
     if "```" in response_trimmed:
