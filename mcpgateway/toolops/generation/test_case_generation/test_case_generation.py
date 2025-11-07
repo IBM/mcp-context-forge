@@ -4,12 +4,90 @@ import os
 import json
 import sys
 import copy
+
+
+
+
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.utils import tool_spec_post_process, check_for_duplicate
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.all_param_generation import all_param_testcase
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_optional_param_generation import mandatory_optional_param_testcase
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules.mandatory_param_generation import mandatory_param_testcase
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.using_optionally_provided_data.testcase_optional_data import generate_testcases_optional_data
 from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.all_testcase_post_process import all_testcase_postprocess
+
+
+from dotenv import load_dotenv
+load_dotenv(".env.example")
+
+# overriding methods
+# from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules import all_param_generation
+# from mcpgateway.toolops.generation.test_case_generation.test_case_generation_utils.combination_modules import mandatory_optional_param_generation
+# from mcpgateway.toolops.utils.llm_util import execute_prompt
+# def custom_data_using_LLM(prompt, model_id, llm_platform):
+#     logger.info("#"*30)
+#     logger.info("Using custom data using LLM method after overriding")
+#     response_trimmed = execute_prompt(prompt)
+#     response_portion = response_trimmed
+#     if "```" in response_trimmed:
+#         response_portion = response_trimmed.split("```")[1]
+#     if "python" in response_portion:
+#         if "testcases =" in response_portion.split("python")[1]:
+#             response_from_LLM = response_portion.split("python")[1].split("testcases =")[1]
+#         else:
+#             response_from_LLM = response_portion.split("python")[1]
+#     elif "json" in response_portion:
+#         if "testcases =" in response_portion.split("json")[1]:
+#             response_from_LLM = response_portion.split("json")[1].split("testcases =")[1]
+#         else:
+#             response_from_LLM = response_portion.split("json")[1]
+#     else:
+#         response_from_LLM = response_portion
+#     try:
+#         json.loads(response_from_LLM)
+#     except:
+#         valid_jsons = []
+#         stack = 0
+#         start = None
+#         num_testcase=0
+#         for i, ch in enumerate(response_from_LLM):
+#             if ch == '{':
+#                 if stack == 0:
+#                     start = i
+#                 stack += 1
+#             elif ch == '}':
+#                 stack -= 1
+#                 if stack in [0,1] and start is not None:
+#                     snippet = response_from_LLM[start:i+1]
+#                     try:
+#                         num_testcase=num_testcase+1
+#                         if stack==1:
+#                             snippet = snippet+"}"
+#                         if "testcase_" not in snippet:
+#                             snippet = {"testcase_"+str(num_testcase):json.loads(snippet)}
+#                         if isinstance(snippet, str):
+#                             data = json.loads(snippet)
+#                         else:
+#                             data=snippet
+#                         valid_jsons.append(data)
+#                     except json.JSONDecodeError:
+#                         pass  
+#                     start = None
+#                     stack=0
+
+#         merged = {}
+#         for item in valid_jsons:
+#             if isinstance(item, dict):
+#                 merged.update(item)
+#         if len(merged) > 0:
+#             response_from_LLM = merged
+#         else:
+#             response_from_LLM = "No json found"
+#     print("response_from_LLM",response_from_LLM)
+#     return(response_from_LLM)
+
+# all_param_generation.data_using_LLM = custom_data_using_LLM
+# mandatory_optional_param_generation.data_using_LLM = custom_data_using_LLM
+
 
 from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
@@ -287,7 +365,7 @@ if __name__ == "__main__":
     llm_model_id = 'meta-llama/llama-3-3-70b-instruct'
     llm_platform = 'OpenAIProvider'
     wxo_tool_spec = json.load(open('wxo_tool_spec.json','r'))
-    max_number_testcases_to_generate, no_test_data_generation, optional_data_scenario_path = 10, False, None
+    max_number_testcases_to_generate, no_test_data_generation, optional_data_scenario_path = 3, False, None
     tc_generator = TestcaseGeneration(llm_model_id, llm_platform, max_number_testcases_to_generate)
     ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
     with open('ip_test_cases.json','w') as ipf:
