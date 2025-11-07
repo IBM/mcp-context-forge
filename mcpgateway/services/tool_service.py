@@ -672,10 +672,10 @@ class ToolService:
                 import_batch_id=import_batch_id,
                 federation_source=federation_source,
                 version=1,
-                # Team scoping fields
-                team_id=team_id,
-                owner_email=owner_email or created_by,
-                visibility=visibility,
+                # Team scoping fields - use schema values if provided, otherwise fallback to parameters
+                team_id=getattr(tool, "team_id", None) or team_id,
+                owner_email=getattr(tool, "owner_email", None) or owner_email or created_by,
+                visibility=getattr(tool, "visibility", None) or visibility,
                 # passthrough REST tools fields
                 base_url=tool.base_url if tool.integration_type == "REST" else None,
                 path_template=tool.path_template if tool.integration_type == "REST" else None,
