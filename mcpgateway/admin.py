@@ -12241,14 +12241,11 @@ async def get_tool_performance(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # Query tool performance metrics
-        tool_performance = (
+        # First, get all tool invocations with durations
+        tool_spans = (
             db.query(
                 func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
-                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
-                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
-                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
-                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
@@ -12256,22 +12253,54 @@ async def get_tool_performance(
                 ObservabilitySpan.duration_ms.isnot(None),
                 func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
-            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
-            .limit(limit)
             .all()
         )
 
-        tools = [
-            {
-                "tool_name": row.tool_name,
-                "count": row.count,
-                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
-                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
-                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
-            }
-            for row in tool_performance
-        ]
+        # Group by tool name and calculate percentiles
+        # Standard
+        from collections import defaultdict
+
+        tool_durations = defaultdict(list)
+        for span in tool_spans:
+            tool_durations[span.tool_name].append(span.duration_ms)
+
+        # Calculate metrics for each tool
+        tools_data = []
+        for tool_name, durations in tool_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            tools_data.append(
+                {
+                    "tool_name": tool_name,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        tools_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        tools = tools_data[:limit]
 
         return {"tools": tools, "time_range_hours": hours}
     except Exception as e:
@@ -12531,14 +12560,11 @@ async def get_prompt_performance(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # Query prompt performance metrics
-        prompt_performance = (
+        # First, get all prompt renders with durations
+        prompt_spans = (
             db.query(
                 func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
-                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
-                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
-                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
-                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
@@ -12546,22 +12572,54 @@ async def get_prompt_performance(
                 ObservabilitySpan.duration_ms.isnot(None),
                 func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
-            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
-            .limit(limit)
             .all()
         )
 
-        prompts = [
-            {
-                "prompt_id": row.prompt_id,
-                "count": row.count,
-                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
-                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
-                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
-            }
-            for row in prompt_performance
-        ]
+        # Group by prompt id and calculate percentiles
+        # Standard
+        from collections import defaultdict
+
+        prompt_durations = defaultdict(list)
+        for span in prompt_spans:
+            prompt_durations[span.prompt_id].append(span.duration_ms)
+
+        # Calculate metrics for each prompt
+        prompts_data = []
+        for prompt_id, durations in prompt_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            prompts_data.append(
+                {
+                    "prompt_id": prompt_id,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        prompts_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        prompts = prompts_data[:limit]
 
         return {"prompts": prompts, "time_range_hours": hours}
     except Exception as e:
@@ -12689,14 +12747,11 @@ async def get_resource_performance(
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
         cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
-        # Query resource performance metrics
-        resource_performance = (
+        # First, get all resource reads with durations
+        resource_spans = (
             db.query(
                 func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
-                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
-                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
-                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
-                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
@@ -12704,22 +12759,54 @@ async def get_resource_performance(
                 ObservabilitySpan.duration_ms.isnot(None),
                 func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
-            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
-            .limit(limit)
             .all()
         )
 
-        resources = [
-            {
-                "resource_uri": row.resource_uri,
-                "count": row.count,
-                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
-                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
-                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
-            }
-            for row in resource_performance
-        ]
+        # Group by resource URI and calculate percentiles
+        # Standard
+        from collections import defaultdict
+
+        resource_durations = defaultdict(list)
+        for span in resource_spans:
+            resource_durations[span.resource_uri].append(span.duration_ms)
+
+        # Calculate metrics for each resource
+        resources_data = []
+        for resource_uri, durations in resource_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            resources_data.append(
+                {
+                    "resource_uri": resource_uri,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        resources_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        resources = resources_data[:limit]
 
         return {"resources": resources, "time_range_hours": hours}
     except Exception as e:

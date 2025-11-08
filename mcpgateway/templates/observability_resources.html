@@ -18,6 +18,7 @@ window.createResourcesController = function() {
         await Promise.all([
           this.loadResourceUsage(),
           this.loadResourcePerformance(),
+          this.loadResourceSlowness(),
         ]);
       } catch (e) {
         console.error('Failed to load resource metrics:', e);
@@ -41,6 +42,14 @@ window.createResourcesController = function() {
       if (!response.ok) throw new Error('Failed to load resource performance');
       const data = await response.json();
       this.renderResourcePerformanceTable(data);
+    },
+    async loadResourceSlowness() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/resources/performance?hours=${this.timeRange}&limit=10`
+      );
+      if (!response.ok) throw new Error('Failed to load resource slowness');
+      const data = await response.json();
+      this.renderResourceSlownessChart(data);
     },
     renderResourceUsageChart(data) {
       const ctx = document.getElementById('resourceUsageChart');
@@ -119,11 +128,94 @@ window.createResourcesController = function() {
               <td class="px-4 py-2 text-sm text-gray-600">${resource.count}</td>
               <td class="px-4 py-2 text-sm text-orange-600 font-medium">${resource.avg_duration_ms} ms</td>
               <td class="px-4 py-2 text-sm text-green-600">${resource.min_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-blue-600">${resource.p50} ms</td>
+              <td class="px-4 py-2 text-sm text-indigo-600">${resource.p90} ms</td>
+              <td class="px-4 py-2 text-sm text-purple-600">${resource.p95} ms</td>
+              <td class="px-4 py-2 text-sm text-pink-600">${resource.p99} ms</td>
               <td class="px-4 py-2 text-sm text-red-600">${resource.max_duration_ms} ms</td>
             </tr>
           `
         )
         .join('');
+    },
+    renderResourceSlownessChart(data) {
+      const ctx = document.getElementById('resourceSlownessChart');
+      if (!ctx) return;
+
+      if (this.charts.resourceSlowness) {
+        this.charts.resourceSlowness.destroy();
+      }
+
+      // Handle empty data
+      if (!data.resources || data.resources.length === 0) {
+        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        return;
+      }
+
+      // Sort by p95 descending and take top 10
+      const sortedResources = [...data.resources]
+        .sort((a, b) => b.p95 - a.p95)
+        .slice(0, 10);
+
+      this.charts.resourceSlowness = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedResources.map(r => r.resource_uri),
+          datasets: [
+            {
+              label: 'p95 Latency (ms)',
+              data: sortedResources.map(r => r.p95),
+              backgroundColor: 'rgba(239, 68, 68, 0.6)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            },
+            {
+              label: 'p50 Latency (ms)',
+              data: sortedResources.map(r => r.p50),
+              backgroundColor: 'rgba(34, 197, 94, 0.6)',
+              borderColor: '#22c55e',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Top 10 Slowest Resources (Last ${this.timeRange}h)`,
+            },
+            legend: {
+              display: true,
+              position: 'top',
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const resource = sortedResources[context.dataIndex];
+                  return [
+                    `${context.dataset.label}: ${context.parsed.x} ms`,
+                    `Avg: ${resource.avg_duration_ms} ms`,
+                    `Max: ${resource.max_duration_ms} ms`,
+                    `Fetches: ${resource.count}`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Latency (ms)',
+              },
+            },
+          },
+        },
+      });
     },
     startAutoRefresh() {
       setInterval(() => this.loadAllMetrics(), 60000);
@@ -177,6 +269,13 @@ window.createResourcesController = function() {
     </div>
   </div>
 
+  <!-- Top 10 Slowest Resources Chart -->
+  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
+    <div style="height: 400px;">
+      <canvas id="resourceSlownessChart"></canvas>
+    </div>
+  </div>
+
   <!-- Resource Performance Table -->
   <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
     <h3 class="text-lg font-semibold text-gray-900 mb-4">Resource Performance Metrics</h3>
@@ -187,9 +286,13 @@ window.createResourcesController = function() {
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resource URI</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Count</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Duration</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min Duration</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max Duration</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p50</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p90</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p95</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p99</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max</th>
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200"></tbody>

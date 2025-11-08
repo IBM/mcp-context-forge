@@ -18,6 +18,7 @@ window.createPromptsController = function() {
         await Promise.all([
           this.loadPromptUsage(),
           this.loadPromptPerformance(),
+          this.loadPromptSlowness(),
         ]);
       } catch (e) {
         console.error('Failed to load prompt metrics:', e);
@@ -41,6 +42,14 @@ window.createPromptsController = function() {
       if (!response.ok) throw new Error('Failed to load prompt performance');
       const data = await response.json();
       this.renderPromptPerformanceTable(data);
+    },
+    async loadPromptSlowness() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/prompts/performance?hours=${this.timeRange}&limit=10`
+      );
+      if (!response.ok) throw new Error('Failed to load prompt slowness');
+      const data = await response.json();
+      this.renderPromptSlownessChart(data);
     },
     renderPromptUsageChart(data) {
       const ctx = document.getElementById('promptUsageChart');
@@ -119,11 +128,94 @@ window.createPromptsController = function() {
               <td class="px-4 py-2 text-sm text-gray-600">${prompt.count}</td>
               <td class="px-4 py-2 text-sm text-orange-600 font-medium">${prompt.avg_duration_ms} ms</td>
               <td class="px-4 py-2 text-sm text-green-600">${prompt.min_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-blue-600">${prompt.p50} ms</td>
+              <td class="px-4 py-2 text-sm text-indigo-600">${prompt.p90} ms</td>
+              <td class="px-4 py-2 text-sm text-purple-600">${prompt.p95} ms</td>
+              <td class="px-4 py-2 text-sm text-pink-600">${prompt.p99} ms</td>
               <td class="px-4 py-2 text-sm text-red-600">${prompt.max_duration_ms} ms</td>
             </tr>
           `
         )
         .join('');
+    },
+    renderPromptSlownessChart(data) {
+      const ctx = document.getElementById('promptSlownessChart');
+      if (!ctx) return;
+
+      if (this.charts.promptSlowness) {
+        this.charts.promptSlowness.destroy();
+      }
+
+      // Handle empty data
+      if (!data.prompts || data.prompts.length === 0) {
+        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        return;
+      }
+
+      // Sort by p95 descending and take top 10
+      const sortedPrompts = [...data.prompts]
+        .sort((a, b) => b.p95 - a.p95)
+        .slice(0, 10);
+
+      this.charts.promptSlowness = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedPrompts.map(p => p.prompt_id),
+          datasets: [
+            {
+              label: 'p95 Latency (ms)',
+              data: sortedPrompts.map(p => p.p95),
+              backgroundColor: 'rgba(239, 68, 68, 0.6)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            },
+            {
+              label: 'p50 Latency (ms)',
+              data: sortedPrompts.map(p => p.p50),
+              backgroundColor: 'rgba(168, 85, 247, 0.6)',
+              borderColor: '#a855f7',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Top 10 Slowest Prompts (Last ${this.timeRange}h)`,
+            },
+            legend: {
+              display: true,
+              position: 'top',
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const prompt = sortedPrompts[context.dataIndex];
+                  return [
+                    `${context.dataset.label}: ${context.parsed.x} ms`,
+                    `Avg: ${prompt.avg_duration_ms} ms`,
+                    `Max: ${prompt.max_duration_ms} ms`,
+                    `Renders: ${prompt.count}`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              title: {
+                display: true,
+                text: 'Latency (ms)',
+              },
+            },
+          },
+        },
+      });
     },
     startAutoRefresh() {
       setInterval(() => this.loadAllMetrics(), 60000);
@@ -177,6 +269,13 @@ window.createPromptsController = function() {
     </div>
   </div>
 
+  <!-- Top 10 Slowest Prompts Chart -->
+  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
+    <div style="height: 400px;">
+      <canvas id="promptSlownessChart"></canvas>
+    </div>
+  </div>
+
   <!-- Prompt Performance Table -->
   <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
     <h3 class="text-lg font-semibold text-gray-900 mb-4">Prompt Performance Metrics</h3>
@@ -187,9 +286,13 @@ window.createPromptsController = function() {
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">#</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Prompt ID</th>
             <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Count</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg Duration</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min Duration</th>
-            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max Duration</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Avg</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Min</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p50</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p90</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p95</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">p99</th>
+            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max</th>
           </tr>
         </thead>
         <tbody class="bg-white divide-y divide-gray-200"></tbody>
