@@ -12257,9 +12257,6 @@ async def get_tool_performance(
         )
 
         # Group by tool name and calculate percentiles
-        # Standard
-        from collections import defaultdict
-
         tool_durations = defaultdict(list)
         for span in tool_spans:
             tool_durations[span.tool_name].append(span.duration_ms)
@@ -12576,9 +12573,6 @@ async def get_prompt_performance(
         )
 
         # Group by prompt id and calculate percentiles
-        # Standard
-        from collections import defaultdict
-
         prompt_durations = defaultdict(list)
         for span in prompt_spans:
             prompt_durations[span.prompt_id].append(span.duration_ms)
@@ -12763,9 +12757,6 @@ async def get_resource_performance(
         )
 
         # Group by resource URI and calculate percentiles
-        # Standard
-        from collections import defaultdict
-
         resource_durations = defaultdict(list)
         for span in resource_spans:
             resource_durations[span.resource_uri].append(span.duration_ms)
