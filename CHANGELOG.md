@@ -40,7 +40,7 @@ The default PostgreSQL image has been upgraded from version 17 to 18. This is a 
    ```bash
    make compose-upgrade-pg18
    ```
-   
+
    This will:
    - Prompt for confirmation (⚠️ **backup recommended**)
    - Run `pg_upgrade` to migrate data from Postgres 17 → 18

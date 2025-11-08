@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """store ca-certs for gateways
 
 Revision ID: f9101f3b00e3

@@ -336,13 +336,13 @@ mcpContextForge:
   secret:
     # Enable Ed25519 signing
     ENABLE_ED25519_SIGNING: "true"
-    
+
     # Current signing key (PEM format)
     ED25519_PRIVATE_KEY: |
       -----BEGIN PRIVATE KEY-----
       MC4CAQAwBQYDK2VwBCIEIJ5pW... (your key here)
       -----END PRIVATE KEY-----
-    
+
     # Previous key for rotation (optional)
     PREV_ED25519_PRIVATE_KEY: |
       -----BEGIN PRIVATE KEY-----
