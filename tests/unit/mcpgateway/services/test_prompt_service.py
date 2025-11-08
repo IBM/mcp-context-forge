@@ -29,7 +29,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
-from mcpgateway.models import Message, PromptResult, Role, TextContent
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate
 
 from mcpgateway.services.prompt_service import (

@@ -9,12 +9,13 @@ Tests for RateLimiterPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    PromptHookType,
     PromptPrehookPayload,
+    ToolHookType
 )
 from plugins.rate_limiter.rate_limiter import RateLimiterPlugin
 
@@ -24,7 +25,7 @@ def _mk(rate: str) -> RateLimiterPlugin:
         PluginConfig(
             name="rl",
             kind="plugins.rate_limiter.rate_limiter.RateLimiterPlugin",
-            hooks=[HookType.PROMPT_PRE_FETCH, HookType.TOOL_PRE_INVOKE],
+            hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
             config={"by_user": rate},
         )
     )

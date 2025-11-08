@@ -53,9 +53,9 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
-from mcpgateway.models import LogLevel
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService

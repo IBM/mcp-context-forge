@@ -935,7 +935,7 @@ class Settings(BaseSettings):
 
     # Plugin CLI settings
     plugins_cli_completion: bool = Field(default=False, description="Enable auto-completion for plugins CLI")
-    plugins_cli_markup_mode: str | None = Field(default=None, description="Set markup mode for plugins CLI")
+    plugins_cli_markup_mode: Literal["markdown", "rich", "disabled"] | None = Field(default=None, description="Set markup mode for plugins CLI")
 
     # Development
     dev_mode: bool = False

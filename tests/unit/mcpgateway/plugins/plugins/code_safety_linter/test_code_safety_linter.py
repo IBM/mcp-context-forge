@@ -9,11 +9,11 @@ Tests for CodeSafetyLinterPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ToolHookType,
     ToolPostInvokePayload,
 )
 from plugins.code_safety_linter.code_safety_linter import CodeSafetyLinterPlugin
@@ -25,7 +25,7 @@ async def test_detects_eval_pattern():
         PluginConfig(
             name="csl",
             kind="plugins.code_safety_linter.code_safety_linter.CodeSafetyLinterPlugin",
-            hooks=[HookType.TOOL_POST_INVOKE],
+            hooks=[ToolHookType.TOOL_POST_INVOKE],
         )
     )
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))

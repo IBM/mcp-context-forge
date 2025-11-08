@@ -11,12 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginViolation,
+    PromptHookType,
+    ToolHookType,
     PromptPrehookPayload,
     ToolPreInvokePayload,
     ToolPostInvokePayload,
@@ -63,7 +64,7 @@ def _create_plugin(config_dict=None) -> ContentModerationPlugin:
         PluginConfig(
             name="content_moderation_test",
             kind="plugins.content_moderation.content_moderation.ContentModerationPlugin",
-            hooks=[HookType.PROMPT_PRE_FETCH, HookType.TOOL_PRE_INVOKE],
+            hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
             config=default_config,
         )
     )

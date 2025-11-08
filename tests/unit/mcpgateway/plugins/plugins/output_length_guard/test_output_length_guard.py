@@ -8,11 +8,11 @@ Unit tests for Output Length Guard Plugin.
 """
 
 # First-Party
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ToolHookType,
     ToolPostInvokePayload,
 )
 
@@ -27,7 +27,7 @@ def _mk_plugin(config: dict | None = None) -> OutputLengthGuardPlugin:
     cfg = PluginConfig(
         name="out_len_guard",
         kind="plugins.output_length_guard.output_length_guard.OutputLengthGuardPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         priority=90,
         config=config or {},
     )

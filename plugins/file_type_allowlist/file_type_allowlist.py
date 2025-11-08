@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 from pydantic import BaseModel, Field
 
 # First-Party
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,

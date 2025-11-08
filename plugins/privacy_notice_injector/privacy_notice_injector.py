@@ -19,7 +19,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 # First-Party
-from mcpgateway.models import Message, Role, TextContent
+from mcpgateway.common.models import Message, Role, TextContent
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginConfig,

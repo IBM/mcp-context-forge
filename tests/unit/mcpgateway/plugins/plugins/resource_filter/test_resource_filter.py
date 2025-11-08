@@ -11,13 +11,13 @@ Tests for the ResourceFilterPlugin.
 import pytest
 
 # First-Party
-from mcpgateway.models import ResourceContent
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.common.models import ResourceContent
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
     PluginMode,
+    ResourceHookType,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
 )
@@ -36,7 +36,7 @@ class TestResourceFilterPlugin:
             author="test",
             kind="plugins.resource_filter.resource_filter.ResourceFilterPlugin",
             version="1.0.0",
-            hooks=[HookType.RESOURCE_PRE_FETCH, HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH],
             tags=["test", "filter"],
             mode=PluginMode.ENFORCE,
             config={

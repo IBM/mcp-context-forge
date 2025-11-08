@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.models import LogLevel
+from mcpgateway.common.models import LogLevel
 from mcpgateway.services.log_storage_service import LogEntry, LogStorageService
 
 

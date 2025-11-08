@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.main import app
-from mcpgateway.models import Tool
+from mcpgateway.common.models import Tool
 from mcpgateway.services.tool_service import ToolService
 
 

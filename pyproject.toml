@@ -516,7 +516,6 @@ warn_unreachable = true                # Warn about unreachable code
 warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
 warn_unused_configs = true             # Warn about unused config options
 warn_redundant_casts = true            # Warn if a cast does nothing
-warn_unused_coroutine = true           # Warn if an unused async coroutine is defined
 strict_equality = true                 # Disallow ==/!= between incompatible types
 
 # Output formatting

@@ -72,6 +72,7 @@ class PluginLoader:
             kind: The fully-qualified type of the plugin to be registered.
         """
         if kind not in self._plugin_types:
+            plugin_type: Type[Plugin]
             if kind == EXTERNAL_PLUGIN_TYPE:
                 plugin_type = ExternalPlugin
             else:
