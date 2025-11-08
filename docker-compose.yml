@@ -9,6 +9,7 @@ networks:
 
 volumes:                # Named volumes survive podman-compose down/up
   pgdata:
+  pgdata18:
   mariadbdata:
   mysqldata:
   mongodata:
@@ -55,7 +56,7 @@ services:
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
-      dockerfile: Containerfile     # Same one the Makefile builds
+      dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
     ports:
       - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
@@ -147,14 +148,14 @@ services:
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
 ###############################################################################
 
-  postgres:              # Official image - easy defaults
+  postgres:
     image: postgres:18
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
       - POSTGRES_DB=mcp
     volumes:
-      - pgdata:/var/lib/postgresql  # Postgres 18+ uses /var/lib/postgresql (not /data subdirectory)
+      - pgdata18:/var/lib/postgresql
     networks: [mcpnet]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
@@ -208,7 +209,7 @@ services:
   #     dockerfile: Containerfile
   #   environment:
   #     - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-  #   command: alembic upgrade head
+  #   command: alembic -c mcpgateway/alembic.ini upgrade head
   #   depends_on:
   #     postgres:
   #       condition: service_healthy

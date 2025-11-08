@@ -2780,6 +2780,21 @@ compose-validate:
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
 
+compose-upgrade-pg18: compose-validate
+	@echo "⚠️  This will upgrade Postgres 17 -> 18"
+	@echo "⚠️  Make sure you have a backup!"
+	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	@echo "🔄 Running Postgres upgrade..."
+	$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade
+	@echo "🔧 Copying pg_hba.conf from old cluster..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade sh -c \
+		"cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf && \
+		 echo '✅ pg_hba.conf copied successfully'"
+	@echo "✅ Upgrade complete!"
+	@echo "📝 Next steps:"
+	@echo "   1. Update docker-compose.yml to use postgres:18"
+	@echo "   2. Run: make compose-up"
+
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d

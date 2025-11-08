@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.9.0] - 2025-11-05
+
+### Added
+* **Ed25519 Certificate Signing** - Digital certificate signing and verification using Ed25519 cryptographic signatures:
+  - `ENABLE_ED25519_SIGNING` - Enable/disable Ed25519 certificate signing (default: "false")
+  - `ED25519_PRIVATE_KEY` - Current Ed25519 private key for signing (base64-encoded)
+  - `PREV_ED25519_PRIVATE_KEY` - Previous Ed25519 private key for graceful key rotation (base64-encoded)
+  - Built-in key generation utility at `mcpgateway/utils/generate_keys.py`
+  - Zero-downtime key rotation support with automatic fallback verification
+  - Complete documentation with Kubernetes examples and External Secrets integration
+  - Ensures certificate authenticity and prevents tampering using RFC 8032 algorithm
+
+### Changed
+* **Chart version** - Bumped to 0.9.0 for Ed25519 certificate signing support
+
 ## [0.6.1] - 2025-09-01
 
 ### Added

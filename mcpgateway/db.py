@@ -2776,6 +2776,11 @@ class Gateway(Base):
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
 
+    # CA certificate
+    ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
+    ca_certificate_sig: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    signing_algorithm: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="ed25519")  # e.g., "sha256"
+
     # Relationship with local tools this gateway provides
     tools: Mapped[List["Tool"]] = relationship(back_populates="gateway", foreign_keys="Tool.gateway_id", cascade="all, delete-orphan")
 

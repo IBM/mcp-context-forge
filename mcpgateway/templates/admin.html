@@ -5007,6 +5007,54 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <div id="status-gateways"></div>
             </div>
+            <div class="mb-4">
+              <label
+                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+              >
+                Upload CA certificate
+              </label>
+              <input
+                type="file"
+                id="upload-ca-certificate"
+                name="ca_certificates[]"
+                class="hidden"
+                onchange="validateCACertFiles(event)"
+                accept=".pem,.crt,.cer,.cert,application/x-x509-ca-certificate"
+                multiple
+              />
+              <div
+                id="ca-certificate-upload-drop-zone"
+                class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-gray-400 dark:hover:border-gray-500 cursor-pointer"
+                onclick="document.getElementById('upload-ca-certificate').click()"
+              >
+                <div class="space-y-2">
+                  <svg
+                    class="mx-auto h-12 w-12 text-gray-400"
+                    stroke="currentColor"
+                    fill="none"
+                    viewBox="0 0 48 48"
+                  >
+                    <path
+                      d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3-3m-3 3l3 3m-3-3V8"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  <div class="text-sm text-gray-600 dark:text-gray-300">
+                    <span
+                      class="font-medium text-blue-600 dark:text-blue-400"
+                      >Click to upload</span
+                    >
+                    or drag and drop
+                  </div>
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    Public certificate files only (.pem, .crt, .cer, .cert)
+                  </p>
+                </div>
+              </div>
+              <div id="ca-certificate-feedback" class="mt-2 text-sm"></div>
+            </div>
             <div class="mt-6">
               <button
                 type="submit"
