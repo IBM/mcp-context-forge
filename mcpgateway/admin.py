@@ -54,6 +54,8 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -1038,14 +1040,36 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
         )
@@ -1242,14 +1266,36 @@ async def admin_edit_server(
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled for edit: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled for edit: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -5145,6 +5191,430 @@ async def admin_search_tools(
         tools.append({"id": row.id, "name": row.original_name, "display_name": row.display_name, "custom_name": row.custom_name})  # original_name for search matching
 
     return {"tools": tools, "count": len(tools)}
+
+
+@admin_router.get("/prompts/partial", response_class=HTMLResponse)
+async def admin_prompts_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated prompts HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    prompts. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive prompts in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded prompt data when templates expect it.
+    """
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbPrompt)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbPrompt.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+    access_conditions.append(DbPrompt.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbPrompt.is_active.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination ordering and limits
+    offset = (page - 1) * per_page
+    query = query.order_by(DbPrompt.name, DbPrompt.id).offset(offset).limit(per_page)
+
+    prompts_db = list(db.scalars(query).all())
+
+    # Convert to schemas using PromptService
+    local_prompt_service = PromptService()
+    prompts_data = []
+    for p in prompts_db:
+        try:
+            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
+            if prompt_dict:
+                prompts_data.append(prompt_dict)
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert prompt {p.id} to schema: {e}")
+            continue
+
+    data = jsonable_encoder(prompts_data)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    base_url = f"{settings.app_root_path}/admin/prompts/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#prompts-table-body",
+                "hx_indicator": "#prompts-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "prompts_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "prompts_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/resources/partial", response_class=HTMLResponse)
+async def admin_resources_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return HTML partial for paginated resources list (HTMX endpoint).
+
+    This endpoint mirrors the behavior of the tools and prompts partial
+    endpoints. It returns a template fragment suitable for HTMX-based
+    pagination/infinite-scroll within the admin UI.
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive resources in results.
+        render (Optional[str]): Render mode; when set to "controls" returns only
+            pagination controls. Other supported value: "selector" for selector
+            items used by infinite scroll selectors.
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: Rendered template response with the
+        resources partial (rows + controls), pagination controls only, or selector
+        items depending on the ``render`` parameter.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+
+    # Normalize per_page
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbResource)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbResource.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    access_conditions.append(DbResource.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbResource.is_active.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination ordering and limits
+    offset = (page - 1) * per_page
+    query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
+
+    resources_db = list(db.scalars(query).all())
+
+    # Convert to schemas using ResourceService
+    local_resource_service = ResourceService()
+    resources_data = []
+    for r in resources_db:
+        try:
+            resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
+            continue
+
+    data = jsonable_encoder(resources_data)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    base_url = f"{settings.app_root_path}/admin/resources/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#resources-table-body",
+                "hx_indicator": "#resources-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "resources_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "resources_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/prompts/ids", response_class=JSONResponse)
+async def admin_get_all_prompt_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all prompt IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of prompts the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include prompts that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "prompt_ids": List[str] of accessible prompt IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbPrompt.id)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    prompt_ids = [row[0] for row in db.execute(query).all()]
+    return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
+
+
+@admin_router.get("/resources/ids", response_class=JSONResponse)
+async def admin_get_all_resource_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all resource IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of resources the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): Whether to include inactive resources in the results.
+        db (Session): Database session dependency.
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "resource_ids": List[str] of accessible resource IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbResource.id)
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    resource_ids = [row[0] for row in db.execute(query).all()]
+    return {"resource_ids": resource_ids, "count": len(resource_ids)}
+
+
+@admin_router.get("/prompts/search", response_class=JSONResponse)
+async def admin_search_prompts(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search prompts by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching prompts suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include prompts that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "prompts": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched prompts returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"prompts": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [func.lower(DbPrompt.name).contains(search_query), func.lower(coalesce(DbPrompt.description, "")).contains(search_query)]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbPrompt.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbPrompt.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    prompts = []
+    for row in results:
+        prompts.append({"id": row.id, "name": row.name, "description": row.description})
+
+    return {"prompts": prompts, "count": len(prompts)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)

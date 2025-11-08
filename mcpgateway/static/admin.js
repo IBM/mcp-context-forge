@@ -6618,7 +6618,29 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            const count = checked.length;
+            // const count = checked.length;
+
+            // Select All handling
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllResources"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allResourceIds"]',
+            );
+
+            let count = checked.length;
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allResourceIds:", e);
+                }
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
@@ -6665,6 +6687,21 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Remove any select-all hidden inputs
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllResources"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allResourceIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
             update();
         });
     }
@@ -6675,12 +6712,63 @@ function initResourceSelect(
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
 
-        newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll(
-                'input[type="checkbox"]',
-            );
-            checkboxes.forEach((cb) => (cb.checked = true));
-            update();
+        newSelectBtn.addEventListener("click", async () => {
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all resources...";
+
+            try {
+                const resp = await fetch(
+                    `${window.ROOT_PATH}/admin/resources/ids`,
+                );
+                if (!resp.ok) {
+                    throw new Error("Failed to fetch resource IDs");
+                }
+                const data = await resp.json();
+                const allIds = data.resource_ids || [];
+
+                // Check all currently loaded checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+
+                // Add hidden select-all flag
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllResources"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllResources";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Store IDs as JSON for backend handling
+                let allIdsInput = container.querySelector(
+                    'input[name="allResourceIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allResourceIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allIds.length} resources selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error("Error selecting all resources:", error);
+                alert("Failed to select all resources. Please try again.");
+            } finally {
+                newSelectBtn.disabled = false;
+            }
         });
     }
 
@@ -6691,6 +6779,35 @@ function initResourceSelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // If Select All mode is active, update the stored IDs array
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllResources"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allResourceIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const id = e.target.value;
+                        if (e.target.checked) {
+                            if (!allIds.includes(id)) {
+                                allIds.push(id);
+                            }
+                        } else {
+                            allIds = allIds.filter((x) => x !== id);
+                        }
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (err) {
+                        console.error("Error updating allResourceIds:", err);
+                    }
+                }
+
                 update();
             }
         });
@@ -6727,7 +6844,28 @@ function initPromptSelect(
                 'input[type="checkbox"]',
             );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            const count = checked.length;
+
+            // Determine count: if Select All mode is active, use the stored allPromptIds
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllPrompts"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allPromptIds"]',
+            );
+
+            let count = checked.length;
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allPromptIds:", e);
+                }
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
@@ -6774,6 +6912,21 @@ function initPromptSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Remove any select-all hidden inputs
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllPrompts"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allPromptIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
             update();
         });
     }
@@ -6783,13 +6936,63 @@ function initPromptSelect(
         const newSelectBtn = selectBtn.cloneNode(true);
         newSelectBtn.dataset.listenerAttached = "true";
         selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        newSelectBtn.addEventListener("click", async () => {
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all prompts...";
 
-        newSelectBtn.addEventListener("click", () => {
-            const checkboxes = container.querySelectorAll(
-                'input[type="checkbox"]',
-            );
-            checkboxes.forEach((cb) => (cb.checked = true));
-            update();
+            try {
+                const resp = await fetch(
+                    `${window.ROOT_PATH}/admin/prompts/ids`,
+                );
+                if (!resp.ok) {
+                    throw new Error("Failed to fetch prompt IDs");
+                }
+                const data = await resp.json();
+                const allIds = data.prompt_ids || [];
+
+                // Check all currently loaded checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+
+                // Add hidden select-all flag
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllPrompts"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllPrompts";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Store IDs as JSON for backend handling
+                let allIdsInput = container.querySelector(
+                    'input[name="allPromptIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allPromptIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allIds.length} prompts selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error("Error selecting all prompts:", error);
+                alert("Failed to select all prompts. Please try again.");
+            } finally {
+                newSelectBtn.disabled = false;
+            }
         });
     }
 
@@ -6800,6 +7003,35 @@ function initPromptSelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // If Select All mode is active, update the stored IDs array
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllPrompts"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allPromptIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const id = e.target.value;
+                        if (e.target.checked) {
+                            if (!allIds.includes(id)) {
+                                allIds.push(id);
+                            }
+                        } else {
+                            allIds = allIds.filter((x) => x !== id);
+                        }
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (err) {
+                        console.error("Error updating allPromptIds:", err);
+                    }
+                }
+
                 update();
             }
         });
@@ -6816,13 +7048,110 @@ function toggleInactiveItems(type) {
         return;
     }
 
-    const url = new URL(window.location);
-    if (checkbox.checked) {
-        url.searchParams.set("include_inactive", "true");
-    } else {
-        url.searchParams.delete("include_inactive");
+    // Update URL in address bar (no navigation) so state is reflected
+    try {
+        const urlObj = new URL(window.location);
+        if (checkbox.checked) {
+            urlObj.searchParams.set("include_inactive", "true");
+        } else {
+            urlObj.searchParams.delete("include_inactive");
+        }
+        // Use replaceState to avoid adding history entries for every toggle
+        window.history.replaceState({}, document.title, urlObj.toString());
+    } catch (e) {
+        // ignore (shouldn't happen)
     }
-    window.location = url;
+
+    // Try to find the HTMX container that loads this entity's partial
+    // Prefer an element with hx-get containing the admin partial endpoint
+    const selector = `[hx-get*="/admin/${type}/partial"]`;
+    let container = document.querySelector(selector);
+
+    // Fallback to conventional id naming used in templates
+    if (!container) {
+        const fallbackId =
+            type === "tools" ? "tools-table" : `${type}-list-container`;
+        container = document.getElementById(fallbackId);
+    }
+
+    if (!container) {
+        // If we couldn't find a container, fallback to full-page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
+    }
+
+    // Build request URL based on the hx-get attribute or container id
+    const base =
+        container.getAttribute("hx-get") ||
+        container.getAttribute("data-hx-get") ||
+        "";
+    let reqUrl;
+    try {
+        if (base) {
+            // base may already include query params; construct URL and set include_inactive/page
+            reqUrl = new URL(base, window.location.origin);
+            // reset to page 1 when toggling
+            reqUrl.searchParams.set("page", "1");
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            } else {
+                reqUrl.searchParams.delete("include_inactive");
+            }
+        } else {
+            // construct from known pattern
+            const root = window.ROOT_PATH || "";
+            reqUrl = new URL(
+                `${root}/admin/${type}/partial?page=1&per_page=50`,
+                window.location.origin,
+            );
+            if (checkbox.checked) {
+                reqUrl.searchParams.set("include_inactive", "true");
+            }
+        }
+    } catch (e) {
+        // fallback to full reload
+        const fallbackUrl2 = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl2.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl2.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl2;
+        return;
+    }
+
+    // Determine indicator selector
+    const indicator =
+        container.getAttribute("hx-indicator") || `#${type}-loading`;
+
+    // Use HTMX to reload only the container (outerHTML swap)
+    if (window.htmx && typeof window.htmx.ajax === "function") {
+        try {
+            window.htmx.ajax("GET", reqUrl.toString(), {
+                target: container,
+                swap: "outerHTML",
+                indicator,
+            });
+            return;
+        } catch (e) {
+            // fall through to full reload
+        }
+    }
+
+    // Last resort: reload page with param
+    const finalUrl = new URL(window.location);
+    if (checkbox.checked) {
+        finalUrl.searchParams.set("include_inactive", "true");
+    } else {
+        finalUrl.searchParams.delete("include_inactive");
+    }
+    window.location = finalUrl;
 }
 
 function handleToggleSubmit(event, type) {
@@ -10565,17 +10894,18 @@ function setupSelectorSearch() {
         });
     }
 
-    // Prompts search
+    // Prompts search (server-side)
     const searchPrompts = safeGetElement("searchPrompts", true);
     if (searchPrompts) {
+        let promptSearchTimeout;
         searchPrompts.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedPrompts",
-                ".prompt-item",
-                "noPromptsMessage",
-                "searchPromptsQuery",
-            );
+            const searchTerm = this.value;
+            if (promptSearchTimeout) {
+                clearTimeout(promptSearchTimeout);
+            }
+            promptSearchTimeout = setTimeout(() => {
+                serverSidePromptSearch(searchTerm);
+            }, 300);
         });
     }
 }
@@ -17546,6 +17876,131 @@ function updateToolMapping(container) {
             window.toolMapping[toolId] = toolName;
         }
     });
+}
+
+/**
+ * Perform server-side search for prompts and update the prompt list
+ */
+async function serverSidePromptSearch(searchTerm) {
+    const container = document.getElementById("associatedPrompts");
+    const noResultsMessage = safeGetElement("noPromptsMessage", true);
+    const searchQuerySpan = safeGetElement("searchPromptsQuery", true);
+
+    if (!container) {
+        console.error("associatedPrompts container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-purple-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching prompts...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompt selector
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Initialize prompt mapping if needed
+                initPromptSelect(
+                    "associatedPrompts",
+                    "selectedPromptsPills",
+                    "selectedPromptsWarning",
+                    6,
+                    "selectAllPromptsBtn",
+                    "clearAllPromptsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+            }
+        } catch (error) {
+            console.error("Error loading prompts:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.prompts && data.prompts.length > 0) {
+            let searchResultsHtml = "";
+            data.prompts.forEach((prompt) => {
+                const displayName = prompt.name || prompt.id;
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 prompt-item"
+                        data-prompt-id="${escapeHtml(prompt.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="${escapeHtml(prompt.id)}"
+                            data-prompt-name="${escapeHtml(displayName)}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Initialize prompt select mapping
+            initPromptSelect(
+                "associatedPrompts",
+                "selectedPromptsPills",
+                "selectedPromptsWarning",
+                6,
+                "selectAllPromptsBtn",
+                "clearAllPromptsBtn",
+            );
+
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching prompts:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
 }
 
 // Add CSS for streaming indicator animation
