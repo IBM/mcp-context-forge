@@ -39,6 +39,7 @@ from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -690,7 +691,33 @@ class PromptService:
         error_message = None
         prompt = None
 
-        # Create a trace span for prompt rendering
+        # Create database span for observability dashboard
+        trace_id = current_trace_id.get()
+        db_span_id = None
+        db_span_ended = False
+        observability_service = ObservabilityService() if trace_id else None
+
+        if trace_id and observability_service:
+            try:
+                db_span_id = observability_service.start_span(
+                    db=db,
+                    trace_id=trace_id,
+                    name="prompt.render",
+                    attributes={
+                        "prompt.id": str(prompt_id),
+                        "arguments_count": len(arguments) if arguments else 0,
+                        "user": user or "anonymous",
+                        "server_id": server_id,
+                        "tenant_id": tenant_id,
+                        "request_id": request_id or "none",
+                    },
+                )
+                logger.debug(f"✓ Created prompt.render span: {db_span_id} for prompt: {prompt_id}")
+            except Exception as e:
+                logger.warning(f"Failed to start observability span for prompt rendering: {e}")
+                db_span_id = None
+
+        # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "prompt.render",
             {
@@ -815,6 +842,20 @@ class PromptService:
                         await self._record_prompt_metric(db, prompt, start_time, success, error_message)
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
+
+                # End database span for observability dashboard
+                if db_span_id and observability_service and not db_span_ended:
+                    try:
+                        observability_service.end_span(
+                            db=db,
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
+                        db_span_ended = True
+                        logger.debug(f"✓ Ended prompt.render span: {db_span_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to end observability span for prompt rendering: {e}")
 
     async def update_prompt(
         self,

@@ -16,7 +16,7 @@ mcpContextForge:
     enabled: false
     plugins: |
       # plugin file
-  
+
   replicaCount: 2                           # horizontal scaling for the gateway
 
   # --- HORIZONTAL POD AUTOSCALER --------------------------------------
@@ -316,6 +316,23 @@ mcpContextForge:
     OTEL_BSP_MAX_QUEUE_SIZE: "2048"   # max queue size for batch span processor
     OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512" # max export batch size
     OTEL_BSP_SCHEDULE_DELAY: "5000"   # schedule delay in milliseconds
+
+    # ─ Internal Observability & Tracing ─
+    OBSERVABILITY_ENABLED: "false"               # enable internal observability tracing and metrics
+    OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"    # automatically trace HTTP requests
+    OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
+    OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
+    OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
+    OBSERVABILITY_EXCLUDE_PATHS: "/health,/healthz,/ready,/metrics,/static/.*" # paths to exclude from tracing
+    OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
+    OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
+
+    # ─ Prometheus Metrics ─
+    ENABLE_METRICS: "true"                       # enable Prometheus metrics instrumentation
+    METRICS_EXCLUDED_HANDLERS: ""                # regex patterns for paths to exclude from metrics (comma-separated)
+    METRICS_NAMESPACE: "default"                 # Prometheus metrics namespace (prefix for all metric names)
+    METRICS_SUBSYSTEM: ""                        # Prometheus metrics subsystem (secondary prefix)
+    METRICS_CUSTOM_LABELS: ""                    # static custom labels for app_info gauge (key=value,key2=value2)
 
     # ─ Header Passthrough (Security Warning) ─
     ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)

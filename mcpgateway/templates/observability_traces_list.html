@@ -1,0 +1,39 @@
+<!-- htmlhint doctype-first:false -->
+{% if traces %}
+    {% for trace in traces %}
+    <tr hx-get="{{ root_path }}/admin/observability/trace/{{ trace.trace_id }}"
+        hx-target="#trace-detail-content"
+        hx-trigger="click"
+        @click="selectedTrace = '{{ trace.trace_id }}'">
+        <td>{{ trace.start_time.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+        <td><strong>{{ trace.http_method or 'N/A' }}</strong></td>
+        <td><code>{{ trace.name }}</code></td>
+        <td>
+            <span class="status-badge status-{{ trace.status }}">
+                {% if trace.status == 'ok' %}✓ {{ trace.http_status_code or 'OK' }}{% else %}✗ {{ trace.http_status_code or 'ERROR' }}{% endif %}
+            </span>
+        </td>
+        <td>
+            <span class="duration-badge {% if trace.duration_ms %}{% if trace.duration_ms < 100 %}duration-fast{% elif trace.duration_ms < 500 %}duration-medium{% else %}duration-slow{% endif %}{% endif %}">
+                {{ "%.2f"|format(trace.duration_ms) if trace.duration_ms else 'N/A' }} ms
+            </span>
+        </td>
+        <td>{{ trace.user_email or 'anonymous' }}</td>
+        <td>
+            <button class="obs-filter-btn" style="padding: 0.25rem 0.5rem; font-size: 0.875rem;">
+                View Details →
+            </button>
+        </td>
+    </tr>
+    {% endfor %}
+{% else %}
+    <tr>
+        <td colspan="7">
+            <div class="empty-state">
+                <div class="empty-state-icon">📊</div>
+                <h3>No traces found</h3>
+                <p>Make some API requests to see observability data</p>
+            </div>
+        </td>
+    </tr>
+{% endif %}
