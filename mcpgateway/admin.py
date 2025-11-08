@@ -51,12 +51,12 @@ from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.models import LogLevel
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,

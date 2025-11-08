@@ -9,11 +9,13 @@ Rust PII Filter Wrapper
 Thin Python wrapper around the Rust implementation for seamless integration.
 """
 
-from typing import Dict, List, Any, TYPE_CHECKING
+# Standard
 import logging
+from typing import Any, Dict, List, TYPE_CHECKING
 
 # Use TYPE_CHECKING to avoid circular import at runtime
 if TYPE_CHECKING:
+    # Local
     from .pii_filter import PIIFilterConfig
 
 logger = logging.getLogger(__name__)
@@ -21,20 +23,23 @@ logger = logging.getLogger(__name__)
 # Try to import Rust implementation
 # Fix sys.path to prioritize site-packages over source directory
 try:
-    import sys
+    # Standard
     import os
+    import sys
 
     # Temporarily remove current directory from path if it contains plugins_rust source
     original_path = sys.path.copy()
     project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    plugins_rust_src = os.path.join(project_root, 'plugins_rust')
+    plugins_rust_src = os.path.join(project_root, "plugins_rust")
 
     # Remove source directory from path temporarily
     filtered_path = [p for p in sys.path if not p.startswith(plugins_rust_src)]
     sys.path = filtered_path
 
     try:
+        # First-Party
         from plugins_rust import PIIDetectorRust as _RustDetector
+
         RUST_AVAILABLE = True
         logger.info("🦀 Rust PII filter module imported successfully")
     finally:
@@ -69,16 +74,15 @@ class RustPIIDetector:
 
         Raises:
             ImportError: If Rust implementation is not available
+            TypeError: If configuration type is invalid
             ValueError: If configuration is invalid
         """
         # Import here to avoid circular dependency
+        # Local
         from .pii_filter import PIIFilterConfig  # pylint: disable=import-outside-toplevel
 
         if not RUST_AVAILABLE:
-            raise ImportError(
-                "Rust implementation not available. "
-                "Install with: pip install mcpgateway[rust]"
-            )
+            raise ImportError("Rust implementation not available. " "Install with: pip install mcpgateway[rust]")
 
         # Validate config type
         if not isinstance(config, PIIFilterConfig):
@@ -114,6 +118,9 @@ class RustPIIDetector:
                 ]
             }
 
+        Raises:
+            RuntimeError: If PII detection fails.
+
         Example:
             >>> detector.detect("SSN: 123-45-6789")
             {'ssn': [{'value': '123-45-6789', 'start': 5, 'end': 16, 'mask_strategy': 'partial'}]}
@@ -132,7 +139,10 @@ class RustPIIDetector:
             detections: Detection results from detect()
 
         Returns:
-            Masked text with PII replaced according to strategies
+            str: Masked text with PII replaced according to strategies
+
+        Raises:
+            RuntimeError: If PII masking fails.
 
         Example:
             >>> text = "SSN: 123-45-6789"
@@ -157,10 +167,13 @@ class RustPIIDetector:
             path: Current path in the structure (for logging)
 
         Returns:
-            Tuple of (modified, new_data, detections) where:
+            tuple[bool, Any, Dict]: Tuple of (modified, new_data, detections) where:
             - modified: True if any PII was found and masked
             - new_data: The data structure with masked PII
             - detections: Dictionary of all detections found
+
+        Raises:
+            RuntimeError: If nested processing fails.
 
         Example:
             >>> data = {"user": {"ssn": "123-45-6789", "name": "John"}}
@@ -176,4 +189,4 @@ class RustPIIDetector:
 
 
 # Export module-level availability flag
-__all__ = ['RustPIIDetector', 'RUST_AVAILABLE']
+__all__ = ["RustPIIDetector", "RUST_AVAILABLE"]

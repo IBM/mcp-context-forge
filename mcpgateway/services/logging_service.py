@@ -22,8 +22,8 @@ from typing import Any, AsyncGenerator, Dict, List, NotRequired, Optional, TextI
 from pythonjsonlogger import json as jsonlogger  # You may need to install python-json-logger package
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.models import LogLevel
 from mcpgateway.services.log_storage_service import LogStorageService
 
 AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
@@ -414,7 +414,7 @@ class LoggingService:
 
         Examples:
             >>> from mcpgateway.services.logging_service import LoggingService
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> import asyncio
             >>> service = LoggingService()
             >>> asyncio.run(service.set_level(LogLevel.DEBUG))
@@ -454,7 +454,7 @@ class LoggingService:
 
         Examples:
             >>> from mcpgateway.services.logging_service import LoggingService
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> import asyncio
             >>> service = LoggingService()
             >>> asyncio.run(service.notify('test', LogLevel.INFO))
@@ -547,7 +547,7 @@ class LoggingService:
             True if should log
 
         Examples:
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> service = LoggingService()
             >>> service._level = LogLevel.WARNING
             >>> service._should_log(LogLevel.ERROR)

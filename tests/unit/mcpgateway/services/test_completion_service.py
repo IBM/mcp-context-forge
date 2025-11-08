@@ -9,7 +9,7 @@ Authors: Mihai Criveti
 import pytest
 
 # First-Party
-from mcpgateway.models import (
+from mcpgateway.common.models import (
     CompleteResult,
 )
 from mcpgateway.services.completion_service import (

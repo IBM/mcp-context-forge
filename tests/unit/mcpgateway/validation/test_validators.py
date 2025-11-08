@@ -15,7 +15,7 @@ from unittest.mock import patch
 import pytest
 
 # First-Party
-from mcpgateway.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator
 
 
 class DummySettings:
@@ -48,7 +48,7 @@ def patch_logger(monkeypatch):
 
             return logfn
 
-    monkeypatch.setattr("mcpgateway.validators.logger", DummyLogger())
+    monkeypatch.setattr("mcpgateway.common.validators.logger", DummyLogger())
     yield logs
 
 

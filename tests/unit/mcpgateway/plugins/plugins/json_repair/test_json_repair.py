@@ -10,11 +10,11 @@ Tests for JSONRepairPlugin.
 import json
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ToolHookType,
     ToolPostInvokePayload,
 )
 from plugins.json_repair.json_repair import JSONRepairPlugin
@@ -26,7 +26,7 @@ async def test_repairs_trailing_commas_and_single_quotes():
         PluginConfig(
             name="jsonr",
             kind="plugins.json_repair.json_repair.JSONRepairPlugin",
-            hooks=[HookType.TOOL_POST_INVOKE],
+            hooks=[ToolHookType.TOOL_POST_INVOKE],
         )
     )
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))

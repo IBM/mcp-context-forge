@@ -13,18 +13,22 @@ plugins.
 from functools import cache
 import importlib
 from types import ModuleType
+from typing import Any, Optional
 
 # First-Party
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
     PluginCondition,
-    PromptPosthookPayload,
-    PromptPrehookPayload,
-    ResourcePostFetchPayload,
-    ResourcePreFetchPayload,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
 )
+
+# from mcpgateway.plugins.mcp.entities import (
+#     PromptPosthookPayload,
+#     PromptPrehookPayload,
+#     ResourcePostFetchPayload,
+#     ResourcePreFetchPayload,
+#     ToolPostInvokePayload,
+#     ToolPreInvokePayload,
+# )
 
 
 @cache  # noqa
@@ -111,208 +115,326 @@ def matches(condition: PluginCondition, context: GlobalContext) -> bool:
     return True
 
 
-def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on pre-prompt hooks.
+def get_matchable_value(payload: Any, hook_type: str) -> Optional[str]:
+    """Extract the matchable value from a payload based on hook type.
+
+    This function maps hook types to their corresponding payload attributes
+    that should be used for conditional matching.
 
     Args:
-        payload: the prompt prehook payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
+        payload: The payload object (e.g., ToolPreInvokePayload, AgentPreInvokePayload).
+        hook_type: The hook type identifier.
 
     Returns:
-        True if the plugin matches criteria.
+        The matchable value (e.g., tool name, agent ID, resource URI) or None.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginCondition, PromptPrehookPayload, GlobalContext
-        >>> payload = PromptPrehookPayload(prompt_id="id1", args={})
-        >>> cond = PluginCondition(prompts={"id1"})
-        >>> ctx = GlobalContext(request_id="req1")
-        >>> pre_prompt_matches(payload, [cond], ctx)
-        True
-        >>> payload2 = PromptPrehookPayload(prompt_id="id2", args={})
-        >>> pre_prompt_matches(payload2, [cond], ctx)
-        False
+        >>> from mcpgateway.plugins.framework import GlobalContext
+        >>> from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
+        >>> payload = ToolPreInvokePayload(name="calculator", args={})
+        >>> get_matchable_value(payload, "tool_pre_invoke")
+        'calculator'
+        >>> get_matchable_value(payload, "unknown_hook")
     """
-    current_result = True
-    for index, condition in enumerate(conditions):
-        if not matches(condition, context):
-            current_result = False
+    # Mapping: hook_type -> payload attribute name
+    field_map = {
+        "tool_pre_invoke": "name",
+        "tool_post_invoke": "name",
+        "prompt_pre_fetch": "prompt_id",
+        "prompt_post_fetch": "prompt_id",
+        "resource_pre_fetch": "uri",
+        "resource_post_fetch": "uri",
+        "agent_pre_invoke": "agent_id",
+        "agent_post_invoke": "agent_id",
+    }
 
-        if condition.prompts and payload.prompt_id not in condition.prompts:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
+    field_name = field_map.get(hook_type)
+    if field_name:
+        return getattr(payload, field_name, None)
+    return None
 
 
-def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on pre-prompt hooks.
+def payload_matches(
+    payload: Any,
+    hook_type: str,
+    conditions: list[PluginCondition],
+    context: GlobalContext,
+) -> bool:
+    """Check if a payload matches any of the plugin conditions.
+
+    This function provides generic conditional matching for all hook types.
+    It checks both GlobalContext conditions (via matches()) and payload-specific
+    conditions (tools, prompts, resources, agents).
 
     Args:
-        payload: the prompt posthook payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
+        payload: The payload object.
+        hook_type: The hook type identifier.
+        conditions: List of conditions to check against.
+        context: The global context.
 
     Returns:
-        True if the plugin matches criteria.
-    """
-    current_result = True
-    for index, condition in enumerate(conditions):
-        if not matches(condition, context):
-            current_result = False
-
-        if condition.prompts and payload.prompt_id not in condition.prompts:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
-
-
-def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on pre-tool hooks.
-
-    Args:
-        payload: the tool pre-invoke payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
-
-    Returns:
-        True if the plugin matches criteria.
+        True if the payload matches any condition or if no conditions are specified.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginCondition, ToolPreInvokePayload, GlobalContext
+        >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+        >>> from mcpgateway.plugins.framework.hooks.tools import ToolPreInvokePayload
         >>> payload = ToolPreInvokePayload(name="calculator", args={})
         >>> cond = PluginCondition(tools={"calculator"})
         >>> ctx = GlobalContext(request_id="req1")
-        >>> pre_tool_matches(payload, [cond], ctx)
+        >>> payload_matches(payload, "tool_pre_invoke", [cond], ctx)
         True
-        >>> payload2 = ToolPreInvokePayload(name="other", args={})
-        >>> pre_tool_matches(payload2, [cond], ctx)
+        >>> cond2 = PluginCondition(tools={"other_tool"})
+        >>> payload_matches(payload, "tool_pre_invoke", [cond2], ctx)
         False
-    """
-    current_result = True
-    for index, condition in enumerate(conditions):
-        if not matches(condition, context):
-            current_result = False
-
-        if condition.tools and payload.name not in condition.tools:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
-
-
-def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on post-tool hooks.
-
-    Args:
-        payload: the tool post-invoke payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
-
-    Returns:
-        True if the plugin matches criteria.
-
-    Examples:
-        >>> from mcpgateway.plugins.framework import PluginCondition, ToolPostInvokePayload, GlobalContext
-        >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8})
-        >>> cond = PluginCondition(tools={"calculator"})
-        >>> ctx = GlobalContext(request_id="req1")
-        >>> post_tool_matches(payload, [cond], ctx)
+        >>> payload_matches(payload, "tool_pre_invoke", [], ctx)
         True
-        >>> payload2 = ToolPostInvokePayload(name="other", result={"result": 8})
-        >>> post_tool_matches(payload2, [cond], ctx)
-        False
     """
-    current_result = True
-    for index, condition in enumerate(conditions):
+    # Mapping: hook_type -> PluginCondition attribute name
+    condition_attr_map = {
+        "tool_pre_invoke": "tools",
+        "tool_post_invoke": "tools",
+        "prompt_pre_fetch": "prompts",
+        "prompt_post_fetch": "prompts",
+        "resource_pre_fetch": "resources",
+        "resource_post_fetch": "resources",
+        "agent_pre_invoke": "agents",
+        "agent_post_invoke": "agents",
+    }
+
+    # If no conditions, match everything
+    if not conditions:
+        return True
+
+    # Check each condition (OR logic between conditions)
+    for condition in conditions:
+        # First check GlobalContext conditions
         if not matches(condition, context):
-            current_result = False
+            continue
 
-        if condition.tools and payload.name not in condition.tools:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
+        # Then check payload-specific conditions
+        condition_attr = condition_attr_map.get(hook_type)
+        if condition_attr:
+            condition_set = getattr(condition, condition_attr, None)
+            if condition_set:
+                # Extract the matchable value from the payload
+                payload_value = get_matchable_value(payload, hook_type)
+                if payload_value and payload_value not in condition_set:
+                    # Payload value doesn't match this condition's set
+                    continue
 
+        # If we get here, this condition matched
+        return True
 
-def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on pre-resource hooks.
-
-    Args:
-        payload: the resource pre-fetch payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
-
-    Returns:
-        True if the plugin matches criteria.
-
-    Examples:
-        >>> from mcpgateway.plugins.framework import PluginCondition, ResourcePreFetchPayload, GlobalContext
-        >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
-        >>> cond = PluginCondition(resources={"file:///data.txt"})
-        >>> ctx = GlobalContext(request_id="req1")
-        >>> pre_resource_matches(payload, [cond], ctx)
-        True
-        >>> payload2 = ResourcePreFetchPayload(uri="http://api/other")
-        >>> pre_resource_matches(payload2, [cond], ctx)
-        False
-    """
-    current_result = True
-    for index, condition in enumerate(conditions):
-        if not matches(condition, context):
-            current_result = False
-
-        if condition.resources and payload.uri not in condition.resources:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
+    # No conditions matched
+    return False
 
 
-def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
-    """Check for a match on post-resource hooks.
+# def pre_prompt_matches(payload: PromptPrehookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-prompt hooks.
 
-    Args:
-        payload: the resource post-fetch payload.
-        conditions: the conditions on the plugin that are required for execution.
-        context: the global context.
+#     Args:
+#         payload: the prompt prehook payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
 
-    Returns:
-        True if the plugin matches criteria.
+#     Returns:
+#         True if the plugin matches criteria.
 
-    Examples:
-        >>> from mcpgateway.plugins.framework import PluginCondition, ResourcePostFetchPayload, GlobalContext
-        >>> from mcpgateway.models import ResourceContent
-        >>> content = ResourceContent(type="resource", id="123", uri="file:///data.txt", text="Test")
-        >>> payload = ResourcePostFetchPayload(id="123",uri="file:///data.txt", content=content)
-        >>> cond = PluginCondition(resources={"file:///data.txt"})
-        >>> ctx = GlobalContext(request_id="req1")
-        >>> post_resource_matches(payload, [cond], ctx)
-        True
-        >>> payload2 = ResourcePostFetchPayload(uri="http://api/other", content=content)
-        >>> post_resource_matches(payload2, [cond], ctx)
-        False
-    """
-    current_result = True
-    for index, condition in enumerate(conditions):
-        if not matches(condition, context):
-            current_result = False
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import PromptPrehookPayload
+#         >>> payload = PromptPrehookPayload(name="greeting", args={})
+#         >>> cond = PluginCondition(prompts={"greeting"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_prompt_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = PromptPrehookPayload(name="other", args={})
+#         >>> pre_prompt_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
 
-        if condition.resources and payload.uri not in condition.resources:
-            current_result = False
-        if current_result:
-            return True
-        if index < len(conditions) - 1:
-            current_result = True
-    return current_result
+#         if condition.prompts and payload.name not in condition.prompts:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_prompt_matches(payload: PromptPosthookPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-prompt hooks.
+
+#     Args:
+#         payload: the prompt posthook payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.prompts and payload.name not in condition.prompts:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def pre_tool_matches(payload: ToolPreInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-tool hooks.
+
+#     Args:
+#         payload: the tool pre-invoke payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ToolPreInvokePayload
+#         >>> payload = ToolPreInvokePayload(name="calculator", args={})
+#         >>> cond = PluginCondition(tools={"calculator"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_tool_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ToolPreInvokePayload(name="other", args={})
+#         >>> pre_tool_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.tools and payload.name not in condition.tools:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_tool_matches(payload: ToolPostInvokePayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on post-tool hooks.
+
+#     Args:
+#         payload: the tool post-invoke payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ToolPostInvokePayload
+#         >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8})
+#         >>> cond = PluginCondition(tools={"calculator"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> post_tool_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ToolPostInvokePayload(name="other", result={"result": 8})
+#         >>> post_tool_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.tools and payload.name not in condition.tools:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def pre_resource_matches(payload: ResourcePreFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on pre-resource hooks.
+
+#     Args:
+#         payload: the resource pre-fetch payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ResourcePreFetchPayload
+#         >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
+#         >>> cond = PluginCondition(resources={"file:///data.txt"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> pre_resource_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ResourcePreFetchPayload(uri="http://api/other")
+#         >>> pre_resource_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.resources and payload.uri not in condition.resources:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result
+
+
+# def post_resource_matches(payload: ResourcePostFetchPayload, conditions: list[PluginCondition], context: GlobalContext) -> bool:
+#     """Check for a match on post-resource hooks.
+
+#     Args:
+#         payload: the resource post-fetch payload.
+#         conditions: the conditions on the plugin that are required for execution.
+#         context: the global context.
+
+#     Returns:
+#         True if the plugin matches criteria.
+
+#     Examples:
+#         >>> from mcpgateway.plugins.framework import PluginCondition, GlobalContext
+#         >>> from mcpgateway.plugins.mcp.entities import ResourcePostFetchPayload, ResourceContent
+#         >>> content = ResourceContent(type="resource", uri="file:///data.txt", text="Test")
+#         >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
+#         >>> cond = PluginCondition(resources={"file:///data.txt"})
+#         >>> ctx = GlobalContext(request_id="req1")
+#         >>> post_resource_matches(payload, [cond], ctx)
+#         True
+#         >>> payload2 = ResourcePostFetchPayload(uri="http://api/other", content=content)
+#         >>> post_resource_matches(payload2, [cond], ctx)
+#         False
+#     """
+#     current_result = True
+#     for index, condition in enumerate(conditions):
+#         if not matches(condition, context):
+#             current_result = False
+
+#         if condition.resources and payload.uri not in condition.resources:
+#             current_result = False
+#         if current_result:
+#             return True
+#         if index < len(conditions) - 1:
+#             current_result = True
+#     return current_result

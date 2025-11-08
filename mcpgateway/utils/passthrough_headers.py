@@ -350,7 +350,7 @@ async def set_global_passthrough_headers(db: Session) -> None:
         Config already exists (no DB write):
         >>> import pytest
         >>> from unittest.mock import Mock, patch
-        >>> from mcpgateway.models import GlobalConfig
+        >>> from mcpgateway.common.models import GlobalConfig
         >>> @pytest.mark.asyncio
         ... @patch("mcpgateway.utils.passthrough_headers.settings")
         ... async def test_existing_config(mock_settings):

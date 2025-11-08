@@ -36,11 +36,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.models import ToolResult
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 

@@ -9,11 +9,11 @@ Tests for CachedToolResultPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ToolHookType,
     ToolPreInvokePayload,
     ToolPostInvokePayload,
 )
@@ -26,7 +26,7 @@ async def test_cache_store_and_hit():
         PluginConfig(
             name="cache",
             kind="plugins.cached_tool_result.cached_tool_result.CachedToolResultPlugin",
-            hooks=[HookType.TOOL_PRE_INVOKE, HookType.TOOL_POST_INVOKE],
+            hooks=[ToolHookType.TOOL_PRE_INVOKE, ToolHookType.TOOL_POST_INVOKE],
             config={"cacheable_tools": ["echo"], "ttl": 60},
         )
     )

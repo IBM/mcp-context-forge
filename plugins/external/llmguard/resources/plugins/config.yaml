@@ -5,7 +5,7 @@ plugins:
     description: "A plugin for running input through llmguard scanners "
     version: "0.1.0"
     author: "Shriti Priya"
-    hooks: ["prompt_pre_fetch","prompt_post_fetch"]
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
     tags: ["plugin", "guardrails", "llmguard", "pre-post"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 10

@@ -40,7 +40,7 @@ class CacheTTLDict(dict):
         """init block for cache. This initializes a redit client.
 
         Args:
-          ttl: Time to live in seconds for cache
+            ttl: Time to live in seconds for cache
         """
         self.cache_ttl = ttl
         self.cache = redis.Redis(host=redis_host, port=redis_port)
@@ -53,6 +53,9 @@ class CacheTTLDict(dict):
         Args:
             key: The id of vault in string
             value: The tuples in the vault
+
+        Returns:
+            tuple[bool]: A tuple containing (success_set, success_expiry) booleans.
         """
         serialized_obj = pickle.dumps(value)
         logger.info(f"Update cache in cache: {key} {serialized_obj}")
@@ -73,10 +76,9 @@ class CacheTTLDict(dict):
 
         Args:
             key: The id of vault in string
-            value: The tuples in the vault
 
         Returns:
-            retrieved_obj: Return the retrieved object from cache
+            tuple: The retrieved object from cache or None if not found.
         """
         value = self.cache.get(key)
         if value:
@@ -87,14 +89,10 @@ class CacheTTLDict(dict):
             logger.error(f"Cache retrieval unsuccessful for id: {key}")
 
     def delete_cache(self, key: int = None) -> None:
-        """Retrieves cache for a key value
+        """Deletes cache for a key value
 
         Args:
             key: The id of vault in string
-            value: The tuples in the vault
-
-        Returns:
-            retrieved_obj: Return the retrieved object from cache
         """
         logger.info(f"Deleting cache for key : {key}")
         deleted_count = self.cache.delete(key)

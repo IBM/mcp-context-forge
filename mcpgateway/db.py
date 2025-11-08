@@ -38,16 +38,16 @@ from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import QueuePool
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.db_isready import wait_for_db_ready
-from mcpgateway.validators import SecurityValidator
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     # First-Party
-    from mcpgateway.models import ResourceContent
+    from mcpgateway.common.models import ResourceContent
 
 # ResourceContent will be imported locally where needed to avoid circular imports
 # EmailUser models moved to this file to avoid circular imports
@@ -2239,7 +2239,7 @@ class Resource(Base):
 
         # Local import to avoid circular import
         # First-Party
-        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.common.models import ResourceContent  # pylint: disable=import-outside-toplevel
 
         if self.text_content is not None:
             return ResourceContent(
