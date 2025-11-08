@@ -1,0 +1,273 @@
+/**
+ * Gantt Chart Styles
+ */
+
+.gantt-container {
+    background: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
+    overflow: hidden;
+    margin: 1rem 0;
+}
+
+/* Toolbar */
+.gantt-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.gantt-info {
+    font-size: 0.875rem;
+    color: #374151;
+}
+
+.gantt-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.gantt-btn {
+    padding: 0.5rem 0.75rem;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.2s;
+}
+
+.gantt-btn:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.gantt-btn:active {
+    transform: scale(0.95);
+}
+
+/* Time Scale */
+.gantt-timescale {
+    position: relative;
+    height: 40px;
+    background: #fafafa;
+    border-bottom: 2px solid #e5e7eb;
+    margin-left: 250px; /* Offset for span names */
+    margin-right: 100px; /* Offset for duration column */
+}
+
+.time-marker {
+    position: absolute;
+    top: 0;
+    height: 100%;
+}
+
+.time-tick {
+    width: 1px;
+    height: 8px;
+    background: #9ca3af;
+    margin-left: -0.5px;
+}
+
+.time-label {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.25rem;
+    margin-left: -15px;
+    font-family: monospace;
+}
+
+/* Spans Container */
+.gantt-spans {
+    max-height: 600px;
+    overflow-y: auto;
+}
+
+.span-row {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #f3f4f6;
+    transition: background 0.2s;
+}
+
+.span-row:hover {
+    background: #f9fafb;
+}
+
+.span-row.critical-path-row {
+    background: #fef2f2;
+}
+
+.span-row.critical-path-row:hover {
+    background: #fee2e2;
+}
+
+/* Span Name Column */
+.span-name {
+    width: 250px;
+    font-size: 0.875rem;
+    color: #374151;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-right: 0.5rem;
+    flex-shrink: 0;
+}
+
+.span-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: #6b7280;
+    padding: 0.125rem 0.25rem;
+    width: 20px;
+    text-align: center;
+}
+
+.span-toggle:hover {
+    color: #374151;
+    background: #f3f4f6;
+    border-radius: 0.25rem;
+}
+
+.span-spacer {
+    display: inline-block;
+    width: 20px;
+}
+
+.span-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Timeline Column */
+.span-timeline {
+    flex: 1;
+    height: 32px;
+    position: relative;
+    background: #f9fafb;
+    border-radius: 0.25rem;
+    margin: 0 0.5rem;
+}
+
+.span-bar {
+    position: absolute;
+    height: 100%;
+    border-radius: 0.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
+}
+
+.span-bar:hover {
+    transform: scaleY(1.1);
+    box-shadow: 0 2px 4px rgb(0 0 0 / 20%);
+    z-index: 10;
+}
+
+.span-bar.critical-path-bar {
+    border: 2px solid #dc2626;
+    box-shadow: 0 0 0 2px rgb(220 38 38 / 20%);
+}
+
+.span-bar-label {
+    font-size: 0.75rem;
+    color: white;
+    font-weight: 500;
+    text-shadow: 0 1px 2px rgb(0 0 0 / 20%);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    padding: 0 0.5rem;
+}
+
+/* Duration Column */
+.span-duration {
+    width: 100px;
+    text-align: right;
+    font-size: 0.875rem;
+    color: #6b7280;
+    font-family: monospace;
+    padding-right: 1rem;
+    flex-shrink: 0;
+}
+
+/* Legend */
+.gantt-legend {
+    display: flex;
+    gap: 1.5rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-top: 1px solid #e5e7eb;
+    font-size: 0.875rem;
+    justify-content: center;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.legend-color {
+    width: 20px;
+    height: 12px;
+    border-radius: 0.25rem;
+}
+
+.legend-color.critical-path {
+    background: white;
+    border: 2px solid #dc2626;
+}
+
+/* Responsive */
+@media (width <= 768px) {
+    .gantt-toolbar {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+    }
+
+    .gantt-controls {
+        justify-content: center;
+    }
+
+    .span-name {
+        width: 150px;
+    }
+
+    .gantt-timescale {
+        margin-left: 150px;
+    }
+
+    .span-duration {
+        width: 80px;
+    }
+}
+
+/* Scrollbar styling for Gantt spans */
+.gantt-spans::-webkit-scrollbar {
+    width: 8px;
+}
+
+.gantt-spans::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.gantt-spans::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+    border-radius: 4px;
+}
+
+.gantt-spans::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}

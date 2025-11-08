@@ -1,0 +1,213 @@
+/**
+ * Flame Graph Visualization Styles
+ *
+ * Provides styling for interactive flame graph traces showing
+ * execution hierarchy and performance hotspots.
+ */
+
+/* Container */
+.flame-graph-container {
+    width: 100%;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+/* Toolbar */
+.flame-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background: #f9fafb;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+.flame-info {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.flame-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+/* Search Input */
+.flame-search {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    min-width: 200px;
+    transition: border-color 0.15s ease-in-out;
+}
+
+.flame-search:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgb(59 130 246 / 10%);
+}
+
+/* Buttons */
+.flame-btn {
+    padding: 0.5rem 0.75rem;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.flame-btn:hover {
+    background: #f3f4f6;
+    border-color: #9ca3af;
+}
+
+.flame-btn:active {
+    background: #e5e7eb;
+}
+
+/* SVG Canvas */
+.flame-svg {
+    display: block;
+    width: 100%;
+    background: #fff;
+    cursor: default;
+}
+
+/* Flame Graph Nodes */
+.flame-node {
+    transition: opacity 0.2s ease-in-out;
+}
+
+.flame-node:hover {
+    opacity: 0.9;
+}
+
+.flame-node rect {
+    transition: stroke-width 0.2s ease-in-out;
+}
+
+.flame-node:hover rect {
+    stroke-width: 2px;
+    stroke: #000;
+}
+
+/* Search Match Highlighting */
+.flame-node.search-match rect {
+    stroke: #000;
+    stroke-width: 2px;
+    filter: brightness(1.1);
+}
+
+/* Legend */
+.flame-legend {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1rem;
+    background: #f9fafb;
+    border-top: 1px solid #e5e7eb;
+    flex-wrap: wrap;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: #4b5563;
+}
+
+.legend-color {
+    width: 1rem;
+    height: 1rem;
+    border-radius: 0.25rem;
+    border: 1px solid #d1d5db;
+}
+
+/* Responsive Design */
+@media (width <= 768px) {
+    .flame-toolbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 1rem;
+    }
+
+    .flame-controls {
+        width: 100%;
+        flex-direction: column;
+    }
+
+    .flame-search {
+        width: 100%;
+    }
+
+    .flame-legend {
+        gap: 0.75rem;
+        padding: 0.75rem;
+    }
+
+    .legend-item {
+        font-size: 0.75rem;
+    }
+}
+
+/* Print Styles */
+@media print {
+    .flame-toolbar,
+    .flame-legend {
+        background: #fff;
+    }
+
+    .flame-btn {
+        display: none;
+    }
+
+    .flame-search {
+        display: none;
+    }
+}
+
+/* Accessibility */
+.flame-node:focus {
+    outline: 2px solid #3b82f6;
+    outline-offset: 2px;
+}
+
+/* Loading State */
+.flame-graph-container.loading {
+    position: relative;
+    min-height: 400px;
+}
+
+.flame-graph-container.loading::after {
+    content: "Loading flame graph...";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #6b7280;
+    font-size: 0.875rem;
+}
+
+/* Empty State */
+.flame-graph-container.empty {
+    padding: 2rem;
+    text-align: center;
+    color: #6b7280;
+}
+
+/* Tooltip Styles (for SVG title fallback) */
+.flame-node title {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12px;
+}

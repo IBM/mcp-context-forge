@@ -716,6 +716,34 @@ class Settings(BaseSettings):
     # Log Buffer (for in-memory storage in admin UI)
     log_buffer_size_mb: float = 1.0  # Size of in-memory log buffer in MB
 
+    # ===================================
+    # Observability Configuration
+    # ===================================
+
+    # Enable observability features (traces, spans, metrics)
+    observability_enabled: bool = Field(default=False, description="Enable observability tracing and metrics collection")
+
+    # Automatic HTTP request tracing
+    observability_trace_http_requests: bool = Field(default=True, description="Automatically trace HTTP requests")
+
+    # Trace retention period (days)
+    observability_trace_retention_days: int = Field(default=7, ge=1, description="Number of days to retain trace data")
+
+    # Maximum traces to store (prevents unbounded growth)
+    observability_max_traces: int = Field(default=100000, ge=1000, description="Maximum number of traces to retain")
+
+    # Sample rate (0.0 to 1.0) - 1.0 means trace everything
+    observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
+
+    # Exclude paths from tracing (regex patterns)
+    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing (regex)")
+
+    # Enable performance metrics
+    observability_metrics_enabled: bool = Field(default=True, description="Enable metrics collection")
+
+    # Enable span events
+    observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:

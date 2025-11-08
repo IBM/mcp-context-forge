@@ -51,6 +51,7 @@ from mcpgateway.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -722,7 +723,34 @@ class ResourceService:
         resource = None
         resource_db = db.get(DbResource, resource_id)
         uri = resource_db.uri if resource_db else None
-        # Create trace span for resource reading
+
+        # Create database span for observability dashboard
+        trace_id = current_trace_id.get()
+        db_span_id = None
+        db_span_ended = False
+        observability_service = ObservabilityService() if trace_id else None
+
+        if trace_id and observability_service:
+            try:
+                db_span_id = observability_service.start_span(
+                    db=db,
+                    trace_id=trace_id,
+                    name="resource.read",
+                    attributes={
+                        "resource.uri": str(uri) if uri else "unknown",
+                        "user": user or "anonymous",
+                        "server_id": server_id,
+                        "request_id": request_id,
+                        "http.url": uri if uri is not None and uri.startswith("http") else None,
+                        "resource.type": "template" if (uri is not None and "{" in uri and "}" in uri) else "static",
+                    },
+                )
+                logger.debug(f"✓ Created resource.read span: {db_span_id} for resource: {uri}")
+            except Exception as e:
+                logger.warning(f"Failed to start observability span for resource reading: {e}")
+                db_span_id = None
+
+        # Create trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "resource.read",
             {
@@ -844,6 +872,20 @@ class ResourceService:
                         await self._record_resource_metric(db, resource, start_time, success, error_message)
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
+
+                # End database span for observability dashboard
+                if db_span_id and observability_service and not db_span_ended:
+                    try:
+                        observability_service.end_span(
+                            db=db,
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
+                        db_span_ended = True
+                        logger.debug(f"✓ Ended resource.read span: {db_span_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to end observability span for resource reading: {e}")
 
     async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
         """

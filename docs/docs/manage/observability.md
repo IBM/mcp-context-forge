@@ -1,16 +1,34 @@
 ## Observability
 
-MCP Gateway includes production-grade OpenTelemetry instrumentation for distributed tracing and Prometheus-compatible metrics exposure.
+MCP Gateway provides comprehensive observability through two complementary systems:
+
+1. **Internal Observability** - Built-in database-backed tracing with Admin UI dashboards
+2. **OpenTelemetry** - Standard distributed tracing to external backends (Phoenix, Jaeger, Tempo)
 
 ## Documentation
 
-- **[Observability Overview](observability/observability.md)** - Complete guide to configuring and using observability
+- **[OpenTelemetry Overview](observability/observability.md)** - External observability with OTLP backends
+- **[Internal Observability](observability/internal-observability.md)** - Built-in tracing, metrics, and Admin UI dashboards
 - **[Phoenix Integration](observability/phoenix.md)** - AI/LLM-focused observability with Arize Phoenix
 
 ## Quick Start
 
+### Internal Observability (Built-in)
+
 ```bash
-# Enable observability (enabled by default)
+# Enable internal observability
+export OBSERVABILITY_ENABLED=true
+
+# Run MCP Gateway
+mcpgateway
+
+# View dashboards at http://localhost:4444/admin/observability
+```
+
+### OpenTelemetry (External)
+
+```bash
+# Enable OpenTelemetry (enabled by default)
 export OTEL_ENABLE_OBSERVABILITY=true
 export OTEL_TRACES_EXPORTER=otlp
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
@@ -20,9 +38,9 @@ docker run -p 6006:6006 -p 4317:4317 arizephoenix/phoenix:latest
 
 # Run MCP Gateway
 mcpgateway
-```
 
-View traces at http://localhost:6006
+# View traces at http://localhost:6006
+```
 
 ## Prometheus metrics (important)
 
