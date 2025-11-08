@@ -86,7 +86,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                 payload=HttpPreRequestPayload(
                     path=str(request.url.path),
                     method=request.method,
-                    headers=HttpHeaderPayload(dict(request.headers)),
+                    headers=HttpHeaderPayload(root=dict(request.headers)),
                     client_host=client_host,
                     client_port=client_port,
                 ),
@@ -122,14 +122,14 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         # POST-REQUEST HOOK: Allow plugins to inspect and modify response
         try:
             # Extract response headers
-            response_headers = HttpHeaderPayload(dict(response.headers))
+            response_headers = HttpHeaderPayload(root=dict(response.headers))
 
             post_result, _ = await self.plugin_manager.invoke_hook(
                 HttpHookType.HTTP_POST_REQUEST,
                 payload=HttpPostRequestPayload(
                     path=str(request.url.path),
                     method=request.method,
-                    headers=HttpHeaderPayload(dict(request.headers)),
+                    headers=HttpHeaderPayload(root=dict(request.headers)),
                     client_host=client_host,
                     client_port=client_port,
                     response_headers=response_headers,

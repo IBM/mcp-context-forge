@@ -124,7 +124,7 @@ async def get_current_user(
                 HttpHookType.HTTP_AUTH_RESOLVE_USER,
                 payload=HttpAuthResolveUserPayload(
                     credentials=credentials_dict,
-                    headers=HttpHeaderPayload(headers),
+                    headers=HttpHeaderPayload(root=headers),
                     client_host=client_host,
                     client_port=client_port,
                 ),
