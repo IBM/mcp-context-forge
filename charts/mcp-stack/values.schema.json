@@ -251,7 +251,7 @@
           },
           "additionalProperties": false
         },
-        
+
         "pluginConfig": {
           "type": "object",
           "description": "Plugin configuration via ConfigMap",

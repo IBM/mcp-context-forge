@@ -314,7 +314,60 @@ class PluginExecutor:
         Raises:
             asyncio.TimeoutError: If plugin exceeds timeout.
         """
-        return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        # Add observability tracing for plugin execution
+        try:
+            # First-Party
+            # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import SessionLocal
+            from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+
+            # pylint: enable=import-outside-toplevel
+
+            trace_id = current_trace_id.get()
+            if trace_id:
+                db = SessionLocal()
+                try:
+                    service = ObservabilityService()
+                    span_id = service.start_span(
+                        db=db,
+                        trace_id=trace_id,
+                        name=f"plugin.execute.{hook_ref.plugin_ref.name}",
+                        kind="internal",
+                        resource_type="plugin",
+                        resource_name=hook_ref.plugin_ref.name,
+                        attributes={
+                            "plugin.name": hook_ref.plugin_ref.name,
+                            "plugin.uuid": hook_ref.plugin_ref.uuid,
+                            "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+                            "plugin.priority": hook_ref.plugin_ref.priority,
+                            "plugin.timeout": self.timeout,
+                        },
+                    )
+
+                    # Execute plugin
+                    result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+
+                    # End span with success
+                    service.end_span(
+                        db=db,
+                        span_id=span_id,
+                        status="ok",
+                        attributes={
+                            "plugin.had_violation": result.violation is not None,
+                            "plugin.modified_payload": result.modified_payload is not None,
+                        },
+                    )
+                    return result
+                finally:
+                    db.close()
+            else:
+                # No active trace, execute without instrumentation
+                return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+
+        except Exception as e:
+            # If observability setup fails, continue without instrumentation
+            logger.debug(f"Plugin observability setup failed: {e}")
+            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
 
     def _validate_payload_size(self, payload: Any) -> None:
         """Validate that payload doesn't exceed size limits.

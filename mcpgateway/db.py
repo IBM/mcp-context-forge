@@ -122,6 +122,17 @@ else:
         connect_args=connect_args,
     )
 
+# Initialize SQLAlchemy instrumentation for observability
+if settings.observability_enabled:
+    try:
+        # First-Party
+        from mcpgateway.instrumentation import instrument_sqlalchemy
+
+        instrument_sqlalchemy(engine)
+        logger.info("SQLAlchemy instrumentation enabled for observability")
+    except ImportError:
+        logger.warning("Failed to import SQLAlchemy instrumentation")
+
 
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
@@ -164,10 +175,12 @@ if backend == "sqlite":
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
-        # Set busy timeout to 10 seconds (10000 ms) to handle lock contention
-        cursor.execute("PRAGMA busy_timeout=10000")
+        # Set busy timeout to 30 seconds (30000 ms) to handle lock contention from observability
+        cursor.execute("PRAGMA busy_timeout=30000")
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
+        # Increase cache size for better performance (negative value = KB)
+        cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
         cursor.close()
 
 
@@ -1526,6 +1539,309 @@ class A2AAgentMetric(Base):
 
     # Relationship back to the A2AAgent model.
     a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="metrics")
+
+
+# ===================================
+# Observability Models (OpenTelemetry-style traces, spans, events)
+# ===================================
+
+
+class ObservabilityTrace(Base):
+    """
+    ORM model for observability traces (similar to OpenTelemetry traces).
+
+    A trace represents a complete request flow through the system. It contains
+    one or more spans representing individual operations.
+
+    Attributes:
+        trace_id (str): Unique trace identifier (UUID or OpenTelemetry trace ID format).
+        name (str): Human-readable name for the trace (e.g., "POST /tools/invoke").
+        start_time (datetime): When the trace started.
+        end_time (datetime): When the trace ended (optional, set when completed).
+        duration_ms (float): Total duration in milliseconds.
+        status (str): Trace status (success, error, timeout).
+        status_message (str): Optional status message or error description.
+        http_method (str): HTTP method for the request (GET, POST, etc.).
+        http_url (str): Full URL of the request.
+        http_status_code (int): HTTP response status code.
+        user_email (str): User who initiated the request (if authenticated).
+        user_agent (str): Client user agent string.
+        ip_address (str): Client IP address.
+        attributes (dict): Additional trace attributes (JSON).
+        resource_attributes (dict): Resource attributes (service name, version, etc.).
+        created_at (datetime): Trace creation timestamp.
+    """
+
+    __tablename__ = "observability_traces"
+
+    # Primary key
+    trace_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Trace metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unset")  # unset, ok, error
+    status_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # HTTP request context
+    http_method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    http_url: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
+    http_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # User context
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+
+    # Attributes (flexible key-value storage)
+    attributes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
+    resource_attributes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Relationships
+    spans: Mapped[List["ObservabilitySpan"]] = relationship("ObservabilitySpan", back_populates="trace", cascade="all, delete-orphan")
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_traces_start_time", "start_time"),
+        Index("idx_observability_traces_user_email", "user_email"),
+        Index("idx_observability_traces_status", "status"),
+        Index("idx_observability_traces_http_status_code", "http_status_code"),
+    )
+
+
+class ObservabilitySpan(Base):
+    """
+    ORM model for observability spans (similar to OpenTelemetry spans).
+
+    A span represents a single operation within a trace. Spans can be nested
+    to represent hierarchical operations.
+
+    Attributes:
+        span_id (str): Unique span identifier.
+        trace_id (str): Parent trace ID.
+        parent_span_id (str): Parent span ID (for nested spans).
+        name (str): Span name (e.g., "database_query", "tool_invocation").
+        kind (str): Span kind (internal, server, client, producer, consumer).
+        start_time (datetime): When the span started.
+        end_time (datetime): When the span ended.
+        duration_ms (float): Span duration in milliseconds.
+        status (str): Span status (success, error).
+        status_message (str): Optional status message.
+        attributes (dict): Span attributes (JSON).
+        resource_name (str): Name of the resource being operated on.
+        resource_type (str): Type of resource (tool, resource, prompt, gateway, etc.).
+        resource_id (str): ID of the specific resource.
+        created_at (datetime): Span creation timestamp.
+    """
+
+    __tablename__ = "observability_spans"
+
+    # Primary key
+    span_id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+
+    # Trace relationship
+    trace_id: Mapped[str] = mapped_column(String(36), ForeignKey("observability_traces.trace_id", ondelete="CASCADE"), nullable=False, index=True)
+    parent_span_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("observability_spans.span_id", ondelete="CASCADE"), nullable=True, index=True)
+
+    # Span metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False, default="internal")  # internal, server, client, producer, consumer
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unset")
+    status_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Attributes
+    attributes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
+
+    # Resource context
+    resource_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)  # tool, resource, prompt, gateway, a2a_agent
+    resource_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Relationships
+    trace: Mapped["ObservabilityTrace"] = relationship("ObservabilityTrace", back_populates="spans")
+    parent_span: Mapped[Optional["ObservabilitySpan"]] = relationship("ObservabilitySpan", remote_side=[span_id], backref="child_spans")
+    events: Mapped[List["ObservabilityEvent"]] = relationship("ObservabilityEvent", back_populates="span", cascade="all, delete-orphan")
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_spans_trace_id", "trace_id"),
+        Index("idx_observability_spans_parent_span_id", "parent_span_id"),
+        Index("idx_observability_spans_start_time", "start_time"),
+        Index("idx_observability_spans_resource_type", "resource_type"),
+        Index("idx_observability_spans_resource_name", "resource_name"),
+    )
+
+
+class ObservabilityEvent(Base):
+    """
+    ORM model for observability events (logs within spans).
+
+    Events represent discrete occurrences within a span, such as log messages,
+    exceptions, or state changes.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        span_id (str): Parent span ID.
+        name (str): Event name (e.g., "exception", "log", "checkpoint").
+        timestamp (datetime): When the event occurred.
+        attributes (dict): Event attributes (JSON).
+        severity (str): Log severity level (debug, info, warning, error, critical).
+        message (str): Event message.
+        exception_type (str): Exception class name (if event is an exception).
+        exception_message (str): Exception message.
+        exception_stacktrace (str): Exception stacktrace.
+        created_at (datetime): Event creation timestamp.
+    """
+
+    __tablename__ = "observability_events"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Span relationship
+    span_id: Mapped[str] = mapped_column(String(36), ForeignKey("observability_spans.span_id", ondelete="CASCADE"), nullable=False, index=True)
+
+    # Event metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+    attributes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
+
+    # Log fields
+    severity: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, index=True)  # debug, info, warning, error, critical
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Exception fields
+    exception_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    exception_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    exception_stacktrace: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Relationships
+    span: Mapped["ObservabilitySpan"] = relationship("ObservabilitySpan", back_populates="events")
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_events_span_id", "span_id"),
+        Index("idx_observability_events_timestamp", "timestamp"),
+        Index("idx_observability_events_severity", "severity"),
+    )
+
+
+class ObservabilityMetric(Base):
+    """
+    ORM model for observability metrics (time-series numerical data).
+
+    Metrics represent numerical measurements over time, such as request rates,
+    error rates, latencies, and custom business metrics.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        name (str): Metric name (e.g., "http.request.duration", "tool.invocation.count").
+        metric_type (str): Metric type (counter, gauge, histogram).
+        value (float): Metric value.
+        timestamp (datetime): When the metric was recorded.
+        unit (str): Metric unit (ms, count, bytes, etc.).
+        attributes (dict): Metric attributes/labels (JSON).
+        resource_type (str): Type of resource (tool, resource, prompt, etc.).
+        resource_id (str): ID of the specific resource.
+        trace_id (str): Associated trace ID (optional).
+        created_at (datetime): Metric creation timestamp.
+    """
+
+    __tablename__ = "observability_metrics"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Metric metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    metric_type: Mapped[str] = mapped_column(String(20), nullable=False)  # counter, gauge, histogram
+    value: Mapped[float] = mapped_column(Float, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, index=True)
+    unit: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # Attributes/labels
+    attributes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, default=dict)
+
+    # Resource context
+    resource_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, index=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+
+    # Trace association (optional)
+    trace_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("observability_traces.trace_id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_metrics_name_timestamp", "name", "timestamp"),
+        Index("idx_observability_metrics_resource_type", "resource_type"),
+        Index("idx_observability_metrics_trace_id", "trace_id"),
+    )
+
+
+class ObservabilitySavedQuery(Base):
+    """
+    ORM model for saved observability queries (filter presets).
+
+    Allows users to save their filter configurations for quick access and
+    historical query tracking. Queries can be personal or shared with the team.
+
+    Attributes:
+        id (int): Auto-incrementing primary key.
+        name (str): User-given name for the saved query.
+        description (str): Optional description of what this query finds.
+        user_email (str): Email of the user who created this query.
+        filter_config (dict): JSON containing all filter values (time_range, status_filter, etc.).
+        is_shared (bool): Whether this query is visible to other users.
+        created_at (datetime): When the query was created.
+        updated_at (datetime): When the query was last modified.
+        last_used_at (datetime): When the query was last executed.
+        use_count (int): How many times this query has been used.
+    """
+
+    __tablename__ = "observability_saved_queries"
+
+    # Primary key
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    # Query metadata
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+
+    # Filter configuration (stored as JSON)
+    filter_config: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+    # Sharing settings
+    is_shared: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Timestamps and usage tracking
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    use_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_observability_saved_queries_user_email", "user_email"),
+        Index("idx_observability_saved_queries_is_shared", "is_shared"),
+        Index("idx_observability_saved_queries_created_at", "created_at"),
+    )
 
 
 class Tool(Base):
