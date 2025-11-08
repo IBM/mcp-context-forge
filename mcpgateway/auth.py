@@ -14,7 +14,6 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
-import os
 from typing import Generator, Never, Optional
 import uuid
 
@@ -26,27 +25,11 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
-from mcpgateway.plugins.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
 bearer_scheme = HTTPBearer(auto_error=False)
-
-# Plugin manager singleton (lazy initialization)
-_plugin_manager: PluginManager | None = None
-
-
-def _get_plugin_manager() -> PluginManager | None:
-    """Get or initialize the plugin manager singleton.
-
-    Returns:
-        PluginManager instance if plugins are enabled, None otherwise.
-    """
-    global _plugin_manager
-    if _plugin_manager is None and settings.plugins_enabled:
-        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-        _plugin_manager = PluginManager(config_file)
-    return _plugin_manager
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -96,7 +79,7 @@ async def get_current_user(
     # This hook is invoked BEFORE standard JWT/API token validation
     try:
         # Get plugin manager singleton
-        plugin_manager = _get_plugin_manager()
+        plugin_manager = get_plugin_manager()
 
         if plugin_manager:
             # Extract client information
@@ -165,6 +148,14 @@ async def get_current_user(
                     created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
                     updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
                 )
+
+                # Store auth_method in request.state so it can be accessed by RBAC middleware
+                if request and hasattr(request, "state") and auth_result.metadata:
+                    auth_method = auth_result.metadata.get("auth_method")
+                    if auth_method:
+                        request.state.auth_method = auth_method
+                        logger.debug(f"Stored auth_method '{auth_method}' in request.state")
+
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 

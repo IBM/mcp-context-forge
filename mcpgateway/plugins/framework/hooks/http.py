@@ -66,12 +66,14 @@ class HttpHookType(str, Enum):
     These hooks allow plugins to:
     1. Transform request headers before processing (middleware layer)
     2. Implement custom user authentication systems (auth layer)
-    3. Process responses after request completion (middleware layer)
+    3. Check and grant permissions (RBAC layer)
+    4. Process responses after request completion (middleware layer)
     """
 
     HTTP_PRE_REQUEST = "http_pre_request"
     HTTP_POST_REQUEST = "http_post_request"
     HTTP_AUTH_RESOLVE_USER = "http_auth_resolve_user"
+    HTTP_AUTH_CHECK_PERMISSION = "http_auth_check_permission"
 
 
 class HttpPreRequestPayload(PluginPayload):
@@ -132,20 +134,66 @@ class HttpAuthResolveUserPayload(PluginPayload):
     client_port: int | None = None
 
 
+class HttpAuthCheckPermissionPayload(PluginPayload):
+    """Payload for permission checking hook (RBAC layer).
+
+    Invoked before RBAC permission checks to allow plugins to:
+    - Grant/deny permissions based on custom logic (e.g., token-based auth)
+    - Bypass RBAC for certain authentication methods
+    - Add additional permission checks (e.g., time-based, IP-based)
+    - Implement custom authorization logic
+
+    Attributes:
+        user_email: Email of the authenticated user
+        permission: Required permission being checked (e.g., "tools.read", "servers.write")
+        resource_type: Type of resource being accessed (e.g., "tool", "server", "prompt")
+        team_id: Team context for the permission check (if applicable)
+        is_admin: Whether the user has admin privileges
+        auth_method: Authentication method used (e.g., "simple_token", "jwt", "oauth")
+        client_host: Client IP address for IP-based permission checks
+        user_agent: User agent string for device-based permission checks
+    """
+
+    user_email: str
+    permission: str
+    resource_type: str | None = None
+    team_id: str | None = None
+    is_admin: bool = False
+    auth_method: str | None = None
+    client_host: str | None = None
+    user_agent: str | None = None
+
+
+class HttpAuthCheckPermissionResultPayload(PluginPayload):
+    """Result payload for permission checking hook.
+
+    Plugins return this to indicate whether permission should be granted.
+
+    Attributes:
+        granted: Whether permission is granted (True) or denied (False)
+        reason: Optional reason for the decision (for logging/auditing)
+    """
+
+    granted: bool
+    reason: str | None = None
+
+
 # Type aliases for hook results
 HttpPreRequestResult = PluginResult[HttpHeaderPayload]
 HttpPostRequestResult = PluginResult[HttpHeaderPayload]
 HttpAuthResolveUserResult = PluginResult[dict]  # Returns user dict (EmailUser serialized)
+HttpAuthCheckPermissionResult = PluginResult[HttpAuthCheckPermissionResultPayload]
 
 
 def _register_http_auth_hooks() -> None:
     """Register HTTP authentication and request hooks in the global registry.
 
     This is called lazily to avoid circular import issues.
-    Registers three hook types:
+    Registers four hook types:
     - HTTP_PRE_REQUEST: Transform headers before authentication (middleware)
     - HTTP_POST_REQUEST: Inspect response after request completion (middleware)
     - HTTP_AUTH_RESOLVE_USER: Custom user authentication (auth layer)
+    - HTTP_AUTH_CHECK_PERMISSION: Custom permission checking (RBAC layer)
     """
     # Import here to avoid circular dependency at module load time
     # First-Party
@@ -158,6 +206,7 @@ def _register_http_auth_hooks() -> None:
         registry.register_hook(HttpHookType.HTTP_PRE_REQUEST, HttpPreRequestPayload, HttpPreRequestResult)
         registry.register_hook(HttpHookType.HTTP_POST_REQUEST, HttpPostRequestPayload, HttpPostRequestResult)
         registry.register_hook(HttpHookType.HTTP_AUTH_RESOLVE_USER, HttpAuthResolveUserPayload, HttpAuthResolveUserResult)
+        registry.register_hook(HttpHookType.HTTP_AUTH_CHECK_PERMISSION, HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResult)
 
 
 _register_http_auth_hooks()

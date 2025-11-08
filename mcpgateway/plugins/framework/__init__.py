@@ -13,6 +13,10 @@ Exposes core MCP Gateway plugin components:
 - ExternalPluginServer
 """
 
+# Standard
+import os
+from typing import Optional
+
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
@@ -22,6 +26,9 @@ from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
 from mcpgateway.plugins.framework.hooks.http import (
+    HttpAuthCheckPermissionPayload,
+    HttpAuthCheckPermissionResult,
+    HttpAuthCheckPermissionResultPayload,
     HttpAuthResolveUserPayload,
     HttpAuthResolveUserResult,
     HttpHeaderPayload,
@@ -54,6 +61,36 @@ from mcpgateway.plugins.framework.models import (
     PluginViolation,
 )
 
+# Plugin manager singleton (lazy initialization)
+_plugin_manager: Optional[PluginManager] = None
+
+
+def get_plugin_manager() -> Optional[PluginManager]:
+    """Get or initialize the plugin manager singleton.
+
+    This is the public API for accessing the plugin manager from anywhere in the application.
+    The plugin manager is lazily initialized on first access if plugins are enabled.
+
+    Returns:
+        PluginManager instance if plugins are enabled, None otherwise.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework import get_plugin_manager
+        >>> pm = get_plugin_manager()
+        >>> pm is not None  # True if plugins are enabled
+        True
+    """
+    global _plugin_manager
+    if _plugin_manager is None:
+        # Import here to avoid circular dependency
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+        if settings.plugins_enabled:
+            config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
+            _plugin_manager = PluginManager(config_file)
+    return _plugin_manager
+
+
 __all__ = [
     "AgentHookType",
     "AgentPostInvokePayload",
@@ -62,8 +99,13 @@ __all__ = [
     "AgentPreInvokeResult",
     "ConfigLoader",
     "ExternalPluginServer",
+    "get_hook_registry",
+    "get_plugin_manager",
     "GlobalContext",
     "HookRegistry",
+    "HttpAuthCheckPermissionPayload",
+    "HttpAuthCheckPermissionResult",
+    "HttpAuthCheckPermissionResultPayload",
     "HttpAuthResolveUserPayload",
     "HttpAuthResolveUserResult",
     "HttpHeaderPayload",
@@ -72,7 +114,6 @@ __all__ = [
     "HttpPostRequestResult",
     "HttpPreRequestPayload",
     "HttpPreRequestResult",
-    "get_hook_registry",
     "MCPServerConfig",
     "Plugin",
     "PluginCondition",
