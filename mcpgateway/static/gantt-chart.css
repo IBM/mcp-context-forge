@@ -5,7 +5,7 @@
 .gantt-container {
     background: white;
     border-radius: 0.5rem;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    box-shadow: 0 1px 3px rgb(0 0 0 / 10%);
     overflow: hidden;
     margin: 1rem 0;
 }
@@ -165,25 +165,25 @@
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 10%);
 }
 
 .span-bar:hover {
     transform: scaleY(1.1);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    box-shadow: 0 2px 4px rgb(0 0 0 / 20%);
     z-index: 10;
 }
 
 .span-bar.critical-path-bar {
     border: 2px solid #dc2626;
-    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
+    box-shadow: 0 0 0 2px rgb(220 38 38 / 20%);
 }
 
 .span-bar-label {
     font-size: 0.75rem;
     color: white;
     font-weight: 500;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+    text-shadow: 0 1px 2px rgb(0 0 0 / 20%);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -230,7 +230,7 @@
 }
 
 /* Responsive */
-@media (max-width: 768px) {
+@media (width <= 768px) {
     .gantt-toolbar {
         flex-direction: column;
         gap: 1rem;
