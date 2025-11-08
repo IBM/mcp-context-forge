@@ -1,0 +1,15 @@
+name: simple_token_auth
+kind: plugins.simple_token_auth.simple_token_auth.SimpleTokenAuthPlugin
+version: 1.0.0
+description: Simple token-based authentication that replaces JWT auth
+author: MCPContextForge
+priority: 10
+hooks:
+  - HTTP_PRE_REQUEST
+  - HTTP_AUTH_RESOLVE_USER
+  - HTTP_POST_REQUEST
+config:
+  token_header: x-auth-token
+  storage_file: data/auth_tokens.json
+  default_token_expiry_days: 30
+  transform_to_bearer: true
