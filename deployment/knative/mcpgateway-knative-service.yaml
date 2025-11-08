@@ -1,0 +1,125 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: mcpgateway
+  namespace: mcp-gateway
+spec:
+  template:
+    metadata:
+      annotations:
+        # Enable scale to zero
+        autoscaling.knative.dev/enable-scale-to-zero: "true"
+        # Scale down to zero after 30 seconds of no traffic
+        autoscaling.knative.dev/scale-to-zero-pod-retention-period: "30s"
+        # Minimum number of instances (0 for scale-to-zero)
+        autoscaling.knative.dev/min-scale: "0"
+        # Maximum number of instances
+        autoscaling.knative.dev/max-scale: "1"
+        # Target concurrency per pod
+        autoscaling.knative.dev/target: "100"
+        # Metric for autoscaling (concurrency or rps)
+        autoscaling.knative.dev/metric: "concurrency"
+        # Window for stable mode
+        autoscaling.knative.dev/window: "60s"
+        # Autoscaling class
+        autoscaling.knative.dev/class: "kpa.autoscaling.knative.dev"
+        # Target utilization percentage
+        autoscaling.knative.dev/target-utilization-percentage: "70"
+    spec:
+      # Timeout for requests (important for scale-to-zero)
+      timeoutSeconds: 300
+      # Container concurrency (0 = unlimited, or set a specific value)
+      containerConcurrency: 100
+      containers:
+      - name: gateway
+        image: ghcr.io/ibm/mcp-context-forge:latest
+        ports:
+        - containerPort: 4444
+          protocol: TCP
+        env:
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "4444"
+        - name: POSTGRES_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_HOST
+              optional: true
+        - name: POSTGRES_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_PORT
+              optional: true
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_DB
+              optional: true
+        - name: POSTGRES_USER
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_USER
+              optional: true
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            configMapKeyRef:
+              name: postgres-config
+              key: POSTGRES_PASSWORD
+              optional: true
+        - name: GUNICORN_CMD_ARGS
+          value: --bind=0.0.0.0:4444
+        - name: MCPGATEWAY_UI_ENABLED
+          value: "true"
+        - name: MCPGATEWAY_ADMIN_API_ENABLED
+          value: "true"
+        envFrom:
+        - configMapRef:
+            name: mcpgateway-env
+            optional: true
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        # Readiness probe - critical for Knative to know when pod is ready
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 4444
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        # Liveness probe
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 4444
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /app/data
+          name: data-volume
+      volumes:
+      - name: data-volume
+        emptyDir: {}
