@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.plugins.framework import (
     HttpHeaderPayload,
     HttpHookType,
@@ -30,6 +31,7 @@ from mcpgateway.plugins.framework import (
 )
 
 
+@pytest.mark.skipif(not settings.plugins_enabled, reason="Plugins must be enabled for HTTP auth integration tests")
 class TestHttpAuthMiddlewareIntegration:
     """Integration tests using the real FastAPI app from main.py."""
 

@@ -77,10 +77,11 @@ def get_plugin_manager() -> Optional[PluginManager]:
     Examples:
         >>> from mcpgateway.plugins.framework import get_plugin_manager
         >>> pm = get_plugin_manager()
-        >>> pm is not None  # True if plugins are enabled
+        >>> # Returns PluginManager if plugins are enabled, None otherwise
+        >>> pm is None or isinstance(pm, PluginManager)
         True
     """
-    global _plugin_manager
+    global _plugin_manager  # pylint: disable=global-statement
     if _plugin_manager is None:
         # Import here to avoid circular dependency
         from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel

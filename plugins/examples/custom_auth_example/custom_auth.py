@@ -26,7 +26,7 @@ from __future__ import annotations
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Dict, Optional
+from typing import Dict
 
 # Third-Party
 from pydantic import BaseModel
@@ -178,7 +178,7 @@ class CustomAuthPlugin(Plugin):
                     message="API key has been revoked",
                     violation=PluginViolation(
                         reason="API key revoked",
-                        description=f"The API key has been revoked and cannot be used for authentication",
+                        description="The API key has been revoked and cannot be used for authentication",
                         code="API_KEY_REVOKED",
                         details={"key_prefix": token[:10]},
                     ),

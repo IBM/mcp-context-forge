@@ -21,12 +21,12 @@ def create_token(storage: TokenStorage, email: str, full_name: str, is_admin: bo
         expires_in_days=expires_days if expires_days > 0 else None,
     )
 
-    print(f"\n✓ Token created successfully!")
+    print("\n✓ Token created successfully!")
     print(f"\nUser: {full_name} ({email})")
     print(f"Admin: {is_admin}")
     print(f"Expires: {'Never' if expires_days <= 0 else f'{expires_days} days'}")
     print(f"\nToken: {token}")
-    print(f"\nUse this token in API requests:")
+    print("\nUse this token in API requests:")
     print(f"  curl -H 'X-Auth-Token: {token}' http://localhost:4444/protocol/initialize")
     print()
 
@@ -59,9 +59,9 @@ def revoke_token(storage: TokenStorage, token: str):
     success = storage.revoke_token(token)
 
     if success:
-        print(f"\n✓ Token revoked successfully\n")
+        print("\n✓ Token revoked successfully\n")
     else:
-        print(f"\n✗ Token not found\n")
+        print("\n✗ Token not found\n")
         sys.exit(1)
 
 
