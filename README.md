@@ -1506,6 +1506,76 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 > Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
 > By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
 
+### Ed25519 Certificate Signing
+
+MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification. This cryptographic signing mechanism ensures that CA certificates used by the gateway are authentic and haven't been tampered with.
+
+| Setting                     | Description                                      | Default | Options |
+| --------------------------- | ------------------------------------------------ | ------- | ------- |
+| `ENABLE_ED25519_SIGNING`    | Enable Ed25519 signing for certificates          | `false` | bool    |
+| `ED25519_PRIVATE_KEY`       | Ed25519 private key for signing (PEM format)     | (none)  | string  |
+| `PREV_ED25519_PRIVATE_KEY`  | Previous Ed25519 private key for key rotation    | (none)  | string  |
+
+**How It Works:**
+
+1. **Certificate Signing** - When `ENABLE_ED25519_SIGNING=true`, the gateway signs the CA certificate of each MCP server/gateway using the Ed25519 private key.
+
+2. **Certificate Validation** - Before using a CA certificate for subsequent calls, the gateway validates its signature to ensure authenticity and integrity.
+
+3. **Disabled Mode** - When `ENABLE_ED25519_SIGNING=false`, certificates are neither signed nor validated (default behavior).
+
+**Key Generation:**
+
+```bash
+# Generate a new Ed25519 key pair
+python mcpgateway/utils/generate_keys.py
+
+# Output will show:
+# - Private key (set this to ED25519_PRIVATE_KEY)
+```
+
+**Key Rotation:**
+
+To rotate keys without invalidating existing signed certificates:
+
+1. Move the current `ED25519_PRIVATE_KEY` value to `PREV_ED25519_PRIVATE_KEY`
+2. Generate a new key pair using the command above
+3. Set the new private key to `ED25519_PRIVATE_KEY`
+4. The gateway will automatically re-sign valid certificates at the point of key change
+
+**Example Configuration:**
+
+```bash
+# Enable Ed25519 signing
+ENABLE_ED25519_SIGNING=true
+
+# Current signing key (PEM format)
+ED25519_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIJ5pW... (your key here)
+-----END PRIVATE KEY-----"
+
+# Previous key for rotation (optional)
+PREV_ED25519_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
+-----END PRIVATE KEY-----"
+```
+
+> 🔐 **Security Best Practices:**
+> - Store private keys securely (use secrets management tools like Vault, AWS Secrets Manager, etc.)
+> - Rotate keys periodically (recommended: every 90-180 days)
+> - Never commit private keys to version control
+> - Use environment variables or encrypted config files
+>
+> 🔑 **Public Key Derivation:**
+> - Public keys are automatically derived from private keys
+> - No need to configure public keys separately
+> - Both `ED25519_PUBLIC_KEY` and `PREV_ED25519_PUBLIC_KEY` are computed at startup
+>
+> ⚡ **Performance:**
+> - Ed25519 signing is extremely fast (~64 microseconds per signature)
+> - Minimal impact on gateway performance
+> - Recommended for production deployments requiring certificate integrity
+
 ### Response Compression
 
 MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS). Compression is negotiated automatically based on client `Accept-Encoding` headers with algorithm priority: **Brotli** (best compression) > **Zstd** (fastest) > **GZip** (universal fallback).

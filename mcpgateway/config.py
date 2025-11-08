@@ -59,6 +59,8 @@ import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 
 # Third-Party
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ed25519
 from pydantic import Field, field_validator, HttpUrl, model_validator, PositiveInt, SecretStr, ValidationInfo
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
@@ -842,32 +844,42 @@ class Settings(BaseSettings):
 
     @field_validator("sso_issuers", mode="before")
     @classmethod
-    def parse_issuers(cls, v: Any) -> set[str]:
+    def parse_issuers(cls, v: Any) -> list[str]:
         """
         Parse and validate the SSO issuers configuration value.
 
-        Accepts either a JSON array string (e.g. '["https://idp1.com", "https://idp2.com"]')
-        or an already-parsed list of issuer URLs. This allows environment variables to
-        provide issuers as JSON while still supporting direct list assignment in code.
+        Accepts:
+        - JSON array string: '["https://idp1.com", "https://idp2.com"]'
+        - Comma-separated string: "https://idp1.com, https://idp2.com"
+        - Empty string or None → []
+        - Already-parsed list
 
         Args:
-            v: The input value for SSO issuers, either a JSON array string
-                or a Python list.
+            v: The input value to parse.
 
         Returns:
-            list: A list of issuer URLs.
+            list[str]: Parsed list of issuer URLs.
 
         Raises:
-            ValueError: If the string input cannot be parsed as JSON.
+            ValueError: If the input is not a valid format.
         """
-
-        # Accept either a JSON array string or actual list
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return v
         if isinstance(v, str):
-            try:
-                return json.loads(v)  # type: ignore[no-any-return]
-            except json.JSONDecodeError:
-                raise ValueError(f"SSO_ISSUERS must be a JSON array of URLs, got: {v!r}")
-        return v  # type: ignore[no-any-return]
+            s = v.strip()
+            if not s:
+                return []
+            if s.startswith("["):
+                try:
+                    parsed = json.loads(s)
+                    return parsed if isinstance(parsed, list) else []
+                except json.JSONDecodeError:
+                    raise ValueError(f"Invalid JSON for SSO_ISSUERS: {v!r}")
+            # Fallback to comma-separated parsing
+            return [item.strip() for item in s.split(",") if item.strip()]
+        raise ValueError("Invalid type for SSO_ISSUERS")
 
     # Resources
     resource_cache_size: int = 1000
@@ -1368,6 +1380,57 @@ Disallow: /
 
     # Base URL for pagination links (defaults to request URL)
     pagination_base_url: Optional[str] = Field(default=None, description="Base URL for pagination links")
+
+    # Ed25519 keys for signing
+    enable_ed25519_signing: bool = Field(default=False, description="Enable Ed25519 signing for certificates")
+    prev_ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Previous Ed25519 private key for signing")
+    prev_ed25519_public_key: Optional[str] = Field(default=None, description="Derived previous Ed25519 public key")
+    ed25519_private_key: SecretStr = Field(default=SecretStr(""), description="Ed25519 private key for signing")
+    ed25519_public_key: Optional[str] = Field(default=None, description="Derived Ed25519 public key")
+
+    @model_validator(mode="after")
+    def derive_public_keys(self) -> "Settings":
+        """
+        Derive public keys after all individual field validations are complete.
+
+        Returns:
+            Settings: The updated Settings instance with derived public keys.
+        """
+        for private_key_field in ["ed25519_private_key", "prev_ed25519_private_key"]:
+            public_key_field = private_key_field.replace("private", "public")
+
+            # 1. Get the private key SecretStr object
+            private_key_secret: SecretStr = getattr(self, private_key_field)
+
+            # 2. Proceed only if a key is present and the public key hasn't been set
+            pem = private_key_secret.get_secret_value().strip()
+            if not pem:
+                continue
+
+            try:
+                # Load the private key
+                private_key = serialization.load_pem_private_key(pem.encode(), password=None)
+                if not isinstance(private_key, ed25519.Ed25519PrivateKey):
+                    # This check is useful, though model_validator should not raise
+                    # for an invalid key if the field validator has already passed.
+                    continue
+
+                # Derive and PEM-encode the public key
+                public_key = private_key.public_key()
+                public_pem = public_key.public_bytes(
+                    encoding=serialization.Encoding.PEM,
+                    format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                ).decode()
+
+                # 3. Set the public key attribute directly on the model instance (self)
+                setattr(self, public_key_field, public_pem)
+                # logger.info(f"Derived and stored {public_key_field} automatically.")
+
+            except Exception:
+                logger.warning("Failed to derive public key for private_key")
+                # You can choose to raise an error here if a failure should halt model creation
+
+        return self
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize Settings with environment variable parsing.

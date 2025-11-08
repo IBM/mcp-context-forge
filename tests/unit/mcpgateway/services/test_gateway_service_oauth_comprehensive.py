@@ -76,6 +76,7 @@ def mock_oauth_gateway():
     gw.auth_type = "oauth"
     gw.auth_value = {}
     gw.oauth_config = {"grant_type": "client_credentials", "client_id": "test_client", "client_secret": "test_secret", "token_url": "https://oauth.example.com/token", "scopes": ["read", "write"]}
+    gw.ca_certificate = ""
     return gw
 
 

@@ -742,6 +742,22 @@
               "description": "Auth encryption secret",
               "default": "my-test-salt"
             },
+            "ENABLE_ED25519_SIGNING": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Ed25519 signing for certificates",
+              "default": "false"
+            },
+            "ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Ed25519 private key for signing (PEM format)",
+              "default": ""
+            },
+            "PREV_ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Previous Ed25519 private key for key rotation",
+              "default": ""
+            },
             "DATABASE_URL": {
               "type": "string",
               "description": "Database URL override"

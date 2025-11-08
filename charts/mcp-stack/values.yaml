@@ -512,6 +512,11 @@ mcpContextForge:
     INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
     REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
 
+    # ─ Ed25519 Certificate Signing ─
+    ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates
+    ED25519_PRIVATE_KEY: ""                # Ed25519 private key for signing (PEM format)
+    PREV_ED25519_PRIVATE_KEY: ""           # previous Ed25519 private key for key rotation
+
     # ─ OpenTelemetry Endpoints (Optional/Sensitive) ─
     OTEL_EXPORTER_OTLP_ENDPOINT: ""        # OTLP endpoint (e.g., http://localhost:4317)
     OTEL_EXPORTER_OTLP_HEADERS: ""         # OTLP headers (comma-separated key=value)

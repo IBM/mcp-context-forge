@@ -121,6 +121,7 @@ from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.validate_signature import sign_data
 
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
@@ -6059,7 +6060,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -6275,6 +6276,29 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
+        ca_certificate: Optional[str] = None
+        sig: Optional[str] = None
+
+        # CA certificate(s) handled by JavaScript validation (supports single or multiple files)
+        # JavaScript validates, orders (root→intermediate→leaf), and concatenates into hidden field
+        if "ca_certificate" in form:
+            ca_cert_value = form["ca_certificate"]
+            if isinstance(ca_cert_value, str) and ca_cert_value.strip():
+                ca_certificate = ca_cert_value.strip()
+                LOGGER.info("✅ CA certificate(s) received and validated by frontend")
+
+                if settings.enable_ed25519_signing:
+                    try:
+                        private_key_pem = settings.ed25519_private_key.get_secret_value()
+                        sig = sign_data(ca_certificate.encode(), private_key_pem)
+                    except Exception as e:
+                        LOGGER.error(f"Error signing CA certificate: {e}")
+                        sig = None
+                        raise RuntimeError("Failed to sign CA certificate") from e
+                else:
+                    LOGGER.warning("⚠️  Ed25519 signing is disabled; CA certificate will be stored without signature")
+                    sig = None
+
         gateway = GatewayCreate(
             name=str(form["name"]),
             url=str(form["url"]),
@@ -6291,6 +6315,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
             visibility=visibility,
+            ca_certificate=ca_certificate,
+            ca_certificate_sig=sig if sig else None,
+            signing_algorithm="ed25519" if sig else None,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -6299,6 +6326,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+
+    except RuntimeError as re:
+        # --- Getting only the custom message from the ValueError ---
+        error_ctx = [str(re)]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)

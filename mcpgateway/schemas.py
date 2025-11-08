@@ -2420,6 +2420,11 @@ class GatewayCreate(BaseModel):
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
     visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
 
+    # CA certificate
+    ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
+    signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
+
     @field_validator("tags")
     @classmethod
     def validate_tags(cls, v: Optional[List[str]]) -> List[str]:

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import ssl
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -41,6 +42,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
+from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
@@ -48,14 +50,12 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginManager, PluginViolationError
+from mcpgateway.observability import create_span
+from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
-from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolResult, ToolUpdate, TopPerformer
+from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -65,6 +65,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1140,293 +1141,317 @@ class ToolService:
         success = False
         error_message = None
 
-        # Create a trace span for the tool invocation using ObservabilityService
-        trace_id = current_trace_id.get()
-        span_id = None
-        span_ended = False
-        observability_service = ObservabilityService() if trace_id else None
-
-        logger.debug(f"Tool invocation trace_id: {trace_id}, tool: {name}")
-
-        if trace_id and observability_service:
+        # Create a trace span for the tool invocation
+        with create_span(
+            "tool.invoke",
+            {
+                "tool.name": name,
+                "tool.id": str(tool.id) if tool else "unknown",
+                "tool.integration_type": tool.integration_type if tool else "unknown",
+                "tool.gateway_id": str(tool.gateway_id) if tool and tool.gateway_id else None,
+                "arguments_count": len(arguments) if arguments else 0,
+                "has_headers": bool(request_headers),
+            },
+        ) as span:
             try:
-                span_id = observability_service.start_span(
-                    db=db,
-                    trace_id=trace_id,
-                    name="tool.invoke",
-                    attributes={
-                        "tool.name": name,
-                        "tool.id": str(tool.id) if tool else "unknown",
-                        "tool.integration_type": tool.integration_type if tool else "unknown",
-                        "tool.gateway_id": str(tool.gateway_id) if tool and tool.gateway_id else None,
-                        "arguments_count": len(arguments) if arguments else 0,
-                        "has_headers": bool(request_headers),
-                    },
-                )
-                logger.info(f"✓ Created tool.invoke span: {span_id} for tool: {name}")
-            except Exception as e:
-                logger.warning(f"Failed to start observability span for tool invocation: {e}")
-                span_id = None
-        else:
-            logger.debug(f"Skipping span creation - trace_id: {trace_id}, observability_service: {observability_service}")
+                # Get combined headers for the tool including base headers, auth, and passthrough headers
+                # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
+                headers = tool.headers or {}
+                if tool.integration_type == "REST":
+                    # Handle OAuth authentication for REST tools
+                    if tool.auth_type == "oauth" and hasattr(tool, "oauth_config") and tool.oauth_config:
+                        try:
+                            access_token = await self.oauth_manager.get_access_token(tool.oauth_config)
+                            headers["Authorization"] = f"Bearer {access_token}"
+                        except Exception as e:
+                            logger.error(f"Failed to obtain OAuth access token for tool {tool.name}: {e}")
+                            raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
+                    else:
+                        credentials = decode_auth(tool.auth_value)
+                        # Filter out empty header names/values to avoid "Illegal header name" errors
+                        filtered_credentials = {k: v for k, v in credentials.items() if k and v}
+                        headers.update(filtered_credentials)
 
-        try:
-            # Get combined headers for the tool including base headers, auth, and passthrough headers
-            # headers = self._get_combined_headers(db, tool, tool.headers or {}, request_headers)
-            headers = tool.headers or {}
-            if tool.integration_type == "REST":
-                # Handle OAuth authentication for REST tools
-                if tool.auth_type == "oauth" and hasattr(tool, "oauth_config") and tool.oauth_config:
-                    try:
-                        access_token = await self.oauth_manager.get_access_token(tool.oauth_config)
-                        headers["Authorization"] = f"Bearer {access_token}"
-                    except Exception as e:
-                        logger.error(f"Failed to obtain OAuth access token for tool {tool.name}: {e}")
-                        raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
-                else:
-                    credentials = decode_auth(tool.auth_value)
-                    # Filter out empty header names/values to avoid "Illegal header name" errors
-                    filtered_credentials = {k: v for k, v in credentials.items() if k and v}
-                    headers.update(filtered_credentials)
+                    # Only call get_passthrough_headers if we actually have request headers to pass through
+                    if request_headers:
+                        headers = get_passthrough_headers(request_headers, headers, db)
 
-                # Only call get_passthrough_headers if we actually have request headers to pass through
-                if request_headers:
-                    headers = get_passthrough_headers(request_headers, headers, db)
+                    if self._plugin_manager:
+                        tool_metadata = PydanticTool.model_validate(tool)
+                        global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            ToolHookType.TOOL_PRE_INVOKE,
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            global_context=global_context,
+                            local_contexts=None,
+                            violations_as_exceptions=True,
+                        )
+                        if pre_result.modified_payload:
+                            payload = pre_result.modified_payload
+                            name = payload.name
+                            arguments = payload.args
+                            if payload.headers is not None:
+                                headers = payload.headers.model_dump()
 
-                if self._plugin_manager:
-                    tool_metadata = PydanticTool.model_validate(tool)
-                    global_context.metadata[TOOL_METADATA] = tool_metadata
-                    pre_result, context_table = await self._plugin_manager.invoke_hook(
-                        ToolHookType.TOOL_PRE_INVOKE,
-                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
-                        global_context=global_context,
-                        local_contexts=None,
-                        violations_as_exceptions=True,
-                    )
-                    if pre_result.modified_payload:
-                        payload = pre_result.modified_payload
-                        name = payload.name
-                        arguments = payload.args
-                        if payload.headers is not None:
-                            headers = payload.headers.model_dump()
+                    # Build the payload based on integration type
+                    payload = arguments.copy()
 
-                # Build the payload based on integration type
-                payload = arguments.copy()
+                    # Handle URL path parameter substitution
+                    final_url = tool.url
+                    if "{" in tool.url and "}" in tool.url:
+                        # Extract path parameters from URL template and arguments
+                        url_params = re.findall(r"\{(\w+)\}", tool.url)
+                        url_substitutions = {}
 
-                # Handle URL path parameter substitution
-                final_url = tool.url
-                if "{" in tool.url and "}" in tool.url:
-                    # Extract path parameters from URL template and arguments
-                    url_params = re.findall(r"\{(\w+)\}", tool.url)
-                    url_substitutions = {}
+                        for param in url_params:
+                            if param in payload:
+                                url_substitutions[param] = payload.pop(param)  # Remove from payload
+                                final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
+                            else:
+                                raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
 
-                    for param in url_params:
-                        if param in payload:
-                            url_substitutions[param] = payload.pop(param)  # Remove from payload
-                            final_url = final_url.replace(f"{{{param}}}", str(url_substitutions[param]))
+                    # --- Extract query params from URL ---
+                    parsed = urlparse(final_url)
+                    final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+
+                    query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+
+                    # Merge leftover payload + query params
+                    payload.update(query_params)
+
+                    # Use the tool's request_type rather than defaulting to POST.
+                    method = tool.request_type.upper()
+                    if method == "GET":
+                        response = await self._http_client.get(final_url, params=payload, headers=headers)
+                    else:
+                        response = await self._http_client.request(method, final_url, json=payload, headers=headers)
+                    response.raise_for_status()
+
+                    # Handle 204 No Content responses that have no body
+                    if response.status_code == 204:
+                        tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                        success = True
+                    elif response.status_code not in [200, 201, 202, 206]:
+                        result = response.json()
+                        tool_result = ToolResult(
+                            content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
+                            is_error=True,
+                        )
+                        # Don't mark as successful for error responses - success remains False
+                    else:
+                        result = response.json()
+                        filtered_response = extract_using_jq(result, tool.jsonpath_filter)
+                        tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
+                        success = True
+
+                        # If output schema is present, validate and attach structured content
+                        if getattr(tool, "output_schema", None):
+                            valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
+                            success = bool(valid)
+
+                elif tool.integration_type == "MCP":
+                    transport = tool.request_type.lower()
+                    # gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                    gateway = tool.gateway
+
+                    # Handle OAuth authentication for the gateway
+                    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                        if grant_type == "authorization_code":
+                            # For Authorization Code flow, try to get stored tokens
+                            try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                token_storage = TokenStorageService(db)
+
+                                # Get user-specific OAuth token
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated.")
+
+                                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+
+                                if access_token:
+                                    headers = {"Authorization": f"Bearer {access_token}"}
+                                else:
+                                    # User hasn't authorized this gateway yet
+                                    raise ToolInvocationError(f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow.")
+                            except Exception as e:
+                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         else:
-                            raise ToolInvocationError(f"Required URL parameter '{param}' not found in arguments")
+                            # For Client Credentials flow, get token directly
+                            try:
+                                access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                headers = {"Authorization": f"Bearer {access_token}"}
+                            except Exception as e:
+                                logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                                raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
+                    else:
+                        headers = decode_auth(gateway.auth_value if gateway else None)
 
-                # --- Extract query params from URL ---
-                parsed = urlparse(final_url)
-                final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+                    # Get combined headers including gateway auth and passthrough
+                    if request_headers:
+                        headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
-                query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
+                    def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
+                        """Create an SSL context with the provided CA certificate.
 
-                # Merge leftover payload + query params
-                payload.update(query_params)
+                        Args:
+                            ca_certificate: CA certificate in PEM format
 
-                # Use the tool's request_type rather than defaulting to POST.
-                method = tool.request_type.upper()
-                if method == "GET":
-                    response = await self._http_client.get(final_url, params=payload, headers=headers)
-                else:
-                    response = await self._http_client.request(method, final_url, json=payload, headers=headers)
-                response.raise_for_status()
+                        Returns:
+                            ssl.SSLContext: Configured SSL context
+                        """
+                        ctx = ssl.create_default_context()
+                        ctx.load_verify_locations(cadata=ca_certificate)
+                        return ctx
 
-                # Handle 204 No Content responses that have no body
-                if response.status_code == 204:
-                    tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
+                    def get_httpx_client_factory(
+                        headers: dict[str, str] | None = None,
+                        timeout: httpx.Timeout | None = None,
+                        auth: httpx.Auth | None = None,
+                    ) -> httpx.AsyncClient:
+                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                        Args:
+                            headers: Optional headers for the client
+                            timeout: Optional timeout for the client
+                            auth: Optional auth for the client
+
+                        Returns:
+                            httpx.AsyncClient: Configured HTTPX async client
+
+                        Raises:
+                            Exception: If CA certificate signature is invalid
+                        """
+                        valid = False
+                        if gateway.ca_certificate:
+                            if settings.enable_ed25519_signing:
+                                public_key_pem = settings.ed25519_public_key
+                                valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                            else:
+                                valid = True
+                        if valid:
+                            ctx = create_ssl_context(gateway.ca_certificate)
+                        else:
+                            ctx = None
+                        return httpx.AsyncClient(
+                            verify=ctx if ctx else True,
+                            follow_redirects=True,
+                            headers=headers,
+                            timeout=timeout or httpx.Timeout(30.0),
+                            auth=auth,
+                        )
+
+                    async def connect_to_sse_server(server_url: str, headers: dict = headers):
+                        """Connect to an MCP server running with SSE transport.
+
+                        Args:
+                            server_url: MCP Server SSE URL
+                            headers: HTTP headers to include in the request
+
+                        Returns:
+                            ToolResult: Result of tool call
+                        """
+                        async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                            async with ClientSession(*streams) as session:
+                                await session.initialize()
+                                tool_call_result = await session.call_tool(tool.original_name, arguments)
+                        return tool_call_result
+
+                    async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
+                        """Connect to an MCP server running with Streamable HTTP transport.
+
+                        Args:
+                            server_url: MCP Server URL
+                            headers: HTTP headers to include in the request
+
+                        Returns:
+                            ToolResult: Result of tool call
+                        """
+                        async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                await session.initialize()
+                                tool_call_result = await session.call_tool(tool.original_name, arguments)
+                        return tool_call_result
+
+                    tool_gateway_id = tool.gateway_id
+                    tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+
+                    if self._plugin_manager:
+                        tool_metadata = PydanticTool.model_validate(tool)
+                        global_context.metadata[TOOL_METADATA] = tool_metadata
+                        if tool_gateway:
+                            gateway_metadata = PydanticGateway.model_validate(tool_gateway)
+                            global_context.metadata[GATEWAY_METADATA] = gateway_metadata
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            ToolHookType.TOOL_PRE_INVOKE,
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            global_context=global_context,
+                            local_contexts=None,
+                            violations_as_exceptions=True,
+                        )
+                        if pre_result.modified_payload:
+                            payload = pre_result.modified_payload
+                            name = payload.name
+                            arguments = payload.args
+                            if payload.headers is not None:
+                                headers = payload.headers.model_dump()
+
+                    tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
+                    if transport == "sse":
+                        tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
+                    elif transport == "streamablehttp":
+                        tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
+                    content = tool_call_result.model_dump(by_alias=True).get("content", [])
+
+                    filtered_response = extract_using_jq(content, tool.jsonpath_filter)
+                    tool_result = ToolResult(content=filtered_response)
                     success = True
-                elif response.status_code not in [200, 201, 202, 206]:
-                    result = response.json()
-                    tool_result = ToolResult(
-                        content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
-                        is_error=True,
-                    )
-                    # Don't mark as successful for error responses - success remains False
-                else:
-                    result = response.json()
-                    filtered_response = extract_using_jq(result, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
-                    success = True
-
                     # If output schema is present, validate and attach structured content
                     if getattr(tool, "output_schema", None):
                         valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                         success = bool(valid)
-
-            elif tool.integration_type == "MCP":
-                transport = tool.request_type.lower()
-                gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-
-                # Handle OAuth authentication for the gateway
-                if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                    grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
-
-                    if grant_type == "authorization_code":
-                        # For Authorization Code flow, try to get stored tokens
-                        try:
-                            # First-Party
-                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                            token_storage = TokenStorageService(db)
-
-                            # Get user-specific OAuth token
-                            if not app_user_email:
-                                raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway.name}'. Please ensure you are authenticated.")
-
-                            access_token = await token_storage.get_user_token(gateway.id, app_user_email)
-
-                            if access_token:
-                                headers = {"Authorization": f"Bearer {access_token}"}
-                            else:
-                                # User hasn't authorized this gateway yet
-                                raise ToolInvocationError(f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow.")
-                        except Exception as e:
-                            logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
-                            raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
-                    else:
-                        # For Client Credentials flow, get token directly
-                        try:
-                            access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
-                            headers = {"Authorization": f"Bearer {access_token}"}
-                        except Exception as e:
-                            logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
-                            raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                 else:
-                    headers = decode_auth(gateway.auth_value if gateway else None)
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
-                # Get combined headers including gateway auth and passthrough
-                if request_headers:
-                    headers = get_passthrough_headers(request_headers, headers, db, gateway)
-
-                async def connect_to_sse_server(server_url: str, headers: dict = headers):
-                    """Connect to an MCP server running with SSE transport.
-
-                    Args:
-                        server_url: MCP Server SSE URL
-                        headers: HTTP headers to include in the request
-
-                    Returns:
-                        ToolResult: Result of tool call
-                    """
-                    async with sse_client(url=server_url, headers=headers) as streams:
-                        async with ClientSession(*streams) as session:
-                            await session.initialize()
-                            tool_call_result = await session.call_tool(tool.original_name, arguments)
-                    return tool_call_result
-
-                async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
-                    """Connect to an MCP server running with Streamable HTTP transport.
-
-                    Args:
-                        server_url: MCP Server URL
-                        headers: HTTP headers to include in the request
-
-                    Returns:
-                        ToolResult: Result of tool call
-                    """
-                    async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            await session.initialize()
-                            tool_call_result = await session.call_tool(tool.original_name, arguments)
-                    return tool_call_result
-
-                tool_gateway_id = tool.gateway_id
-                tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
-
+                # Plugin hook: tool post-invoke
                 if self._plugin_manager:
-                    tool_metadata = PydanticTool.model_validate(tool)
-                    global_context.metadata[TOOL_METADATA] = tool_metadata
-                    if tool_gateway:
-                        gateway_metadata = PydanticGateway.model_validate(tool_gateway)
-                        global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                    pre_result, context_table = await self._plugin_manager.invoke_hook(
-                        ToolHookType.TOOL_PRE_INVOKE,
-                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        ToolHookType.TOOL_POST_INVOKE,
+                        payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
                         global_context=global_context,
-                        local_contexts=None,
+                        local_contexts=context_table,
                         violations_as_exceptions=True,
                     )
-                    if pre_result.modified_payload:
-                        payload = pre_result.modified_payload
-                        name = payload.name
-                        arguments = payload.args
-                        if payload.headers is not None:
-                            headers = payload.headers.model_dump()
+                    # Use modified payload if provided
+                    if post_result.modified_payload:
+                        # Reconstruct ToolResult from modified result
+                        modified_result = post_result.modified_payload.result
+                        if isinstance(modified_result, dict) and "content" in modified_result:
+                            tool_result = ToolResult(content=modified_result["content"])
+                        else:
+                            # If result is not in expected format, convert it to text content
+                            tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
 
-                tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                if transport == "sse":
-                    tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
-                elif transport == "streamablehttp":
-                    tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
-                content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
-                filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                tool_result = ToolResult(content=filtered_response)
-                success = True
-                # If output schema is present, validate and attach structured content
-                if getattr(tool, "output_schema", None):
-                    valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
-                    success = bool(valid)
-            else:
-                tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
-
-            # Plugin hook: tool post-invoke
-            if self._plugin_manager:
-                post_result, _ = await self._plugin_manager.invoke_hook(
-                    ToolHookType.TOOL_POST_INVOKE,
-                    payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
-                    global_context=global_context,
-                    local_contexts=context_table,
-                    violations_as_exceptions=True,
-                )
-                # Use modified payload if provided
-                if post_result.modified_payload:
-                    # Reconstruct ToolResult from modified result
-                    modified_result = post_result.modified_payload.result
-                    if isinstance(modified_result, dict) and "content" in modified_result:
-                        tool_result = ToolResult(content=modified_result["content"])
-                    else:
-                        # If result is not in expected format, convert it to text content
-                        tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
-
-            return tool_result
-        except (PluginError, PluginViolationError):
-            raise
-        except Exception as e:
-            error_message = str(e)
-            raise ToolInvocationError(f"Tool invocation failed: {error_message}")
-        finally:
-            # End span with appropriate status
-            if span_id and observability_service and not span_ended:
-                try:
-                    duration_ms = (time.monotonic() - start_time) * 1000
-                    observability_service.end_span(
-                        db=db,
-                        span_id=span_id,
-                        status="ok" if success else "error",
-                        attributes={
-                            "success": success,
-                            "duration.ms": duration_ms,
-                            "error.message": error_message if error_message else None,
-                        },
-                    )
-                    span_ended = True
-                except Exception as span_error:
-                    logger.warning(f"Failed to end observability span: {span_error}")
-            await self._record_tool_metric(db, tool, start_time, success, error_message)
+                return tool_result
+            except (PluginError, PluginViolationError):
+                raise
+            except Exception as e:
+                error_message = str(e)
+                # Set span error status
+                if span:
+                    span.set_attribute("error", True)
+                    span.set_attribute("error.message", str(e))
+                raise ToolInvocationError(f"Tool invocation failed: {error_message}")
+            finally:
+                # Add final span attributes
+                if span:
+                    span.set_attribute("success", success)
+                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                await self._record_tool_metric(db, tool, start_time, success, error_message)
 
     async def update_tool(
         self,

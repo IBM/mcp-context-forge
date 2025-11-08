@@ -4,11 +4,11 @@
 
 ---
 
-## [0.9.0] - 2025-11-04 [WIP] - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
+## [0.9.0] - 2025-11-05 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
 
-This release delivers **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
+This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
 
 - **📄 REST API & UI Pagination** - Comprehensive pagination support for all admin endpoints with HTMX-based UI and performance testing up to 10K records
 - **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
@@ -20,6 +20,92 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 - **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
+
+### ⚠️ BREAKING CHANGES
+
+#### **🗄️ PostgreSQL 17 → 18 Upgrade Required**
+
+**Docker Compose users must run the upgrade utility before starting the stack.**
+
+The default PostgreSQL image has been upgraded from version 17 to 18. This is a **major version upgrade** that requires a one-time data migration using `pg_upgrade`.
+
+**Migration Steps:**
+
+1. **Stop your existing stack:**
+   ```bash
+   docker compose down
+   ```
+
+2. **Run the automated upgrade utility:**
+   ```bash
+   make compose-upgrade-pg18
+   ```
+
+   This will:
+   - Prompt for confirmation (⚠️ **backup recommended**)
+   - Run `pg_upgrade` to migrate data from Postgres 17 → 18
+   - Automatically copy `pg_hba.conf` to preserve network access settings
+   - Create a new `pgdata18` volume with upgraded data
+
+3. **Start the upgraded stack:**
+   ```bash
+   make compose-up
+   ```
+
+4. **(Optional) Run maintenance commands** to update statistics:
+   ```bash
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-in-stages --missing-stats-only -U postgres
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-only -U postgres
+   ```
+
+5. **Verify the upgrade:**
+   ```bash
+   docker compose exec postgres psql -U postgres -c 'SELECT version();'
+   # Should show: PostgreSQL 18.x
+   ```
+
+6. **(Optional) Clean up old volume** after confirming everything works:
+   ```bash
+   docker volume rm mcp-context-forge_pgdata
+   ```
+
+**Manual Upgrade (without Make):**
+
+If you prefer not to use the Makefile:
+
+```bash
+# Stop stack
+docker compose down
+
+# Run upgrade
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade
+
+# Copy pg_hba.conf
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade \
+  sh -c "cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf"
+
+# Start upgraded stack
+docker compose up -d
+```
+
+**Why This Change:**
+
+- Postgres 18 introduces a new directory structure (`/var/lib/postgresql/18/docker`) for better compatibility with `pg_ctlcluster`
+- Enables future upgrades using `pg_upgrade --link` without mount point boundary issues
+- Aligns with official PostgreSQL Docker image best practices (see [postgres#1259](https://github.com/docker-library/postgres/pull/1259))
+
+**What Changed:**
+
+- `docker-compose.yml`: Updated from `postgres:17` → `postgres:18`
+- Volume mount: Changed from `pgdata:/var/lib/postgresql/data` → `pgdata18:/var/lib/postgresql`
+- Added `compose.upgrade.yml` for automated upgrade process
+- Added `make compose-upgrade-pg18` target for one-command upgrades
+
+**Troubleshooting:**
+
+- **Error: "data checksums mismatch"** - Fixed automatically in upgrade script (disables checksums to match old cluster)
+- **Error: "no pg_hba.conf entry"** - Fixed automatically by copying old `pg_hba.conf` during upgrade
+- **Error: "Invalid cross-device link"** - Upgrade uses copy mode (not `--link`) to work across different Docker volumes
 
 ### Added
 
@@ -101,7 +187,32 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Keycloak Integration** (#1217, #1216, #1109) - Full Keycloak support with application/x-www-form-urlencoded
 * **OAuth Timeout Configuration** (#1201) - Configurable `OAUTH_DEFAULT_TIMEOUT` for OAuth providers
 
-#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
+#### **� Ed25519 Certificate Signing** - Enhanced certificate validation and integrity verification
+* **Digital Certificate Signing** - Sign and verify certificates using Ed25519 cryptographic signatures
+  - Ensures certificate authenticity and prevents tampering
+  - Built on proven Ed25519 algorithm (RFC 8032) for high security and performance
+  - Zero-dependency Python implementation using `cryptography` library
+* **Key Generation Utility** - Built-in key generation tool at `mcpgateway/utils/generate_keys.py`
+  - Generates secure Ed25519 private keys in base64 format
+  - Simple command-line interface for development and production use
+* **Key Rotation Support** - Graceful key rotation with zero downtime
+  - Configure both current (`ED25519_PRIVATE_KEY`) and previous (`PREV_ED25519_PRIVATE_KEY`) keys
+  - Automatic fallback to previous key for verification during rotation period
+  - Supports rolling updates in distributed deployments
+* **Environment Variable Configuration** - Three new environment variables for certificate signing
+  - `ENABLE_ED25519_SIGNING` - Enable/disable signing (default: "false")
+  - `ED25519_PRIVATE_KEY` - Current signing key (base64-encoded)
+  - `PREV_ED25519_PRIVATE_KEY` - Previous key for rotation support (base64-encoded)
+* **Kubernetes & Helm Support** - Full integration with Helm chart deployment
+  - Secret management via `values.yaml` configuration
+  - JSON Schema validation in `values.schema.json`
+  - External Secrets Operator integration examples
+* **Production Ready** - Comprehensive documentation and security best practices
+  - Complete documentation in main README.md
+  - Helm chart documentation with Kubernetes examples
+  - Security guidelines for key storage and rotation
+
+#### **�🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
 * **🦀 Rust Plugin Framework** (#1289, #1249) - Optional Rust-accelerated plugins with automatic Python fallback
   - Complete PyO3-based framework for building high-performance plugins
   - **PII Filter (Rust)**: 5-100x faster than Python implementation with identical functionality
