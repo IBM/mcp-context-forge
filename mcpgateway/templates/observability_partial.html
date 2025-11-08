@@ -77,6 +77,60 @@
             }, 10);
         }
     },
+    async loadPromptsView() {
+        const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
+        if (response.ok) {
+            const html = await response.text();
+            const container = document.getElementById('prompts-container');
+            container.innerHTML = html;
+
+            // Execute any script tags (innerHTML doesn't execute them)
+            const scripts = container.querySelectorAll('script');
+            scripts.forEach(script => {
+                const newScript = document.createElement('script');
+                if (script.src) {
+                    newScript.src = script.src;
+                } else {
+                    newScript.textContent = script.textContent;
+                }
+                document.head.appendChild(newScript);
+            });
+
+            // Wait for scripts to execute, then re-initialize Alpine.js
+            setTimeout(() => {
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+            }, 10);
+        }
+    },
+    async loadResourcesView() {
+        const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
+        if (response.ok) {
+            const html = await response.text();
+            const container = document.getElementById('resources-container');
+            container.innerHTML = html;
+
+            // Execute any script tags (innerHTML doesn't execute them)
+            const scripts = container.querySelectorAll('script');
+            scripts.forEach(script => {
+                const newScript = document.createElement('script');
+                if (script.src) {
+                    newScript.src = script.src;
+                } else {
+                    newScript.textContent = script.textContent;
+                }
+                document.head.appendChild(newScript);
+            });
+
+            // Wait for scripts to execute, then re-initialize Alpine.js
+            setTimeout(() => {
+                if (window.Alpine) {
+                    window.Alpine.initTree(container);
+                }
+            }, 10);
+        }
+    },
     refreshTraces() {
         let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
         if (this.minDuration) url += `&min_duration=${this.minDuration}`;
@@ -234,12 +288,20 @@
             border-color: #3b82f6;
         }
         .obs-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
             margin-bottom: 2rem;
             padding-bottom: 1rem;
             border-bottom: 2px solid #e5e7eb;
+        }
+        .obs-header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .obs-tabs-row {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
         }
         .obs-title {
             font-size: 1.875rem;
@@ -466,36 +528,13 @@
 
     <!-- Header -->
     <div class="obs-header">
-        <div>
+        <!-- Title and Filters Row -->
+        <div class="obs-header-top">
             <h1 class="obs-title">
                 <span>🔍</span>
                 Observability Dashboard
             </h1>
-            <div style="display: flex; gap: 0.5rem; margin-top: 1rem;">
-                <button
-                    @click="viewMode = 'traces'"
-                    :class="{'active': viewMode === 'traces'}"
-                    class="view-toggle-btn"
-                >
-                    📋 Traces
-                </button>
-                <button
-                    @click="viewMode = 'metrics'; loadMetricsView()"
-                    :class="{'active': viewMode === 'metrics'}"
-                    class="view-toggle-btn"
-                >
-                    📊 Advanced Metrics
-                </button>
-                <button
-                    @click="viewMode = 'tools'; loadToolsView()"
-                    :class="{'active': viewMode === 'tools'}"
-                    class="view-toggle-btn"
-                >
-                    🔧 MCP Tools
-                </button>
-            </div>
-        </div>
-        <div class="obs-filters" x-show="viewMode === 'traces'">
+            <div class="obs-filters" x-show="viewMode === 'traces'" style="margin: 0;">
             <select
                 x-model="selectedQueryId"
                 class="obs-filter-btn"
@@ -542,6 +581,46 @@
                 @click="refreshStats(); refreshTraces();"
             >
                 🔄 Refresh
+            </button>
+            </div>
+        </div>
+
+        <!-- View Mode Tabs Row -->
+        <div class="obs-tabs-row">
+            <button
+                @click="viewMode = 'traces'"
+                :class="{'active': viewMode === 'traces'}"
+                class="view-toggle-btn"
+            >
+                📋 Traces
+            </button>
+            <button
+                @click="viewMode = 'metrics'; loadMetricsView()"
+                :class="{'active': viewMode === 'metrics'}"
+                class="view-toggle-btn"
+            >
+                📊 Advanced Metrics
+            </button>
+            <button
+                @click="viewMode = 'tools'; loadToolsView()"
+                :class="{'active': viewMode === 'tools'}"
+                class="view-toggle-btn"
+            >
+                🔧 MCP Tools
+            </button>
+            <button
+                @click="viewMode = 'prompts'; loadPromptsView()"
+                :class="{'active': viewMode === 'prompts'}"
+                class="view-toggle-btn"
+            >
+                💬 Prompts
+            </button>
+            <button
+                @click="viewMode = 'resources'; loadResourcesView()"
+                :class="{'active': viewMode === 'resources'}"
+                class="view-toggle-btn"
+            >
+                📦 Resources
             </button>
         </div>
     </div>
@@ -818,6 +897,20 @@
     <div x-show="viewMode === 'tools'" id="tools-container">
         <div style="padding: 2rem; text-align: center; color: #6b7280;">
             Loading tool metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Prompts View -->
+    <div x-show="viewMode === 'prompts'" id="prompts-container">
+        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+            Loading prompt metrics dashboard...
+        </div>
+    </div>
+
+    <!-- Resources View -->
+    <div x-show="viewMode === 'resources'" id="resources-container">
+        <div style="padding: 2rem; text-align: center; color: #6b7280;">
+            Loading resource metrics dashboard...
         </div>
     </div>
 </div>

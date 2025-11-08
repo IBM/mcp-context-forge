@@ -12435,3 +12435,319 @@ async def get_tools_partial(
             "root_path": root_path,
         },
     )
+
+
+# ==============================================================================
+# Prompts Observability Endpoints
+# ==============================================================================
+
+
+@admin_router.get("/observability/prompts/usage", response_model=dict)
+async def get_prompt_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt rendering frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of prompts to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query prompt renders from spans (looking for prompts/get calls)
+        # The prompt id should be in attributes as "prompt.id"
+        prompt_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_renders = sum(row.count for row in prompt_usage)
+
+        prompts = [
+            {
+                "prompt_id": row.prompt_id,
+                "count": row.count,
+                "percentage": round((row.count / total_renders * 100) if total_renders > 0 else 0, 2),
+            }
+            for row in prompt_usage
+        ]
+
+        return {"prompts": prompts, "total_renders": total_renders, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get prompt usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/prompts/performance", response_model=dict)
+async def get_prompt_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of prompts to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query prompt performance metrics
+        prompt_performance = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
+                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
+                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
+            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        prompts = [
+            {
+                "prompt_id": row.prompt_id,
+                "count": row.count,
+                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
+                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
+                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
+            }
+            for row in prompt_performance
+        ]
+
+        return {"prompts": prompts, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get prompt performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
+async def get_prompts_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the prompt rendering metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered prompt metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_prompts.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
+
+
+# ==============================================================================
+# Resources Observability Endpoints
+# ==============================================================================
+
+
+@admin_router.get("/observability/resources/usage", response_model=dict)
+async def get_resource_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource fetch frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of resources to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query resource reads from spans (looking for resources/read calls)
+        # The resource URI should be in attributes
+        resource_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_fetches = sum(row.count for row in resource_usage)
+
+        resources = [
+            {
+                "resource_uri": row.resource_uri,
+                "count": row.count,
+                "percentage": round((row.count / total_fetches * 100) if total_fetches > 0 else 0, 2),
+            }
+            for row in resource_usage
+        ]
+
+        return {"resources": resources, "total_fetches": total_fetches, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get resource usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/performance", response_model=dict)
+async def get_resource_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of resources to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query resource performance metrics
+        resource_performance = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+                func.avg(ObservabilitySpan.duration_ms).label("avg_duration_ms"),  # pylint: disable=not-callable
+                func.min(ObservabilitySpan.duration_ms).label("min_duration_ms"),  # pylint: disable=not-callable
+                func.max(ObservabilitySpan.duration_ms).label("max_duration_ms"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
+            .order_by(func.avg(ObservabilitySpan.duration_ms).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        resources = [
+            {
+                "resource_uri": row.resource_uri,
+                "count": row.count,
+                "avg_duration_ms": round(row.avg_duration_ms, 2) if row.avg_duration_ms else 0,
+                "min_duration_ms": round(row.min_duration_ms, 2) if row.min_duration_ms else 0,
+                "max_duration_ms": round(row.max_duration_ms, 2) if row.max_duration_ms else 0,
+            }
+            for row in resource_performance
+        ]
+
+        return {"resources": resources, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get resource performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
+async def get_resources_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the resource fetch metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered resource metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_resources.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
