@@ -1670,6 +1670,81 @@ mcpgateway
 >
 > 📊 **View Traces**: Phoenix UI at `http://localhost:6006`, Jaeger at `http://localhost:16686`, or your configured backend
 
+### Internal Observability & Tracing
+
+The gateway includes built-in observability features for tracking HTTP requests, spans, and traces independent of OpenTelemetry. This provides database-backed trace storage and analysis directly in the Admin UI.
+
+| Setting                              | Description                                           | Default                                              | Options          |
+| ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- | ---------------- |
+| `OBSERVABILITY_ENABLED`              | Enable internal observability tracing and metrics     | `false`                                              | bool             |
+| `OBSERVABILITY_TRACE_HTTP_REQUESTS`  | Automatically trace HTTP requests                     | `true`                                               | bool             |
+| `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
+| `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
+| `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float (0.0-1.0)  |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Paths to exclude from tracing (regex patterns)        | `/health,/healthz,/ready,/metrics,/static/.*`        | comma-separated  |
+| `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
+| `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
+
+**Key Features:**
+- 📊 **Database-backed storage**: Traces stored in SQLite/PostgreSQL for persistence
+- 🔍 **Admin UI integration**: View traces, spans, and metrics in the diagnostics tab
+- 🎯 **Sampling control**: Configure sampling rate to reduce overhead in high-traffic scenarios
+- 🕐 **Automatic cleanup**: Old traces automatically purged based on retention settings
+- 🚫 **Path filtering**: Exclude health checks and static resources from tracing
+
+**Configuration Effects:**
+- `OBSERVABILITY_ENABLED=false`: Completely disables internal observability (no database writes, zero overhead)
+- `OBSERVABILITY_SAMPLE_RATE=0.1`: Traces 10% of requests (useful for high-volume production)
+- `OBSERVABILITY_EXCLUDE_PATHS=/health,/metrics`: Prevents noisy endpoints from creating traces
+
+> 📝 **Note**: This is separate from OpenTelemetry. You can use both systems simultaneously - internal observability for Admin UI visibility and OpenTelemetry for external systems like Phoenix/Jaeger.
+>
+> 🎛️ **Admin UI Access**: When enabled, traces appear in **Admin → Diagnostics → Observability** tab with filtering, search, and export capabilities
+
+### Prometheus Metrics
+
+The gateway exposes Prometheus-compatible metrics at `/metrics/prometheus` for monitoring and alerting.
+
+| Setting                      | Description                                              | Default   | Options          |
+| ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
+| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
+| `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
+| `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
+| `METRICS_CUSTOM_LABELS`      | Static custom labels for app_info gauge                  | (empty)   | `key=value,...`  |
+
+**Key Features:**
+- 📊 **Standard metrics**: HTTP request duration, response codes, active requests
+- 🏷️ **Custom labels**: Add static labels (environment, region, team) for filtering in Prometheus/Grafana
+- 🚫 **Path exclusions**: Prevent high-cardinality issues by excluding dynamic paths
+- 📈 **Namespace isolation**: Group metrics by application or organization
+
+**Configuration Examples:**
+
+```bash
+# Production deployment with custom labels
+ENABLE_METRICS=true
+METRICS_NAMESPACE=mycompany
+METRICS_SUBSYSTEM=gateway
+METRICS_CUSTOM_LABELS=environment=production,region=us-east-1,team=platform
+
+# Exclude high-volume endpoints from metrics
+METRICS_EXCLUDED_HANDLERS=/servers/.*/sse,/static/.*,.*health.*
+
+# Disable metrics for development
+ENABLE_METRICS=false
+```
+
+**Metric Names:**
+- With namespace + subsystem: `mycompany_gateway_http_requests_total`
+- Default (no namespace/subsystem): `default_http_requests_total`
+
+> ⚠️ **High-Cardinality Warning**: Never use high-cardinality values (user IDs, request IDs, timestamps) in `METRICS_CUSTOM_LABELS`. Only use low-cardinality static values (environment, region, cluster).
+>
+> 📊 **Prometheus Endpoint**: Access metrics at `GET /metrics/prometheus` (requires authentication if `AUTH_REQUIRED=true`)
+>
+> 🎯 **Grafana Integration**: Import metrics into Grafana dashboards using the configured namespace as a filter
+
 ### Transport
 
 | Setting                   | Description                        | Default | Options                         |

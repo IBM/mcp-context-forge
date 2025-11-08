@@ -563,7 +563,7 @@ REQUIRE_TOKEN_EXPIRATION=true
 TOKEN_EXPIRY=60
 ```
 
-### Observability Integration
+### OpenTelemetry Observability
 
 ```bash
 # OpenTelemetry (Phoenix, Jaeger, etc.)
@@ -573,6 +573,39 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://phoenix:4317
 OTEL_EXPORTER_OTLP_PROTOCOL=grpc
 OTEL_SERVICE_NAME=mcp-gateway
 ```
+
+### Internal Observability System
+
+MCP Gateway includes a built-in observability system that stores traces and metrics in the database, providing performance analytics and error tracking through the Admin UI.
+
+```bash
+# Enable internal observability (database-backed tracing)
+OBSERVABILITY_ENABLED=false
+
+# Automatically trace HTTP requests
+OBSERVABILITY_TRACE_HTTP_REQUESTS=true
+
+# Trace retention (days)
+OBSERVABILITY_TRACE_RETENTION_DAYS=7
+
+# Maximum traces to retain (prevents unbounded growth)
+OBSERVABILITY_MAX_TRACES=100000
+
+# Trace sampling rate (0.0-1.0)
+# 1.0 = trace everything, 0.1 = trace 10% of requests
+OBSERVABILITY_SAMPLE_RATE=1.0
+
+# Paths to exclude from tracing (comma-separated regex patterns)
+OBSERVABILITY_EXCLUDE_PATHS=/health,/healthz,/ready,/metrics,/static/.*
+
+# Enable metrics collection
+OBSERVABILITY_METRICS_ENABLED=true
+
+# Enable event logging within spans
+OBSERVABILITY_EVENTS_ENABLED=true
+```
+
+See the [Internal Observability Guide](observability/internal-observability.md) for detailed usage instructions including Admin UI dashboards, performance metrics, and trace analysis.
 
 ---
 
