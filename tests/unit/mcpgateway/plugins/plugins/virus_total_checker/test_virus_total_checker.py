@@ -13,16 +13,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    PromptHookType,
+    ResourceHookType,
+    ToolHookType,
     ResourcePreFetchPayload,
 )
 
 from plugins.virus_total_checker.virus_total_checker import VirusTotalURLCheckerPlugin
-from mcpgateway.models import Message, PromptResult, TextContent
+from mcpgateway.common.models import Message, PromptResult, TextContent
 
 
 class _Resp:
@@ -68,7 +70,7 @@ async def test_url_block_on_malicious(tmp_path, monkeypatch):
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.RESOURCE_PRE_FETCH],
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
         config={
             "enabled": True,
             "check_url": True,
@@ -134,7 +136,7 @@ async def test_local_allow_and_deny_overrides():
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         config={
             "enabled": True,
             "scan_tool_outputs": True,
@@ -144,7 +146,7 @@ async def test_local_allow_and_deny_overrides():
     plugin = VirusTotalURLCheckerPlugin(cfg)
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
-    from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+    from mcpgateway.plugins.framework import ToolPostInvokePayload
     payload = ToolPostInvokePayload(name="writer", result=f"See {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r7"))
     res = await plugin.tool_post_invoke(payload, ctx)
@@ -155,7 +157,7 @@ async def test_local_allow_and_deny_overrides():
     cfg2 = PluginConfig(
         name="vt2",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         config={
             "enabled": True,
             "scan_tool_outputs": True,
@@ -178,7 +180,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     cfg_allow = PluginConfig(
         name="vt-allow",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         config={
             "enabled": True,
             "scan_tool_outputs": True,
@@ -190,7 +192,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     plugin_allow = VirusTotalURLCheckerPlugin(cfg_allow)
     plugin_allow._client_factory = lambda c, h: _StubClient({})  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
-    from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+    from mcpgateway.plugins.framework import ToolPostInvokePayload
     payload = ToolPostInvokePayload(name="writer", result=f"visit {url}")
     ctx = PluginContext(global_context=GlobalContext(request_id="r8"))
     res_allow = await plugin_allow.tool_post_invoke(payload, ctx)
@@ -200,7 +202,7 @@ async def test_override_precedence_allow_over_deny_vs_deny_over_allow():
     cfg_deny = PluginConfig(
         name="vt-deny",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         config={
             "enabled": True,
             "scan_tool_outputs": True,
@@ -221,7 +223,7 @@ async def test_prompt_scan_blocks_on_url():
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.PROMPT_POST_FETCH],
+        hooks=[PromptHookType.PROMPT_POST_FETCH],
         config={
             "enabled": True,
             "scan_prompt_outputs": True,
@@ -249,7 +251,7 @@ async def test_prompt_scan_blocks_on_url():
     os.environ["VT_API_KEY"] = "dummy"
 
     pr = PromptResult(messages=[Message(role="assistant", content=TextContent(type="text", text=f"see {url}"))])
-    from mcpgateway.plugins.framework.models import PromptPosthookPayload
+    from mcpgateway.plugins.framework import PromptPosthookPayload
     payload = PromptPosthookPayload(prompt_id="p", result=pr)
     ctx = PluginContext(global_context=GlobalContext(request_id="r5"))
     res = await plugin.prompt_post_fetch(payload, ctx)
@@ -262,7 +264,7 @@ async def test_resource_scan_blocks_on_url():
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.RESOURCE_POST_FETCH],
+        hooks=[ResourceHookType.RESOURCE_POST_FETCH],
         config={
             "enabled": True,
             "scan_resource_contents": True,
@@ -289,9 +291,9 @@ async def test_resource_scan_blocks_on_url():
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
 
-    from mcpgateway.models import ResourceContent
+    from mcpgateway.common.models import ResourceContent
     rc = ResourceContent(type="resource", id="345",uri="test://x", mime_type="text/plain", text=f"{url} is fishy")
-    from mcpgateway.plugins.framework.models import ResourcePostFetchPayload
+    from mcpgateway.plugins.framework import ResourcePostFetchPayload
     payload = ResourcePostFetchPayload(uri="test://x", content=rc)
     ctx = PluginContext(global_context=GlobalContext(request_id="r6"))
     res = await plugin.resource_post_fetch(payload, ctx)
@@ -309,7 +311,7 @@ async def test_file_hash_lookup_blocks(tmp_path, monkeypatch):
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.RESOURCE_PRE_FETCH],
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
         config={
             "enabled": True,
             "enable_file_checks": True,
@@ -353,7 +355,7 @@ async def test_unknown_file_then_upload_wait_allows_when_clean(tmp_path):
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.RESOURCE_PRE_FETCH],
+        hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
         config={
             "enabled": True,
             "enable_file_checks": True,
@@ -402,7 +404,7 @@ async def test_tool_output_url_block_and_ratio():
     cfg = PluginConfig(
         name="vt",
         kind="plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin",
-        hooks=[HookType.TOOL_POST_INVOKE],
+        hooks=[ToolHookType.TOOL_POST_INVOKE],
         config={
             "enabled": True,
             "scan_tool_outputs": True,
@@ -433,7 +435,7 @@ async def test_tool_output_url_block_and_ratio():
     plugin._client_factory = lambda c, h: _StubClient(routes)  # type: ignore
     os.environ["VT_API_KEY"] = "dummy"
 
-    from mcpgateway.plugins.framework.models import ToolPostInvokePayload
+    from mcpgateway.plugins.framework import ToolPostInvokePayload
 
     payload = ToolPostInvokePayload(name="writer", result=f"See {url} for details")
     ctx = PluginContext(global_context=GlobalContext(request_id="r4"))

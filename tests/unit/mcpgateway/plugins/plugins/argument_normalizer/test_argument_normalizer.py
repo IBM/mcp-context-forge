@@ -11,11 +11,12 @@ Unit tests for Argument Normalizer Plugin.
 import pytest
 
 # First-Party
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    PromptHookType,
+    ToolHookType,
     PromptPrehookPayload,
     ToolPreInvokePayload,
 )
@@ -30,7 +31,7 @@ def _mk_plugin(config: dict | None = None) -> ArgumentNormalizerPlugin:
     cfg = PluginConfig(
         name="arg_norm",
         kind="plugins.argument_normalizer.argument_normalizer.ArgumentNormalizerPlugin",
-        hooks=[HookType.PROMPT_PRE_FETCH, HookType.TOOL_PRE_INVOKE],
+        hooks=[PromptHookType.PROMPT_PRE_FETCH, ToolHookType.TOOL_PRE_INVOKE],
         priority=30,
         config=config or {},
     )

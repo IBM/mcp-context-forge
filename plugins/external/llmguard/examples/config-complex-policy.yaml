@@ -61,7 +61,7 @@ plugins:
       output:
         filters:
           Toxicity:
-              threshold: 0.5
+            threshold: 0.5
           policy: Toxicity
           policy_message: I'm sorry, I cannot allow this output.
 

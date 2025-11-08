@@ -17,43 +17,47 @@ Exposes core MCP Gateway plugin components:
 from mcpgateway.plugins.framework.base import Plugin
 from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
 from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
+from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_registry
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
+from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPostInvokeResult, AgentPreInvokePayload, AgentPreInvokeResult
+from mcpgateway.plugins.framework.hooks.resources import ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
+from mcpgateway.plugins.framework.hooks.prompts import (
+    PromptHookType,
+    PromptPosthookPayload,
+    PromptPosthookResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+)
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokeResult, ToolPreInvokePayload
 from mcpgateway.plugins.framework.models import (
     GlobalContext,
-    HttpHeaderPayload,
-    HttpHeaderPayloadResult,
-    HookType,
+    MCPServerConfig,
     PluginCondition,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
     PluginMode,
+    PluginPayload,
     PluginResult,
     PluginViolation,
-    PromptPosthookPayload,
-    PromptPosthookResult,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    PromptResult,
-    ResourcePostFetchPayload,
-    ResourcePostFetchResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
 )
 
 __all__ = [
+    "AgentHookType",
+    "AgentPostInvokePayload",
+    "AgentPostInvokeResult",
+    "AgentPreInvokePayload",
+    "AgentPreInvokeResult",
     "ConfigLoader",
     "ExternalPluginServer",
     "GlobalContext",
-    "HookType",
+    "HookRegistry",
     "HttpHeaderPayload",
-    "HttpHeaderPayloadResult",
+    "get_hook_registry",
+    "MCPServerConfig",
     "Plugin",
     "PluginCondition",
     "PluginConfig",
@@ -63,20 +67,23 @@ __all__ = [
     "PluginLoader",
     "PluginManager",
     "PluginMode",
+    "PluginPayload",
     "PluginResult",
     "PluginViolation",
     "PluginViolationError",
+    "PromptHookType",
     "PromptPosthookPayload",
     "PromptPosthookResult",
     "PromptPrehookPayload",
     "PromptPrehookResult",
-    "PromptResult",
+    "ResourceHookType",
     "ResourcePostFetchPayload",
     "ResourcePostFetchResult",
     "ResourcePreFetchPayload",
     "ResourcePreFetchResult",
+    "ToolHookType",
     "ToolPostInvokePayload",
     "ToolPostInvokeResult",
-    "ToolPreInvokePayload",
     "ToolPreInvokeResult",
+    "ToolPreInvokePayload",
 ]

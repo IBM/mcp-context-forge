@@ -52,8 +52,14 @@ EICAR_SIGNATURES = (
 
 
 def _has_eicar(data: bytes) -> bool:
-    """Has Eicar implementation."""
+    """Check if data contains EICAR test virus signature.
 
+    Args:
+        data: Bytes to scan for EICAR signature.
+
+    Returns:
+        True if EICAR signature found, False otherwise.
+    """
     blob = data.decode("latin1", errors="ignore")
     return any(sig in blob for sig in EICAR_SIGNATURES)
 
@@ -62,8 +68,11 @@ class ClamAVConfig:
     """ClamAVConfig implementation."""
 
     def __init__(self, cfg: dict[str, Any] | None) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
 
+        Args:
+            cfg: Configuration dictionary.
+        """
         c = cfg or {}
         self.mode: str = c.get("mode", "eicar_only")  # eicar_only|clamd_tcp|clamd_unix
         self.host: str | None = c.get("clamd_host")
@@ -75,8 +84,17 @@ class ClamAVConfig:
 
 
 def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) -> str:
-    """Clamd Instream Scan Tcp implementation."""
+    """Scan data using ClamAV daemon via TCP connection.
 
+    Args:
+        host: ClamAV daemon host address.
+        port: ClamAV daemon port number.
+        data: Bytes to scan.
+        timeout: Connection timeout in seconds.
+
+    Returns:
+        Scan response from ClamAV daemon.
+    """
     # Minimal INSTREAM protocol: https://linux.die.net/man/8/clamd
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(timeout)
@@ -99,8 +117,16 @@ def _clamd_instream_scan_tcp(host: str, port: int, data: bytes, timeout: float) 
 
 
 def _clamd_instream_scan_unix(path: str, data: bytes, timeout: float) -> str:
-    """Clamd Instream Scan Unix implementation."""
+    """Scan data using ClamAV daemon via Unix socket connection.
 
+    Args:
+        path: Unix socket path.
+        data: Bytes to scan.
+        timeout: Connection timeout in seconds.
+
+    Returns:
+        Scan response from ClamAV daemon.
+    """
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.settimeout(timeout)
     s.connect(path)
@@ -123,23 +149,35 @@ class ClamAVRemotePlugin(Plugin):
     """External ClamAV plugin for scanning resources and content."""
 
     def __init__(self, config: PluginConfig) -> None:
-        """Initialize the instance."""
+        """Initialize the instance.
 
+        Args:
+            config: Plugin configuration.
+        """
         super().__init__(config)
         self._cfg = ClamAVConfig(config.config)
         self._stats: dict[str, int] = {"attempted": 0, "infected": 0, "blocked": 0, "errors": 0}
 
     def _bump(self, key: str) -> None:
-        """Bump implementation."""
+        """Increment statistics counter.
 
+        Args:
+            key: Statistics key to increment.
+        """
         try:
             self._stats[key] = int(self._stats.get(key, 0)) + 1
         except Exception:
             pass
 
     def _scan_bytes(self, data: bytes) -> tuple[bool, str]:
-        """Scan Bytes implementation."""
+        """Scan bytes for malware using configured scan method.
 
+        Args:
+            data: Bytes to scan for malware.
+
+        Returns:
+            Tuple of (infected: bool, detail: str) indicating if malware was found and scan details.
+        """
         if len(data) > self._cfg.max_bytes:
             return False, "SKIPPED: too large"
 
@@ -284,8 +322,14 @@ class ClamAVRemotePlugin(Plugin):
 
         # Recursively scan string values in tool outputs
         def iter_strings(obj):
-            """Iter Strings implementation."""
+            """Recursively iterate over all string values in an object.
 
+            Args:
+                obj: Object to iterate over (str, dict, list, or other).
+
+            Yields:
+                String values found in the object.
+            """
             if isinstance(obj, str):
                 yield obj
             elif isinstance(obj, dict):
@@ -320,7 +364,11 @@ class ClamAVRemotePlugin(Plugin):
             return ToolPostInvokeResult(metadata={"clamav": {"error": str(exc)}})
 
     def health(self) -> dict[str, Any]:
-        """Return plugin health and metrics; try clamd connectivity when configured."""
+        """Return plugin health and metrics; try clamd connectivity when configured.
+
+        Returns:
+            Dictionary containing plugin health status and metrics.
+        """
         status = {"mode": self._cfg.mode, "block_on_positive": self._cfg.block_on_positive, "stats": dict(self._stats)}
         reachable = None
         try:

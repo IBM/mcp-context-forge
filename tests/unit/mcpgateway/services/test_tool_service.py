@@ -2234,6 +2234,10 @@ class TestToolService:
 
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, test_db):
         """Test invoking tool with successful plugin post-invoke hook."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ToolHookType
+
         # Configure tool as REST
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "POST"
@@ -2251,15 +2255,21 @@ class TestToolService:
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
 
-        # Mock plugin manager and post-invoke hook
+        # Mock plugin manager with invoke_hook
         mock_post_result = Mock()
         mock_post_result.continue_processing = True
         mock_post_result.violation = None
         mock_post_result.modified_payload = None
 
         tool_service._plugin_manager = Mock()
-        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
-        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            # POST_INVOKE
+            return (mock_post_result, None)
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
@@ -2267,8 +2277,8 @@ class TestToolService:
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify plugin post-invoke was called
-        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+        # Verify plugin hooks were called
+        assert tool_service._plugin_manager.invoke_hook.call_count == 2  # Pre and post invoke
 
         # Verify result
         assert result.content[0].text == '{\n  "result": "original response"\n}'
@@ -2301,9 +2311,18 @@ class TestToolService:
         mock_post_result.violation = None
         mock_post_result.modified_payload = mock_modified_payload
 
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult, ToolHookType
+
         tool_service._plugin_manager = Mock()
-        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
-        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            # POST_INVOKE
+            return (mock_post_result, None)
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
@@ -2311,8 +2330,8 @@ class TestToolService:
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify plugin post-invoke was called
-        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+        # Verify plugin hooks were called
+        assert tool_service._plugin_manager.invoke_hook.call_count == 2  # Pre and post invoke
 
         # Verify result was modified by plugin
         assert result.content[0].text == "Modified by plugin"
@@ -2345,9 +2364,19 @@ class TestToolService:
         mock_post_result.violation = None
         mock_post_result.modified_payload = mock_modified_payload
 
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ToolHookType
+
         tool_service._plugin_manager = Mock()
-        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
-        tool_service._plugin_manager.tool_post_invoke = AsyncMock(return_value=(mock_post_result, None))
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            # POST_INVOKE
+            return (mock_post_result, None)
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         with (
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
@@ -2355,8 +2384,8 @@ class TestToolService:
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        # Verify plugin post-invoke was called
-        tool_service._plugin_manager.tool_post_invoke.assert_called_once()
+        # Verify plugin hooks were called
+        assert tool_service._plugin_manager.invoke_hook.call_count == 2  # Pre and post invoke
 
         # Verify result was converted to string since format was invalid
         assert result.content[0].text == "Invalid format - not a dict"
@@ -2380,10 +2409,20 @@ class TestToolService:
         mock_response.json = Mock(return_value={"result": "original response"})
         tool_service._http_client.request.return_value = mock_response
 
-        # Mock plugin manager and post-invoke hook with error
+        # Mock plugin manager with invoke_hook that raises error on POST_INVOKE
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ToolHookType
+
         tool_service._plugin_manager = Mock()
-        tool_service._plugin_manager.tool_pre_invoke = AsyncMock(return_value=(Mock(continue_processing=True, violation=None, modified_payload=None), None))
-        tool_service._plugin_manager.tool_post_invoke = AsyncMock(side_effect=Exception("Plugin error"))
+
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
+            # POST_INVOKE - raise error
+            raise Exception("Plugin error")
+
+        tool_service._plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         # Mock plugin config to fail on errors
         mock_plugin_settings = Mock()

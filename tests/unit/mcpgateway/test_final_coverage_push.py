@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.models import ImageContent, LogLevel, ResourceContent, Role, TextContent
+from mcpgateway.common.models import ImageContent, LogLevel, ResourceContent, Role, TextContent
 from mcpgateway.schemas import BaseModelWithConfigDict
 
 

@@ -11,45 +11,47 @@ Module that contains plugin MCP client code to serve external plugins.
 # Standard
 import asyncio
 from contextlib import AsyncExitStack
+from functools import partial
 import json
 import logging
 import os
-from typing import Any, Optional, Type, TypeVar
+from typing import Any, Awaitable, Callable, Optional
 
 # Third-Party
 import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
-from pydantic import BaseModel
+from mcp.types import TextContent
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.constants import CONTEXT, ERROR, GET_PLUGIN_CONFIG, IGNORE_CONFIG_EXTERNAL, NAME, PAYLOAD, PLUGIN_NAME, PYTHON, PYTHON_SUFFIX, RESULT
+from mcpgateway.common.models import TransportType
+from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+from mcpgateway.plugins.framework.constants import (
+    CONTEXT,
+    ERROR,
+    GET_PLUGIN_CONFIG,
+    HOOK_TYPE,
+    IGNORE_CONFIG_EXTERNAL,
+    INVOKE_HOOK,
+    NAME,
+    PAYLOAD,
+    PLUGIN_NAME,
+    PYTHON,
+    PYTHON_SUFFIX,
+    RESULT,
+)
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError
 from mcpgateway.plugins.framework.external.mcp.tls_utils import create_ssl_context
+from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 from mcpgateway.plugins.framework.models import (
-    HookType,
     MCPClientTLSConfig,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
-    PromptPosthookPayload,
-    PromptPosthookResult,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    ResourcePostFetchPayload,
-    ResourcePostFetchResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
+    PluginPayload,
+    PluginResult,
 )
-from mcpgateway.schemas import TransportType
-
-P = TypeVar("P", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +83,12 @@ class ExternalPlugin(Plugin):
         if not self._config.mcp:
             raise PluginError(error=PluginErrorModel(message="The mcp section must be defined for external plugin", plugin_name=self.name))
         if self._config.mcp.proto == TransportType.STDIO:
+            if not self._config.mcp.script:
+                raise PluginError(error=PluginErrorModel(message="STDIO transport requires script", plugin_name=self.name))
             await self.__connect_to_stdio_server(self._config.mcp.script)
         elif self._config.mcp.proto == TransportType.STREAMABLEHTTP:
+            if not self._config.mcp.url:
+                raise PluginError(error=PluginErrorModel(message="STREAMABLEHTTP transport requires url", plugin_name=self.name))
             await self.__connect_to_http_server(self._config.mcp.url)
 
         try:
@@ -146,9 +152,6 @@ class ExternalPlugin(Plugin):
         Raises:
             PluginError: if there is an external connection error after all retries.
         """
-        max_retries = 3
-        base_delay = 1.0
-
         plugin_tls = self._config.mcp.tls if self._config and self._config.mcp else None
         tls_config = plugin_tls or MCPClientTLSConfig.from_env()
 
@@ -188,37 +191,37 @@ class ExternalPlugin(Plugin):
 
             return httpx.AsyncClient(**kwargs)
 
+        max_retries = 3
+        base_delay = 1.0
+
         for attempt in range(max_retries):
-            logger.info(f"Connecting to external plugin server: {uri} (attempt {attempt + 1}/{max_retries})")
 
             try:
-                # Create a fresh exit stack for each attempt
+                client_factory = _tls_httpx_client_factory if tls_config else None
                 async with AsyncExitStack() as temp_stack:
-                    client_factory = _tls_httpx_client_factory if tls_config else None
                     streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
                     http_transport = await temp_stack.enter_async_context(streamable_client)
                     http_client, write_func, _ = http_transport
                     session = await temp_stack.enter_async_context(ClientSession(http_client, write_func))
-
                     await session.initialize()
-
                     # List available tools
                     response = await session.list_tools()
                     tools = response.tools
-                    logger.info("Successfully connected to plugin MCP server with tools: %s", " ".join([tool.name for tool in tools]))
+                    logger.info(
+                        "Successfully connected to plugin MCP server with tools: %s",
+                        " ".join([tool.name for tool in tools]),
+                    )
 
-                # Success! Now move to the main exit stack
                 client_factory = _tls_httpx_client_factory if tls_config else None
                 streamable_client = streamablehttp_client(uri, httpx_client_factory=client_factory) if client_factory else streamablehttp_client(uri)
                 http_transport = await self._exit_stack.enter_async_context(streamable_client)
                 self._http, self._write, _ = http_transport
                 self._session = await self._exit_stack.enter_async_context(ClientSession(self._http, self._write))
+
                 await self._session.initialize()
                 return
-
             except Exception as e:
                 logger.warning(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
-
                 if attempt == max_retries - 1:
                     # Final attempt failed
                     error_msg = f"External plugin '{self.name}' connection failed after {max_retries} attempts: {uri} is not reachable. Please ensure the MCP server is running."
@@ -230,12 +233,11 @@ class ExternalPlugin(Plugin):
                 logger.info(f"Retrying in {delay}s...")
                 await asyncio.sleep(delay)
 
-    async def __invoke_hook(self, payload_result_model: Type[P], hook_type: HookType, payload: BaseModel, context: PluginContext) -> P:
+    async def invoke_hook(self, hook_type: str, payload: PluginPayload, context: PluginContext) -> PluginResult:
         """Invoke an external plugin hook using the MCP protocol.
 
         Args:
-            payload_result_model: The type of result payload for the hook.
-            hook_type:  The type of hook invoked (i.e., prompt_pre_hook)
+            hook_type:  The type of hook invoked (i.e., prompt_pre_fetch)
             payload: The payload to be passed to the hook.
             context: The plugin context passed to the run.
 
@@ -245,18 +247,31 @@ class ExternalPlugin(Plugin):
         Returns:
             The resulting payload from the plugin.
         """
+        # Get the result type from the global registry
+        registry = get_hook_registry()
+        result_type = registry.get_result_type(hook_type)
+        if not result_type:
+            raise PluginError(error=PluginErrorModel(message=f"Hook type '{hook_type}' not registered in hook registry", plugin_name=self.name))
+
+        if not self._session:
+            raise PluginError(error=PluginErrorModel(message="Plugin session not initialized", plugin_name=self.name))
 
         try:
-            result = await self._session.call_tool(hook_type, {PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
+            result = await self._session.call_tool(INVOKE_HOOK, {HOOK_TYPE: hook_type, PLUGIN_NAME: self.name, PAYLOAD: payload, CONTEXT: context})
             for content in result.content:
-                res = json.loads(content.text)
+                if not isinstance(content, TextContent):
+                    continue
+                try:
+                    res = json.loads(content.text)
+                except json.decoder.JSONDecodeError:
+                    raise PluginError(error=PluginErrorModel(message=f"Error trying to decode json: {content.text}", code="JSON_DECODE_ERROR", plugin_name=self.name))
                 if CONTEXT in res:
                     cxt = PluginContext.model_validate(res[CONTEXT])
                     context.state = cxt.state
                     context.metadata = cxt.metadata
                     context.global_context.state = cxt.global_context.state
                 if RESULT in res:
-                    return payload_result_model.model_validate(res[RESULT])
+                    return result_type.model_validate(res[RESULT])
                 if ERROR in res:
                     error = PluginErrorModel.model_validate(res[ERROR])
                     raise PluginError(error)
@@ -268,83 +283,6 @@ class ExternalPlugin(Plugin):
             raise PluginError(error=convert_exception_to_error(e, plugin_name=self.name))
         raise PluginError(error=PluginErrorModel(message=f"Received invalid response. Result = {result}", plugin_name=self.name))
 
-    async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
-        """Plugin hook run before a prompt is retrieved and rendered.
-
-        Args:
-            payload: The prompt payload to be analyzed.
-            context: contextual information about the hook call. Including why it was called.
-
-        Returns:
-            The prompt prehook with name and arguments as modified or blocked by the plugin.
-        """
-
-        return await self.__invoke_hook(payload_result_model=PromptPrehookResult, hook_type=HookType.PROMPT_PRE_FETCH, payload=payload, context=context)
-
-    async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
-        """Plugin hook run after a prompt is rendered.
-
-        Args:
-            payload: The prompt payload to be analyzed.
-            context: Contextual information about the hook call.
-
-        Returns:
-            A set of prompt messages as modified or blocked by the plugin.
-        """
-        return await self.__invoke_hook(payload_result_model=PromptPosthookResult, hook_type=HookType.PROMPT_POST_FETCH, payload=payload, context=context)
-
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
-        """Plugin hook run before a tool is invoked.
-
-        Args:
-            payload: The tool payload to be analyzed.
-            context: contextual information about the hook call. Including why it was called.
-
-        Returns:
-            The tool prehook with name and arguments as modified or blocked by the plugin.
-        """
-
-        return await self.__invoke_hook(payload_result_model=ToolPreInvokeResult, hook_type=HookType.TOOL_PRE_INVOKE, payload=payload, context=context)
-
-    async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        """Plugin hook run after a tool is invoked.
-
-        Args:
-            payload: The tool payload to be analyzed.
-            context: contextual information about the hook call. Including why it was called.
-
-        Returns:
-            The tool posthook with name and arguments as modified or blocked by the plugin.
-        """
-
-        return await self.__invoke_hook(payload_result_model=ToolPostInvokeResult, hook_type=HookType.TOOL_POST_INVOKE, payload=payload, context=context)
-
-    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
-        """Plugin hook run before a resource is fetched.
-
-        Args:
-            payload: The resource payload to be analyzed.
-            context: contextual information about the hook call. Including why it was called.
-
-        Returns:
-            The resource prehook with name and arguments as modified or blocked by the plugin.
-        """
-
-        return await self.__invoke_hook(payload_result_model=ResourcePreFetchResult, hook_type=HookType.RESOURCE_PRE_FETCH, payload=payload, context=context)
-
-    async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
-        """Plugin hook run after a resource is fetched.
-
-        Args:
-            payload: The resource payload to be analyzed.
-            context: contextual information about the hook call. Including why it was called.
-
-        Returns:
-            The resource posthook with name and arguments as modified or blocked by the plugin.
-        """
-
-        return await self.__invoke_hook(payload_result_model=ResourcePostFetchResult, hook_type=HookType.RESOURCE_POST_FETCH, payload=payload, context=context)
-
     async def __get_plugin_config(self) -> PluginConfig | None:
         """Retrieve plugin configuration for the current plugin on the remote MCP server.
 
@@ -354,9 +292,13 @@ class ExternalPlugin(Plugin):
         Returns:
             A plugin configuration for the current plugin from a remote MCP server.
         """
+        if not self._session:
+            raise PluginError(error=PluginErrorModel(message="Plugin session not initialized", plugin_name=self.name))
         try:
             configs = await self._session.call_tool(GET_PLUGIN_CONFIG, {NAME: self.name})
             for content in configs.content:
+                if not isinstance(content, TextContent):
+                    continue
                 conf = json.loads(content.text)
                 return PluginConfig.model_validate(conf)
         except Exception as e:
@@ -369,3 +311,27 @@ class ExternalPlugin(Plugin):
         """Plugin cleanup code."""
         if self._exit_stack:
             await self._exit_stack.aclose()
+
+
+class ExternalHookRef(HookRef):
+    """A Hook reference point for external plugins."""
+
+    def __init__(self, hook: str, plugin_ref: PluginRef):  # pylint: disable=super-init-not-called
+        """Initialize a hook reference point for an external plugin.
+
+        Note: We intentionally don't call super().__init__() because external plugins
+        use invoke_hook() rather than direct method attributes.
+
+        Args:
+            hook: name of the hook point.
+            plugin_ref: The reference to the plugin to hook.
+
+        Raises:
+            PluginError: If the plugin is not an external plugin.
+        """
+        self._plugin_ref = plugin_ref
+        self._hook = hook
+        if hasattr(plugin_ref.plugin, INVOKE_HOOK):
+            self._func: Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]] = partial(plugin_ref.plugin.invoke_hook, hook)  # type: ignore[attr-defined]
+        else:
+            raise PluginError(error=PluginErrorModel(message=f"Plugin: {plugin_ref.plugin.name} is not an external plugin", plugin_name=plugin_ref.plugin.name))

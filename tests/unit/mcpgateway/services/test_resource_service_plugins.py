@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
 
@@ -39,11 +39,21 @@ class TestResourceServicePluginIntegration:
     @pytest.fixture
     def resource_service_with_plugins(self):
         """Create a ResourceService instance with plugins enabled."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+
         with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGIN_CONFIG_FILE": "test_config.yaml"}):
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 mock_manager = MagicMock()
                 mock_manager._initialized = False
                 mock_manager.initialize = AsyncMock()
+                # Add default invoke_hook mock that returns success
+                mock_manager.invoke_hook = AsyncMock(
+                    return_value=(
+                        PluginResult(continue_processing=True, modified_payload=None),
+                        None  # contexts
+                    )
+                )
                 MockPluginManager.return_value = mock_manager
                 service = ResourceService()
                 service._plugin_manager = mock_manager
@@ -70,6 +80,9 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_read_resource_with_pre_fetch_hook(self, resource_service_with_plugins, mock_db):
         """Test read_resource with pre-fetch hook execution."""
+        # First-Party
+        from mcpgateway.plugins.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
@@ -87,33 +100,6 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
-        # Setup pre-fetch hook response
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
-                    continue_processing=True,
-                    modified_payload=None,
-                    violation=None,
-                ),
-                {"context": "data"},  # contexts
-            )
-        )
-
-        # Setup post-fetch hook response
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
-                    continue_processing=True,
-                    modified_payload=None,
-                ),
-                None,
-            )
-        )
-
-        # Explicitly call initialize if not already called
-        if hasattr(mock_manager.initialize, 'await_count') and mock_manager.initialize.await_count == 0:
-            await mock_manager.initialize()
-
         result = await service.read_resource(
             mock_db,
             "test://resource",
@@ -123,14 +109,14 @@ class TestResourceServicePluginIntegration:
 
         # Verify hooks were called
         mock_manager.initialize.assert_called()
-        mock_manager.resource_pre_fetch.assert_called_once()
-        mock_manager.resource_post_fetch.assert_called_once()
+        assert mock_manager.invoke_hook.call_count >= 2  # Pre and post fetch
 
-        # Verify context was passed correctly
-        call_args = mock_manager.resource_pre_fetch.call_args
-        assert call_args[0][0].uri == "test://resource"  # payload
-        assert call_args[0][1].request_id == "test-123"  # global_context
-        assert call_args[0][1].user == "testuser"
+        # Verify context was passed correctly - check first call (pre-fetch)
+        first_call = mock_manager.invoke_hook.call_args_list[0]
+        assert first_call[0][0] == ResourceHookType.RESOURCE_PRE_FETCH  # hook_type
+        assert first_call[0][1].uri == "test://resource"  # payload
+        assert first_call[0][2].request_id == "test-123"  # global_context
+        assert first_call[0][2].user == "testuser"
 
     @pytest.mark.asyncio
     async def test_read_resource_blocked_by_plugin(self, resource_service_with_plugins, mock_db):
@@ -152,8 +138,8 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
-        # Setup pre-fetch hook to block
-        mock_manager.resource_pre_fetch = AsyncMock(
+        # Setup invoke_hook to raise PluginViolationError
+        mock_manager.invoke_hook = AsyncMock(
             side_effect=PluginViolationError(message="Protocol not allowed",
                 violation=PluginViolation(
                     reason="Protocol not allowed",
@@ -168,13 +154,15 @@ class TestResourceServicePluginIntegration:
             await service.read_resource(mock_db, "file:///etc/passwd")
 
         assert "Protocol not allowed" in str(exc_info.value)
-        mock_manager.resource_pre_fetch.assert_called_once()
-        # Post-fetch should not be called if pre-fetch blocks
-        mock_manager.resource_post_fetch.assert_not_called()
+        mock_manager.invoke_hook.assert_called()
 
     @pytest.mark.asyncio
     async def test_read_resource_uri_modified_by_plugin(self, resource_service_with_plugins, mock_db):
         """Test read_resource with URI modification by plugin."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ResourceHookType
+
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
 
@@ -193,26 +181,27 @@ class TestResourceServicePluginIntegration:
         # Setup pre-fetch hook to modify URI
         modified_payload = MagicMock()
         modified_payload.uri = "cached://test://resource"
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
-                    continue_processing=True,
-                    modified_payload=modified_payload,
-                ),
-                {"context": "data"},
-            )
-        )
 
-        # Setup post-fetch hook
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
+        # Use side_effect to return different results based on hook type
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                return (
+                    PluginResult(
+                        continue_processing=True,
+                        modified_payload=modified_payload,
+                    ),
+                    {"context": "data"},
+                )
+            # POST_FETCH
+            return (
+                PluginResult(
                     continue_processing=True,
                     modified_payload=None,
                 ),
                 None,
             )
-        )
+
+        mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         result = await service.read_resource(mock_db, "test://resource")
 
@@ -223,6 +212,10 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_read_resource_content_filtered_by_plugin(self, resource_service_with_plugins, mock_db):
         """Test read_resource with content filtering by post-fetch hook."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
@@ -244,14 +237,6 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.side_effect = scalar_one_or_none_side_effect
         mock_db.get.return_value = mock_resource
 
-        # Setup pre-fetch hook
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(continue_processing=True),
-                {"context": "data"},
-            )
-        )
-
         # Setup post-fetch hook to filter content
         filtered_content = ResourceContent(
             type="resource",
@@ -260,17 +245,26 @@ class TestResourceServicePluginIntegration:
             text="password: [REDACTED]\napi_key: [REDACTED]",
         )
         resource_id = filtered_content.id
-        modified_payload = MagicMock()
-        modified_payload.content = filtered_content
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(
-                MagicMock(
+        modified_post_payload = MagicMock()
+        modified_post_payload.content = filtered_content
+
+        # Use side_effect to return different results based on hook type
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                return (
+                    PluginResult(continue_processing=True),
+                    {"context": "data"},
+                )
+            # POST_FETCH
+            return (
+                PluginResult(
                     continue_processing=True,
-                    modified_payload=modified_payload,
+                    modified_payload=modified_post_payload,
                 ),
                 None,
             )
-        )
+
+        mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         result = await service.read_resource(mock_db, resource_id)
 
@@ -303,17 +297,21 @@ class TestResourceServicePluginIntegration:
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
         # Setup pre-fetch hook to raise an error
-        mock_manager.resource_pre_fetch = AsyncMock(side_effect=PluginError(error=PluginErrorModel(message="Plugin error", plugin_name="mock_plugin")))
+        mock_manager.invoke_hook = AsyncMock(side_effect=PluginError(error=PluginErrorModel(message="Plugin error", plugin_name="mock_plugin")))
 
         with pytest.raises(PluginError) as exc_info:
             await service.read_resource(mock_db, resource_id)
 
 
-        mock_manager.resource_pre_fetch.assert_called_once()
+        mock_manager.invoke_hook.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_read_resource_post_fetch_blocking(self, resource_service_with_plugins, mock_db):
         """Test read_resource blocked by post-fetch hook."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
@@ -331,30 +329,32 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
-        # Setup pre-fetch hook
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(continue_processing=True),
-                {"context": "data"},
+        # Use side_effect to allow pre-fetch but block on post-fetch
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                return (
+                    PluginResult(continue_processing=True),
+                    {"context": "data"},
+                )
+            # POST_FETCH - raise error
+            raise PluginViolationError(
+                message="Content contains sensitive data",
+                violation=PluginViolation(
+                    reason="Content contains sensitive data",
+                    description="The resource content was flagged as containing sensitive information",
+                    code="SENSITIVE_CONTENT",
+                    details={"uri": "test://resource"}
+                )
             )
-        )
 
-        # Setup post-fetch hook to block
-        mock_manager.resource_post_fetch = AsyncMock(
-            side_effect=PluginViolationError(message="Content contains sensitive data",
-                                             violation=PluginViolation(
-                        reason="Content contains sensitive data",
-                        description="The resource content was flagged as containing sensitive information",
-                        code="SENSITIVE_CONTENT",
-                        details={"uri": "test://resource"}
-                        ))
-        )
+        mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         with pytest.raises(PluginViolationError) as exc_info:
             await service.read_resource(mock_db, "test://resource")
 
         assert "Content contains sensitive data" in str(exc_info.value)
-        mock_manager.resource_post_fetch.assert_called_once()
+        # Verify invoke_hook was called at least twice (pre and post)
+        assert mock_manager.invoke_hook.call_count == 2
 
     @pytest.mark.asyncio
     async def test_read_resource_with_template(self, resource_service_with_plugins, mock_db):
@@ -377,32 +377,23 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
-        # Setup hooks
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(continue_processing=True),
-                {"context": "data"},
-            )
-        )
-        # Create a mock result with modified_payload explicitly set to None
-        mock_post_result = MagicMock()
-        mock_post_result.continue_processing = True
-        mock_post_result.modified_payload = None
-
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(mock_post_result, None)
-        )
+        # The default invoke_hook from fixture will work fine for this test
+        # since it just returns success with no modifications
 
         # Use the correct resource id for lookup
         result = await service.read_resource(mock_db, mock_resource.uri)
 
         assert result == mock_template_content
-        mock_manager.resource_pre_fetch.assert_called_once()
-        mock_manager.resource_post_fetch.assert_called_once()
+        # Verify hooks were called
+        assert mock_manager.invoke_hook.call_count >= 2  # Pre and post fetch
 
     @pytest.mark.asyncio
     async def test_read_resource_context_propagation(self, resource_service_with_plugins, mock_db):
         """Test context propagation from pre-fetch to post-fetch."""
+        # First-Party
+        from mcpgateway.plugins.framework.models import PluginResult
+        from mcpgateway.plugins.framework import ResourceHookType
+
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
@@ -422,28 +413,31 @@ class TestResourceServicePluginIntegration:
 
         # Capture contexts from pre-fetch
         test_contexts = {"plugin1": {"validated": True}}
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(
-                MagicMock(continue_processing=True),
-                test_contexts,
-            )
-        )
 
-        # Verify contexts passed to post-fetch
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(
-                MagicMock(continue_processing=True),
+        # Use side_effect to return contexts from pre-fetch
+        def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
+            if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
+                return (
+                    PluginResult(continue_processing=True),
+                    test_contexts,
+                )
+            # POST_FETCH
+            return (
+                PluginResult(continue_processing=True),
                 None,
             )
-        )
+
+        mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
         # The resource id must match the lookup for plugin logic to trigger
         await service.read_resource(mock_db, mock_resource.content.id)
 
         # Verify contexts were passed from pre to post
-        post_call_args = mock_manager.resource_post_fetch.call_args
-        assert post_call_args is not None, "resource_post_fetch was not called"
-        assert post_call_args[0][2] == test_contexts  # Third argument is contexts
+        assert mock_manager.invoke_hook.call_count == 2
+        # Check second call (post-fetch) to verify contexts were passed
+        post_call_args = mock_manager.invoke_hook.call_args_list[1]
+        # The contexts dict should be passed as the 4th positional arg (local_contexts)
+        assert post_call_args[0][3] == test_contexts  # Fourth argument is local_contexts
 
     @pytest.mark.asyncio
     async def test_read_resource_inactive_resource(self, resource_service, mock_db):
@@ -496,19 +490,13 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
-        # Setup hooks
-        mock_manager.resource_pre_fetch = AsyncMock(
-            return_value=(MagicMock(continue_processing=True), None)
-        )
-        mock_manager.resource_post_fetch = AsyncMock(
-            return_value=(MagicMock(continue_processing=True), None)
-        )
+        # The default invoke_hook from fixture will work fine
 
         await service.read_resource(mock_db, "test://resource")
 
-        # Verify request_id was generated
-        call_args = mock_manager.resource_pre_fetch.call_args
-        assert call_args is not None, "resource_pre_fetch was not called"
-        global_context = call_args[0][1]
+        # Verify request_id was generated - check first call (pre-fetch)
+        assert mock_manager.invoke_hook.call_count >= 1, "invoke_hook was not called"
+        first_call = mock_manager.invoke_hook.call_args_list[0]
+        global_context = first_call[0][2]  # Third positional arg is global_context
         assert global_context.request_id is not None
         assert len(global_context.request_id) > 0

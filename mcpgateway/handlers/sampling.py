@@ -10,7 +10,7 @@ It handles model selection, sampling preferences, and message generation.
 
 Examples:
     >>> import asyncio
-    >>> from mcpgateway.models import ModelPreferences
+    >>> from mcpgateway.common.models import ModelPreferences
     >>> handler = SamplingHandler()
     >>> asyncio.run(handler.initialize())
     >>>
@@ -48,7 +48,7 @@ from typing import Any, Dict, List
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.models import CreateMessageResult, ModelPreferences, Role, TextContent
+from mcpgateway.common.models import CreateMessageResult, ModelPreferences, Role, TextContent
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -247,7 +247,7 @@ class SamplingHandler:
             SamplingError: If no suitable model found
 
         Examples:
-            >>> from mcpgateway.models import ModelPreferences, ModelHint
+            >>> from mcpgateway.common.models import ModelPreferences, ModelHint
             >>> handler = SamplingHandler()
             >>>
             >>> # Test intelligence priority

@@ -131,7 +131,15 @@ class WebhookNotificationPlugin(Plugin):
         self._client = httpx.AsyncClient()
 
     async def _render_template(self, template: str, context: Dict[str, Any]) -> str:
-        """Render a Jinja2-style template with the given context."""
+        """Render a Jinja2-style template with the given context.
+
+        Args:
+            template: The template string to render.
+            context: The context dictionary for template rendering.
+
+        Returns:
+            str: The rendered template string.
+        """
         # Simple template substitution for now - could be enhanced with Jinja2
         result = template
         for key, value in context.items():
@@ -145,7 +153,16 @@ class WebhookNotificationPlugin(Plugin):
         return result
 
     def _create_hmac_signature(self, payload: str, secret: str, algorithm: str) -> str:
-        """Create HMAC signature for the payload."""
+        """Create HMAC signature for the payload.
+
+        Args:
+            payload: The payload to sign.
+            secret: The secret key for HMAC.
+            algorithm: The hash algorithm to use.
+
+        Returns:
+            str: The HMAC signature string.
+        """
         hash_func = getattr(hashlib, algorithm, hashlib.sha256)
         signature = hmac.new(secret.encode("utf-8"), payload.encode("utf-8"), hash_func).hexdigest()
         return f"{algorithm}={signature}"
@@ -159,7 +176,16 @@ class WebhookNotificationPlugin(Plugin):
         metadata: Optional[Dict[str, Any]] = None,
         payload_data: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Send a webhook notification with retry logic."""
+        """Send a webhook notification with retry logic.
+
+        Args:
+            webhook: The webhook configuration.
+            event: The event type to notify.
+            context: The plugin context.
+            violation: Optional violation details.
+            metadata: Optional metadata dictionary.
+            payload_data: Optional payload data dictionary.
+        """
         if not webhook.enabled or event not in webhook.events:
             return
 
@@ -229,7 +255,15 @@ class WebhookNotificationPlugin(Plugin):
     async def _notify_webhooks(
         self, event: EventType, context: PluginContext, violation: Optional[PluginViolation] = None, metadata: Optional[Dict[str, Any]] = None, payload_data: Optional[Dict[str, Any]] = None
     ) -> None:
-        """Send notifications to all configured webhooks."""
+        """Send notifications to all configured webhooks.
+
+        Args:
+            event: The event type to notify.
+            context: The plugin context.
+            violation: Optional violation details.
+            metadata: Optional metadata dictionary.
+            payload_data: Optional payload data dictionary.
+        """
         if not self._cfg.webhooks:
             return
 
@@ -240,7 +274,14 @@ class WebhookNotificationPlugin(Plugin):
             await asyncio.gather(*tasks, return_exceptions=True)
 
     def _determine_event_type(self, violation: Optional[PluginViolation]) -> EventType:
-        """Determine event type based on violation details."""
+        """Determine event type based on violation details.
+
+        Args:
+            violation: Optional violation details.
+
+        Returns:
+            EventType: The determined event type.
+        """
         if not violation:
             return EventType.TOOL_SUCCESS
 
@@ -254,20 +295,52 @@ class WebhookNotificationPlugin(Plugin):
             return EventType.VIOLATION
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
-        """Hook for prompt pre-fetch events."""
+        """Hook for prompt pre-fetch events.
+
+        Args:
+            payload: The prompt pre-hook payload.
+            context: The plugin context.
+
+        Returns:
+            PromptPrehookResult: The result of the pre-fetch hook.
+        """
         return PromptPrehookResult()
 
     async def prompt_post_fetch(self, payload: PromptPosthookPayload, context: PluginContext) -> PromptPosthookResult:
-        """Hook for prompt post-fetch events."""
+        """Hook for prompt post-fetch events.
+
+        Args:
+            payload: The prompt post-hook payload.
+            context: The plugin context.
+
+        Returns:
+            PromptPosthookResult: The result of the post-fetch hook.
+        """
         await self._notify_webhooks(EventType.PROMPT_SUCCESS, context, metadata={"prompt_id": payload.prompt_id})
         return PromptPosthookResult()
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
-        """Hook for tool pre-invoke events."""
+        """Hook for tool pre-invoke events.
+
+        Args:
+            payload: The tool pre-invoke payload.
+            context: The plugin context.
+
+        Returns:
+            ToolPreInvokeResult: The result of the pre-invoke hook.
+        """
         return ToolPreInvokeResult()
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
-        """Hook for tool post-invoke events."""
+        """Hook for tool post-invoke events.
+
+        Args:
+            payload: The tool post-invoke payload.
+            context: The plugin context.
+
+        Returns:
+            ToolPostInvokeResult: The result of the post-invoke hook.
+        """
         # Check if there was an error in the result
         event = EventType.TOOL_SUCCESS
         metadata = {"tool_name": payload.name}
@@ -284,16 +357,36 @@ class WebhookNotificationPlugin(Plugin):
         return ToolPostInvokeResult()
 
     async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
-        """Hook for resource pre-fetch events."""
+        """Hook for resource pre-fetch events.
+
+        Args:
+            payload: The resource pre-fetch payload.
+            context: The plugin context.
+
+        Returns:
+            ResourcePreFetchResult: The result of the pre-fetch hook.
+        """
         return ResourcePreFetchResult()
 
     async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: PluginContext) -> ResourcePostFetchResult:
-        """Hook for resource post-fetch events."""
+        """Hook for resource post-fetch events.
+
+        Args:
+            payload: The resource post-fetch payload.
+            context: The plugin context.
+
+        Returns:
+            ResourcePostFetchResult: The result of the post-fetch hook.
+        """
         await self._notify_webhooks(EventType.RESOURCE_SUCCESS, context, metadata={"resource_uri": payload.uri})
         return ResourcePostFetchResult()
 
     async def __aenter__(self):
-        """Async context manager entry."""
+        """Async context manager entry.
+
+        Returns:
+            WebhookNotificationPlugin: The plugin instance.
+        """
         return self
 
     async def __aexit__(self, _exc_type, _exc_val, _exc_tb):

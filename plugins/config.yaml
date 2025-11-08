@@ -179,11 +179,11 @@ plugins:
     priority: 119
     conditions: []
     config:
-      allowed_tags: ["a","p","div","span","strong","em","code","pre","ul","ol","li","h1","h2","h3","h4","h5","h6","blockquote","img","br","hr","table","thead","tbody","tr","th","td"]
+      allowed_tags: ["a", "p", "div", "span", "strong", "em", "code", "pre", "ul", "ol", "li", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td"]
       allowed_attrs:
-        "*": ["id","class","title","alt"]
-        a: ["href","rel","target"]
-        img: ["src","width","height","alt","title"]
+        "*": ["id", "class", "title", "alt"]
+        a: ["href", "rel", "target"]
+        img: ["src", "width", "height", "alt", "title"]
       remove_comments: true
       drop_unknown_tags: true
       strip_event_handlers: true

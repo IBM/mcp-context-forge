@@ -22,13 +22,13 @@ from pydantic import BaseModel
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.plugins.framework import (
+    HttpHeaderPayload,
     Plugin,
     PluginConfig,
     PluginContext,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.models import HttpHeaderPayload
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.logging_service import LoggingService
 

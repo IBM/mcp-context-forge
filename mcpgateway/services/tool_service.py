@@ -38,6 +38,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import Gateway as PydanticGateway
+from mcpgateway.common.models import TextContent
+from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
@@ -45,13 +48,11 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.models import Gateway as PydanticGateway
-from mcpgateway.models import TextContent
-from mcpgateway.models import Tool as PydanticTool
-from mcpgateway.models import ToolResult
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import GlobalContext, PluginError, PluginManager, PluginViolationError
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.plugins.framework.hooks.http import HttpHeaderPayload
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.schemas import ToolCreate, ToolRead, ToolResult, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -444,7 +445,7 @@ class ToolService:
 
         Examples:
                 >>> from mcpgateway.services.tool_service import ToolService
-                >>> from mcpgateway.models import TextContent, ToolResult
+                >>> from mcpgateway.common.models import TextContent, ToolResult
                 >>> import json
                 >>> service = ToolService()
                 >>> # No schema declared -> nothing to validate
@@ -1195,8 +1196,9 @@ class ToolService:
                 if self._plugin_manager:
                     tool_metadata = PydanticTool.model_validate(tool)
                     global_context.metadata[TOOL_METADATA] = tool_metadata
-                    pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
-                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
+                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                        ToolHookType.TOOL_PRE_INVOKE,
+                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
                         global_context=global_context,
                         local_contexts=None,
                         violations_as_exceptions=True,
@@ -1350,8 +1352,9 @@ class ToolService:
                     if tool_gateway:
                         gateway_metadata = PydanticGateway.model_validate(tool_gateway)
                         global_context.metadata[GATEWAY_METADATA] = gateway_metadata
-                    pre_result, context_table = await self._plugin_manager.tool_pre_invoke(
-                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
+                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                        ToolHookType.TOOL_PRE_INVOKE,
+                        payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
                         global_context=global_context,
                         local_contexts=None,
                         violations_as_exceptions=True,
@@ -1382,7 +1385,8 @@ class ToolService:
 
             # Plugin hook: tool post-invoke
             if self._plugin_manager:
-                post_result, _ = await self._plugin_manager.tool_post_invoke(
+                post_result, _ = await self._plugin_manager.invoke_hook(
+                    ToolHookType.TOOL_POST_INVOKE,
                     payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
                     global_context=global_context,
                     local_contexts=context_table,

@@ -17,7 +17,7 @@ services:
 
   llmguardplugin:
     container_name: llmguardplugin
-    image:  mcpgateway/llmguardplugin:latest # Use the local latest image. Run `make docker-prod` to build it.
+    image: mcpgateway/llmguardplugin:latest # Use the local latest image. Run `make docker-prod` to build it.
     restart: always
     env_file:
       - .env
@@ -33,7 +33,7 @@ services:
 
   llmguardplugin-testing:
     container_name: llmguardplugin-testing
-    image:  mcpgateway/llmguardplugin-testing:latest  # Use the local latest image. Run `make docker-prod` to build it.
+    image: mcpgateway/llmguardplugin-testing:latest  # Use the local latest image. Run `make docker-prod` to build it.
     env_file:
       - .env
     ports:

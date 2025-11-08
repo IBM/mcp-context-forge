@@ -9,15 +9,15 @@ Tests for FileTypeAllowlistPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ResourceHookType,
     ResourcePreFetchPayload,
     ResourcePostFetchPayload,
 )
-from mcpgateway.models import ResourceContent
+from mcpgateway.common.models import ResourceContent
 from plugins.file_type_allowlist.file_type_allowlist import FileTypeAllowlistPlugin
 
 
@@ -27,7 +27,7 @@ async def test_blocks_disallowed_extension_and_mime():
         PluginConfig(
             name="fta",
             kind="plugins.file_type_allowlist.file_type_allowlist.FileTypeAllowlistPlugin",
-            hooks=[HookType.RESOURCE_PRE_FETCH, HookType.RESOURCE_POST_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH, ResourceHookType.RESOURCE_POST_FETCH],
             config={"allowed_extensions": [".md"], "allowed_mime_types": ["text/markdown"]},
         )
     )

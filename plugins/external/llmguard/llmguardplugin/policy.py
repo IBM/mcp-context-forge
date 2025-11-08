@@ -34,7 +34,10 @@ class GuardrailPolicy:
             scan_result: The result of scanners applied
 
         Returns:
-            A union of bool (if true or false). However, if the policy expression is invalid returns string with invalid expression
+            Union[bool, str]: A union of bool (if true or false). However, if the policy expression is invalid returns string with invalid expression
+
+        Raises:
+            ValueError: If the policy expression contains invalid operations.
         """
         policy_variables = {key: value["is_valid"] for key, value in scan_result.items()}
         try:
@@ -97,10 +100,9 @@ def get_policy_filters(policy_expression) -> Union[list, None]:
 
     Args:
         policy_expression: The expression of policy
-        sentence2: The second sentence
 
     Returns:
-        None if no policy expression is defined, else a comma separated list of filters defined in the policy
+        Union[list, None]: None if no policy expression is defined, else a comma separated list of filters defined in the policy
     """
     if isinstance(policy_expression, str):
         pattern = r"\b(and|or|not)\b|[()]"

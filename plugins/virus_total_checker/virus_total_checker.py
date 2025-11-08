@@ -313,7 +313,13 @@ def _ip_in_cidrs(ip: str, cidrs: list[str]) -> bool:
 def _apply_overrides(url: str, host: str | None, cfg: VirusTotalConfig) -> str | None:
     """Return 'deny', 'allow', or None based on local overrides and precedence.
 
-    Precedence order is controlled by cfg.override_precedence.
+    Args:
+        url: The URL to check for overrides.
+        host: The host to check for overrides (optional).
+        cfg: The VirusTotal configuration.
+
+    Returns:
+        str | None: 'deny', 'allow', or None based on overrides. Precedence order is controlled by cfg.override_precedence.
     """
     host_l = (host or "").lower()
     allow = _url_matches(url, cfg.allow_url_patterns) or (host_l and _domain_matches(host_l, cfg.allow_domains)) or (host_l and _ip_in_cidrs(host_l, cfg.allow_ip_cidrs))

@@ -18,8 +18,8 @@ from typing import Any, AsyncGenerator, Deque, Dict, List, Optional, TypedDict
 import uuid
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.models import LogLevel
 
 
 class LogEntryDict(TypedDict, total=False):
@@ -108,7 +108,7 @@ class LogEntry:
             Dictionary representation of the log entry
 
         Examples:
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> entry = LogEntry(LogLevel.INFO, "Test message", entity_type="tool", entity_id="123")
             >>> d = entry.to_dict()
             >>> str(d['level'])
@@ -371,7 +371,7 @@ class LogStorageService:
             True if log level meets or exceeds minimum
 
         Examples:
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> service = LogStorageService()
             >>> service._meets_level_threshold(LogLevel.ERROR, LogLevel.WARNING)
             True
@@ -462,7 +462,7 @@ class LogStorageService:
             Number of logs cleared
 
         Examples:
-            >>> from mcpgateway.models import LogLevel
+            >>> from mcpgateway.common.models import LogLevel
             >>> service = LogStorageService()
             >>> import asyncio
             >>> entry = asyncio.run(service.add_log(LogLevel.INFO, "Test"))

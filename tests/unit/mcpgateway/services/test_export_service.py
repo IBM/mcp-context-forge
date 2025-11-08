@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.models import Root
+from mcpgateway.common.models import Root
 from mcpgateway.schemas import GatewayRead, PromptMetrics, PromptRead, ResourceMetrics, ResourceRead, ServerMetrics, ServerRead, ToolMetrics, ToolRead
 from mcpgateway.services.export_service import ExportError, ExportService, ExportValidationError
 from mcpgateway.utils.services_auth import encode_auth
@@ -971,7 +971,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     export_service.resource_service.list_resources.return_value = ([sample_resource], None)
 
     # First-Party
-    from mcpgateway.models import Root
+    from mcpgateway.common.models import Root
 
     mock_roots = [Root(uri="file:///workspace", name="Workspace")]
     export_service.root_service.list_roots.return_value = mock_roots

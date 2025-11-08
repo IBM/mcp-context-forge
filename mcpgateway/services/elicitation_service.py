@@ -18,7 +18,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 # First-Party
-from mcpgateway.models import ElicitResult
+from mcpgateway.common.models import ElicitResult
 
 logger = logging.getLogger(__name__)
 
