@@ -7,6 +7,12 @@ window.createResourcesController = function() {
     charts: {},
     loading: false,
     error: null,
+    summaryCards: {
+      slowest: null,
+      mostErrorProne: null,
+      mostUsed: null,
+      overallHealth: 'good'
+    },
     async init() {
       await this.loadAllMetrics();
       this.startAutoRefresh();
@@ -19,6 +25,7 @@ window.createResourcesController = function() {
           this.loadResourceUsage(),
           this.loadResourcePerformance(),
           this.loadResourceSlowness(),
+          this.loadResourceErrorProne(),
         ]);
       } catch (e) {
         console.error('Failed to load resource metrics:', e);
@@ -34,6 +41,15 @@ window.createResourcesController = function() {
       if (!response.ok) throw new Error('Failed to load resource usage');
       const data = await response.json();
       this.renderResourceUsageChart(data);
+
+      // Update most used card
+      if (data.resources && data.resources.length > 0) {
+        this.summaryCards.mostUsed = {
+          name: data.resources[0].resource_uri,
+          value: data.resources[0].count,
+          metric: 'fetches'
+        };
+      }
     },
     async loadResourcePerformance() {
       const response = await fetch(
@@ -42,6 +58,16 @@ window.createResourcesController = function() {
       if (!response.ok) throw new Error('Failed to load resource performance');
       const data = await response.json();
       this.renderResourcePerformanceTable(data);
+
+      // Update slowest resource card
+      if (data.resources && data.resources.length > 0) {
+        const slowest = [...data.resources].sort((a, b) => b.p95 - a.p95)[0];
+        this.summaryCards.slowest = {
+          name: slowest.resource_uri,
+          value: slowest.p95,
+          metric: 'ms (p95)'
+        };
+      }
     },
     async loadResourceSlowness() {
       const response = await fetch(
@@ -50,6 +76,36 @@ window.createResourcesController = function() {
       if (!response.ok) throw new Error('Failed to load resource slowness');
       const data = await response.json();
       this.renderResourceSlownessChart(data);
+    },
+    async loadResourceErrorProne() {
+      const response = await fetch(
+        `{{ root_path }}/admin/observability/resources/errors?hours=${this.timeRange}&limit=10`
+      );
+      if (!response.ok) throw new Error('Failed to load resource errors');
+      const data = await response.json();
+      this.renderResourceErrorProneChart(data);
+
+      // Update most error-prone card and overall health
+      if (data.resources && data.resources.length > 0) {
+        const mostErrorProne = [...data.resources].sort((a, b) => b.error_rate - a.error_rate)[0];
+        this.summaryCards.mostErrorProne = {
+          name: mostErrorProne.resource_uri,
+          value: mostErrorProne.error_rate,
+          metric: '% errors'
+        };
+
+        // Calculate overall health
+        const avgErrorRate = data.resources.reduce((sum, r) => sum + r.error_rate, 0) / data.resources.length;
+        if (avgErrorRate < 5) {
+          this.summaryCards.overallHealth = 'good';
+        } else if (avgErrorRate < 20) {
+          this.summaryCards.overallHealth = 'warning';
+        } else {
+          this.summaryCards.overallHealth = 'critical';
+        }
+      } else {
+        this.summaryCards.overallHealth = 'good';
+      }
     },
     renderResourceUsageChart(data) {
       const ctx = document.getElementById('resourceUsageChart');
@@ -217,6 +273,86 @@ window.createResourcesController = function() {
         },
       });
     },
+    renderResourceErrorProneChart(data) {
+      const ctx = document.getElementById('resourceErrorProneChart');
+      if (!ctx) return;
+
+      if (this.charts.resourceErrorProne) {
+        this.charts.resourceErrorProne.destroy();
+      }
+
+      // Handle empty data
+      if (!data.resources || data.resources.length === 0) {
+        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        return;
+      }
+
+      // Sort by error_rate descending and take top 10
+      const sortedResources = [...data.resources]
+        .filter(r => r.error_rate > 0)
+        .sort((a, b) => b.error_rate - a.error_rate)
+        .slice(0, 10);
+
+      if (sortedResources.length === 0) {
+        ctx.getContext('2d').clearRect(0, 0, ctx.width, ctx.height);
+        const parent = ctx.parentElement;
+        parent.innerHTML = '<p style="text-align: center; color: #10b981; padding: 2rem;">✓ No errors found - all resources fetched successfully!</p>';
+        return;
+      }
+
+      this.charts.resourceErrorProne = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: sortedResources.map(r => r.resource_uri),
+          datasets: [
+            {
+              label: 'Error Rate (%)',
+              data: sortedResources.map(r => r.error_rate),
+              backgroundColor: 'rgba(239, 68, 68, 0.6)',
+              borderColor: '#ef4444',
+              borderWidth: 1,
+            },
+          ],
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: {
+              display: true,
+              text: `Top 10 Error-Prone Resources (Last ${this.timeRange}h)`,
+            },
+            legend: {
+              display: false,
+            },
+            tooltip: {
+              callbacks: {
+                label: function (context) {
+                  const resource = sortedResources[context.dataIndex];
+                  return [
+                    `Error Rate: ${resource.error_rate}%`,
+                    `Errors: ${resource.error_count}`,
+                    `Total: ${resource.total_count}`,
+                    `Success: ${resource.total_count - resource.error_count}`
+                  ];
+                },
+              },
+            },
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              max: 100,
+              title: {
+                display: true,
+                text: 'Error Rate (%)',
+              },
+            },
+          },
+        },
+      });
+    },
     startAutoRefresh() {
       setInterval(() => this.loadAllMetrics(), 60000);
     },
@@ -262,6 +398,63 @@ window.createResourcesController = function() {
     <div x-show="error" class="mt-3 text-sm text-red-600" x-text="error"></div>
   </div>
 
+  <!-- Summary Cards -->
+  <div class="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+    <!-- Overall Health Card -->
+    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4" :class="{
+      'border-green-500': summaryCards.overallHealth === 'good',
+      'border-yellow-500': summaryCards.overallHealth === 'warning',
+      'border-red-500': summaryCards.overallHealth === 'critical'
+    }">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="text-sm font-medium text-gray-600">Overall Health</p>
+          <p class="mt-2 text-3xl font-bold" :class="{
+            'text-green-600': summaryCards.overallHealth === 'good',
+            'text-yellow-600': summaryCards.overallHealth === 'warning',
+            'text-red-600': summaryCards.overallHealth === 'critical'
+          }" x-text="summaryCards.overallHealth === 'good' ? '🟢 Healthy' : summaryCards.overallHealth === 'warning' ? '🟡 Warning' : '🔴 Critical'"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Most Used Resource Card -->
+    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-green-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600">Most Fetched</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostUsed?.name || 'N/A'"></p>
+          <p class="text-sm text-green-600 font-medium" x-text="summaryCards.mostUsed ? `${summaryCards.mostUsed.value} ${summaryCards.mostUsed.metric}` : ''"></p>
+        </div>
+        <div class="text-3xl">📦</div>
+      </div>
+    </div>
+
+    <!-- Slowest Resource Card -->
+    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-orange-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600">Slowest Resource</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.slowest?.name || 'N/A'"></p>
+          <p class="text-sm text-orange-600 font-medium" x-text="summaryCards.slowest ? `${summaryCards.slowest.value} ${summaryCards.slowest.metric}` : ''"></p>
+        </div>
+        <div class="text-3xl">🐌</div>
+      </div>
+    </div>
+
+    <!-- Most Error-Prone Resource Card -->
+    <div class="bg-white rounded-lg shadow-sm p-6 border-l-4 border-red-500">
+      <div class="flex items-center justify-between">
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-gray-600">Most Error-Prone</p>
+          <p class="mt-2 text-lg font-semibold text-gray-900 truncate" x-text="summaryCards.mostErrorProne?.name || 'None'"></p>
+          <p class="text-sm text-red-600 font-medium" x-text="summaryCards.mostErrorProne ? `${summaryCards.mostErrorProne.value}${summaryCards.mostErrorProne.metric}` : '0% errors'"></p>
+        </div>
+        <div class="text-3xl">⚠️</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Resource Usage Chart -->
   <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
     <div style="height: 400px;">
@@ -273,6 +466,13 @@ window.createResourcesController = function() {
   <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
     <div style="height: 400px;">
       <canvas id="resourceSlownessChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Top 10 Error-Prone Resources Chart -->
+  <div class="mb-6 bg-white rounded-lg shadow-sm p-6">
+    <div style="height: 400px;">
+      <canvas id="resourceErrorProneChart"></canvas>
     </div>
   </div>
 

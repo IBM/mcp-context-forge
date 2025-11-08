@@ -12623,6 +12623,60 @@ async def get_prompt_performance(
         db.close()
 
 
+@admin_router.get("/observability/prompts/errors", response_model=dict)
+async def get_prompts_errors(
+    hours: int = Query(24, description="Time range in hours"),
+    limit: int = Query(20, description="Maximum number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt error rates.
+
+    Args:
+        hours: Time range in hours to analyze
+        limit: Maximum number of prompts to return
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt error statistics
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all prompt spans with their status
+        prompt_stats = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                func.count().label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(
+                ObservabilitySpan.name == "prompt.render",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .all()
+        )
+
+        prompts_data = []
+        for stat in prompt_stats:
+            total = stat.total_count
+            errors = stat.error_count or 0
+            error_rate = round((errors / total * 100), 2) if total > 0 else 0
+
+            prompts_data.append({"prompt_id": stat.prompt_id, "total_count": total, "error_count": errors, "error_rate": error_rate})
+
+        # Sort by error rate descending
+        prompts_data.sort(key=lambda x: x["error_rate"], reverse=True)
+        prompts_data = prompts_data[:limit]
+
+        return {"prompts": prompts_data, "time_range_hours": hours}
+    finally:
+        db.close()
+
+
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
 async def get_prompts_partial(
     request: Request,
@@ -12803,6 +12857,60 @@ async def get_resource_performance(
     except Exception as e:
         LOGGER.error(f"Failed to get resource performance metrics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/errors", response_model=dict)
+async def get_resources_errors(
+    hours: int = Query(24, description="Time range in hours"),
+    limit: int = Query(20, description="Maximum number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource error rates.
+
+    Args:
+        hours: Time range in hours to analyze
+        limit: Maximum number of resources to return
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource error statistics
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all resource spans with their status
+        resource_stats = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                func.count().label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .all()
+        )
+
+        resources_data = []
+        for stat in resource_stats:
+            total = stat.total_count
+            errors = stat.error_count or 0
+            error_rate = round((errors / total * 100), 2) if total > 0 else 0
+
+            resources_data.append({"resource_uri": stat.resource_uri, "total_count": total, "error_count": errors, "error_rate": error_rate})
+
+        # Sort by error rate descending
+        resources_data.sort(key=lambda x: x["error_rate"], reverse=True)
+        resources_data = resources_data[:limit]
+
+        return {"resources": resources_data, "time_range_hours": hours}
     finally:
         db.close()
 
