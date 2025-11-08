@@ -73,6 +73,7 @@ include mcpgateway/services/import_service.py
 
 # 📦 Migration scripts (v0.7.0 multitenancy migration tools)
 recursive-include scripts *.py
+recursive-include scripts *.sh
 
 # 🧪 Testing documentation and plans
 recursive-include tests/manual *.py *.md
