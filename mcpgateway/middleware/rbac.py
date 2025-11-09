@@ -15,6 +15,7 @@ functions for protecting routes.
 from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
+import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -125,7 +126,13 @@ async def get_current_user_with_permissions(
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
 
         # Extract user from token using the email auth function
-        user = await get_current_user(credentials, db)
+        # Pass request to get_current_user so plugins can store auth_method in request.state
+        user = await get_current_user(credentials, db, request=request)
+
+        # Read auth_method and request_id from request.state
+        # (auth_method set by plugin in get_current_user, request_id set by HTTP middleware)
+        auth_method = getattr(request.state, "auth_method", None)
+        request_id = getattr(request.state, "request_id", None)
 
         # Add request context for permission auditing
         return {
@@ -135,6 +142,8 @@ async def get_current_user_with_permissions(
             "ip_address": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
             "db": db,
+            "auth_method": auth_method,  # Include auth_method from plugin
+            "request_id": request_id,  # Include request_id from middleware
         }
     except Exception as e:
         logger.error(f"Authentication failed: {type(e).__name__}: {e}")
@@ -219,7 +228,56 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
 
-            # Check permission
+            # First, check if any plugins want to handle permission checking
+            # First-Party
+            from mcpgateway.plugins.framework import (  # pylint: disable=import-outside-toplevel
+                get_plugin_manager,
+                GlobalContext,
+                HttpAuthCheckPermissionPayload,
+                HttpHookType,
+            )
+
+            plugin_manager = get_plugin_manager()
+            if plugin_manager:
+                # Get request_id from user_context (passed from get_current_user_with_permissions)
+                # Generate a fallback if not present
+                request_id = user_context.get("request_id") or uuid.uuid4().hex
+
+                # Create global context for plugin invocation
+                global_context = GlobalContext(
+                    request_id=request_id,
+                    server_id=None,
+                    tenant_id=None,
+                )
+
+                # Invoke permission check hook
+                result, _ = await plugin_manager.invoke_hook(
+                    HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+                    payload=HttpAuthCheckPermissionPayload(
+                        user_email=user_context["email"],
+                        permission=permission,
+                        resource_type=resource_type,
+                        team_id=team_id,
+                        is_admin=user_context.get("is_admin", False),
+                        auth_method=user_context.get("auth_method"),
+                        client_host=user_context.get("ip_address"),
+                        user_agent=user_context.get("user_agent"),
+                    ),
+                    global_context=global_context,
+                )
+
+                # If a plugin made a decision, respect it
+                if result and result.modified_payload:
+                    if result.modified_payload.granted:
+                        logger.info(f"Permission granted by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
+                        return await func(*args, **kwargs)
+                    logger.warning(f"Permission denied by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Insufficient permissions. Required: {permission}",
+                    )
+
+            # No plugin handled it, fall through to standard RBAC check
             granted = await permission_service.check_permission(
                 user_email=user_context["email"],
                 permission=permission,

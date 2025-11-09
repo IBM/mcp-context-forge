@@ -18,6 +18,7 @@ Plugins for protecting against security threats, detecting sensitive data, and m
 
 | Plugin | Type | Description |
 |--------|------|-------------|
+| [Simple Token Auth](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) | Native | Custom token-based authentication with file storage, expiration, and CLI management. Complete example of HTTP authentication hooks (http_pre_request, http_auth_resolve_user, http_auth_check_permission, http_post_request) |
 | [PII Filter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/pii_filter) | Native | Detects and masks sensitive information including SSN, credit cards, and emails with configurable masking strategies |
 | [Secrets Detection](https://github.com/IBM/mcp-context-forge/tree/main/plugins/secrets_detection) | Native | Detects likely credentials/secrets (AWS keys, API keys, JWT tokens, private keys) in inputs and outputs with optional redaction and blocking |
 | [Code Safety Linter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/code_safety_linter) | Native | Detects unsafe code patterns in tool outputs (eval, exec, os.system, subprocess, rm -rf) |
