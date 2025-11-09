@@ -6783,6 +6783,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             auth_header_value=str(form.get("auth_header_value", "")),
             auth_headers=auth_headers if auth_headers else None,
             oauth_config=oauth_config,
+            one_time_auth=form.get("one_time_auth", False),
             passthrough_headers=passthrough_headers,
             visibility=visibility,
             ca_certificate=ca_certificate,

@@ -738,6 +738,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ca_certificate = getattr(gateway, "ca_certificate", None)
             capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
 
+            if gateway.one_time_auth:
+                # For one-time auth, clear auth_type and auth_value after initialization
+                auth_type = None
+                auth_value = None
+                oauth_config = None
+                
             tools = [
                 DbTool(
                     original_name=tool.name,
