@@ -2712,6 +2712,29 @@
                     </div>
                   </div>
 
+                  <!-- Import Results Section -->
+                  <div id="dropdown-results" class="hidden mb-4">
+                    <h5
+                      class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2"
+                    >
+                      📊 Import Results
+                    </h5>
+                    <div class="grid grid-cols-3 gap-2 mb-2">
+                      <div class="bg-white dark:bg-gray-800 rounded p-2 text-center border">
+                        <div id="dropdown-stats-total" class="text-sm font-bold text-blue-600 dark:text-blue-400">0</div>
+                        <div class="text-xs text-gray-500">Total</div>
+                      </div>
+                      <div class="bg-white dark:bg-gray-800 rounded p-2 text-center border">
+                        <div id="dropdown-stats-success" class="text-sm font-bold text-green-600 dark:text-green-400">0</div>
+                        <div class="text-xs text-gray-500">Success</div>
+                      </div>
+                      <div class="bg-white dark:bg-gray-800 rounded p-2 text-center border">
+                        <div id="dropdown-stats-failed" class="text-sm font-bold text-red-600 dark:text-red-400">0</div>
+                        <div class="text-xs text-gray-500">Failed</div>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- Status Messages -->
                   <div id="dropdown-status" class="hidden mb-4 text-xs"></div>
 
@@ -3181,7 +3204,33 @@
               </span>
             </div>
 
-            <div id="import-result" class="pt-2"></div>
+            <!-- Import Result Summary -->
+            <div id="import-result" class="pt-2">
+              <!-- Results will be populated here by JavaScript -->
+            </div>
+            
+            <!-- Import Statistics Display -->
+            <div id="import-statistics" class="hidden pt-4">
+              <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                <h4 class="text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+                  📊 Import Summary
+                </h4>
+                <div class="grid grid-cols-3 gap-4 text-center">
+                  <div class="bg-white dark:bg-gray-700 rounded-lg p-3 border">
+                    <div id="stats-total" class="text-2xl font-bold text-blue-600 dark:text-blue-400">0</div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400">Total Tools</div>
+                  </div>
+                  <div class="bg-white dark:bg-gray-700 rounded-lg p-3 border">
+                    <div id="stats-success" class="text-2xl font-bold text-green-600 dark:text-green-400">0</div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400">Successful</div>
+                  </div>
+                  <div class="bg-white dark:bg-gray-700 rounded-lg p-3 border">
+                    <div id="stats-failed" class="text-2xl font-bold text-red-600 dark:text-red-400">0</div>
+                    <div class="text-xs text-gray-600 dark:text-gray-400">Failed</div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </form>
         </div>
       </div>
@@ -10633,6 +10682,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           document.getElementById("import-preview").classList.add("hidden");
           document.getElementById("import-status").classList.add("hidden");
           document.getElementById("import-loading").classList.add("hidden");
+          document.getElementById("import-statistics").classList.add("hidden");
 
           // Reset validation status
           document.getElementById("json-validation-status").textContent = "";
@@ -11024,6 +11074,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             document.getElementById("import-loading").classList.add("hidden");
 
             if (response.ok) {
+              // Update statistics display
+              updateImportStatistics(result);
+              
               if (result.success) {
                 // Complete success
                 showImportSuccess(result);
@@ -11044,16 +11097,16 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 }, 5000); // Longer delay to see the message
               } else {
                 // Complete failure
-                showImportError(result.message || "All tools failed to import");
+                showImportError(result.message || "All tools failed to import", result);
                 document.getElementById("import-submit-btn").disabled = false;
               }
             } else {
-              showImportError(result.message || "Import failed");
+              showImportError(result.message || "Import failed", result);
               document.getElementById("import-submit-btn").disabled = false;
             }
           } catch (error) {
             document.getElementById("import-loading").classList.add("hidden");
-            showImportError(`Network error: ${error.message}`);
+            showImportError(`Network error: ${error.message}`, null);
             document.getElementById("import-submit-btn").disabled = false;
           }
         };
@@ -11064,6 +11117,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           const isPartialSuccess = result.failed_count > 0;
           const bgColor = isPartialSuccess ? "yellow" : "green";
           const textColor = isPartialSuccess ? "yellow" : "green";
+          const totalTools = (result.created_count || 0) + (result.failed_count || 0);
 
           statusDiv.innerHTML = `
             <div class="bg-${bgColor}-50 dark:bg-${bgColor}-900 border border-${bgColor}-200 dark:border-${bgColor}-800 rounded-md p-4">
@@ -11073,33 +11127,64 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
                   </svg>
                 </div>
-                <div class="ml-3">
+                <div class="ml-3 w-full">
                   <h3 class="text-sm font-medium text-${textColor}-800 dark:text-${textColor}-200">
                     ${isPartialSuccess ? "Import Partially Completed" : "Import Completed Successfully"}
                   </h3>
-                  <div class="mt-2 text-sm text-${textColor}-700 dark:text-${textColor}-300">
-                    <p><strong>${result.created_count}</strong> tools imported successfully</p>
-                    ${result.failed_count > 0 ? `<p><strong>${result.failed_count}</strong> tools failed to import</p>` : ""}
+                  
+                  <!-- Import Statistics -->
+                  <div class="mt-3 grid grid-cols-3 gap-4 text-center">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                      <div class="text-lg font-bold text-blue-600 dark:text-blue-400">${totalTools}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Total Tools</div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                      <div class="text-lg font-bold text-green-600 dark:text-green-400">${result.created_count || 0}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Successful</div>
+                    </div>
+                    <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                      <div class="text-lg font-bold text-red-600 dark:text-red-400">${result.failed_count || 0}</div>
+                      <div class="text-xs text-gray-600 dark:text-gray-400">Failed</div>
+                    </div>
+                  </div>
+
+                  <div class="mt-3 text-sm text-${textColor}-700 dark:text-${textColor}-300">
+                    <p><strong>${result.created_count || 0}</strong> tools imported successfully out of <strong>${totalTools}</strong> total tools</p>
+                    ${result.failed_count > 0 ? `<p class="text-red-600 dark:text-red-400"><strong>${result.failed_count}</strong> tools failed to import</p>` : ""}
                     ${
                       result.errors && result.errors.length > 0
                         ? `
-                      <details class="mt-2">
-                        <summary class="cursor-pointer">View errors</summary>
-                        <ul class="mt-1 list-disc list-inside text-xs">
-                          ${result.errors
-                            .slice(0, 5)
-                            .map(
-                              (error) =>
-                                `<li>${error.name || "Tool"}: ${error.error?.message || "Unknown error"}</li>`,
-                            )
-                            .join("")}
-                          ${result.errors.length > 5 ? `<li>... and ${result.errors.length - 5} more errors</li>` : ""}
-                        </ul>
+                      <details class="mt-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+                        <summary class="cursor-pointer font-medium text-red-800 dark:text-red-200 hover:text-red-600 dark:hover:text-red-300">
+                          📋 View Failed Tools (${result.errors.length})
+                        </summary>
+                        <div class="mt-3 max-h-64 overflow-y-auto">
+                          <div class="space-y-2">
+                            ${result.errors
+                              .map(
+                                (error, index) => `
+                                <div class="bg-white dark:bg-gray-800 border border-red-200 dark:border-red-700 rounded p-2 text-xs">
+                                  <div class="flex justify-between items-start">
+                                    <div class="font-medium text-red-800 dark:text-red-200">
+                                      ${index + 1}. ${escapeHtml(error.name || error.tool_name || "Unnamed Tool")}
+                                    </div>
+                                    <span class="text-red-600 dark:text-red-400 text-xs">❌</span>
+                                  </div>
+                                  <div class="mt-1 text-red-700 dark:text-red-300">
+                                    <strong>Error:</strong> ${escapeHtml(error.error?.message || error.message || "Unknown error")}
+                                  </div>
+                                  ${error.url ? `<div class="mt-1 text-gray-600 dark:text-gray-400"><strong>URL:</strong> ${escapeHtml(error.url)}</div>` : ""}
+                                </div>
+                              `
+                              )
+                              .join("")}
+                          </div>
+                        </div>
                       </details>
                     `
                         : ""
                     }
-                    <p class="mt-2 text-xs">Page will refresh automatically...</p>
+                    <p class="mt-3 text-xs text-gray-600 dark:text-gray-400">Page will refresh automatically...</p>
                   </div>
                 </div>
               </div>
@@ -11109,8 +11194,36 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
 
         // Show import error message
-        function showImportError(message) {
+        function showImportError(message, result = null) {
           const statusDiv = document.getElementById("import-status");
+          
+          let errorContent = `<p>${escapeHtml(message)}</p>`;
+          
+          // If we have detailed error information, show statistics
+          if (result && (result.failed_count > 0 || result.errors)) {
+            const totalTools = (result.created_count || 0) + (result.failed_count || 0);
+            const successCount = result.created_count || 0;
+            const failedCount = result.failed_count || 0;
+            
+            errorContent = `
+              <div class="mb-3 grid grid-cols-3 gap-4 text-center">
+                <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                  <div class="text-lg font-bold text-blue-600 dark:text-blue-400">${totalTools}</div>
+                  <div class="text-xs text-gray-600 dark:text-gray-400">Total Tools</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                  <div class="text-lg font-bold text-green-600 dark:text-green-400">${successCount}</div>
+                  <div class="text-xs text-gray-600 dark:text-gray-400">Successful</div>
+                </div>
+                <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
+                  <div class="text-lg font-bold text-red-600 dark:text-red-400">${failedCount}</div>
+                  <div class="text-xs text-gray-600 dark:text-gray-400">Failed</div>
+                </div>
+              </div>
+              <p>${escapeHtml(message)}</p>
+            `;
+          }
+          
           statusDiv.innerHTML = `
             <div class="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-800 rounded-md p-4">
               <div class="flex">
@@ -11119,18 +11232,32 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
                   </svg>
                 </div>
-                <div class="ml-3">
+                <div class="ml-3 w-full">
                   <h3 class="text-sm font-medium text-red-800 dark:text-red-200">
-                    Import Error
+                    Import ${result && result.created_count > 0 ? 'Partially Failed' : 'Failed'}
                   </h3>
                   <div class="mt-2 text-sm text-red-700 dark:text-red-300">
-                    <p>${escapeHtml(message)}</p>
+                    ${errorContent}
                   </div>
                 </div>
               </div>
             </div>
           `;
           statusDiv.classList.remove("hidden");
+        }
+
+        // Update import statistics display
+        function updateImportStatistics(result) {
+          const totalTools = (result.created_count || 0) + (result.failed_count || 0);
+          const successCount = result.created_count || 0;
+          const failedCount = result.failed_count || 0;
+          
+          document.getElementById("stats-total").textContent = totalTools;
+          document.getElementById("stats-success").textContent = successCount;
+          document.getElementById("stats-failed").textContent = failedCount;
+          
+          // Show the statistics section
+          document.getElementById("import-statistics").classList.remove("hidden");
         }
 
         // Format file size
@@ -11265,8 +11392,42 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
 
         window.showDropdownStatus = function (type, message) {
           const status = document.getElementById("dropdown-status");
-          status.innerHTML = `<div class="text-${type === "error" ? "red" : "green"}-600">${escapeHtml(message)}</div>`;
+          const colorClass = type === "error" ? "red" : type === "warning" ? "yellow" : "green";
+          const content = message.includes('<div') ? message : escapeHtml(message);
+          status.innerHTML = `<div class="text-${colorClass}-600 dark:text-${colorClass}-400 whitespace-pre-line text-xs">${content}</div>`;
           status.classList.remove("hidden");
+        };
+
+        window.showDropdownResults = function (total, success, failed) {
+          document.getElementById("dropdown-stats-total").textContent = total;
+          document.getElementById("dropdown-stats-success").textContent = success;
+          document.getElementById("dropdown-stats-failed").textContent = failed;
+          document.getElementById("dropdown-results").classList.remove("hidden");
+        };
+
+        window.showDropdownFailedTools = function (errors) {
+          const failedToolsHtml = errors.map((error, index) => 
+            `<div class="text-xs p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded mb-1">
+              <div class="font-medium text-red-800 dark:text-red-200">${index + 1}. ${escapeHtml(error.name || error.tool_name || "Unnamed Tool")}</div>
+              <div class="text-red-600 dark:text-red-400 mt-1">${escapeHtml(error.error?.message || error.message || "Unknown error")}</div>
+            </div>`
+          ).join('');
+          
+          showDropdownStatus("error", `<div class="font-medium mb-2">Failed Tools (${errors.length}):</div><div class="max-h-32 overflow-y-auto">${failedToolsHtml}</div>`);
+        };
+
+        window.showDropdownActionButtons = function() {
+          const actionButtonsHtml = `<div class="mt-3 flex justify-center space-x-2">
+            <button onclick="toggleBulkImportDropdown()" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
+              Discard
+            </button>
+            <button onclick="toggleBulkImportDropdown(); window.location.reload();" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
+              🔄 Execute Import
+            </button>
+          </div>`;
+          
+          const statusDiv = document.getElementById("dropdown-status");
+          statusDiv.innerHTML += actionButtonsHtml;
         };
 
         window.resetDropdownImport = function () {
@@ -11276,6 +11437,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           document.getElementById("dropdown-json-status").textContent = "";
           document.getElementById("dropdown-preview").classList.add("hidden");
           document.getElementById("dropdown-status").classList.add("hidden");
+          document.getElementById("dropdown-results").classList.add("hidden");
           document.getElementById("dropdown-import-btn").disabled = true;
         };
 
@@ -11333,18 +11495,31 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             const result = await response.json();
 
             if (response.ok) {
-              showDropdownStatus(
-                "success",
-                `✅ Successfully imported ${result.imported} tools`,
-              );
-              resetDropdownImport();
-              setTimeout(() => {
-                window.location.reload();
-              }, 2000);
+              const totalTools = (result.created_count || result.imported || 0) + (result.failed_count || 0);
+              const successCount = result.created_count || result.imported || 0;
+              const failedCount = result.failed_count || 0;
+              
+              // Show statistics
+              showDropdownResults(totalTools, successCount, failedCount);
+              
+              let statusMessage = `✅ Import completed: ${successCount}/${totalTools} tools imported successfully`;
+              if (failedCount > 0) {
+                statusMessage = `⚠️ Partial success: ${successCount}/${totalTools} tools imported, ${failedCount} failed`;
+              }
+              
+              showDropdownStatus("success", statusMessage);
+              
+              // Show failed tools if any
+              if (result.errors && result.errors.length > 0) {
+                showDropdownFailedTools(result.errors);
+              }
+              
+              // Show close/refresh buttons after import
+              showDropdownActionButtons();
             } else {
               showDropdownStatus(
                 "error",
-                `❌ Import failed: ${result.detail || "Unknown error"}`,
+                `❌ Import failed: ${result.detail || result.message || "Unknown error"}`,
               );
             }
           } catch (error) {
