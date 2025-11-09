@@ -75,4 +75,3 @@ spec:
       metrics.backend-destination: "prometheus"
       # Enable profiling
       profiling.enable: "false"
-
