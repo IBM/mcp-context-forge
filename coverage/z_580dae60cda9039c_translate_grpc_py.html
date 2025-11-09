@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_translate_header_utils_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-21 01:01 +0100
+            created at 2025-10-29 00:06 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -362,7 +362,7 @@
     <p class="mis mis2 show_mis"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">        <span class="com"># Convert protobuf response to JSON</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">        <span class="nam">response_dict</span> <span class="op">=</span> <span class="nam">json_format</span><span class="op">.</span><span class="nam">MessageToDict</span><span class="op">(</span><span class="nam">response_msg</span><span class="op">,</span> <span class="nam">preserving_proto_field_name</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">always_print_fields_with_no_presence</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">        <span class="nam">response_dict</span> <span class="op">=</span> <span class="nam">json_format</span><span class="op">.</span><span class="nam">MessageToDict</span><span class="op">(</span><span class="nam">response_msg</span><span class="op">,</span> <span class="nam">preserving_proto_field_name</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">including_default_value_fields</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Successfully invoked </span><span class="op">{</span><span class="nam">service</span><span class="op">}</span><span class="fst">.</span><span class="op">{</span><span class="nam">method</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t">        <span class="key">return</span> <span class="nam">response_dict</span>&nbsp;</span><span class="r"></span></p>
@@ -434,7 +434,7 @@
     <p class="pln"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">        <span class="com"># Yield responses as they arrive</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">            <span class="key">for</span> <span class="nam">response_msg</span> <span class="key">in</span> <span class="nam">stream_call</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">                <span class="nam">response_dict</span> <span class="op">=</span> <span class="nam">json_format</span><span class="op">.</span><span class="nam">MessageToDict</span><span class="op">(</span><span class="nam">response_msg</span><span class="op">,</span> <span class="nam">preserving_proto_field_name</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">always_print_fields_with_no_presence</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">                <span class="nam">response_dict</span> <span class="op">=</span> <span class="nam">json_format</span><span class="op">.</span><span class="nam">MessageToDict</span><span class="op">(</span><span class="nam">response_msg</span><span class="op">,</span> <span class="nam">preserving_proto_field_name</span><span class="op">=</span><span class="key">True</span><span class="op">,</span> <span class="nam">including_default_value_fields</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">                <span class="key">yield</span> <span class="nam">response_dict</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">        <span class="key">except</span> <span class="nam">grpc</span><span class="op">.</span><span class="nam">RpcError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t356" href="#t356">356</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Streaming RPC error: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -658,7 +658,7 @@
             <a class="nav" href="z_580dae60cda9039c_translate_header_utils_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-21 01:01 +0100
+            created at 2025-10-29 00:06 +0000
         </p>
     </div>
 </footer>

@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_30f902e1518e4bb2_models_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-08 22:14 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -157,7 +157,7 @@
     <p class="pln"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t"><span class="com"># ---------------------------------------------------------------------------</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t"><span class="key">def</span> <span class="nam">command_exists</span><span class="op">(</span><span class="nam">command_name</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t"><span class="key">def</span> <span class="nam">command_exists</span><span class="op">(</span><span class="nam">command_name</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">bool</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">    <span class="str">"""Check if a given command-line utility exists and is executable.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t"><span class="str">    Args:</span>&nbsp;</span><span class="r"></span></p>
@@ -216,7 +216,7 @@
     <p class="run run2"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">    <span class="nam">answers_file</span><span class="op">:</span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">Annotated</span><span class="op">[</span><span class="nam">typer</span><span class="op">.</span><span class="nam">FileText</span><span class="op">,</span> <span class="nam">typer</span><span class="op">.</span><span class="nam">Option</span><span class="op">(</span><span class="str">"--answers_file"</span><span class="op">,</span> <span class="str">"-a"</span><span class="op">,</span> <span class="nam">help</span><span class="op">=</span><span class="str">"The answers file to be used for bootstrapping."</span><span class="op">)</span><span class="op">]</span><span class="op">]</span> <span class="op">=</span> <span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">    <span class="nam">defaults</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">bool</span><span class="op">,</span> <span class="nam">typer</span><span class="op">.</span><span class="nam">Option</span><span class="op">(</span><span class="str">"--defaults"</span><span class="op">,</span> <span class="nam">help</span><span class="op">=</span><span class="str">"Bootstrap with defaults."</span><span class="op">)</span><span class="op">]</span> <span class="op">=</span> <span class="key">False</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">    <span class="nam">dry_run</span><span class="op">:</span> <span class="nam">Annotated</span><span class="op">[</span><span class="nam">bool</span><span class="op">,</span> <span class="nam">typer</span><span class="op">.</span><span class="nam">Option</span><span class="op">(</span><span class="str">"--dry_run"</span><span class="op">,</span> <span class="nam">help</span><span class="op">=</span><span class="str">"Run but do not make any changes."</span><span class="op">)</span><span class="op">]</span> <span class="op">=</span> <span class="key">False</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t"><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t"><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">    <span class="str">"""Boostrap a new plugin project from a template.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t"><span class="str">    Args:</span>&nbsp;</span><span class="r"></span></p>
@@ -245,7 +245,7 @@
     <p class="pln"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t"><span class="op">@</span><span class="nam">app</span><span class="op">.</span><span class="nam">callback</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="exc show_exc"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t"><span class="key">def</span> <span class="nam">callback</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>  <span class="com"># pragma: no cover</span>&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t"><span class="key">def</span> <span class="nam">callback</span><span class="op">(</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>  <span class="com"># pragma: no cover</span>&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t165" href="#t165">165</a></span><span class="t">    <span class="str">"""This function exists to force 'bootstrap' to be a subcommand."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -310,7 +310,7 @@
             <a class="nav" href="z_30f902e1518e4bb2_models_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-08 22:14 +0000
         </p>
     </div>
 </footer>

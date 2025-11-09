@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_2c74865051463af4_resource_cache_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-10-29 00:37 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -162,7 +162,7 @@
     <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Creating platform admin user: </span><span class="op">{</span><span class="nam">settings</span><span class="op">.</span><span class="nam">platform_admin_email</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">            <span class="nam">admin_user</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">auth_service</span><span class="op">.</span><span class="nam">create_user</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">                <span class="nam">email</span><span class="op">=</span><span class="nam">settings</span><span class="op">.</span><span class="nam">platform_admin_email</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">                <span class="nam">password</span><span class="op">=</span><span class="nam">settings</span><span class="op">.</span><span class="nam">platform_admin_password</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">                <span class="nam">password</span><span class="op">=</span><span class="nam">settings</span><span class="op">.</span><span class="nam">platform_admin_password</span><span class="op">.</span><span class="nam">get_secret_value</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">                <span class="nam">full_name</span><span class="op">=</span><span class="nam">settings</span><span class="op">.</span><span class="nam">platform_admin_full_name</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">                <span class="nam">is_admin</span><span class="op">=</span><span class="key">True</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -444,7 +444,7 @@
             <a class="nav" href="z_2c74865051463af4_resource_cache_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-10-29 00:37 +0000
         </p>
     </div>
 </footer>

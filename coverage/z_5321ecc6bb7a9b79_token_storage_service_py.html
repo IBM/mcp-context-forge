@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-05 00:04 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -106,8 +106,8 @@
     <p class="pln"><span class="n"><a id="t22" href="#t22">22</a></span><span class="t"><span class="com"># First-Party</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t23" href="#t23">23</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">config</span> <span class="key">import</span> <span class="nam">get_settings</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t24" href="#t24">24</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">db</span> <span class="key">import</span> <span class="nam">OAuthToken</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">services</span><span class="op">.</span><span class="nam">oauth_manager</span> <span class="key">import</span> <span class="nam">OAuthError</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">utils</span><span class="op">.</span><span class="nam">oauth_encryption</span> <span class="key">import</span> <span class="nam">get_oauth_encryption</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">services</span><span class="op">.</span><span class="nam">encryption_service</span> <span class="key">import</span> <span class="nam">get_encryption_service</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">services</span><span class="op">.</span><span class="nam">oauth_manager</span> <span class="key">import</span> <span class="nam">OAuthError</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -152,7 +152,7 @@
     <p class="run"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">db</span> <span class="op">=</span> <span class="nam">db</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">            <span class="nam">settings</span> <span class="op">=</span> <span class="nam">get_settings</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_oauth_encryption</span><span class="op">(</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_encryption_service</span><span class="op">(</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">        <span class="key">except</span> <span class="op">(</span><span class="nam">ImportError</span><span class="op">,</span> <span class="nam">AttributeError</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"OAuth encryption not available, using plain text storage"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">encryption</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -513,7 +513,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-05 00:04 +0000
         </p>
     </div>
 </footer>
