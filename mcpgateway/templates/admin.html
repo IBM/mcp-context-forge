@@ -3208,7 +3208,7 @@
             <div id="import-result" class="pt-2">
               <!-- Results will be populated here by JavaScript -->
             </div>
-            
+
             <!-- Import Statistics Display -->
             <div id="import-statistics" class="hidden pt-4">
               <div class="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
@@ -11076,7 +11076,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             if (response.ok) {
               // Update statistics display
               updateImportStatistics(result);
-              
+
               if (result.success) {
                 // Complete success
                 showImportSuccess(result);
@@ -11131,7 +11131,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <h3 class="text-sm font-medium text-${textColor}-800 dark:text-${textColor}-200">
                     ${isPartialSuccess ? "Import Partially Completed" : "Import Completed Successfully"}
                   </h3>
-                  
+
                   <!-- Import Statistics -->
                   <div class="mt-3 grid grid-cols-3 gap-4 text-center">
                     <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
@@ -11196,15 +11196,15 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         // Show import error message
         function showImportError(message, result = null) {
           const statusDiv = document.getElementById("import-status");
-          
+
           let errorContent = `<p>${escapeHtml(message)}</p>`;
-          
+
           // If we have detailed error information, show statistics
           if (result && (result.failed_count > 0 || result.errors)) {
             const totalTools = (result.created_count || 0) + (result.failed_count || 0);
             const successCount = result.created_count || 0;
             const failedCount = result.failed_count || 0;
-            
+
             errorContent = `
               <div class="mb-3 grid grid-cols-3 gap-4 text-center">
                 <div class="bg-white dark:bg-gray-800 rounded-lg p-3 border">
@@ -11223,7 +11223,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <p>${escapeHtml(message)}</p>
             `;
           }
-          
+
           statusDiv.innerHTML = `
             <div class="bg-red-50 dark:bg-red-900 border border-red-200 dark:border-red-800 rounded-md p-4">
               <div class="flex">
@@ -11251,11 +11251,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           const totalTools = (result.created_count || 0) + (result.failed_count || 0);
           const successCount = result.created_count || 0;
           const failedCount = result.failed_count || 0;
-          
+
           document.getElementById("stats-total").textContent = totalTools;
           document.getElementById("stats-success").textContent = successCount;
           document.getElementById("stats-failed").textContent = failedCount;
-          
+
           // Show the statistics section
           document.getElementById("import-statistics").classList.remove("hidden");
         }
@@ -11406,13 +11406,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         };
 
         window.showDropdownFailedTools = function (errors) {
-          const failedToolsHtml = errors.map((error, index) => 
+          const failedToolsHtml = errors.map((error, index) =>
             `<div class="text-xs p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 rounded mb-1">
               <div class="font-medium text-red-800 dark:text-red-200">${index + 1}. ${escapeHtml(error.name || error.tool_name || "Unnamed Tool")}</div>
               <div class="text-red-600 dark:text-red-400 mt-1">${escapeHtml(error.error?.message || error.message || "Unknown error")}</div>
             </div>`
           ).join('');
-          
+
           showDropdownStatus("error", `<div class="font-medium mb-2">Failed Tools (${errors.length}):</div><div class="max-h-32 overflow-y-auto">${failedToolsHtml}</div>`);
         };
 
@@ -11425,7 +11425,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               🔄 Execute Import
             </button>
           </div>`;
-          
+
           const statusDiv = document.getElementById("dropdown-status");
           statusDiv.innerHTML += actionButtonsHtml;
         };
@@ -11498,22 +11498,22 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               const totalTools = (result.created_count || result.imported || 0) + (result.failed_count || 0);
               const successCount = result.created_count || result.imported || 0;
               const failedCount = result.failed_count || 0;
-              
+
               // Show statistics
               showDropdownResults(totalTools, successCount, failedCount);
-              
+
               let statusMessage = `✅ Import completed: ${successCount}/${totalTools} tools imported successfully`;
               if (failedCount > 0) {
                 statusMessage = `⚠️ Partial success: ${successCount}/${totalTools} tools imported, ${failedCount} failed`;
               }
-              
+
               showDropdownStatus("success", statusMessage);
-              
+
               // Show failed tools if any
               if (result.errors && result.errors.length > 0) {
                 showDropdownFailedTools(result.errors);
               }
-              
+
               // Show close/refresh buttons after import
               showDropdownActionButtons();
             } else {
