@@ -2681,6 +2681,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
 
+    # One time auth - do not store the auth in gateway flag
+    one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization

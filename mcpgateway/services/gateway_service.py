@@ -743,7 +743,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth_type = None
                 auth_value = None
                 oauth_config = None
-                
+
             tools = [
                 DbTool(
                     original_name=tool.name,
@@ -1412,6 +1412,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
+
+                        if gateway_update.one_time_auth:
+                            # For one-time auth, clear auth_type and auth_value after initialization
+                            gateway.auth_type = None
+                            gateway.auth_value = None
+                            gateway.oauth_config = None
 
                         # Update tools using helper method
                         tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")

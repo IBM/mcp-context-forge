@@ -7092,6 +7092,7 @@ async def admin_edit_gateway(
             auth_header_value=str(form.get("auth_header_value", "")),
             auth_value=str(form.get("auth_value", "")),
             auth_headers=auth_headers if auth_headers else None,
+            one_time_auth=form.get("one_time_auth", False),
             passthrough_headers=passthrough_headers,
             oauth_config=oauth_config,
             visibility=visibility,
