@@ -612,7 +612,7 @@ class ToolCreate(BaseModel):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -1032,7 +1032,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -2650,6 +2650,9 @@ class GatewayCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -2886,6 +2889,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -3042,6 +3048,10 @@ class GatewayRead(BaseModelWithConfigDict):
         if auth_type == "oauth":
             # OAuth gateways don't have traditional auth_value to decode
             # They use oauth_config instead
+            return self
+
+        if auth_type == "one_time_auth":
+            # One-time auth gateways don't store auth_value
             return self
 
         # If no encoded value is present, nothing to populate
@@ -4148,6 +4158,10 @@ class A2AAgentCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -4432,6 +4446,10 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -4580,6 +4598,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
         if auth_type == "oauth":
             # OAuth gateways don't have traditional auth_value to decode
             # They use oauth_config instead
+            return self
+
+        if auth_type == "one_time_auth":
             return self
 
         # If no encoded value is present, nothing to populate
