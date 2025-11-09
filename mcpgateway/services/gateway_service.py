@@ -2194,6 +2194,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
             for gateway in gateways:
+
+                if gateway.auth_type == "one_time_auth":
+                    continue  # Skip health check for one-time auth gateways as these are authenticated with passthrough headers only
+
                 # Create span for individual gateway health check
                 with create_span(
                     "gateway.health_check",
