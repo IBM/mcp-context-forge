@@ -381,7 +381,7 @@ make docker-prod
 docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:latest
 
 # For testing multiple versions
-docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:0.8.0
+docker tag mcp-context-forge:latest ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 ## Troubleshooting

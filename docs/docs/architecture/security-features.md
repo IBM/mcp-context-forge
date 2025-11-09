@@ -1,6 +1,6 @@
 # MCP Gateway Security Features
 
-**Current Version: 0.8.0 (Beta)** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
+**Current Version: 0.9.0 (Beta)** — The gateway ships with the controls described below. Everything listed here is present in the codebase today; future roadmap items live in `docs/docs/architecture/roadmap.md`.
 
 ## Security Posture Overview
 

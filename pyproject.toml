@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "0.8.0"
+version = "0.9.0"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -46,12 +46,12 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "aiohttp>=3.13.1",
-    "alembic>=1.17.0",
+    "aiohttp>=3.13.2",
+    "alembic>=1.17.1",
     "argon2-cffi>=25.1.0",
     "copier>=9.10.3",
     "cryptography>=46.0.3",
-    "fastapi>=0.119.0",
+    "fastapi>=0.121.1",
     "filelock>=3.20.0",
     "gunicorn>=23.0.0",
     "httpx>=0.28.1",
@@ -60,25 +60,25 @@ dependencies = [
     "jq>=1.10.0",
     "jsonpath-ng>=1.7.0",
     "jsonschema>=4.25.1",
-    "mcp>=1.18.0",
+    "mcp>=1.21.0",
     "oauthlib>=3.3.1",
-    "orjson>=3.11.3",
+    "orjson>=3.11.4",
     "parse>=1.20.2",
-    "psutil>=7.1.1",
-    "pydantic>=2.12.3",
-    "pydantic[email]>=2.12.3",
+    "prometheus-fastapi-instrumentator>=7.1.0",
+    "prometheus_client>=0.23.1",
+    "psutil>=7.1.3",
+    "pydantic>=2.12.4",
+    "pydantic[email]>=2.12.4",
     "pydantic-settings>=2.11.0",
-    "prometheus_client>=0.16.0",
-    "prometheus-fastapi-instrumentator>=7.0.0",
     "pyjwt>=2.10.1",
     "python-json-logger>=4.0.0",
     "PyYAML>=6.0.3",
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.44",
-    "sse-starlette>=3.0.2",
-    "starlette>=0.48.0",
+    "sse-starlette>=3.0.3",
+    "starlette>=0.49.3",
     "starlette-compress>=1.6.1",
-    "typer>=0.19.2",
+    "typer>=0.20.0",
     "uvicorn>=0.38.0",
     "zeroconf>=0.148.0",
 ]
@@ -165,7 +165,7 @@ dev = [
 
 # Optional dependency groups (runtime)
 redis = [
-    "redis>=6.4.0",
+    "redis>=7.0.1",
 ]
 
 postgres = [
@@ -177,19 +177,19 @@ mysql = [
 ]
 
 llmchat = [
-    "langchain-core>=1.0.0",
-    "langchain-mcp-adapters>=0.1.11",
+    "langchain-core>=1.0.4",
+    "langchain-mcp-adapters>=0.1.12",
     "langchain-ollama>=1.0.0",
-    "langchain-openai>=1.0.0",
-    "langgraph>=1.0.0",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.142.1",
-    "pytest-benchmark>=5.1.0",
+    "hypothesis>=6.147.0",
+    "pytest-benchmark>=5.2.2",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.3.6",
+    "schemathesis>=4.4.4",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -198,7 +198,7 @@ fuzz-atheris = [
 ]
 
 alembic = [
-    "alembic>=1.17.0",
+    "alembic>=1.17.1",
 ]
 
 # Observability dependencies (optional)
@@ -219,15 +219,15 @@ asyncpg = [
 
 # Agent Lifecycle Toolkit(optional)
 altk = [
-    "agent-lifecycle-toolkit>=0.4.0",
+    "agent-lifecycle-toolkit>=0.4.1",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
 grpc = [
-    "grpcio>=1.75.1",
-    "grpcio-reflection>=1.75.1",
-    "grpcio-tools>=1.75.1",
+    "grpcio>=1.76.0",
+    "grpcio-reflection>=1.76.0",
+    "grpcio-tools>=1.76.0",
     "protobuf>=6.33.0",
 ]
 
@@ -241,11 +241,11 @@ playwright = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.7.0",
+    "mcp-contextforge-gateway[redis]>=0.9.0",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.7.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
 ]
 
 # --------------------------------------------------------------------

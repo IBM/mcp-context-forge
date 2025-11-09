@@ -514,7 +514,7 @@ auth_types:
 
 ---
 
-## Recent Improvements (v0.8.0)
+## Recent Improvements (v0.9.0)
 
 ### Enhanced UI Features
 
