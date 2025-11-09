@@ -4,7 +4,7 @@
 
 ---
 
-## [0.9.0] - 2025-11-05 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
+## [0.9.0] - 2025-11-09 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
 
@@ -431,9 +431,12 @@ docker compose up -d
 
 **Multi-Tenancy & RBAC:**
 - Closes #969 - Backend Multi-Tenancy Issues - Critical bugs and missing features
+- Closes #967 - UI Gaps in Multi-Tenancy Support - Visibility fields missing for most resource types
 - Closes #959 - Unable to Re-add Team Member Due to Unique Constraint
 - Closes #958 - Incomplete Visibility Implementation
+- Closes #946 - Alembic migrations fails in docker compose setup
 - Closes #945 - Scoped uniqueness for prompts, resources, and A2A agents
+- Closes #926 - Bootstrap fails to assign platform_admin role due to foreign key constraint violation
 - Closes #1180 - Prompt editing to include team_id in form data
 - Closes #1184 - Prompt and resource endpoints to use unique IDs instead of name/URI
 - Closes #1222 - Already addressed as part of #945
@@ -444,6 +447,9 @@ docker compose up -d
 - Closes #1254 - JWT jti mismatch between token and database record
 - Closes #1262 - JWT token follows default variable payload expiry instead of UI
 - Closes #1261 - API Token Expiry Issue: UI Configuration overridden by default env Variable
+- Closes #1111 - Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
+- Closes #1094 - Creating an MCP OAUTH2 server fails if using API
+- Closes #1092 - After issue 1078 change, how to add X-Upstream-Authorization header when clicking Authorize in admin UI
 - Closes #1048 - Login issue - Serving over HTTP requires SECURE_COOKIES=false
 - Closes #1101 - Login issue with v0.7.0
 - Closes #1117 - Login not working with 0.7.0 version
@@ -460,6 +466,7 @@ docker compose up -d
 **Developer Tools & Operations:**
 - Closes #1197 - Support Bundle Generation - Automated Diagnostics Collection
 - Closes #1200 - In built MCP client - LLM Chat service for virtual servers
+- Closes #1239 - LLMChat Multi-Worker: Add Documentation and Integration Tests
 - Closes #1202 - LLM Chat Interface with MCP Enabled Tool Orchestration
 - Closes #1228 - Show system statistics in metrics page
 - Closes #1225 - Production-Scale Load Data Generator for Multi-Tenant Testing
@@ -470,21 +477,27 @@ docker compose up -d
 - Closes #1271 - Consolidated linting configuration in pyproject.toml
 
 **Plugin Framework:**
+- Closes #1249 - Rust-Powered PII Filter Plugin - 5-10x Performance Improvement
 - Closes #1196 - Plugin client server mTLS support
 - Closes #1137 - Add missing hooks to OPA plugin
 - Closes #1198 - Complete OPA plugin hook implementation
 
 **Platform & Protocol:**
+- Closes #1381 - Resource view error - mime type handling for resource added via mcp server
+- Closes #1348 - Add support for IBM Watsonx.ai LLM provider
 - Closes #1258 - MCP Tool outputSchema Field is Stripped During Discovery
 - Closes #1188 - Allow multiple StreamableHTTP content
 - Closes #1138 - Support for container builds for s390x
 
 **Performance Optimizations:**
 - Closes #1294 - orjson JSON Serialization for 5-6x faster JSON encoding/decoding
+- Closes #1292 - Brotli/Zstd/GZip Response Compression reducing bandwidth by 30-70%
 
 **Bug Fixes:**
+- Closes #1336 - Add toggles to password/sensitive textboxes to mask/unmask the input value
 - Closes #1098 - Unable to see request payload being sent
 - Closes #1024 - plugin tool_prefetch hook cannot access PASSTHROUGH_HEADERS, tags
+- Closes #1020 - Edit Button Functionality - A2A
 - Closes #861 - Passthrough header parameters not persisted to database
 - Closes #1178 - Header overlaps with modals in UI
 - Closes #922 - IFraming the admin UI is not working
@@ -492,6 +505,7 @@ docker compose up -d
 - Closes #1230 - pyproject.toml conflicting dependencies with uv
 - Closes #448 - MCP server with custom base path "/api" not working
 - Closes #835 - Adding Custom annotation for tools
+- Closes #409 - Add configurable limits for data cleaning / XSS prevention in .env.example and helm
 
 **Documentation:**
 - Closes #1159 - Several minor quirks in main README.md
