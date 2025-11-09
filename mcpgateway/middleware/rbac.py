@@ -15,6 +15,7 @@ functions for protecting routes.
 from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
+import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -240,9 +241,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             if plugin_manager:
                 # Get request_id from user_context (passed from get_current_user_with_permissions)
                 # Generate a fallback if not present
-                # Standard
-                import uuid
-
                 request_id = user_context.get("request_id") or uuid.uuid4().hex
 
                 # Create global context for plugin invocation
@@ -273,12 +271,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     if result.modified_payload.granted:
                         logger.info(f"Permission granted by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
                         return await func(*args, **kwargs)
-                    else:
-                        logger.warning(f"Permission denied by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Insufficient permissions. Required: {permission}",
-                        )
+                    logger.warning(f"Permission denied by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Insufficient permissions. Required: {permission}",
+                    )
 
             # No plugin handled it, fall through to standard RBAC check
             granted = await permission_service.check_permission(
