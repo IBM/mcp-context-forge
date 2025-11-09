@@ -129,7 +129,7 @@ class CustomAuthPlugin(Plugin):
             headers["authorization"] = f"Bearer {api_key}"
 
             # Return modified headers
-            modified_headers = HttpHeaderPayload(headers)
+            modified_headers = HttpHeaderPayload(root=headers)
             return PluginResult(
                 modified_payload=modified_headers,
                 metadata={"transformed": True, "original_header": self._cfg.api_key_header},
@@ -310,6 +310,6 @@ class CustomAuthPlugin(Plugin):
         )
 
         return PluginResult(
-            modified_payload=HttpHeaderPayload(response_headers),
+            modified_payload=HttpHeaderPayload(root=response_headers),
             continue_processing=True,
         )

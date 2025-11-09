@@ -124,7 +124,7 @@ class SimpleTokenAuthPlugin(Plugin):
         from mcpgateway.plugins.framework import HttpHeaderPayload
 
         return PluginResult(
-            modified_payload=HttpHeaderPayload(headers),
+            modified_payload=HttpHeaderPayload(root=headers),
             metadata={"transformed": True, "original_header": token_header},
             continue_processing=True,
         )
@@ -279,7 +279,7 @@ class SimpleTokenAuthPlugin(Plugin):
             elif payload.status_code == 401:
                 response_headers["x-auth-status"] = "failed"
 
-        return PluginResult(modified_payload=HttpHeaderPayload(response_headers), continue_processing=True)
+        return PluginResult(modified_payload=HttpHeaderPayload(root=response_headers), continue_processing=True)
 
     def get_supported_hooks(self) -> list[str]:
         """Return list of supported hook types."""
