@@ -150,32 +150,44 @@
     **Due:** 02 Dec 2025 | **Status:** Open
     Release 1.0 General Availability & Release Candidate Hardening - stable & audited
 
-???+ info "📋 Epics - Remaining (4)"
+???+ info "📋 Epics - Remaining (12)"
 
+    - ⏳ [**#1245**](https://github.com/IBM/mcp-context-forge/issues/1245) - 🔌 Epic: Security Clearance Levels Plugin - Bell-LaPadula MAC Implementation
+    - ⏳ [**#1247**](https://github.com/IBM/mcp-context-forge/issues/1247) - 🔌 Epic: Per-Virtual-Server Plugin Selection with Multi-Level RBAC
+    - ⏳ [**#1285**](https://github.com/IBM/mcp-context-forge/issues/1285) - [Epic]: Fully implement MCP 2025-06-18 compliance across all endpoints
+    - ⏳ [**#1286**](https://github.com/IBM/mcp-context-forge/issues/1286) - [Epic] 🔍 MCP Compliance Checker - Automated Specification Testing Tool
+    - ⏳ [**#1293**](https://github.com/IBM/mcp-context-forge/issues/1293) - [Epic] 🌐 Performance - HTTP/2 & Keep-Alive Transport
+    - ⏳ [**#1295**](https://github.com/IBM/mcp-context-forge/issues/1295) - [Epic] 📦 Performance - Static Asset Caching & CDN
+    - ⏳ [**#1296**](https://github.com/IBM/mcp-context-forge/issues/1296) - [Epic] 💾 Performance - Redis Endpoint Response Caching
+    - ⏳ [**#1297**](https://github.com/IBM/mcp-context-forge/issues/1297) - [Epic] ⚙️ Performance - Production Server Tuning
     - ⏳ [**#1353**](https://github.com/IBM/mcp-context-forge/issues/1353) - [Epic] 💾 Performance - Database Indexing Optimization
     - ⏳ [**#1354**](https://github.com/IBM/mcp-context-forge/issues/1354) - [Epic] 🐘 Performance - PostgreSQL Database Tuning & Optimization
     - ⏳ [**#1355**](https://github.com/IBM/mcp-context-forge/issues/1355) - [Epic] 💾 Document Backup & Restore - Data Protection Strategy
     - ⏳ [**#1358**](https://github.com/IBM/mcp-context-forge/issues/1358) - 🏷️ Epic: Configurable Tag Restrictions - Whitelist Enforcement
 
-???+ check "✨ Features - Completed (5)"
+???+ check "✨ Features - Completed (6)"
 
     - ✅ [**#898**](https://github.com/IBM/mcp-context-forge/issues/898) - Sample MCP Server - Go (system-monitor-server)
+    - ✅ [**#1019**](https://github.com/IBM/mcp-context-forge/issues/1019) - [Feature] Authentication Architecture through Plugin System
     - ✅ [**#1138**](https://github.com/IBM/mcp-context-forge/issues/1138) - [Feature Request]: Support for container builds for s390x
     - ✅ [**#1171**](https://github.com/IBM/mcp-context-forge/issues/1171) - [Feature]: gRPC-to-MCP Protocol Translation
     - ✅ [**#1203**](https://github.com/IBM/mcp-context-forge/issues/1203) - [Feature]: Performance Testing & Benchmarking Framework
     - ✅ [**#1219**](https://github.com/IBM/mcp-context-forge/issues/1219) - [Feature]: Benchmark MCP Server for Load Testing and Performance Analysis
 
-???+ info "✨ Features - Remaining (48)"
+???+ info "✨ Features - Remaining (73)"
 
+    - ⏳ [**#80**](https://github.com/IBM/mcp-context-forge/issues/80) - [Feature Request]: Publish a multi-architecture container (including ARM64) support
     - ⏳ [**#114**](https://github.com/IBM/mcp-context-forge/issues/114) - [Feature Request]: Connect to Dockerized MCP Servers via STDIO
     - ⏳ [**#123**](https://github.com/IBM/mcp-context-forge/issues/123) - [Feature Request]: Dynamic Server Catalog via Rule, Regexp, Tags - or Embedding / LLM-Based Selection
     - ⏳ [**#130**](https://github.com/IBM/mcp-context-forge/issues/130) - [Feature Request]: Dynamic LLM-Powered Tool Generation via Prompt
+    - ⏳ [**#172**](https://github.com/IBM/mcp-context-forge/issues/172) - [Feature Request]: Enable Auto Refresh and Reconnection for MCP Servers in Gateways
     - ⏳ [**#175**](https://github.com/IBM/mcp-context-forge/issues/175) - [Feature Request]: Add OpenLLMetry Integration for Observability
     - ⏳ [**#182**](https://github.com/IBM/mcp-context-forge/issues/182) - [Feature Request]: Semantic tool auto-filtering
     - ⏳ [**#209**](https://github.com/IBM/mcp-context-forge/issues/209) - [Feature Request]: Anthropic Desktop Extensions DTX directory/marketplace
     - ⏳ [**#217**](https://github.com/IBM/mcp-context-forge/issues/217) - [Feature Request]: Graceful-Shutdown Hooks for API & Worker Containers (SIGTERM-safe rollouts, DB-pool cleanup, zero-drop traffic)
     - ⏳ [**#218**](https://github.com/IBM/mcp-context-forge/issues/218) - [Feature Request]: Prometheus Metrics Instrumentation using prometheus-fastapi-instrumentator
     - ⏳ [**#234**](https://github.com/IBM/mcp-context-forge/issues/234) - [Feature Request]: 🧠 Protocol Feature – Elicitation Support (MCP 2025-06-18)
+    - ⏳ [**#258**](https://github.com/IBM/mcp-context-forge/issues/258) - [Feature Request]: Universal Client Retry Mechanisms with Exponential Backoff & Random Jitter
     - ⏳ [**#264**](https://github.com/IBM/mcp-context-forge/issues/264) - [DOCS]: GA Documentation Review & End-to-End Validation Audit
     - ⏳ [**#266**](https://github.com/IBM/mcp-context-forge/issues/266) - [Feature Request]: Sample MCP Server - Rust Implementation ("filesystem-server")
     - ⏳ [**#267**](https://github.com/IBM/mcp-context-forge/issues/267) - [Feature Request]: Sample MCP Server – Java Implementation ("plantuml-server")
@@ -185,17 +197,31 @@
     - ⏳ [**#275**](https://github.com/IBM/mcp-context-forge/issues/275) - [Feature Request]: Terraform Module - "mcp-gateway-gcp" supporting GKE and Cloud Run
     - ⏳ [**#276**](https://github.com/IBM/mcp-context-forge/issues/276) - [Feature Request]: Terraform Module – "mcp-gateway-ibm-cloud" supporting IKS, ROKS, Code Engine targets
     - ⏳ [**#284**](https://github.com/IBM/mcp-context-forge/issues/284) - [AUTH FEATURE]: LDAP / Active-Directory Integration
+    - ⏳ [**#285**](https://github.com/IBM/mcp-context-forge/issues/285) - [Feature Request]: Configuration Validation & Schema Enforcement using Pydantic V2 models, config validator cli flag
     - ⏳ [**#286**](https://github.com/IBM/mcp-context-forge/issues/286) - [Feature Request]: Dynamic Configuration UI & Admin API (store config in database after db init)
     - ⏳ [**#287**](https://github.com/IBM/mcp-context-forge/issues/287) - [Feature Request]: API Path Versioning /v1 and /experimental prefix
     - ⏳ [**#288**](https://github.com/IBM/mcp-context-forge/issues/288) - [Feature Request]: MariaDB Support Testing, Documentation, CI/CD (alongside PostgreSQL & SQLite)
     - ⏳ [**#289**](https://github.com/IBM/mcp-context-forge/issues/289) - [Feature Request]: Multi-Layer Caching System (Memory + Redis)
     - ⏳ [**#294**](https://github.com/IBM/mcp-context-forge/issues/294) - [Feature Request]: Automated MCP Server Testing and Certification
+    - ⏳ [**#295**](https://github.com/IBM/mcp-context-forge/issues/295) - [Feature Request]: MCP Server Marketplace and Registry
+    - ⏳ [**#300**](https://github.com/IBM/mcp-context-forge/issues/300) - [Feature Request]: Structured JSON Logging with Correlation IDs
+    - ⏳ [**#301**](https://github.com/IBM/mcp-context-forge/issues/301) - [Feature Request]: Full Circuit Breakers for Unstable MCP Server Backends support (extend existing healthchecks with half-open state)
+    - ⏳ [**#386**](https://github.com/IBM/mcp-context-forge/issues/386) - [Feature Request]: Gateways/MCP Servers Page Refresh
     - ⏳ [**#432**](https://github.com/IBM/mcp-context-forge/issues/432) - [PERFORMANCE]: Performance Optimization Implementation and Guide for MCP Gateway (baseline)
     - ⏳ [**#505**](https://github.com/IBM/mcp-context-forge/issues/505) - [Feature Request]: Add ENV token forwarding management per tool (draft)
     - ⏳ [**#546**](https://github.com/IBM/mcp-context-forge/issues/546) - [Feature Request]: Protocol Version Negotiation & Backward Compatibility
     - ⏳ [**#565**](https://github.com/IBM/mcp-context-forge/issues/565) - [Feature Request]: Docs for https://github.com/block/goose (draft)
+    - ⏳ [**#568**](https://github.com/IBM/mcp-context-forge/issues/568) - [Feature]: mTLS support (gateway and plugins), configurable client require TLS cert, and certificate setup for MCP Servers with private CA
+    - ⏳ [**#683**](https://github.com/IBM/mcp-context-forge/issues/683) - [Feature Request]: Debug headers and passthrough headers, e.g. X-Tenant-Id, X-Trace-Id, Authorization for time server (go) (draft)
+    - ⏳ [**#706**](https://github.com/IBM/mcp-context-forge/issues/706) - [Feature Request]: ABAC Virtual Server Support
+    - ⏳ [**#732**](https://github.com/IBM/mcp-context-forge/issues/732) - [Feature Request]: Enhance Handling of Long Tool Descriptions
     - ⏳ [**#738**](https://github.com/IBM/mcp-context-forge/issues/738) - [Feature Request]: Configuration Database for Dynamic Settings Management
+    - ⏳ [**#743**](https://github.com/IBM/mcp-context-forge/issues/743) - [Feature Request]: Enhance Server Creation/Editing UI for Prompt and Resource Association
     - ⏳ [**#751**](https://github.com/IBM/mcp-context-forge/issues/751) - [Feature] MCP Server - Implement MCP Evaluation Benchmarks Suite
+    - ⏳ [**#756**](https://github.com/IBM/mcp-context-forge/issues/756) - [Feature Request]: REST Passthrough APIs with Pre/Post Plugins (JSONPath and filters)
+    - ⏳ [**#758**](https://github.com/IBM/mcp-context-forge/issues/758) - Implement missing MCP protocol methods
+    - ⏳ [**#782**](https://github.com/IBM/mcp-context-forge/issues/782) - [Feature Request]: OAuth Enhancement following PR 768
+    - ⏳ [**#848**](https://github.com/IBM/mcp-context-forge/issues/848) - [Feature Request]: Allow same prompt name when adding two different mcp server
     - ⏳ [**#892**](https://github.com/IBM/mcp-context-forge/issues/892) - Update and test IBM Cloud deployment documentation and automation
     - ⏳ [**#896**](https://github.com/IBM/mcp-context-forge/issues/896) - Add Prompt Authoring Tools Category to MCP Eval Server
     - ⏳ [**#897**](https://github.com/IBM/mcp-context-forge/issues/897) - Sample MCP Server - Go (database-query-server)
@@ -214,7 +240,15 @@
     - ⏳ [**#912**](https://github.com/IBM/mcp-context-forge/issues/912) - Sample Agent - IBM BeeAI Framework Integration (OpenAI & A2A Endpoints)
     - ⏳ [**#919**](https://github.com/IBM/mcp-context-forge/issues/919) - Sample MCP Server - Python (qr-code-server)
     - ⏳ [**#921**](https://github.com/IBM/mcp-context-forge/issues/921) - Sample MCP Server - Python (weather-data-server)
+    - ⏳ [**#932**](https://github.com/IBM/mcp-context-forge/issues/932) - [Feature Request]: Air-Gapped Environment Support
     - ⏳ [**#950**](https://github.com/IBM/mcp-context-forge/issues/950) - Session Management & Tool Invocation with Gateway vs Direct MCP Client–Server
+    - ⏳ [**#974**](https://github.com/IBM/mcp-context-forge/issues/974) - [Feature Request]: Make users change default admin passwords and secrets for production deployments.
+    - ⏳ [**#975**](https://github.com/IBM/mcp-context-forge/issues/975) - Feature Request: Implement Session Persistence & Pooling for Improved Performance and State Continuity
+    - ⏳ [**#1042**](https://github.com/IBM/mcp-context-forge/issues/1042) - [Feature Request]: Implementation Plan for Root Directory
+    - ⏳ [**#1122**](https://github.com/IBM/mcp-context-forge/issues/1122) - [Feature Request]: Investigate Bearer Token Validation in MCP/Forge with Keycloak JWT
+    - ⏳ [**#1136**](https://github.com/IBM/mcp-context-forge/issues/1136) - [Feature Request]: Feature Request: Add depends_on key in plugin configurations
+    - ⏳ [**#1140**](https://github.com/IBM/mcp-context-forge/issues/1140) - [Feature Request]: Reduce Complexity in Plugin Configuration Framework
+    - ⏳ [**#1282**](https://github.com/IBM/mcp-context-forge/issues/1282) - [Feature]🔐 Configurable Password Expiration with Forced Password Change on Login
 
 ???+ info "🔒 Security - Remaining (11)"
 
@@ -230,7 +264,7 @@
     - ⏳ [**#542**](https://github.com/IBM/mcp-context-forge/issues/542) - [SECURITY FEATURE]: Helm Chart - Enterprise Secrets Management Integration (Vault)
     - ⏳ [**#543**](https://github.com/IBM/mcp-context-forge/issues/543) - [SECURITY FEATURE]: CSRF Token Protection System
 
-???+ info "🔧 Chores - Remaining (32)"
+???+ info "🔧 Chores - Remaining (33)"
 
     - ⏳ [**#211**](https://github.com/IBM/mcp-context-forge/issues/211) - [CHORE]: Achieve Zero Static-Type Errors Across All Checkers (mypy, ty, pyright, pyrefly)
     - ⏳ [**#212**](https://github.com/IBM/mcp-context-forge/issues/212) - [CHORE]: Achieve zero flagged SonarQube issues
@@ -264,6 +298,7 @@
     - ⏳ [**#595**](https://github.com/IBM/mcp-context-forge/issues/595) - [CHORE] Investigate potential migration to UUID7 (draft)
     - ⏳ [**#674**](https://github.com/IBM/mcp-context-forge/issues/674) - [CHORE]: Automate release management process (draft)
     - ⏳ [**#806**](https://github.com/IBM/mcp-context-forge/issues/806) - [CHORE]: Bulk Import – Missing error messages and registration feedback in UI
+    - ⏳ [**#1290**](https://github.com/IBM/mcp-context-forge/issues/1290) - [CHORE] Remove redundant import checkers: importchecker and unimport
 
 ???+ info "📚 Documentation - Remaining (1)"
 
@@ -274,8 +309,8 @@
 
 ## Release 0.9.0
 
-!!! warning "Release 0.9.0 - In Progress (36%)"
-    **Due:** 04 Nov 2025 | **Status:** Open
+!!! success "Release 0.9.0 - Completed (100%)"
+    **Due:** 09 Nov 2025 | **Status:** Closed
     Interoperability, marketplaces & advanced connectivity
 
 ???+ check "📋 Epics - Completed (4)"
@@ -285,25 +320,16 @@
     - ✅ [**#1292**](https://github.com/IBM/mcp-context-forge/issues/1292) - [Epic] 🗜️ Performance - Brotli/Zstd/GZip Response Compression
     - ✅ [**#1294**](https://github.com/IBM/mcp-context-forge/issues/1294) - [Epic] ⚡ Performance - orjson JSON Serialization
 
-???+ info "📋 Epics - Remaining (8)"
-
-    - ⏳ [**#1245**](https://github.com/IBM/mcp-context-forge/issues/1245) - 🔌 Epic: Security Clearance Levels Plugin - Bell-LaPadula MAC Implementation
-    - ⏳ [**#1247**](https://github.com/IBM/mcp-context-forge/issues/1247) - 🔌 Epic: Per-Virtual-Server Plugin Selection with Multi-Level RBAC
-    - ⏳ [**#1285**](https://github.com/IBM/mcp-context-forge/issues/1285) - [Epic]: Fully implement MCP 2025-06-18 compliance across all endpoints
-    - ⏳ [**#1286**](https://github.com/IBM/mcp-context-forge/issues/1286) - [Epic] 🔍 MCP Compliance Checker - Automated Specification Testing Tool
-    - ⏳ [**#1293**](https://github.com/IBM/mcp-context-forge/issues/1293) - [Epic] 🌐 Performance - HTTP/2 & Keep-Alive Transport
-    - ⏳ [**#1295**](https://github.com/IBM/mcp-context-forge/issues/1295) - [Epic] 📦 Performance - Static Asset Caching & CDN
-    - ⏳ [**#1296**](https://github.com/IBM/mcp-context-forge/issues/1296) - [Epic] 💾 Performance - Redis Endpoint Response Caching
-    - ⏳ [**#1297**](https://github.com/IBM/mcp-context-forge/issues/1297) - [Epic] ⚙️ Performance - Production Server Tuning
-
-???+ check "✨ Features - Completed (13)"
+???+ check "✨ Features - Completed (16)"
 
     - ✅ [**#277**](https://github.com/IBM/mcp-context-forge/issues/277) - [Feature Request]: Authentication & Authorization - GitHub SSO Integration Tutorial (Depends on #220)
     - ✅ [**#835**](https://github.com/IBM/mcp-context-forge/issues/835) - [Feature Request]: Adding Custom annotation for the tools
     - ✅ [**#869**](https://github.com/IBM/mcp-context-forge/issues/869) - [Question]: 0.7.0 Release timeline
+    - ✅ [**#967**](https://github.com/IBM/mcp-context-forge/issues/967) - UI Gaps in Multi-Tenancy Support - Visibility fields missing for most resource types
     - ✅ [**#969**](https://github.com/IBM/mcp-context-forge/issues/969) - Backend Multi-Tenancy Issues - Critical bugs and missing features
     - ✅ [**#1020**](https://github.com/IBM/mcp-context-forge/issues/1020) - [Feature] Edit Button Functionality - A2A
     - ✅ [**#1093**](https://github.com/IBM/mcp-context-forge/issues/1093) - [Feature Request]: Role-Based Access Control (RBAC) - support generic oAuth provider or ldap provider
+    - ✅ [**#1111**](https://github.com/IBM/mcp-context-forge/issues/1111) - [Feature Request]: Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
     - ✅ [**#1137**](https://github.com/IBM/mcp-context-forge/issues/1137) - [Feature Request]: Add missing hooks to OPA plugin
     - ✅ [**#1197**](https://github.com/IBM/mcp-context-forge/issues/1197) - [Feature]: Support Bundle Generation - Automated Diagnostics Collection
     - ✅ [**#1200**](https://github.com/IBM/mcp-context-forge/issues/1200) - [Feature Request]: In built MCP client - LLM Chat service for virtual servers with agentic capabilities and MCP Enabled Tool Orchestration
@@ -311,76 +337,28 @@
     - ✅ [**#1228**](https://github.com/IBM/mcp-context-forge/issues/1228) - [Feature] Show system statistics in metrics page
     - ✅ [**#1239**](https://github.com/IBM/mcp-context-forge/issues/1239) - LLMChat Multi-Worker: Add Documentation and Integration Tests (PR #1236 Follow-up)
     - ✅ [**#1336**](https://github.com/IBM/mcp-context-forge/issues/1336) - [Feature Request]: Add toggles to password/sensitive textboxes to mask/unmask the input value.
+    - ✅ [**#1348**](https://github.com/IBM/mcp-context-forge/issues/1348) - [Feature Request]: Add support for IBM Watsonx.ai LLM provider
 
-???+ info "✨ Features - Remaining (29)"
+???+ check "🐛 Bugs - Completed (18)"
 
-    - ⏳ [**#80**](https://github.com/IBM/mcp-context-forge/issues/80) - [Feature Request]: Publish a multi-architecture container (including ARM64) support
-    - ⏳ [**#172**](https://github.com/IBM/mcp-context-forge/issues/172) - [Feature Request]: Enable Auto Refresh and Reconnection for MCP Servers in Gateways
-    - ⏳ [**#258**](https://github.com/IBM/mcp-context-forge/issues/258) - [Feature Request]: Universal Client Retry Mechanisms with Exponential Backoff & Random Jitter
-    - ⏳ [**#285**](https://github.com/IBM/mcp-context-forge/issues/285) - [Feature Request]: Configuration Validation & Schema Enforcement using Pydantic V2 models, config validator cli flag
-    - ⏳ [**#295**](https://github.com/IBM/mcp-context-forge/issues/295) - [Feature Request]: MCP Server Marketplace and Registry
-    - ⏳ [**#300**](https://github.com/IBM/mcp-context-forge/issues/300) - [Feature Request]: Structured JSON Logging with Correlation IDs
-    - ⏳ [**#301**](https://github.com/IBM/mcp-context-forge/issues/301) - [Feature Request]: Full Circuit Breakers for Unstable MCP Server Backends support (extend existing healthchecks with half-open state)
-    - ⏳ [**#386**](https://github.com/IBM/mcp-context-forge/issues/386) - [Feature Request]: Gateways/MCP Servers Page Refresh
-    - ⏳ [**#568**](https://github.com/IBM/mcp-context-forge/issues/568) - [Feature]: mTLS support (gateway and plugins), configurable client require TLS cert, and certificate setup for MCP Servers with private CA
-    - ⏳ [**#683**](https://github.com/IBM/mcp-context-forge/issues/683) - [Feature Request]: Debug headers and passthrough headers, e.g. X-Tenant-Id, X-Trace-Id, Authorization for time server (go) (draft)
-    - ⏳ [**#706**](https://github.com/IBM/mcp-context-forge/issues/706) - [Feature Request]: ABAC Virtual Server Support
-    - ⏳ [**#732**](https://github.com/IBM/mcp-context-forge/issues/732) - [Feature Request]: Enhance Handling of Long Tool Descriptions
-    - ⏳ [**#743**](https://github.com/IBM/mcp-context-forge/issues/743) - [Feature Request]: Enhance Server Creation/Editing UI for Prompt and Resource Association
-    - ⏳ [**#756**](https://github.com/IBM/mcp-context-forge/issues/756) - [Feature Request]: REST Passthrough APIs with Pre/Post Plugins (JSONPath and filters)
-    - ⏳ [**#758**](https://github.com/IBM/mcp-context-forge/issues/758) - Implement missing MCP protocol methods
-    - ⏳ [**#782**](https://github.com/IBM/mcp-context-forge/issues/782) - [Feature Request]: OAuth Enhancement following PR 768
-    - ⏳ [**#848**](https://github.com/IBM/mcp-context-forge/issues/848) - [Feature Request]: Allow same prompt name when adding two different mcp server
-    - ⏳ [**#932**](https://github.com/IBM/mcp-context-forge/issues/932) - [Feature Request]: Air-Gapped Environment Support
-    - ⏳ [**#967**](https://github.com/IBM/mcp-context-forge/issues/967) - UI Gaps in Multi-Tenancy Support - Visibility fields missing for most resource types
-    - ⏳ [**#974**](https://github.com/IBM/mcp-context-forge/issues/974) - [Feature Request]: Make users change default admin passwords and secrets for production deployments.
-    - ⏳ [**#975**](https://github.com/IBM/mcp-context-forge/issues/975) - Feature Request: Implement Session Persistence & Pooling for Improved Performance and State Continuity
-    - ⏳ [**#1019**](https://github.com/IBM/mcp-context-forge/issues/1019) - [Feature] Authentication Architecture through Plugin System
-    - ⏳ [**#1042**](https://github.com/IBM/mcp-context-forge/issues/1042) - [Feature Request]: Implementation Plan for Root Directory
-    - ⏳ [**#1111**](https://github.com/IBM/mcp-context-forge/issues/1111) - [Feature Request]: Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
-    - ⏳ [**#1122**](https://github.com/IBM/mcp-context-forge/issues/1122) - [Feature Request]: Investigate Bearer Token Validation in MCP/Forge with Keycloak JWT
-    - ⏳ [**#1136**](https://github.com/IBM/mcp-context-forge/issues/1136) - [Feature Request]: Feature Request: Add depends_on key in plugin configurations
-    - ⏳ [**#1140**](https://github.com/IBM/mcp-context-forge/issues/1140) - [Feature Request]: Reduce Complexity in Plugin Configuration Framework
-    - ⏳ [**#1282**](https://github.com/IBM/mcp-context-forge/issues/1282) - [Feature]🔐 Configurable Password Expiration with Forced Password Change on Login
-    - ⏳ [**#1348**](https://github.com/IBM/mcp-context-forge/issues/1348) - [Feature Request]: Add support for IBM Watsonx.ai LLM provider
-
-???+ check "🐛 Bugs - Completed (12)"
-
+    - ✅ [**#409**](https://github.com/IBM/mcp-context-forge/issues/409) - [Bug]: Add configurable limits for data cleaning / XSS prevention in .env.example and helm
     - ✅ [**#448**](https://github.com/IBM/mcp-context-forge/issues/448) - [Bug]:MCP server with custom base path "/api" instead of "mcp" or "sse" is not working
     - ✅ [**#625**](https://github.com/IBM/mcp-context-forge/issues/625) - [Bug]: Gateway unable to register gateway or call tools on MacOS
     - ✅ [**#861**](https://github.com/IBM/mcp-context-forge/issues/861) - [Bug]: Passthrough header parameters not persisted to database
     - ✅ [**#922**](https://github.com/IBM/mcp-context-forge/issues/922) - [Bug]: In 0.6.0 Version, IFraming the admin UI is not working.
+    - ✅ [**#926**](https://github.com/IBM/mcp-context-forge/issues/926) - [BUG] Bootstrap fails to assign platform_admin role due to foreign key constraint violation
     - ✅ [**#945**](https://github.com/IBM/mcp-context-forge/issues/945) - [Bug]: Unique Constraint is not allowing Users to create servers/tools/resources/prompts with Names already used by another User
+    - ✅ [**#946**](https://github.com/IBM/mcp-context-forge/issues/946) - [Bug]: Alembic migrations fails in docker compose setup
     - ✅ [**#1024**](https://github.com/IBM/mcp-context-forge/issues/1024) - [Bug]: plugin that is using tool_prefetch hook cannot access PASSTHROUGH_HEADERS, tags for an MCP Server Need MCP-GW restart
+    - ✅ [**#1092**](https://github.com/IBM/mcp-context-forge/issues/1092) - [Bug]: after issue 1078 change, how to add X-Upstream-Authorization header when click Authorize in admin UI
+    - ✅ [**#1094**](https://github.com/IBM/mcp-context-forge/issues/1094) - [Bug]: Creating an MCP OAUTH2 server fails if using API.
     - ✅ [**#1098**](https://github.com/IBM/mcp-context-forge/issues/1098) - [Bug]:Unable to see request payload being sent
     - ✅ [**#1222**](https://github.com/IBM/mcp-context-forge/issues/1222) - [Bug]: Missing name conflict detection for private visibility resources
     - ✅ [**#1248**](https://github.com/IBM/mcp-context-forge/issues/1248) - [Bug]: RBAC Vulnerability: Unauthorized Access to Resource Status Toggling
     - ✅ [**#1254**](https://github.com/IBM/mcp-context-forge/issues/1254) - [Bug]: JWT jti mismatch between token and database record
     - ✅ [**#1258**](https://github.com/IBM/mcp-context-forge/issues/1258) - [Bug]: MCP Tool outputSchema Field is Stripped During Discovery
     - ✅ [**#1261**](https://github.com/IBM/mcp-context-forge/issues/1261) - [Bug]: API Token Expiry Issue: UI Configuration overridden by default env Variable
-
-???+ info "🐛 Bugs - Remaining (11)"
-
-    - ⏳ [**#383**](https://github.com/IBM/mcp-context-forge/issues/383) - [Bug]: Remove migration step from Helm chart (now automated, no longer needed)
-    - ⏳ [**#409**](https://github.com/IBM/mcp-context-forge/issues/409) - [Bug]: Add configurable limits for data cleaning / XSS prevention in .env.example and helm (draft)
-    - ⏳ [**#464**](https://github.com/IBM/mcp-context-forge/issues/464) - [Bug]: MCP Server "Active" status not getting updated under "Gateways/MCP Servers" when the MCP Server shutdown.
-    - ⏳ [**#840**](https://github.com/IBM/mcp-context-forge/issues/840) - [Bug]: For A2A Agent test not working
-    - ⏳ [**#842**](https://github.com/IBM/mcp-context-forge/issues/842) - [Bug]: 401 on privileged actions after cold restart despite valid login
-    - ⏳ [**#926**](https://github.com/IBM/mcp-context-forge/issues/926) - [BUG] Bootstrap fails to assign platform_admin role due to foreign key constraint violation
-    - ⏳ [**#946**](https://github.com/IBM/mcp-context-forge/issues/946) - [Bug]: Alembic migrations fails in docker compose setup
-    - ⏳ [**#1047**](https://github.com/IBM/mcp-context-forge/issues/1047) - [Bug]:MCP Server/Federated Gateway Registration is failing
-    - ⏳ [**#1092**](https://github.com/IBM/mcp-context-forge/issues/1092) - [Bug]: after issue 1078 change, how to add X-Upstream-Authorization header when click Authorize in admin UI
-    - ⏳ [**#1094**](https://github.com/IBM/mcp-context-forge/issues/1094) - [Bug]: Creating an MCP OAUTH2 server fails if using API.
-    - ⏳ [**#1108**](https://github.com/IBM/mcp-context-forge/issues/1108) - [Bug]: When using postgresql as database, high postgresql transaction rollback rate detected
-
-???+ info "🔒 Security - Remaining (2)"
-
-    - ⏳ [**#342**](https://github.com/IBM/mcp-context-forge/issues/342) - [SECURITY FEATURE]: Implement database-level security constraints and SQL injection prevention
-    - ⏳ [**#534**](https://github.com/IBM/mcp-context-forge/issues/534) - [SECURITY FEATURE]: Add Security Configuration Validation and Startup Checks
-
-???+ info "🔧 Chores - Remaining (1)"
-
-    - ⏳ [**#1290**](https://github.com/IBM/mcp-context-forge/issues/1290) - [CHORE] Remove redundant import checkers: importchecker and unimport
+    - ✅ [**#1381**](https://github.com/IBM/mcp-context-forge/issues/1381) - [Bug]: Resource view error - mime type handling for resource added via mcp server
 
 ---
 

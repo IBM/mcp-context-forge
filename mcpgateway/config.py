@@ -397,7 +397,7 @@ class Settings(BaseSettings):
     # Security validation thresholds
     min_secret_length: int = 32
     min_password_length: int = 12
-    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
+    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
 

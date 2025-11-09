@@ -167,12 +167,12 @@ This allows deploying the core gateway with only required features enabled, redu
 
 ## Versioning Strategy
 
-- **Core Gateway:** Independent semver (e.g., v0.8.0)
+- **Core Gateway:** Independent semver (e.g., v0.9.0)
 - **UI:** Follows core version
 - **Plugins:** Per-plugin semver (e.g., pii-filter-v1.2.0)
 - **Standalone Tools:** Independent semver (e.g., translate-v1.0.0)
 - **MCP Servers:** Per-server semver (e.g., docx-v1.0.0)
-- **Helm Chart:** Chart version + app version (e.g., Chart: 1.0.0, App: 0.8.0)
+- **Helm Chart:** Chart version + app version (e.g., Chart: 1.0.0, App: 0.9.0)
 
 ## Alternatives Considered
 
