@@ -103,20 +103,20 @@ class TestHttpAuthMiddlewareIntegration:
 
             return PluginResult(continue_processing=True), {}
 
-        # Patch the _get_plugin_manager in auth.py to return our mock
+        # Patch the get_plugin_manager in auth.py to return our mock
         mock_plugin_manager = MagicMock()
         mock_plugin_manager.invoke_hook = mock_invoke_hook
 
-        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_plugin_manager):
-            with patch("mcpgateway.middleware.http_auth_middleware.PluginManager", return_value=mock_plugin_manager):
-                # Also need to patch the middleware's plugin_manager attribute
-                # Find the middleware instance and set its plugin_manager
-                for middleware in app.user_middleware:
-                    if hasattr(middleware, "cls") and middleware.cls.__name__ == "HttpAuthMiddleware":
-                        middleware.kwargs["plugin_manager"] = mock_plugin_manager
+        # Patch where get_plugin_manager is USED (in auth.py)
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_plugin_manager):
+            # Also need to patch the middleware's plugin_manager attribute
+            # Find the middleware instance and set its plugin_manager
+            for middleware in app.user_middleware:
+                if hasattr(middleware, "cls") and middleware.cls.__name__ == "HttpAuthMiddleware":
+                    middleware.kwargs["plugin_manager"] = mock_plugin_manager
 
-                client = TestClient(app)
-                yield client
+            client = TestClient(app)
+            yield client
 
     def test_x_api_key_transformation_and_authentication(self, test_client_with_http_auth):
         """Test that X-API-Key is transformed to Authorization and user is authenticated."""
