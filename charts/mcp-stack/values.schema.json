@@ -1339,7 +1339,7 @@
             "tag": {
               "type": "string",
               "description": "Image tag",
-              "default": "0.8.0"
+              "default": "0.9.0"
             },
             "pullPolicy": {
               "type": "string",

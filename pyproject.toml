@@ -241,11 +241,11 @@ playwright = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=0.8.0",
+    "mcp-contextforge-gateway[redis]>=0.9.0",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev]>=0.8.0",
+    "mcp-contextforge-gateway[redis,dev]>=0.9.0",
 ]
 
 # --------------------------------------------------------------------

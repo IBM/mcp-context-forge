@@ -1366,7 +1366,7 @@ Secure external plugin servers as you would any service (authentication, TLS). T
 - **Hot Configuration Reload:** Update plugin configs without restart
 - **Advanced Caching:** Redis-backed caching for external service calls
 
-### Long-term Vision (v0.8.0+)
+### Long-term Vision (v0.9.0+)
 
 - **Plugin Marketplace:** Community plugin sharing and discovery
 - **Advanced Analytics:** Plugin performance analytics and optimization recommendations
