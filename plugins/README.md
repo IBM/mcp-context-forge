@@ -38,6 +38,19 @@ The framework supports two types of plugins:
 
 Plugins can implement hooks at these lifecycle points:
 
+### HTTP Authentication & Middleware Hooks
+
+| Hook | Description | Payload Type | Use Cases |
+|------|-------------|--------------|-----------|
+| `http_pre_request` | Before any authentication (middleware) | `HttpPreRequestPayload` | Header transformation (X-API-Key → Bearer), correlation IDs |
+| `http_auth_resolve_user` | Custom user authentication (auth layer) | `HttpAuthResolveUserPayload` | LDAP, mTLS, token auth, external auth services |
+| `http_auth_check_permission` | Custom permission checking (RBAC layer) | `HttpAuthCheckPermissionPayload` | Bypass RBAC, time-based access, IP restrictions |
+| `http_post_request` | After request completion (middleware) | `HttpPostRequestPayload` | Audit logging, metrics, response headers |
+
+**See**: [HTTP Authentication Hooks Guide](../docs/docs/using/plugins/http-auth-hooks.md) for detailed examples and flow diagrams.
+
+### MCP Protocol Hooks
+
 | Hook | Description | Payload Type | Use Cases |
 |------|-------------|--------------|-----------|
 | `prompt_pre_fetch` | Before prompt template retrieval | `PromptPrehookPayload` | Input validation, access control |
@@ -49,9 +62,9 @@ Plugins can implement hooks at these lifecycle points:
 | `agent_pre_invoke` | Before agent invocation | `AgentPreInvokePayload` | Message filtering, access control |
 | `agent_post_invoke` | After agent response | `AgentPostInvokePayload` | Response filtering, audit logging |
 
-Future hooks (in development):
+### Future Hooks (Planned)
+
 - `server_pre_register` / `server_post_register` - Virtual server verification
-- `auth_pre_check` / `auth_post_check` - Custom authentication logic
 - `federation_pre_sync` / `federation_post_sync` - Gateway federation
 
 ## Configuration
