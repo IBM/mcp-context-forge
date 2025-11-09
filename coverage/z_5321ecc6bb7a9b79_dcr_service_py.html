@@ -64,10 +64,10 @@
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_completion_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_email_auth_service_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_elicitation_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-05 00:04 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -109,7 +109,7 @@
     <p class="pln"><span class="n"><a id="t25" href="#t25">25</a></span><span class="t"><span class="com"># First-Party</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t26" href="#t26">26</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">config</span> <span class="key">import</span> <span class="nam">get_settings</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t27" href="#t27">27</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">db</span> <span class="key">import</span> <span class="nam">RegisteredOAuthClient</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">utils</span><span class="op">.</span><span class="nam">oauth_encryption</span> <span class="key">import</span> <span class="nam">get_oauth_encryption</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t28" href="#t28">28</a></span><span class="t"><span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">services</span><span class="op">.</span><span class="nam">encryption_service</span> <span class="key">import</span> <span class="nam">get_encryption_service</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t29" href="#t29">29</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t30" href="#t30">30</a></span><span class="t"><span class="nam">logger</span> <span class="op">=</span> <span class="nam">logging</span><span class="op">.</span><span class="nam">getLogger</span><span class="op">(</span><span class="nam">__name__</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t31" href="#t31">31</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -252,7 +252,7 @@
     <p class="mis show_mis"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">            <span class="key">raise</span> <span class="nam">DcrError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to register client with </span><span class="op">{</span><span class="nam">issuer</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">        <span class="com"># Encrypt secrets</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_oauth_encryption</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_encryption_service</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t">        <span class="nam">client_secret</span> <span class="op">=</span> <span class="nam">registration_response</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"client_secret"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t">        <span class="nam">client_secret_encrypted</span> <span class="op">=</span> <span class="nam">encryption</span><span class="op">.</span><span class="nam">encrypt_secret</span><span class="op">(</span><span class="nam">client_secret</span><span class="op">)</span> <span class="key">if</span> <span class="nam">client_secret</span> <span class="key">else</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -344,7 +344,7 @@
     <p class="mis show_mis"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">            <span class="key">raise</span> <span class="nam">DcrError</span><span class="op">(</span><span class="str">"Cannot update client: no registration_access_token available"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">        <span class="com"># Decrypt registration access token</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_oauth_encryption</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_encryption_service</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">        <span class="nam">registration_access_token</span> <span class="op">=</span> <span class="nam">encryption</span><span class="op">.</span><span class="nam">decrypt_secret</span><span class="op">(</span><span class="nam">client_record</span><span class="op">.</span><span class="nam">registration_access_token_encrypted</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t265" href="#t265">265</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t266" href="#t266">266</a></span><span class="t">        <span class="com"># Build update request</span>&nbsp;</span><span class="r"></span></p>
@@ -397,7 +397,7 @@
     <p class="mis show_mis"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">            <span class="key">return</span> <span class="key">True</span>  <span class="com"># Consider it deleted locally</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t315" href="#t315">315</a></span><span class="t">        <span class="com"># Decrypt registration access token</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_oauth_encryption</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">        <span class="nam">encryption</span> <span class="op">=</span> <span class="nam">get_encryption_service</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">settings</span><span class="op">.</span><span class="nam">auth_encryption_secret</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t317" href="#t317">317</a></span><span class="t">        <span class="nam">registration_access_token</span> <span class="op">=</span> <span class="nam">encryption</span><span class="op">.</span><span class="nam">decrypt_secret</span><span class="op">(</span><span class="nam">client_record</span><span class="op">.</span><span class="nam">registration_access_token_encrypted</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t318" href="#t318">318</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t319" href="#t319">319</a></span><span class="t">        <span class="com"># Send delete request</span>&nbsp;</span><span class="r"></span></p>
@@ -424,10 +424,10 @@
         <p>
             <a class="nav" href="z_5321ecc6bb7a9b79_completion_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_5321ecc6bb7a9b79_email_auth_service_py.html">&#xbb; next</a>
+            <a class="nav" href="z_5321ecc6bb7a9b79_elicitation_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.11.0">coverage.py v7.11.0</a>,
-            created at 2025-10-17 11:22 +0100
+            created at 2025-11-05 00:04 +0000
         </p>
     </div>
 </footer>
