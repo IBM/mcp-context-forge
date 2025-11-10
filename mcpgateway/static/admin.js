@@ -7300,14 +7300,14 @@ async function validateTool(toolId) {
                 
                 
                 // Run All Tests wit hAgent button
-                const runAGentAllDiv = document.createElement("div");
-                runAGentAllDiv.className = "mt-6 text-center";
-                runAGentAllDiv.innerHTML = `
-                    <button id="run-all-agent-tests-btn"
-                    class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
-                    Run With Agent
-                    </button>`;
-                container.appendChild(runAGentAllDiv);
+                // const runAGentAllDiv = document.createElement("div");
+                // runAGentAllDiv.className = "mt-6 text-center";
+                // runAGentAllDiv.innerHTML = `
+                //     <button id="run-all-agent-tests-btn"
+                //     class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
+                //     Run With Agent
+                //     </button>`;
+                // container.appendChild(runAGentAllDiv);
                 
                 // Hook up Run All button
                 document
