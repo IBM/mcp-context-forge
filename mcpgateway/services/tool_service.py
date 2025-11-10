@@ -1420,7 +1420,6 @@ class ToolService:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
                 # Plugin hook: tool post-invoke
-                logger.info(f"self._plugin_manager:{self._plugin_manager}")
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.tool_post_invoke(
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
@@ -1432,7 +1431,6 @@ class ToolService:
                     if post_result.modified_payload:
                         # Reconstruct ToolResult from modified result
                         modified_result = post_result.modified_payload.result
-                        logger.info(f"Post-invoke modified result: {modified_result}")
                         if isinstance(modified_result, dict) and "content" in modified_result:
                             tool_result = ToolResult(content=modified_result["content"])
                         else:
