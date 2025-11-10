@@ -5104,7 +5104,9 @@ async function editServer(serverId) {
         }
 
         // Set associated resources data attribute on the container
-        const editResourcesContainer = document.getElementById("edit-server-resources");
+        const editResourcesContainer = document.getElementById(
+            "edit-server-resources",
+        );
         if (editResourcesContainer && server.associatedResources) {
             editResourcesContainer.setAttribute(
                 "data-server-resources",
@@ -5113,7 +5115,9 @@ async function editServer(serverId) {
         }
 
         // Set associated prompts data attribute on the container
-        const editPromptsContainer = document.getElementById("edit-server-prompts");
+        const editPromptsContainer = document.getElementById(
+            "edit-server-prompts",
+        );
         if (editPromptsContainer && server.associatedPrompts) {
             editPromptsContainer.setAttribute(
                 "data-server-prompts",
@@ -5125,21 +5129,21 @@ async function editServer(serverId) {
 
         // Initialize the select handlers for resources and prompts in the edit modal
         initResourceSelect(
-            'edit-server-resources',
-            'selectedEditResourcesPills',
-            'selectedEditResourcesWarning',
+            "edit-server-resources",
+            "selectedEditResourcesPills",
+            "selectedEditResourcesWarning",
             6,
-            'selectAllEditResourcesBtn',
-            'clearAllEditResourcesBtn'
+            "selectAllEditResourcesBtn",
+            "clearAllEditResourcesBtn",
         );
-        
+
         initPromptSelect(
-            'edit-server-prompts',
-            'selectedEditPromptsPills',
-            'selectedEditPromptsWarning',
+            "edit-server-prompts",
+            "selectedEditPromptsPills",
+            "selectedEditPromptsWarning",
             6,
-            'selectAllEditPromptsBtn',
-            'clearAllEditPromptsBtn'
+            "selectAllEditPromptsBtn",
+            "clearAllEditPromptsBtn",
         );
 
         // Use multiple approaches to ensure checkboxes get set
@@ -5516,13 +5520,19 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                 }
 
                 if (!container) {
-                    const editModal = document.getElementById("server-edit-modal");
-                    const isEditModalOpen = editModal && !editModal.classList.contains("hidden");
+                    const editModal =
+                        document.getElementById("server-edit-modal");
+                    const isEditModalOpen =
+                        editModal && !editModal.classList.contains("hidden");
 
                     if (isEditModalOpen) {
-                        container = document.getElementById("edit-server-resources");
+                        container = document.getElementById(
+                            "edit-server-resources",
+                        );
                     } else {
-                        container = document.getElementById("associatedResources");
+                        container = document.getElementById(
+                            "associatedResources",
+                        );
                     }
                 }
 
@@ -5543,30 +5553,43 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                         });
 
                         if (newCheckboxes.length > 0) {
-                            const event = new Event("change", { bubbles: true });
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
                             container.dispatchEvent(event);
                         }
                     }
 
                     // Also check for edit mode: pre-select items based on server's associated resources
-                    const dataAttr = container.getAttribute("data-server-resources");
+                    const dataAttr = container.getAttribute(
+                        "data-server-resources",
+                    );
                     if (dataAttr) {
                         try {
                             const associatedResourceIds = JSON.parse(dataAttr);
                             newCheckboxes.forEach((cb) => {
                                 const checkboxValue = parseInt(cb.value);
-                                if (associatedResourceIds.includes(checkboxValue)) {
+                                if (
+                                    associatedResourceIds.includes(
+                                        checkboxValue,
+                                    )
+                                ) {
                                     cb.checked = true;
                                 }
                                 cb.removeAttribute("data-auto-check");
                             });
 
                             if (newCheckboxes.length > 0) {
-                                const event = new Event("change", { bubbles: true });
+                                const event = new Event("change", {
+                                    bubbles: true,
+                                });
                                 container.dispatchEvent(event);
                             }
                         } catch (e) {
-                            console.error("Error parsing data-server-resources:", e);
+                            console.error(
+                                "Error parsing data-server-resources:",
+                                e,
+                            );
                         }
                     }
                 }
@@ -5602,13 +5625,18 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                 }
 
                 if (!container) {
-                    const editModal = document.getElementById("server-edit-modal");
-                    const isEditModalOpen = editModal && !editModal.classList.contains("hidden");
+                    const editModal =
+                        document.getElementById("server-edit-modal");
+                    const isEditModalOpen =
+                        editModal && !editModal.classList.contains("hidden");
 
                     if (isEditModalOpen) {
-                        container = document.getElementById("edit-server-prompts");
+                        container = document.getElementById(
+                            "edit-server-prompts",
+                        );
                     } else {
-                        container = document.getElementById("associatedPrompts");
+                        container =
+                            document.getElementById("associatedPrompts");
                     }
                 }
 
@@ -5629,30 +5657,41 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                         });
 
                         if (newCheckboxes.length > 0) {
-                            const event = new Event("change", { bubbles: true });
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
                             container.dispatchEvent(event);
                         }
                     }
 
                     // Also check for edit mode: pre-select items based on server's associated prompts
-                    const dataAttr = container.getAttribute("data-server-prompts");
+                    const dataAttr = container.getAttribute(
+                        "data-server-prompts",
+                    );
                     if (dataAttr) {
                         try {
                             const associatedPromptIds = JSON.parse(dataAttr);
                             newCheckboxes.forEach((cb) => {
                                 const checkboxValue = parseInt(cb.value);
-                                if (associatedPromptIds.includes(checkboxValue)) {
+                                if (
+                                    associatedPromptIds.includes(checkboxValue)
+                                ) {
                                     cb.checked = true;
                                 }
                                 cb.removeAttribute("data-auto-check");
                             });
 
                             if (newCheckboxes.length > 0) {
-                                const event = new Event("change", { bubbles: true });
+                                const event = new Event("change", {
+                                    bubbles: true,
+                                });
                                 container.dispatchEvent(event);
                             }
                         } catch (e) {
-                            console.error("Error parsing data-server-prompts:", e);
+                            console.error(
+                                "Error parsing data-server-prompts:",
+                                e,
+                            );
                         }
                     }
                 }
