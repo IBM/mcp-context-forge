@@ -421,7 +421,6 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
-
     def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
         """
         Extract structured content (if any) and validate it against ``tool.output_schema``.
@@ -533,38 +532,6 @@ class ToolService:
                 else:
                     structured = inner
 
-            # Transiently normalize common wrapper shapes so validation can proceed
-            # without mutating the stored output_schema. We handle two cases:
-            # 1) {'result': <primitive>} -> unwrap to <primitive> when schema expects a primitive
-            # 2) <primitive> -> wrap to {'result': <primitive>} when schema expects an object
-            try:
-                primitive_types = {"integer", "number", "string", "boolean", "null"}
-
-                # Case 1: unwrap {'result': X} -> X when schema expects a primitive
-                if isinstance(structured, dict) and len(structured) == 1 and "result" in structured and schema_type in primitive_types:
-                    structured = structured["result"]
-                    logger.debug("Transiently unwrapped {'result': ..} to primitive for validation")
-
-                # Case 2: wrap primitive -> {'result': primitive} when schema expects an object with a 'result' prop
-                elif (isinstance(structured, (str, int, float, bool)) or structured is None) and schema_type == "object" and isinstance(output_schema, dict):
-                    prop = output_schema.get("properties", {}).get("result")
-                    if isinstance(prop, dict):
-                        prop_type = prop.get("type")
-                        if prop_type in primitive_types:
-                            compatible = (
-                                (prop_type == "integer" and isinstance(structured, int) and not isinstance(structured, bool))
-                                or (prop_type == "number" and isinstance(structured, (int, float)) and not isinstance(structured, bool))
-                                or (prop_type == "string" and isinstance(structured, str))
-                                or (prop_type == "boolean" and isinstance(structured, bool))
-                                or (prop_type == "null" and structured is None)
-                            )
-                            if compatible:
-                                structured = {"result": structured}
-                                logger.debug("Transiently wrapped primitive into {'result': ..} to match object schema for validation")
-            except Exception:
-                # defensive: don't break validation flow
-                pass
-
             # Attach structured content
             try:
                 setattr(tool_result, "structured_content", structured)
@@ -594,6 +561,7 @@ class ToolService:
             logger.error(f"Error extracting/validating structured_content: {exc}")
             return False
 
+    
     async def register_tool(
         self,
         db: Session,
@@ -1440,18 +1408,12 @@ class ToolService:
                         tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
-                    logger.info(f"Tool call result: {tool_call_result}")
-                    logger.info(f"Tool call result content type : {type(tool_call_result)})")
                     dump = tool_call_result.model_dump(by_alias=True)
                     logger.info(f"Tool call result dump: {dump}")
                     content = dump.get("content", [])
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
-                    logger.info(f"content: {content}, structuredContent: {structured}")
-
-                    # Use textual content for jq extraction, but keep structured payload available
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    logger.info(f"filtered_response: {filtered_response}")
                     tool_result = ToolResult(
                                 content=filtered_response,
                                 structured_content=structured,
@@ -1459,7 +1421,6 @@ class ToolService:
                                 meta=getattr(tool_call_result, 'meta', None)
                             )
                     logger.info(f"Final tool_result: {tool_result}")
-                    #tool_result=tool_call_result    
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
