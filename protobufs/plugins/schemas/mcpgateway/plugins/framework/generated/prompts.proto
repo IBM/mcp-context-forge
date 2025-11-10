@@ -1,0 +1,50 @@
+// schemas/contextforge/plugins/hooks/prompts.proto
+// Prompt hook payloads and results
+// Maps to: mcpgateway/plugins/framework/hooks/prompts.py
+syntax = "proto3";
+
+package contextforge.plugins.hooks;
+
+import "google/protobuf/struct.proto";
+import "mcpgateway/plugins/framework/generated/types.proto";
+
+// Prompt hook types
+// Maps to: PromptHookType enum (prompts.py:24-47)
+enum PromptHookType {
+  PROMPT_HOOK_TYPE_UNSPECIFIED = 0;
+  PROMPT_PRE_FETCH = 1;
+  PROMPT_POST_FETCH = 2;
+}
+
+// Prompt pre-fetch payload
+// Maps to: PromptPrehookPayload (prompts.py:50-75)
+message PromptPreFetchPayload {
+  string prompt_id = 1;  // REQUIRED
+  map<string, string> args = 2;  // REQUIRED
+}
+
+// Prompt post-fetch payload
+// Maps to: PromptPosthookPayload (prompts.py:77-103)
+// Note: PromptResult contains Message objects, using Struct for flexibility
+message PromptPostFetchPayload {
+  string prompt_id = 1;  // REQUIRED
+  google.protobuf.Struct result = 2;  // REQUIRED - PromptResult serialized to Struct
+}
+
+// Prompt pre-fetch result
+// Maps to: PromptPrehookResult = PluginResult[PromptPrehookPayload] (prompts.py:105)
+message PromptPreFetchResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  PromptPreFetchPayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// Prompt post-fetch result
+// Maps to: PromptPosthookResult = PluginResult[PromptPosthookPayload] (prompts.py:106)
+message PromptPostFetchResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  PromptPostFetchPayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}

@@ -64,6 +64,51 @@ class ResourcePreFetchPayload(PluginPayload):
     uri: str
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
+    def model_dump_pb(self):
+        """Convert to protobuf ResourcePreFetchPayload message.
+
+        Returns:
+            resources_pb2.ResourcePreFetchPayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import resources_pb2
+
+        # Convert metadata dict to Struct
+        metadata_struct = struct_pb2.Struct()
+        if self.metadata:
+            json_format.ParseDict(self.metadata, metadata_struct)
+
+        return resources_pb2.ResourcePreFetchPayload(
+            uri=self.uri,
+            metadata=metadata_struct,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "ResourcePreFetchPayload":
+        """Create from protobuf ResourcePreFetchPayload message.
+
+        Args:
+            proto: resources_pb2.ResourcePreFetchPayload protobuf message.
+
+        Returns:
+            ResourcePreFetchPayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict
+        metadata = {}
+        if proto.HasField("metadata"):
+            metadata = json_format.MessageToDict(proto.metadata)
+
+        return cls(
+            uri=proto.uri,
+            metadata=metadata,
+        )
+
 
 class ResourcePostFetchPayload(PluginPayload):
     """A resource payload for a resource post-fetch hook.
@@ -90,6 +135,64 @@ class ResourcePostFetchPayload(PluginPayload):
 
     uri: str
     content: Any
+
+    def model_dump_pb(self):
+        """Convert to protobuf ResourcePostFetchPayload message.
+
+        Returns:
+            resources_pb2.ResourcePostFetchPayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import resources_pb2
+
+        # Convert content to Struct
+        content_struct = struct_pb2.Struct()
+        if self.content is not None:
+            if isinstance(self.content, dict):
+                json_format.ParseDict(self.content, content_struct)
+            elif hasattr(self.content, "model_dump"):
+                # Handle Pydantic models like ResourceContent
+                content_dict = self.content.model_dump(mode="json")
+                json_format.ParseDict(content_dict, content_struct)
+            else:
+                # For other types, wrap in a dict
+                json_format.ParseDict({"value": self.content}, content_struct)
+
+        return resources_pb2.ResourcePostFetchPayload(
+            uri=self.uri,
+            content=content_struct,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "ResourcePostFetchPayload":
+        """Create from protobuf ResourcePostFetchPayload message.
+
+        Args:
+            proto: resources_pb2.ResourcePostFetchPayload protobuf message.
+
+        Returns:
+            ResourcePostFetchPayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict/value
+        content = None
+        if proto.HasField("content"):
+            content_dict = json_format.MessageToDict(proto.content)
+            # If it was wrapped with "value" key, unwrap it
+            if len(content_dict) == 1 and "value" in content_dict:
+                content = content_dict["value"]
+            else:
+                content = content_dict
+
+        return cls(
+            uri=proto.uri,
+            content=content,
+        )
 
 
 ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]

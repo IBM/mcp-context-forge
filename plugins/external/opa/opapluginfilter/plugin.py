@@ -19,10 +19,10 @@ import requests
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginViolation,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,

@@ -19,9 +19,9 @@ from typing import Any
 # First-Party
 from mcpgateway.common.models import Message, PromptResult, ResourceContent, TextContent
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     ResourcePostFetchPayload,
