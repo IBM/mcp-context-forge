@@ -4,48 +4,51 @@
 # source: mcpgateway/plugins/framework/generated/resources.proto
 # Protobuf Python Version: 6.33.0
 """Generated protocol buffer code."""
-# Third-Party
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
-_runtime_version.ValidateProtobufRuntimeVersion(_runtime_version.Domain.PUBLIC, 6, 33, 0, "", "mcpgateway/plugins/framework/generated/resources.proto")
+_runtime_version.ValidateProtobufRuntimeVersion(
+    _runtime_version.Domain.PUBLIC,
+    6,
+    33,
+    0,
+    '',
+    'mcpgateway/plugins/framework/generated/resources.proto'
+)
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-# Third-Party
+from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+from mcpgateway.plugins.framework.generated import types_pb2 as mcpgateway_dot_plugins_dot_framework_dot_generated_dot_types__pb2
 
-# First-Party
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n6mcpgateway/plugins/framework/generated/resources.proto\x12\x1a\x63ontextforge.plugins.hooks\x1a\x1cgoogle/protobuf/struct.proto\x1a\x32mcpgateway/plugins/framework/generated/types.proto"Q\n\x17ResourcePreFetchPayload\x12\x0b\n\x03uri\x18\x01 \x01(\t\x12)\n\x08metadata\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct"Q\n\x18ResourcePostFetchPayload\x12\x0b\n\x03uri\x18\x01 \x01(\t\x12(\n\x07\x63ontent\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct"\xca\x02\n\x16ResourcePreFetchResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12M\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x33.contextforge.plugins.hooks.ResourcePreFetchPayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12R\n\x08metadata\x18\x04 \x03(\x0b\x32@.contextforge.plugins.hooks.ResourcePreFetchResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"\xcd\x02\n\x17ResourcePostFetchResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12N\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x34.contextforge.plugins.hooks.ResourcePostFetchPayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12S\n\x08metadata\x18\x04 \x03(\x0b\x32\x41.contextforge.plugins.hooks.ResourcePostFetchResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*g\n\x10ResourceHookType\x12"\n\x1eRESOURCE_HOOK_TYPE_UNSPECIFIED\x10\x00\x12\x16\n\x12RESOURCE_PRE_FETCH\x10\x01\x12\x17\n\x13RESOURCE_POST_FETCH\x10\x02\x62\x06proto3'
-)
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n6mcpgateway/plugins/framework/generated/resources.proto\x12\x1a\x63ontextforge.plugins.hooks\x1a\x1cgoogle/protobuf/struct.proto\x1a\x32mcpgateway/plugins/framework/generated/types.proto\"Q\n\x17ResourcePreFetchPayload\x12\x0b\n\x03uri\x18\x01 \x01(\t\x12)\n\x08metadata\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"Q\n\x18ResourcePostFetchPayload\x12\x0b\n\x03uri\x18\x01 \x01(\t\x12(\n\x07\x63ontent\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\xca\x02\n\x16ResourcePreFetchResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12M\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x33.contextforge.plugins.hooks.ResourcePreFetchPayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12R\n\x08metadata\x18\x04 \x03(\x0b\x32@.contextforge.plugins.hooks.ResourcePreFetchResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xcd\x02\n\x17ResourcePostFetchResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12N\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x34.contextforge.plugins.hooks.ResourcePostFetchPayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12S\n\x08metadata\x18\x04 \x03(\x0b\x32\x41.contextforge.plugins.hooks.ResourcePostFetchResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*g\n\x10ResourceHookType\x12\"\n\x1eRESOURCE_HOOK_TYPE_UNSPECIFIED\x10\x00\x12\x16\n\x12RESOURCE_PRE_FETCH\x10\x01\x12\x17\n\x13RESOURCE_POST_FETCH\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "mcpgateway.plugins.framework.generated.resources_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'mcpgateway.plugins.framework.generated.resources_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-    DESCRIPTOR._loaded_options = None
-    _globals["_RESOURCEPREFETCHRESULT_METADATAENTRY"]._loaded_options = None
-    _globals["_RESOURCEPREFETCHRESULT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_RESOURCEPOSTFETCHRESULT_METADATAENTRY"]._loaded_options = None
-    _globals["_RESOURCEPOSTFETCHRESULT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_RESOURCEHOOKTYPE"]._serialized_start = 1003
-    _globals["_RESOURCEHOOKTYPE"]._serialized_end = 1106
-    _globals["_RESOURCEPREFETCHPAYLOAD"]._serialized_start = 168
-    _globals["_RESOURCEPREFETCHPAYLOAD"]._serialized_end = 249
-    _globals["_RESOURCEPOSTFETCHPAYLOAD"]._serialized_start = 251
-    _globals["_RESOURCEPOSTFETCHPAYLOAD"]._serialized_end = 332
-    _globals["_RESOURCEPREFETCHRESULT"]._serialized_start = 335
-    _globals["_RESOURCEPREFETCHRESULT"]._serialized_end = 665
-    _globals["_RESOURCEPREFETCHRESULT_METADATAENTRY"]._serialized_start = 618
-    _globals["_RESOURCEPREFETCHRESULT_METADATAENTRY"]._serialized_end = 665
-    _globals["_RESOURCEPOSTFETCHRESULT"]._serialized_start = 668
-    _globals["_RESOURCEPOSTFETCHRESULT"]._serialized_end = 1001
-    _globals["_RESOURCEPOSTFETCHRESULT_METADATAENTRY"]._serialized_start = 618
-    _globals["_RESOURCEPOSTFETCHRESULT_METADATAENTRY"]._serialized_end = 665
+  DESCRIPTOR._loaded_options = None
+  _globals['_RESOURCEPREFETCHRESULT_METADATAENTRY']._loaded_options = None
+  _globals['_RESOURCEPREFETCHRESULT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_RESOURCEPOSTFETCHRESULT_METADATAENTRY']._loaded_options = None
+  _globals['_RESOURCEPOSTFETCHRESULT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_RESOURCEHOOKTYPE']._serialized_start=1003
+  _globals['_RESOURCEHOOKTYPE']._serialized_end=1106
+  _globals['_RESOURCEPREFETCHPAYLOAD']._serialized_start=168
+  _globals['_RESOURCEPREFETCHPAYLOAD']._serialized_end=249
+  _globals['_RESOURCEPOSTFETCHPAYLOAD']._serialized_start=251
+  _globals['_RESOURCEPOSTFETCHPAYLOAD']._serialized_end=332
+  _globals['_RESOURCEPREFETCHRESULT']._serialized_start=335
+  _globals['_RESOURCEPREFETCHRESULT']._serialized_end=665
+  _globals['_RESOURCEPREFETCHRESULT_METADATAENTRY']._serialized_start=618
+  _globals['_RESOURCEPREFETCHRESULT_METADATAENTRY']._serialized_end=665
+  _globals['_RESOURCEPOSTFETCHRESULT']._serialized_start=668
+  _globals['_RESOURCEPOSTFETCHRESULT']._serialized_end=1001
+  _globals['_RESOURCEPOSTFETCHRESULT_METADATAENTRY']._serialized_start=618
+  _globals['_RESOURCEPOSTFETCHRESULT_METADATAENTRY']._serialized_end=665
 # @@protoc_insertion_point(module_scope)

@@ -74,7 +74,8 @@ protoc \
     mcpgateway/plugins/framework/generated/tools.proto \
     mcpgateway/plugins/framework/generated/prompts.proto \
     mcpgateway/plugins/framework/generated/resources.proto \
-    mcpgateway/plugins/framework/generated/agents.proto
+    mcpgateway/plugins/framework/generated/agents.proto \
+    mcpgateway/plugins/framework/generated/http.proto
 
 echo ""
 echo -e "${GREEN}✓${NC} Python classes generated successfully!"

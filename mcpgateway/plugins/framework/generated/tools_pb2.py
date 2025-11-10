@@ -4,48 +4,51 @@
 # source: mcpgateway/plugins/framework/generated/tools.proto
 # Protobuf Python Version: 6.33.0
 """Generated protocol buffer code."""
-# Third-Party
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
-_runtime_version.ValidateProtobufRuntimeVersion(_runtime_version.Domain.PUBLIC, 6, 33, 0, "", "mcpgateway/plugins/framework/generated/tools.proto")
+_runtime_version.ValidateProtobufRuntimeVersion(
+    _runtime_version.Domain.PUBLIC,
+    6,
+    33,
+    0,
+    '',
+    'mcpgateway/plugins/framework/generated/tools.proto'
+)
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-# Third-Party
+from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
+from mcpgateway.plugins.framework.generated import types_pb2 as mcpgateway_dot_plugins_dot_framework_dot_generated_dot_types__pb2
 
-# First-Party
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n2mcpgateway/plugins/framework/generated/tools.proto\x12\x1a\x63ontextforge.plugins.hooks\x1a\x1cgoogle/protobuf/struct.proto\x1a\x32mcpgateway/plugins/framework/generated/types.proto"\x86\x01\n\x14ToolPreInvokePayload\x12\x0c\n\x04name\x18\x01 \x01(\t\x12%\n\x04\x61rgs\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x39\n\x07headers\x18\x03 \x01(\x0b\x32(.contextforge.plugins.common.HttpHeaders"N\n\x15ToolPostInvokePayload\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\'\n\x06result\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct"\xc1\x02\n\x13ToolPreInvokeResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12J\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x30.contextforge.plugins.hooks.ToolPreInvokePayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12O\n\x08metadata\x18\x04 \x03(\x0b\x32=.contextforge.plugins.hooks.ToolPreInvokeResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"\xc4\x02\n\x14ToolPostInvokeResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12K\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x31.contextforge.plugins.hooks.ToolPostInvokePayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12P\n\x08metadata\x18\x04 \x03(\x0b\x32>.contextforge.plugins.hooks.ToolPostInvokeResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*Y\n\x0cToolHookType\x12\x1e\n\x1aTOOL_HOOK_TYPE_UNSPECIFIED\x10\x00\x12\x13\n\x0fTOOL_PRE_INVOKE\x10\x01\x12\x14\n\x10TOOL_POST_INVOKE\x10\x02\x62\x06proto3'
-)
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n2mcpgateway/plugins/framework/generated/tools.proto\x12\x1a\x63ontextforge.plugins.hooks\x1a\x1cgoogle/protobuf/struct.proto\x1a\x32mcpgateway/plugins/framework/generated/types.proto\"\x86\x01\n\x14ToolPreInvokePayload\x12\x0c\n\x04name\x18\x01 \x01(\t\x12%\n\x04\x61rgs\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x39\n\x07headers\x18\x03 \x01(\x0b\x32(.contextforge.plugins.common.HttpHeaders\"N\n\x15ToolPostInvokePayload\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\'\n\x06result\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\xc1\x02\n\x13ToolPreInvokeResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12J\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x30.contextforge.plugins.hooks.ToolPreInvokePayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12O\n\x08metadata\x18\x04 \x03(\x0b\x32=.contextforge.plugins.hooks.ToolPreInvokeResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc4\x02\n\x14ToolPostInvokeResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12K\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x31.contextforge.plugins.hooks.ToolPostInvokePayload\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12P\n\x08metadata\x18\x04 \x03(\x0b\x32>.contextforge.plugins.hooks.ToolPostInvokeResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01*Y\n\x0cToolHookType\x12\x1e\n\x1aTOOL_HOOK_TYPE_UNSPECIFIED\x10\x00\x12\x13\n\x0fTOOL_PRE_INVOKE\x10\x01\x12\x14\n\x10TOOL_POST_INVOKE\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "mcpgateway.plugins.framework.generated.tools_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'mcpgateway.plugins.framework.generated.tools_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-    DESCRIPTOR._loaded_options = None
-    _globals["_TOOLPREINVOKERESULT_METADATAENTRY"]._loaded_options = None
-    _globals["_TOOLPREINVOKERESULT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_TOOLPOSTINVOKERESULT_METADATAENTRY"]._loaded_options = None
-    _globals["_TOOLPOSTINVOKERESULT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_TOOLHOOKTYPE"]._serialized_start = 1032
-    _globals["_TOOLHOOKTYPE"]._serialized_end = 1121
-    _globals["_TOOLPREINVOKEPAYLOAD"]._serialized_start = 165
-    _globals["_TOOLPREINVOKEPAYLOAD"]._serialized_end = 299
-    _globals["_TOOLPOSTINVOKEPAYLOAD"]._serialized_start = 301
-    _globals["_TOOLPOSTINVOKEPAYLOAD"]._serialized_end = 379
-    _globals["_TOOLPREINVOKERESULT"]._serialized_start = 382
-    _globals["_TOOLPREINVOKERESULT"]._serialized_end = 703
-    _globals["_TOOLPREINVOKERESULT_METADATAENTRY"]._serialized_start = 656
-    _globals["_TOOLPREINVOKERESULT_METADATAENTRY"]._serialized_end = 703
-    _globals["_TOOLPOSTINVOKERESULT"]._serialized_start = 706
-    _globals["_TOOLPOSTINVOKERESULT"]._serialized_end = 1030
-    _globals["_TOOLPOSTINVOKERESULT_METADATAENTRY"]._serialized_start = 656
-    _globals["_TOOLPOSTINVOKERESULT_METADATAENTRY"]._serialized_end = 703
+  DESCRIPTOR._loaded_options = None
+  _globals['_TOOLPREINVOKERESULT_METADATAENTRY']._loaded_options = None
+  _globals['_TOOLPREINVOKERESULT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_TOOLPOSTINVOKERESULT_METADATAENTRY']._loaded_options = None
+  _globals['_TOOLPOSTINVOKERESULT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_TOOLHOOKTYPE']._serialized_start=1032
+  _globals['_TOOLHOOKTYPE']._serialized_end=1121
+  _globals['_TOOLPREINVOKEPAYLOAD']._serialized_start=165
+  _globals['_TOOLPREINVOKEPAYLOAD']._serialized_end=299
+  _globals['_TOOLPOSTINVOKEPAYLOAD']._serialized_start=301
+  _globals['_TOOLPOSTINVOKEPAYLOAD']._serialized_end=379
+  _globals['_TOOLPREINVOKERESULT']._serialized_start=382
+  _globals['_TOOLPREINVOKERESULT']._serialized_end=703
+  _globals['_TOOLPREINVOKERESULT_METADATAENTRY']._serialized_start=656
+  _globals['_TOOLPREINVOKERESULT_METADATAENTRY']._serialized_end=703
+  _globals['_TOOLPOSTINVOKERESULT']._serialized_start=706
+  _globals['_TOOLPOSTINVOKERESULT']._serialized_end=1030
+  _globals['_TOOLPOSTINVOKERESULT_METADATAENTRY']._serialized_start=656
+  _globals['_TOOLPOSTINVOKERESULT_METADATAENTRY']._serialized_end=703
 # @@protoc_insertion_point(module_scope)

@@ -1,0 +1,106 @@
+// schemas/contextforge/plugins/hooks/http.proto
+// HTTP hook payloads and results
+// Maps to: mcpgateway/plugins/framework/hooks/http.py
+syntax = "proto3";
+
+package contextforge.plugins.hooks;
+
+import "google/protobuf/struct.proto";
+import "mcpgateway/plugins/framework/generated/types.proto";
+
+// HTTP hook types
+// Maps to: HttpHookType enum (http.py:63-77)
+enum HttpHookType {
+  HTTP_HOOK_TYPE_UNSPECIFIED = 0;
+  HTTP_PRE_REQUEST = 1;
+  HTTP_POST_REQUEST = 2;
+  HTTP_AUTH_RESOLVE_USER = 3;
+  HTTP_AUTH_CHECK_PERMISSION = 4;
+}
+
+// HTTP pre-request payload (middleware layer)
+// Maps to: HttpPreRequestPayload (http.py:79-99)
+message HttpPreRequestPayload {
+  string path = 1;  // REQUIRED
+  string method = 2;  // REQUIRED
+  string client_host = 3;  // OPTIONAL
+  int32 client_port = 4;  // OPTIONAL
+  contextforge.plugins.common.HttpHeaders headers = 5;  // REQUIRED
+}
+
+// HTTP post-request payload (middleware layer)
+// Maps to: HttpPostRequestPayload (http.py:101-115)
+message HttpPostRequestPayload {
+  string path = 1;  // REQUIRED
+  string method = 2;  // REQUIRED
+  string client_host = 3;  // OPTIONAL
+  int32 client_port = 4;  // OPTIONAL
+  contextforge.plugins.common.HttpHeaders headers = 5;  // REQUIRED
+  contextforge.plugins.common.HttpHeaders response_headers = 6;  // OPTIONAL
+  int32 status_code = 7;  // OPTIONAL
+}
+
+// HTTP auth resolve user payload (auth layer)
+// Maps to: HttpAuthResolveUserPayload (http.py:117-135)
+message HttpAuthResolveUserPayload {
+  google.protobuf.Struct credentials = 1;  // OPTIONAL - HTTPAuthorizationCredentials serialized
+  contextforge.plugins.common.HttpHeaders headers = 2;  // REQUIRED
+  string client_host = 3;  // OPTIONAL
+  int32 client_port = 4;  // OPTIONAL
+}
+
+// HTTP auth check permission payload (RBAC layer)
+// Maps to: HttpAuthCheckPermissionPayload (http.py:137-165)
+message HttpAuthCheckPermissionPayload {
+  string user_email = 1;  // REQUIRED
+  string permission = 2;  // REQUIRED
+  string resource_type = 3;  // OPTIONAL
+  string team_id = 4;  // OPTIONAL
+  bool is_admin = 5;  // OPTIONAL - defaults to false
+  string auth_method = 6;  // OPTIONAL
+  string client_host = 7;  // OPTIONAL
+  string user_agent = 8;  // OPTIONAL
+}
+
+// HTTP auth check permission result payload
+// Maps to: HttpAuthCheckPermissionResultPayload (http.py:167-179)
+message HttpAuthCheckPermissionResultPayload {
+  bool granted = 1;  // REQUIRED
+  string reason = 2;  // OPTIONAL
+}
+
+// HTTP pre-request result
+// Maps to: HttpPreRequestResult = PluginResult[HttpHeaderPayload] (http.py:182)
+message HttpPreRequestResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  contextforge.plugins.common.HttpHeaders modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// HTTP post-request result
+// Maps to: HttpPostRequestResult = PluginResult[HttpHeaderPayload] (http.py:183)
+message HttpPostRequestResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  contextforge.plugins.common.HttpHeaders modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// HTTP auth resolve user result
+// Maps to: HttpAuthResolveUserResult = PluginResult[dict] (http.py:184)
+message HttpAuthResolveUserResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  google.protobuf.Struct modified_payload = 2;  // OPTIONAL - user dict (EmailUser serialized)
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}
+
+// HTTP auth check permission result
+// Maps to: HttpAuthCheckPermissionResult = PluginResult[HttpAuthCheckPermissionResultPayload] (http.py:185)
+message HttpAuthCheckPermissionResult {
+  bool continue_processing = 1;  // OPTIONAL - defaults to true
+  HttpAuthCheckPermissionResultPayload modified_payload = 2;  // OPTIONAL
+  contextforge.plugins.common.PluginViolation violation = 3;  // OPTIONAL
+  map<string, string> metadata = 4;  // OPTIONAL - defaults to empty dict
+}

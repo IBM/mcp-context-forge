@@ -4,98 +4,107 @@
 # source: mcpgateway/plugins/framework/generated/types.proto
 # Protobuf Python Version: 6.33.0
 """Generated protocol buffer code."""
-# Third-Party
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
-_runtime_version.ValidateProtobufRuntimeVersion(_runtime_version.Domain.PUBLIC, 6, 33, 0, "", "mcpgateway/plugins/framework/generated/types.proto")
+_runtime_version.ValidateProtobufRuntimeVersion(
+    _runtime_version.Domain.PUBLIC,
+    6,
+    33,
+    0,
+    '',
+    'mcpgateway/plugins/framework/generated/types.proto'
+)
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-# Third-Party
+from google.protobuf import any_pb2 as google_dot_protobuf_dot_any__pb2
+from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
-    b'\n2mcpgateway/plugins/framework/generated/types.proto\x12\x1b\x63ontextforge.plugins.common\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto"\xc8\x02\n\rGlobalContext\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0c\n\x04user\x18\x02 \x01(\t\x12\x11\n\ttenant_id\x18\x03 \x01(\t\x12\x11\n\tserver_id\x18\x04 \x01(\t\x12\x44\n\x05state\x18\x05 \x03(\x0b\x32\x35.contextforge.plugins.common.GlobalContext.StateEntry\x12J\n\x08metadata\x18\x06 \x03(\x0b\x32\x38.contextforge.plugins.common.GlobalContext.MetadataEntry\x1a,\n\nStateEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"\x83\x01\n\x0fPluginViolation\x12\x0e\n\x06reason\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x13\n\x0bplugin_name\x18\x05 \x01(\t"\xaa\x01\n\x0fPluginCondition\x12\x12\n\nserver_ids\x18\x01 \x03(\t\x12\x12\n\ntenant_ids\x18\x02 \x03(\t\x12\r\n\x05tools\x18\x03 \x03(\t\x12\x0f\n\x07prompts\x18\x04 \x03(\t\x12\x11\n\tresources\x18\x05 \x03(\t\x12\x0e\n\x06\x61gents\x18\x06 \x03(\t\x12\x15\n\ruser_patterns\x18\x07 \x03(\t\x12\x15\n\rcontent_types\x18\x08 \x03(\t"\x85\x01\n\x0bHttpHeaders\x12\x46\n\x07headers\x18\x01 \x03(\x0b\x32\x35.contextforge.plugins.common.HttpHeaders.HeadersEntry\x1a.\n\x0cHeadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"\x98\x02\n\x0cPluginResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12.\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x14.google.protobuf.Any\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12I\n\x08metadata\x18\x04 \x03(\x0b\x32\x37.contextforge.plugins.common.PluginResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01"\xf6\x02\n\rPluginContext\x12\x44\n\x05state\x18\x01 \x03(\x0b\x32\x35.contextforge.plugins.common.PluginContext.StateEntry\x12\x42\n\x0eglobal_context\x18\x02 \x01(\x0b\x32*.contextforge.plugins.common.GlobalContext\x12J\n\x08metadata\x18\x03 \x03(\x0b\x32\x38.contextforge.plugins.common.PluginContext.MetadataEntry\x1a\x45\n\nStateEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct:\x02\x38\x01\x1aH\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct:\x02\x38\x01"p\n\x10PluginErrorModel\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct"k\n\x19MCPTransportTLSConfigBase\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t"\x8c\x01\n\x12MCPClientTLSConfig\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t\x12\x0e\n\x06verify\x18\x05 \x01(\x08\x12\x16\n\x0e\x63heck_hostname\x18\x06 \x01(\x08"{\n\x12MCPServerTLSConfig\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t\x12\x15\n\rssl_cert_reqs\x18\x05 \x01(\x05"k\n\x0fMCPServerConfig\x12\x0c\n\x04host\x18\x01 \x01(\t\x12\x0c\n\x04port\x18\x02 \x01(\x05\x12<\n\x03tls\x18\x03 \x01(\x0b\x32/.contextforge.plugins.common.MCPServerTLSConfig"\xa7\x01\n\x0fMCPClientConfig\x12\x39\n\x05proto\x18\x01 \x01(\x0e\x32*.contextforge.plugins.common.TransportType\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\x0e\n\x06script\x18\x03 \x01(\t\x12<\n\x03tls\x18\x04 \x01(\x0b\x32/.contextforge.plugins.common.MCPClientTLSConfig"L\n\x0c\x42\x61seTemplate\x12\x0f\n\x07\x63ontext\x18\x01 \x03(\t\x12+\n\nextensions\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct"\x7f\n\x0cToolTemplate\x12\x11\n\ttool_name\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct"\x83\x01\n\x0ePromptTemplate\x12\x13\n\x0bprompt_name\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct"\x86\x01\n\x10ResourceTemplate\x12\x14\n\x0cresource_uri\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct"\xc5\x01\n\tAppliedTo\x12\x38\n\x05tools\x18\x01 \x03(\x0b\x32).contextforge.plugins.common.ToolTemplate\x12<\n\x07prompts\x18\x02 \x03(\x0b\x32+.contextforge.plugins.common.PromptTemplate\x12@\n\tresources\x18\x03 \x03(\x0b\x32-.contextforge.plugins.common.ResourceTemplate"\xbb\x03\n\x0cPluginConfig\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x03 \x01(\t\x12\x0c\n\x04kind\x18\x04 \x01(\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x0f\n\x07version\x18\x06 \x01(\t\x12\r\n\x05hooks\x18\x07 \x03(\t\x12\x0c\n\x04tags\x18\x08 \x03(\t\x12\x35\n\x04mode\x18\t \x01(\x0e\x32\'.contextforge.plugins.common.PluginMode\x12\x10\n\x08priority\x18\n \x01(\x05\x12@\n\nconditions\x18\x0b \x03(\x0b\x32,.contextforge.plugins.common.PluginCondition\x12:\n\napplied_to\x18\x0c \x01(\x0b\x32&.contextforge.plugins.common.AppliedTo\x12\'\n\x06\x63onfig\x18\r \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x39\n\x03mcp\x18\x0e \x01(\x0b\x32,.contextforge.plugins.common.MCPClientConfig"\x9e\x01\n\x0ePluginManifest\x12\x13\n\x0b\x64\x65scription\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t\x12\x0c\n\x04tags\x18\x04 \x03(\t\x12\x17\n\x0f\x61vailable_hooks\x18\x05 \x03(\t\x12/\n\x0e\x64\x65\x66\x61ult_config\x18\x06 \x01(\x0b\x32\x17.google.protobuf.Struct"\xaf\x01\n\x0ePluginSettings\x12&\n\x1eparallel_execution_within_band\x18\x01 \x01(\x08\x12\x16\n\x0eplugin_timeout\x18\x02 \x01(\x05\x12\x1c\n\x14\x66\x61il_on_plugin_error\x18\x03 \x01(\x08\x12\x19\n\x11\x65nable_plugin_api\x18\x04 \x01(\x08\x12$\n\x1cplugin_health_check_interval\x18\x05 \x01(\x05"\xe6\x01\n\x06\x43onfig\x12:\n\x07plugins\x18\x01 \x03(\x0b\x32).contextforge.plugins.common.PluginConfig\x12\x13\n\x0bplugin_dirs\x18\x02 \x03(\t\x12\x44\n\x0fplugin_settings\x18\x03 \x01(\x0b\x32+.contextforge.plugins.common.PluginSettings\x12\x45\n\x0fserver_settings\x18\x04 \x01(\x0b\x32,.contextforge.plugins.common.MCPServerConfig*n\n\nPluginMode\x12\x1b\n\x17PLUGIN_MODE_UNSPECIFIED\x10\x00\x12\x0b\n\x07\x45NFORCE\x10\x01\x12\x18\n\x14\x45NFORCE_IGNORE_ERROR\x10\x02\x12\x0e\n\nPERMISSIVE\x10\x03\x12\x0c\n\x08\x44ISABLED\x10\x04*W\n\rTransportType\x12\x1e\n\x1aTRANSPORT_TYPE_UNSPECIFIED\x10\x00\x12\x07\n\x03SSE\x10\x01\x12\t\n\x05STDIO\x10\x02\x12\x12\n\x0eSTREAMABLEHTTP\x10\x03\x62\x06proto3'
-)
+
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n2mcpgateway/plugins/framework/generated/types.proto\x12\x1b\x63ontextforge.plugins.common\x1a\x19google/protobuf/any.proto\x1a\x1cgoogle/protobuf/struct.proto\"\xc8\x02\n\rGlobalContext\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x0c\n\x04user\x18\x02 \x01(\t\x12\x11\n\ttenant_id\x18\x03 \x01(\t\x12\x11\n\tserver_id\x18\x04 \x01(\t\x12\x44\n\x05state\x18\x05 \x03(\x0b\x32\x35.contextforge.plugins.common.GlobalContext.StateEntry\x12J\n\x08metadata\x18\x06 \x03(\x0b\x32\x38.contextforge.plugins.common.GlobalContext.MetadataEntry\x1a,\n\nStateEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\x83\x01\n\x0fPluginViolation\x12\x0e\n\x06reason\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x13\n\x0bplugin_name\x18\x05 \x01(\t\"\xaa\x01\n\x0fPluginCondition\x12\x12\n\nserver_ids\x18\x01 \x03(\t\x12\x12\n\ntenant_ids\x18\x02 \x03(\t\x12\r\n\x05tools\x18\x03 \x03(\t\x12\x0f\n\x07prompts\x18\x04 \x03(\t\x12\x11\n\tresources\x18\x05 \x03(\t\x12\x0e\n\x06\x61gents\x18\x06 \x03(\t\x12\x15\n\ruser_patterns\x18\x07 \x03(\t\x12\x15\n\rcontent_types\x18\x08 \x03(\t\"\x85\x01\n\x0bHttpHeaders\x12\x46\n\x07headers\x18\x01 \x03(\x0b\x32\x35.contextforge.plugins.common.HttpHeaders.HeadersEntry\x1a.\n\x0cHeadersEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xc5\x01\n\x18HttpPreForwardingPayload\x12\x13\n\x0btarget_type\x18\x01 \x01(\t\x12\x11\n\ttarget_id\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\x12\x13\n\x0b\x63lient_host\x18\x05 \x01(\t\x12\x13\n\x0b\x63lient_port\x18\x06 \x01(\x05\x12\x39\n\x07headers\x18\x07 \x01(\x0b\x32(.contextforge.plugins.common.HttpHeaders\"\x9f\x02\n\x19HttpPostForwardingPayload\x12\x13\n\x0btarget_type\x18\x01 \x01(\t\x12\x11\n\ttarget_id\x18\x02 \x01(\t\x12\x0c\n\x04path\x18\x03 \x01(\t\x12\x0e\n\x06method\x18\x04 \x01(\t\x12\x13\n\x0b\x63lient_host\x18\x05 \x01(\t\x12\x13\n\x0b\x63lient_port\x18\x06 \x01(\x05\x12\x39\n\x07headers\x18\x07 \x01(\x0b\x32(.contextforge.plugins.common.HttpHeaders\x12\x42\n\x10response_headers\x18\x08 \x01(\x0b\x32(.contextforge.plugins.common.HttpHeaders\x12\x13\n\x0bstatus_code\x18\t \x01(\x05\"\x98\x02\n\x0cPluginResult\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12.\n\x10modified_payload\x18\x02 \x01(\x0b\x32\x14.google.protobuf.Any\x12?\n\tviolation\x18\x03 \x01(\x0b\x32,.contextforge.plugins.common.PluginViolation\x12I\n\x08metadata\x18\x04 \x03(\x0b\x32\x37.contextforge.plugins.common.PluginResult.MetadataEntry\x1a/\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t:\x02\x38\x01\"\xf6\x02\n\rPluginContext\x12\x44\n\x05state\x18\x01 \x03(\x0b\x32\x35.contextforge.plugins.common.PluginContext.StateEntry\x12\x42\n\x0eglobal_context\x18\x02 \x01(\x0b\x32*.contextforge.plugins.common.GlobalContext\x12J\n\x08metadata\x18\x03 \x03(\x0b\x32\x38.contextforge.plugins.common.PluginContext.MetadataEntry\x1a\x45\n\nStateEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct:\x02\x38\x01\x1aH\n\rMetadataEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12&\n\x05value\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct:\x02\x38\x01\"p\n\x10PluginErrorModel\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\"k\n\x19MCPTransportTLSConfigBase\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t\"\x8c\x01\n\x12MCPClientTLSConfig\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t\x12\x0e\n\x06verify\x18\x05 \x01(\x08\x12\x16\n\x0e\x63heck_hostname\x18\x06 \x01(\x08\"{\n\x12MCPServerTLSConfig\x12\x10\n\x08\x63\x65rtfile\x18\x01 \x01(\t\x12\x0f\n\x07keyfile\x18\x02 \x01(\t\x12\x11\n\tca_bundle\x18\x03 \x01(\t\x12\x18\n\x10keyfile_password\x18\x04 \x01(\t\x12\x15\n\rssl_cert_reqs\x18\x05 \x01(\x05\"k\n\x0fMCPServerConfig\x12\x0c\n\x04host\x18\x01 \x01(\t\x12\x0c\n\x04port\x18\x02 \x01(\x05\x12<\n\x03tls\x18\x03 \x01(\x0b\x32/.contextforge.plugins.common.MCPServerTLSConfig\"\xa7\x01\n\x0fMCPClientConfig\x12\x39\n\x05proto\x18\x01 \x01(\x0e\x32*.contextforge.plugins.common.TransportType\x12\x0b\n\x03url\x18\x02 \x01(\t\x12\x0e\n\x06script\x18\x03 \x01(\t\x12<\n\x03tls\x18\x04 \x01(\x0b\x32/.contextforge.plugins.common.MCPClientTLSConfig\"L\n\x0c\x42\x61seTemplate\x12\x0f\n\x07\x63ontext\x18\x01 \x03(\t\x12+\n\nextensions\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x7f\n\x0cToolTemplate\x12\x11\n\ttool_name\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x83\x01\n\x0ePromptTemplate\x12\x13\n\x0bprompt_name\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x86\x01\n\x10ResourceTemplate\x12\x14\n\x0cresource_uri\x18\x01 \x01(\t\x12\x0e\n\x06\x66ields\x18\x02 \x03(\t\x12\x0e\n\x06result\x18\x03 \x01(\x08\x12\x0f\n\x07\x63ontext\x18\x04 \x03(\t\x12+\n\nextensions\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\"\xc5\x01\n\tAppliedTo\x12\x38\n\x05tools\x18\x01 \x03(\x0b\x32).contextforge.plugins.common.ToolTemplate\x12<\n\x07prompts\x18\x02 \x03(\x0b\x32+.contextforge.plugins.common.PromptTemplate\x12@\n\tresources\x18\x03 \x03(\x0b\x32-.contextforge.plugins.common.ResourceTemplate\"\xbb\x03\n\x0cPluginConfig\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x03 \x01(\t\x12\x0c\n\x04kind\x18\x04 \x01(\t\x12\x11\n\tnamespace\x18\x05 \x01(\t\x12\x0f\n\x07version\x18\x06 \x01(\t\x12\r\n\x05hooks\x18\x07 \x03(\t\x12\x0c\n\x04tags\x18\x08 \x03(\t\x12\x35\n\x04mode\x18\t \x01(\x0e\x32\'.contextforge.plugins.common.PluginMode\x12\x10\n\x08priority\x18\n \x01(\x05\x12@\n\nconditions\x18\x0b \x03(\x0b\x32,.contextforge.plugins.common.PluginCondition\x12:\n\napplied_to\x18\x0c \x01(\x0b\x32&.contextforge.plugins.common.AppliedTo\x12\'\n\x06\x63onfig\x18\r \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x39\n\x03mcp\x18\x0e \x01(\x0b\x32,.contextforge.plugins.common.MCPClientConfig\"\x9e\x01\n\x0ePluginManifest\x12\x13\n\x0b\x64\x65scription\x18\x01 \x01(\t\x12\x0e\n\x06\x61uthor\x18\x02 \x01(\t\x12\x0f\n\x07version\x18\x03 \x01(\t\x12\x0c\n\x04tags\x18\x04 \x03(\t\x12\x17\n\x0f\x61vailable_hooks\x18\x05 \x03(\t\x12/\n\x0e\x64\x65\x66\x61ult_config\x18\x06 \x01(\x0b\x32\x17.google.protobuf.Struct\"\xaf\x01\n\x0ePluginSettings\x12&\n\x1eparallel_execution_within_band\x18\x01 \x01(\x08\x12\x16\n\x0eplugin_timeout\x18\x02 \x01(\x05\x12\x1c\n\x14\x66\x61il_on_plugin_error\x18\x03 \x01(\x08\x12\x19\n\x11\x65nable_plugin_api\x18\x04 \x01(\x08\x12$\n\x1cplugin_health_check_interval\x18\x05 \x01(\x05\"\xe6\x01\n\x06\x43onfig\x12:\n\x07plugins\x18\x01 \x03(\x0b\x32).contextforge.plugins.common.PluginConfig\x12\x13\n\x0bplugin_dirs\x18\x02 \x03(\t\x12\x44\n\x0fplugin_settings\x18\x03 \x01(\x0b\x32+.contextforge.plugins.common.PluginSettings\x12\x45\n\x0fserver_settings\x18\x04 \x01(\x0b\x32,.contextforge.plugins.common.MCPServerConfig*n\n\nPluginMode\x12\x1b\n\x17PLUGIN_MODE_UNSPECIFIED\x10\x00\x12\x0b\n\x07\x45NFORCE\x10\x01\x12\x18\n\x14\x45NFORCE_IGNORE_ERROR\x10\x02\x12\x0e\n\nPERMISSIVE\x10\x03\x12\x0c\n\x08\x44ISABLED\x10\x04*W\n\rTransportType\x12\x1e\n\x1aTRANSPORT_TYPE_UNSPECIFIED\x10\x00\x12\x07\n\x03SSE\x10\x01\x12\t\n\x05STDIO\x10\x02\x12\x12\n\x0eSTREAMABLEHTTP\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "mcpgateway.plugins.framework.generated.types_pb2", _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'mcpgateway.plugins.framework.generated.types_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-    DESCRIPTOR._loaded_options = None
-    _globals["_GLOBALCONTEXT_STATEENTRY"]._loaded_options = None
-    _globals["_GLOBALCONTEXT_STATEENTRY"]._serialized_options = b"8\001"
-    _globals["_GLOBALCONTEXT_METADATAENTRY"]._loaded_options = None
-    _globals["_GLOBALCONTEXT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_HTTPHEADERS_HEADERSENTRY"]._loaded_options = None
-    _globals["_HTTPHEADERS_HEADERSENTRY"]._serialized_options = b"8\001"
-    _globals["_PLUGINRESULT_METADATAENTRY"]._loaded_options = None
-    _globals["_PLUGINRESULT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_PLUGINCONTEXT_STATEENTRY"]._loaded_options = None
-    _globals["_PLUGINCONTEXT_STATEENTRY"]._serialized_options = b"8\001"
-    _globals["_PLUGINCONTEXT_METADATAENTRY"]._loaded_options = None
-    _globals["_PLUGINCONTEXT_METADATAENTRY"]._serialized_options = b"8\001"
-    _globals["_PLUGINMODE"]._serialized_start = 4040
-    _globals["_PLUGINMODE"]._serialized_end = 4150
-    _globals["_TRANSPORTTYPE"]._serialized_start = 4152
-    _globals["_TRANSPORTTYPE"]._serialized_end = 4239
-    _globals["_GLOBALCONTEXT"]._serialized_start = 141
-    _globals["_GLOBALCONTEXT"]._serialized_end = 469
-    _globals["_GLOBALCONTEXT_STATEENTRY"]._serialized_start = 376
-    _globals["_GLOBALCONTEXT_STATEENTRY"]._serialized_end = 420
-    _globals["_GLOBALCONTEXT_METADATAENTRY"]._serialized_start = 422
-    _globals["_GLOBALCONTEXT_METADATAENTRY"]._serialized_end = 469
-    _globals["_PLUGINVIOLATION"]._serialized_start = 472
-    _globals["_PLUGINVIOLATION"]._serialized_end = 603
-    _globals["_PLUGINCONDITION"]._serialized_start = 606
-    _globals["_PLUGINCONDITION"]._serialized_end = 776
-    _globals["_HTTPHEADERS"]._serialized_start = 779
-    _globals["_HTTPHEADERS"]._serialized_end = 912
-    _globals["_HTTPHEADERS_HEADERSENTRY"]._serialized_start = 866
-    _globals["_HTTPHEADERS_HEADERSENTRY"]._serialized_end = 912
-    _globals["_PLUGINRESULT"]._serialized_start = 915
-    _globals["_PLUGINRESULT"]._serialized_end = 1195
-    _globals["_PLUGINRESULT_METADATAENTRY"]._serialized_start = 422
-    _globals["_PLUGINRESULT_METADATAENTRY"]._serialized_end = 469
-    _globals["_PLUGINCONTEXT"]._serialized_start = 1198
-    _globals["_PLUGINCONTEXT"]._serialized_end = 1572
-    _globals["_PLUGINCONTEXT_STATEENTRY"]._serialized_start = 1429
-    _globals["_PLUGINCONTEXT_STATEENTRY"]._serialized_end = 1498
-    _globals["_PLUGINCONTEXT_METADATAENTRY"]._serialized_start = 1500
-    _globals["_PLUGINCONTEXT_METADATAENTRY"]._serialized_end = 1572
-    _globals["_PLUGINERRORMODEL"]._serialized_start = 1574
-    _globals["_PLUGINERRORMODEL"]._serialized_end = 1686
-    _globals["_MCPTRANSPORTTLSCONFIGBASE"]._serialized_start = 1688
-    _globals["_MCPTRANSPORTTLSCONFIGBASE"]._serialized_end = 1795
-    _globals["_MCPCLIENTTLSCONFIG"]._serialized_start = 1798
-    _globals["_MCPCLIENTTLSCONFIG"]._serialized_end = 1938
-    _globals["_MCPSERVERTLSCONFIG"]._serialized_start = 1940
-    _globals["_MCPSERVERTLSCONFIG"]._serialized_end = 2063
-    _globals["_MCPSERVERCONFIG"]._serialized_start = 2065
-    _globals["_MCPSERVERCONFIG"]._serialized_end = 2172
-    _globals["_MCPCLIENTCONFIG"]._serialized_start = 2175
-    _globals["_MCPCLIENTCONFIG"]._serialized_end = 2342
-    _globals["_BASETEMPLATE"]._serialized_start = 2344
-    _globals["_BASETEMPLATE"]._serialized_end = 2420
-    _globals["_TOOLTEMPLATE"]._serialized_start = 2422
-    _globals["_TOOLTEMPLATE"]._serialized_end = 2549
-    _globals["_PROMPTTEMPLATE"]._serialized_start = 2552
-    _globals["_PROMPTTEMPLATE"]._serialized_end = 2683
-    _globals["_RESOURCETEMPLATE"]._serialized_start = 2686
-    _globals["_RESOURCETEMPLATE"]._serialized_end = 2820
-    _globals["_APPLIEDTO"]._serialized_start = 2823
-    _globals["_APPLIEDTO"]._serialized_end = 3020
-    _globals["_PLUGINCONFIG"]._serialized_start = 3023
-    _globals["_PLUGINCONFIG"]._serialized_end = 3466
-    _globals["_PLUGINMANIFEST"]._serialized_start = 3469
-    _globals["_PLUGINMANIFEST"]._serialized_end = 3627
-    _globals["_PLUGINSETTINGS"]._serialized_start = 3630
-    _globals["_PLUGINSETTINGS"]._serialized_end = 3805
-    _globals["_CONFIG"]._serialized_start = 3808
-    _globals["_CONFIG"]._serialized_end = 4038
+  DESCRIPTOR._loaded_options = None
+  _globals['_GLOBALCONTEXT_STATEENTRY']._loaded_options = None
+  _globals['_GLOBALCONTEXT_STATEENTRY']._serialized_options = b'8\001'
+  _globals['_GLOBALCONTEXT_METADATAENTRY']._loaded_options = None
+  _globals['_GLOBALCONTEXT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_HTTPHEADERS_HEADERSENTRY']._loaded_options = None
+  _globals['_HTTPHEADERS_HEADERSENTRY']._serialized_options = b'8\001'
+  _globals['_PLUGINRESULT_METADATAENTRY']._loaded_options = None
+  _globals['_PLUGINRESULT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_PLUGINCONTEXT_STATEENTRY']._loaded_options = None
+  _globals['_PLUGINCONTEXT_STATEENTRY']._serialized_options = b'8\001'
+  _globals['_PLUGINCONTEXT_METADATAENTRY']._loaded_options = None
+  _globals['_PLUGINCONTEXT_METADATAENTRY']._serialized_options = b'8\001'
+  _globals['_PLUGINMODE']._serialized_start=4530
+  _globals['_PLUGINMODE']._serialized_end=4640
+  _globals['_TRANSPORTTYPE']._serialized_start=4642
+  _globals['_TRANSPORTTYPE']._serialized_end=4729
+  _globals['_GLOBALCONTEXT']._serialized_start=141
+  _globals['_GLOBALCONTEXT']._serialized_end=469
+  _globals['_GLOBALCONTEXT_STATEENTRY']._serialized_start=376
+  _globals['_GLOBALCONTEXT_STATEENTRY']._serialized_end=420
+  _globals['_GLOBALCONTEXT_METADATAENTRY']._serialized_start=422
+  _globals['_GLOBALCONTEXT_METADATAENTRY']._serialized_end=469
+  _globals['_PLUGINVIOLATION']._serialized_start=472
+  _globals['_PLUGINVIOLATION']._serialized_end=603
+  _globals['_PLUGINCONDITION']._serialized_start=606
+  _globals['_PLUGINCONDITION']._serialized_end=776
+  _globals['_HTTPHEADERS']._serialized_start=779
+  _globals['_HTTPHEADERS']._serialized_end=912
+  _globals['_HTTPHEADERS_HEADERSENTRY']._serialized_start=866
+  _globals['_HTTPHEADERS_HEADERSENTRY']._serialized_end=912
+  _globals['_HTTPPREFORWARDINGPAYLOAD']._serialized_start=915
+  _globals['_HTTPPREFORWARDINGPAYLOAD']._serialized_end=1112
+  _globals['_HTTPPOSTFORWARDINGPAYLOAD']._serialized_start=1115
+  _globals['_HTTPPOSTFORWARDINGPAYLOAD']._serialized_end=1402
+  _globals['_PLUGINRESULT']._serialized_start=1405
+  _globals['_PLUGINRESULT']._serialized_end=1685
+  _globals['_PLUGINRESULT_METADATAENTRY']._serialized_start=422
+  _globals['_PLUGINRESULT_METADATAENTRY']._serialized_end=469
+  _globals['_PLUGINCONTEXT']._serialized_start=1688
+  _globals['_PLUGINCONTEXT']._serialized_end=2062
+  _globals['_PLUGINCONTEXT_STATEENTRY']._serialized_start=1919
+  _globals['_PLUGINCONTEXT_STATEENTRY']._serialized_end=1988
+  _globals['_PLUGINCONTEXT_METADATAENTRY']._serialized_start=1990
+  _globals['_PLUGINCONTEXT_METADATAENTRY']._serialized_end=2062
+  _globals['_PLUGINERRORMODEL']._serialized_start=2064
+  _globals['_PLUGINERRORMODEL']._serialized_end=2176
+  _globals['_MCPTRANSPORTTLSCONFIGBASE']._serialized_start=2178
+  _globals['_MCPTRANSPORTTLSCONFIGBASE']._serialized_end=2285
+  _globals['_MCPCLIENTTLSCONFIG']._serialized_start=2288
+  _globals['_MCPCLIENTTLSCONFIG']._serialized_end=2428
+  _globals['_MCPSERVERTLSCONFIG']._serialized_start=2430
+  _globals['_MCPSERVERTLSCONFIG']._serialized_end=2553
+  _globals['_MCPSERVERCONFIG']._serialized_start=2555
+  _globals['_MCPSERVERCONFIG']._serialized_end=2662
+  _globals['_MCPCLIENTCONFIG']._serialized_start=2665
+  _globals['_MCPCLIENTCONFIG']._serialized_end=2832
+  _globals['_BASETEMPLATE']._serialized_start=2834
+  _globals['_BASETEMPLATE']._serialized_end=2910
+  _globals['_TOOLTEMPLATE']._serialized_start=2912
+  _globals['_TOOLTEMPLATE']._serialized_end=3039
+  _globals['_PROMPTTEMPLATE']._serialized_start=3042
+  _globals['_PROMPTTEMPLATE']._serialized_end=3173
+  _globals['_RESOURCETEMPLATE']._serialized_start=3176
+  _globals['_RESOURCETEMPLATE']._serialized_end=3310
+  _globals['_APPLIEDTO']._serialized_start=3313
+  _globals['_APPLIEDTO']._serialized_end=3510
+  _globals['_PLUGINCONFIG']._serialized_start=3513
+  _globals['_PLUGINCONFIG']._serialized_end=3956
+  _globals['_PLUGINMANIFEST']._serialized_start=3959
+  _globals['_PLUGINMANIFEST']._serialized_end=4117
+  _globals['_PLUGINSETTINGS']._serialized_start=4120
+  _globals['_PLUGINSETTINGS']._serialized_end=4295
+  _globals['_CONFIG']._serialized_start=4298
+  _globals['_CONFIG']._serialized_end=4528
 # @@protoc_insertion_point(module_scope)
