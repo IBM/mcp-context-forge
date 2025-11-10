@@ -50,10 +50,6 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
-from mcpgateway.models import Gateway as PydanticGateway
-from mcpgateway.models import TextContent
-from mcpgateway.models import Tool as PydanticTool
-from mcpgateway.models import ToolResult
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
@@ -1414,7 +1410,7 @@ class ToolService:
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    
+
                     is_err = getattr(tool_call_result, "is_error", None)
                     if is_err is None:
                         is_err = getattr(tool_call_result, "isError", False)
