@@ -1421,7 +1421,8 @@ class ToolService:
 
                 # Plugin hook: tool post-invoke
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.tool_post_invoke(
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        ToolHookType.TOOL_POST_INVOKE,
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
                         global_context=global_context,
                         local_contexts=context_table,
