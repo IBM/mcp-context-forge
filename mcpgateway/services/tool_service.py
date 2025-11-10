@@ -1414,12 +1414,17 @@ class ToolService:
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=tool_call_result.isError, meta=getattr(tool_call_result, "meta", None))
+                    
+                    is_err = getattr(tool_call_result, "is_error", None)
+                    if is_err is None:
+                        is_err = getattr(tool_call_result, "isError", False)
+                    tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                     logger.info(f"Final tool_result: {tool_result}")
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
                 # Plugin hook: tool post-invoke
+                logger.info(f"self._plugin_manager:{self._plugin_manager}")
                 if self._plugin_manager:
                     post_result, _ = await self._plugin_manager.tool_post_invoke(
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
@@ -1431,6 +1436,7 @@ class ToolService:
                     if post_result.modified_payload:
                         # Reconstruct ToolResult from modified result
                         modified_result = post_result.modified_payload.result
+                        logger.info(f"Post-invoke modified result: {modified_result}")
                         if isinstance(modified_result, dict) and "content" in modified_result:
                             tool_result = ToolResult(content=modified_result["content"])
                         else:

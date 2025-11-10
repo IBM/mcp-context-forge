@@ -165,6 +165,10 @@ async def test_call_tool_success(monkeypatch):
     mock_content.type = "text"
     mock_content.text = "hello"
     mock_result.content = [mock_content]
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", AsyncMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock())))
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
@@ -191,6 +195,11 @@ async def test_call_tool_success(monkeypatch):
     @asynccontextmanager
     async def fake_get_db():
         yield mock_db
+
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
