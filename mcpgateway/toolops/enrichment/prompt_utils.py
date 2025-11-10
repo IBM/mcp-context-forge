@@ -144,7 +144,7 @@ async def generate_enriched_tool_description(
             f"Exception {e1!s}! Invalid format returned by LLM1: {responses!s}",
             extra={"details": ""},
         )
-        enriched_desc = ""
+        enriched_desc = current_tool_description
 
     if debug_mode:
         try:
@@ -156,7 +156,7 @@ async def generate_enriched_tool_description(
                 f"Exception {e1!s} in gen_tool_param_desc_via_code!: ",
                 extra={"details": ""},
             )
-            enriched_desc = ""
+            enriched_desc = current_tool_description
 
     #logger.info("Return Value from generate_operation_description: %s", enriched_desc)
     logger.info("Tool description enrichment is successful")
