@@ -1445,6 +1445,7 @@ class ToolService:
                     # If output schema is present, validate and attach structured content
                     if getattr(tool, "output_schema", None):
                         valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
+                        logger.info(f"Structured content validation result: {valid}")
                         success = bool(valid)
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
