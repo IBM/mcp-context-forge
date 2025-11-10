@@ -421,6 +421,7 @@ class ToolService:
         )
         db.add(metric)
         db.commit()
+
     def _extract_and_validate_structured_content(self, tool: DbTool, tool_result: "ToolResult", candidate: Optional[Any] = None) -> bool:
         """
         Extract structured content (if any) and validate it against ``tool.output_schema``.
@@ -561,7 +562,6 @@ class ToolService:
             logger.error(f"Error extracting/validating structured_content: {exc}")
             return False
 
-    
     async def register_tool(
         self,
         db: Session,
@@ -1414,20 +1414,14 @@ class ToolService:
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    tool_result = ToolResult(
-                                content=filtered_response,
-                                structured_content=structured,
-                                is_error=tool_call_result.isError,
-                                meta=getattr(tool_call_result, 'meta', None)
-                            )
+                    tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=tool_call_result.isError, meta=getattr(tool_call_result, "meta", None))
                     logger.info(f"Final tool_result: {tool_result}")
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
                 # Plugin hook: tool post-invoke
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.invoke_hook(
-                        ToolHookType.TOOL_POST_INVOKE,
+                    post_result, _ = await self._plugin_manager.tool_post_invoke(
                         payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
                         global_context=global_context,
                         local_contexts=context_table,

@@ -389,7 +389,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-           # Normalize unstructured content to MCP SDK types
+            # Normalize unstructured content to MCP SDK types
             unstructured = [types.TextContent(type=content.type, text=content.text) for content in result.content]
 
             # If the tool produced structured content (ToolResult.structured_content / structuredContent),
@@ -417,6 +417,7 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
+
 
 @mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:

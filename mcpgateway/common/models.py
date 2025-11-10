@@ -672,7 +672,7 @@ class CallToolResult(BaseModelWithConfigDict):
     is_error: Optional[bool] = Field(default=False, alias="isError")
     structured_content: Optional[Dict[str, Any]] = Field(None, alias="structuredContent")
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
-
+    
 
 # Legacy alias for backwards compatibility
 ToolResult = CallToolResult
