@@ -12639,63 +12639,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
       });
 
-      // Select All / Clear All handlers for create server form
-      document.addEventListener('DOMContentLoaded', function() {
-        // Resources Select All / Clear All for create form
-        const selectAllResourcesBtn = document.getElementById('selectAllResourcesBtn');
-        const clearAllResourcesBtn = document.getElementById('clearAllResourcesBtn');
-        if (selectAllResourcesBtn && clearAllResourcesBtn) {
-          selectAllResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedResources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedResources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        // Prompts Select All / Clear All for create form
-        const selectAllPromptsBtn = document.getElementById('selectAllPromptsBtn');
-        const clearAllPromptsBtn = document.getElementById('clearAllPromptsBtn');
-        if (selectAllPromptsBtn && clearAllPromptsBtn) {
-          selectAllPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedPrompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedPrompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        // Select All / Clear All handlers for edit server form (should already exist but let's add them)
-        const selectAllEditResourcesBtn = document.getElementById('selectAllEditResourcesBtn');
-        const clearAllEditResourcesBtn = document.getElementById('clearAllEditResourcesBtn');
-        if (selectAllEditResourcesBtn && clearAllEditResourcesBtn) {
-          selectAllEditResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-resources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllEditResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-resources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        const selectAllEditPromptsBtn = document.getElementById('selectAllEditPromptsBtn');
-        const clearAllEditPromptsBtn = document.getElementById('clearAllEditPromptsBtn');
-        if (selectAllEditPromptsBtn && clearAllEditPromptsBtn) {
-          selectAllEditPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-prompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllEditPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-prompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-      });
+      // NOTE: Select All / Clear All handlers for Resources and Prompts are now handled
+      // by initResourceSelect() and initPromptSelect() functions in admin.js.
+      // Those functions properly fetch ALL IDs from the server and maintain state,
+      // so items that load via pagination are also included in the selection.
+      // The handlers are attached via HTMX's hx-on::after-swap attribute.
 
       // Download sample JSON for bulk import
       function downloadSampleJSON() {
