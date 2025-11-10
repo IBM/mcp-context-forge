@@ -21,8 +21,8 @@ Examples:
 
     >>> # Create test payload and context
     >>> from mcpgateway.plugins.framework.models import GlobalContext
-    >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-    >>> payload = PromptPrehookPayload(name="test", args={"user": "input"})
+    >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload
+    >>> payload = PromptPrehookPayload(prompt_id="123", name="test", args={"user": "input"})
     >>> context = GlobalContext(request_id="123")
     >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)  # Called in async context
 """
@@ -79,8 +79,7 @@ class PluginExecutor:
     - Metadata aggregation from multiple plugins
 
     Examples:
-        >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-        >>> executor = PluginExecutor[PromptPrehookPayload]()
+        >>> executor = PluginExecutor()
         >>> # In async context:
         >>> # result, contexts = await executor.execute(
         >>> #     plugins=[plugin1, plugin2],
@@ -132,14 +131,14 @@ class PluginExecutor:
 
         Examples:
             >>> # Execute plugins with timeout protection
-            >>> from mcpgateway.plugins.mcp.entities.models import HookType
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
             >>> executor = PluginExecutor(timeout=30)
             >>> # Assuming you have a registry instance:
-            >>> # plugins = registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH)
+            >>> # plugins = registry.get_plugins_for_hook(PromptHookType.PROMPT_PRE_FETCH)
             >>> # In async context:
             >>> # result, contexts = await executor.execute(
             >>> #     plugins=plugins,
-            >>> #     payload=PromptPrehookPayload(name="test", args={}),
+            >>> #     payload=PromptPrehookPayload(prompt_id="123", name="test", args={}),
             >>> #     global_context=GlobalContext(request_id="123"),
             >>> #     plugin_run=pre_prompt_fetch,
             >>> #     compare=pre_prompt_matches
@@ -306,7 +305,6 @@ class PluginExecutor:
 
         Args:
             hook_ref: Reference to the hook and plugin to execute.
-            plugin_run: Function to execute the plugin.
             payload: Payload to process.
             context: Plugin execution context.
 
@@ -316,7 +314,60 @@ class PluginExecutor:
         Raises:
             asyncio.TimeoutError: If plugin exceeds timeout.
         """
-        return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        # Add observability tracing for plugin execution
+        try:
+            # First-Party
+            # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import SessionLocal
+            from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+
+            # pylint: enable=import-outside-toplevel
+
+            trace_id = current_trace_id.get()
+            if trace_id:
+                db = SessionLocal()
+                try:
+                    service = ObservabilityService()
+                    span_id = service.start_span(
+                        db=db,
+                        trace_id=trace_id,
+                        name=f"plugin.execute.{hook_ref.plugin_ref.name}",
+                        kind="internal",
+                        resource_type="plugin",
+                        resource_name=hook_ref.plugin_ref.name,
+                        attributes={
+                            "plugin.name": hook_ref.plugin_ref.name,
+                            "plugin.uuid": hook_ref.plugin_ref.uuid,
+                            "plugin.mode": hook_ref.plugin_ref.mode.value if hasattr(hook_ref.plugin_ref.mode, "value") else str(hook_ref.plugin_ref.mode),
+                            "plugin.priority": hook_ref.plugin_ref.priority,
+                            "plugin.timeout": self.timeout,
+                        },
+                    )
+
+                    # Execute plugin
+                    result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+
+                    # End span with success
+                    service.end_span(
+                        db=db,
+                        span_id=span_id,
+                        status="ok",
+                        attributes={
+                            "plugin.had_violation": result.violation is not None,
+                            "plugin.modified_payload": result.modified_payload is not None,
+                        },
+                    )
+                    return result
+                finally:
+                    db.close()
+            else:
+                # No active trace, execute without instrumentation
+                return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+
+        except Exception as e:
+            # If observability setup fails, continue without instrumentation
+            logger.debug(f"Plugin observability setup failed: {e}")
+            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
 
     def _validate_payload_size(self, payload: Any) -> None:
         """Validate that payload doesn't exceed size limits.
@@ -364,8 +415,8 @@ class PluginManager:
         >>>
         >>> # Execute prompt hooks
         >>> from mcpgateway.plugins.framework.models import GlobalContext
-        >>> from mcpgateway.plugins.mcp.entities.models import PromptPrehookPayload
-        >>> payload = PromptPrehookPayload(name="test", args={})
+        >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload
+        >>> payload = PromptPrehookPayload(prompt_id="123", name="test", args={})
         >>> context = GlobalContext(request_id="req-123")
         >>> # In async context:
         >>> # result, contexts = await manager.prompt_pre_fetch(payload, context)
@@ -530,6 +581,7 @@ class PluginManager:
         """Invoke a set of plugins configured for the hook point in priority order.
 
         Args:
+            hook_type: The type of hook to execute.
             payload: The plugin payload for which the plugins will analyze and modify.
             global_context: Shared context for all plugins with request metadata.
             local_contexts: Optional existing contexts from previous hook executions.
@@ -587,6 +639,7 @@ class PluginManager:
 
         Raises:
             PluginError: If the plugin or hook type cannot be found in the registry.
+            ValueError: If payload type does not match payload_as_json setting.
 
         Examples:
             >>> manager = PluginManager("plugins/config.yaml")

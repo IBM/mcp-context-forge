@@ -30,7 +30,7 @@ class HookRegistry:
         >>> registry = HookRegistry()
         >>> registry.register_hook("test_hook", PluginPayload, PluginResult)
         >>> registry.get_payload_type("test_hook")
-        <class 'mcpgateway.plugins.framework.models.PluginPayload'>
+        <class 'pydantic.main.BaseModel'>
         >>> registry.get_result_type("test_hook")
         <class 'mcpgateway.plugins.framework.models.PluginResult'>
     """
@@ -115,9 +115,9 @@ class HookRegistry:
 
         Examples:
             >>> registry = HookRegistry()
-            >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
-            >>> registry.register_hook("test", PluginPayload, PluginResult)
-            >>> payload = registry.json_to_payload("test", "{}")
+            >>> from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload, PromptPrehookResult
+            >>> registry.register_hook("test", PromptPrehookPayload, PromptPrehookResult)
+            >>> payload = registry.json_to_payload("test", {"prompt_id": "123"})
         """
         payload_class = self.get_payload_type(hook_type)
         if not payload_class:

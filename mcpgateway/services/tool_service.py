@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 import json
 import os
 import re
+import ssl
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
@@ -64,6 +65,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -1179,7 +1181,7 @@ class ToolService:
                         global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_result, context_table = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,
@@ -1249,7 +1251,8 @@ class ToolService:
 
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
-                    gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                    # gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
+                    gateway = tool.gateway
 
                     # Handle OAuth authentication for the gateway
                     if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
@@ -1292,6 +1295,56 @@ class ToolService:
                     if request_headers:
                         headers = get_passthrough_headers(request_headers, headers, db, gateway)
 
+                    def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
+                        """Create an SSL context with the provided CA certificate.
+
+                        Args:
+                            ca_certificate: CA certificate in PEM format
+
+                        Returns:
+                            ssl.SSLContext: Configured SSL context
+                        """
+                        ctx = ssl.create_default_context()
+                        ctx.load_verify_locations(cadata=ca_certificate)
+                        return ctx
+
+                    def get_httpx_client_factory(
+                        headers: dict[str, str] | None = None,
+                        timeout: httpx.Timeout | None = None,
+                        auth: httpx.Auth | None = None,
+                    ) -> httpx.AsyncClient:
+                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                        Args:
+                            headers: Optional headers for the client
+                            timeout: Optional timeout for the client
+                            auth: Optional auth for the client
+
+                        Returns:
+                            httpx.AsyncClient: Configured HTTPX async client
+
+                        Raises:
+                            Exception: If CA certificate signature is invalid
+                        """
+                        valid = False
+                        if gateway.ca_certificate:
+                            if settings.enable_ed25519_signing:
+                                public_key_pem = settings.ed25519_public_key
+                                valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                            else:
+                                valid = True
+                        if valid:
+                            ctx = create_ssl_context(gateway.ca_certificate)
+                        else:
+                            ctx = None
+                        return httpx.AsyncClient(
+                            verify=ctx if ctx else True,
+                            follow_redirects=True,
+                            headers=headers,
+                            timeout=timeout or httpx.Timeout(30.0),
+                            auth=auth,
+                        )
+
                     async def connect_to_sse_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with SSE transport.
 
@@ -1302,7 +1355,7 @@ class ToolService:
                         Returns:
                             ToolResult: Result of tool call
                         """
-                        async with sse_client(url=server_url, headers=headers) as streams:
+                        async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
                             async with ClientSession(*streams) as session:
                                 await session.initialize()
                                 tool_call_result = await session.call_tool(tool.original_name, arguments)
@@ -1318,7 +1371,7 @@ class ToolService:
                         Returns:
                             ToolResult: Result of tool call
                         """
-                        async with streamablehttp_client(url=server_url, headers=headers) as (read_stream, write_stream, _get_session_id):
+                        async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                             async with ClientSession(read_stream, write_stream) as session:
                                 await session.initialize()
                                 tool_call_result = await session.call_tool(tool.original_name, arguments)
@@ -1335,7 +1388,7 @@ class ToolService:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
                         pre_result, context_table = await self._plugin_manager.invoke_hook(
                             ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(headers)),
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
                             global_context=global_context,
                             local_contexts=None,
                             violations_as_exceptions=True,

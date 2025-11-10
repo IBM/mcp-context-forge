@@ -21,9 +21,9 @@ from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
+    PluginResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
-    PromptResult,
     ResourcePostFetchPayload,
     ResourcePreFetchPayload,
     ToolPostInvokePayload,
@@ -160,7 +160,7 @@ async def test_post_prompt_fetch_opapluginfilter():
 
     # Benign payload (allowed by OPA (rego) policy)
     message = Message(content=TextContent(type="text", text="abc"), role=Role.USER)
-    prompt_result = PromptResult(messages=[message])
+    prompt_result = PluginResult(messages=[message])
     payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_post_fetch(payload, context)
@@ -168,7 +168,7 @@ async def test_post_prompt_fetch_opapluginfilter():
 
     # Malign payload (denied by OPA (rego) policy)
     message = Message(content=TextContent(type="text", text="abc@example.com"), role=Role.USER)
-    prompt_result = PromptResult(messages=[message])
+    prompt_result = PluginResult(messages=[message])
     payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_post_fetch(payload, context)

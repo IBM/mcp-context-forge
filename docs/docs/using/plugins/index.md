@@ -278,6 +278,8 @@ are defined as follows:
 
 Available hook values for the `hooks` field:
 
+**MCP Protocol Hooks:**
+
 | Hook Value | Description | Timing |
 |------------|-------------|--------|
 | `"prompt_pre_fetch"` | Process prompt requests before template processing | Before prompt template retrieval |
@@ -286,6 +288,17 @@ Available hook values for the `hooks` field:
 | `"tool_post_invoke"` | Process tool results after execution | After tool completion |
 | `"resource_pre_fetch"` | Process resource requests before fetching | Before resource retrieval |
 | `"resource_post_fetch"` | Process resource content after loading | After resource content loading |
+
+**HTTP Authentication & Middleware Hooks:**
+
+| Hook Value | Description | Timing |
+|------------|-------------|--------|
+| `"http_pre_request"` | Transform HTTP headers before processing | Before authentication |
+| `"http_auth_resolve_user"` | Implement custom authentication | During user authentication |
+| `"http_auth_check_permission"` | Custom permission checking logic | Before RBAC checks |
+| `"http_post_request"` | Process responses and add audit headers | After request completion |
+
+See the [HTTP Authentication Hooks Guide](./http-auth-hooks.md) for detailed implementation examples.
 
 #### Condition Fields
 
@@ -372,17 +385,32 @@ The plugin framework provides comprehensive hook coverage across the entire MCP 
 | `tool_post_invoke` | After tool execution | Result filtering, PII masking, audit logging, response transformation | `ToolPostInvokePayload` |
 | `resource_pre_fetch` | Before resource fetching | URI validation, protocol checking, metadata injection | `ResourcePreFetchPayload` |
 | `resource_post_fetch` | After resource content retrieval | Content filtering, size validation, sensitive data redaction | `ResourcePostFetchPayload` |
+| `http_pre_request` | Before HTTP request processing | Header transformation (e.g., custom token to Bearer) | `HttpPreRequestPayload` |
+| `http_auth_resolve_user` | During user authentication | Custom authentication systems (LDAP, mTLS, token-based) | `HttpAuthResolveUserPayload` |
+| `http_auth_check_permission` | Before RBAC permission checks | Custom permission logic (token-based access, time-based rules) | `HttpAuthCheckPermissionPayload` |
+| `http_post_request` | After HTTP request completion | Audit logging, response header injection | `HttpPostRequestPayload` |
+| `agent_pre_invoke` | Before agent invocation | Message filtering, access control, tool restrictions | `AgentPreInvokePayload` |
+| `agent_post_invoke` | After agent response | Response filtering, content moderation, audit logging | `AgentPostInvokePayload` |
+
+!!! note "HTTP Authentication & Middleware Hooks"
+    For detailed information on implementing custom authentication and authorization, see the [HTTP Authentication Hooks Guide](./http-auth-hooks.md).
+
+!!! note "Agent-to-Agent (A2A) Hooks"
+    Agent hooks enable filtering and monitoring of Agent-to-Agent interactions. These hooks allow you to:
+    - Filter/transform messages before they reach agents
+    - Control which tools are available to agents
+    - Override model or system prompt settings
+    - Filter agent responses for safety/compliance
+    - Monitor tool invocations made by agents
+
+    See [A2A Documentation](../agents/a2a.md) for more information on Agent-to-Agent features.
 
 ### Planned Hooks (Roadmap)
 
 | Hook | Purpose | Expected Release |
 |------|---------|-----------------|
-| `http_pre_forwarding_call` | Before HTTP forwarding | v0.9.0 |
-| `http_post_forwarding_call` | Before HTTP forwarding | v0.9.0 |
 | `server_pre_register` | Server attestation and validation before admission | v0.9.0 |
 | `server_post_register` | Post-registration processing and setup | v0.9.0 |
-| `auth_pre_check` | Custom authentication logic integration | v0.9.0 |
-| `auth_post_check` | Post-authentication processing and enrichment | v0.9.0 |
 | `federation_pre_sync` | Gateway federation validation and filtering | v0.10.0 |
 | `federation_post_sync` | Post-federation data processing and reconciliation | v0.10.0 |
 
@@ -510,215 +538,327 @@ class ResourcePostFetchPayload(BaseModel):
     content: Any                                 # Fetched resource content
 ```
 
-Planned hooks (not yet implemented):
+### HTTP Authentication & Middleware Hooks
 
-- `server_pre_register` / `server_post_register` - Server validation
-- `auth_pre_check` / `auth_post_check` - Custom authentication
-- `federation_pre_sync` / `federation_post_sync` - Gateway federation
+For HTTP request processing and authentication, see the dedicated guide:
 
-## Writing Plugins
+- **[HTTP Authentication Hooks Guide](./http-auth-hooks.md)** - Complete guide to `http_pre_request`, `http_auth_resolve_user`, `http_auth_check_permission`, and `http_post_request` hooks
 
-### Plugin Structure
+### Agent Hooks Details
+
+The agent hooks allow plugins to intercept and modify Agent-to-Agent (A2A) interactions:
+
+- **`agent_pre_invoke`**: Receives agent invocation details before the agent processes the request. Can filter messages, restrict tools, override model settings, or block the request entirely.
+- **`agent_post_invoke`**: Receives the agent's response after processing. Can filter response content, redact sensitive information, or add audit metadata.
+
+Example Use Cases:
+
+- Filter offensive or sensitive content in messages
+- Restrict which tools an agent can access
+- Override model selection or system prompts
+- Apply content moderation to agent responses
+- Log all agent interactions for compliance
+- Block agents from accessing certain resources
+
+#### Agent Hook Payloads
+
+**AgentPreInvokePayload**: Payload for agent pre-invoke hooks.
+
+```python
+class AgentPreInvokePayload(BaseModel):
+    agent_id: str                                    # Agent identifier (can be modified for routing)
+    messages: List[Message]                          # Conversation messages (can be filtered/transformed)
+    tools: Optional[List[str]] = None                # Available tools (can be restricted)
+    headers: Optional[HttpHeaderPayload] = None      # HTTP headers
+    model: Optional[str] = None                      # Model override
+    system_prompt: Optional[str] = None              # System instructions override
+    parameters: Optional[Dict[str, Any]] = None      # LLM parameters (temperature, max_tokens, etc.)
+```
+
+**AgentPostInvokePayload**: Payload for agent post-invoke hooks.
+
+```python
+class AgentPostInvokePayload(BaseModel):
+    agent_id: str                                    # Agent identifier
+    messages: List[Message]                          # Response messages (can be filtered/transformed)
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # Tool invocations made by agent
+```
+
+**Example Plugin:**
 
 ```python
 from mcpgateway.plugins.framework import (
     Plugin,
-    PluginConfig,
     PluginContext,
-    PromptPrehookPayload,
-    PromptPrehookResult,
-    PromptPosthookPayload,
-    PromptPosthookResult,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
-    ResourcePreFetchPayload,
-    ResourcePreFetchResult,
-    ResourcePostFetchPayload,
-    ResourcePostFetchResult
+    AgentPreInvokePayload,
+    AgentPreInvokeResult,
+    PluginViolation,
 )
 
+class AgentSafetyPlugin(Plugin):
+    """Filter agent interactions for safety."""
+
+    async def agent_pre_invoke(
+        self,
+        payload: AgentPreInvokePayload,
+        context: PluginContext
+    ) -> AgentPreInvokeResult:
+        # Restrict dangerous tools
+        if payload.tools:
+            safe_tools = [t for t in payload.tools if t not in ["file_delete", "system_exec"]]
+            if len(safe_tools) < len(payload.tools):
+                payload.tools = safe_tools
+                self.logger.info(f"Restricted tools for agent {payload.agent_id}")
+
+        # Filter offensive content in messages
+        for msg in payload.messages:
+            if self._contains_offensive_content(msg.content):
+                return AgentPreInvokeResult(
+                    continue_processing=False,
+                    violation=PluginViolation(
+                        code="OFFENSIVE_CONTENT",
+                        reason="Message contains offensive content",
+                        description="Agent request blocked due to policy violation"
+                    )
+                )
+
+        return AgentPreInvokeResult(
+            modified_payload=payload,
+            metadata={"safety_checked": True}
+        )
+```
+
+### Planned Hooks (Roadmap)
+
+- `server_pre_register` / `server_post_register` - Server validation
+- `federation_pre_sync` / `federation_post_sync` - Gateway federation
+
+## Writing Plugins
+
+### Understanding the Plugin Base Class
+
+The `Plugin` class is an **abstract base class (ABC)** that provides the foundation for all plugins. You **must** subclass it and implement at least one hook method to create a functional plugin.
+
+```python
+from abc import ABC
+from mcpgateway.plugins.framework import Plugin, PluginConfig
+
 class MyPlugin(Plugin):
-    """Example plugin implementation."""
+    """Your plugin must inherit from Plugin."""
 
     def __init__(self, config: PluginConfig):
         super().__init__(config)
         # Initialize plugin-specific configuration
         self.my_setting = config.config.get("my_setting", "default")
+```
 
-    async def prompt_pre_fetch(
-        self,
-        payload: PromptPrehookPayload,
-        context: PluginContext
-    ) -> PromptPrehookResult:
-        """Process prompt before retrieval."""
+!!! important "Key Design Principle"
+    Plugins implement **only the hooks they need** using one of three registration patterns. You don't need to implement all hooks - just the ones relevant to your plugin's purpose.
 
-        # Access prompt name and arguments
-        prompt_name = payload.name
-        args = payload.args
+### Three Hook Registration Patterns
 
-        # Example: Block requests with forbidden words
-        if "forbidden" in str(args.values()).lower():
-            return PromptPrehookResult(
-                continue_processing=False,
-                violation=PluginViolation(
-                    reason="Forbidden content",
-                    description="Forbidden content detected",
-                    code="FORBIDDEN_CONTENT",
-                    details={"found_in": "arguments"}
-                )
-            )
+#### Pattern 1: Convention-Based (Recommended)
 
-        # Example: Modify arguments
-        if "transform_me" in args:
-            args["transform_me"] = args["transform_me"].upper()
-            return PromptPrehookResult(
-                modified_payload=PromptPrehookPayload(prompt_name, args)
-            )
+The simplest approach - just name your method to match the hook type:
 
-        # Allow request to continue unmodified
-        return PromptPrehookResult()
+```python
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginContext,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
+)
 
-    async def prompt_post_fetch(
-        self,
-        payload: PromptPosthookPayload,
-        context: PluginContext
-    ) -> PromptPosthookResult:
-        """Process prompt after rendering."""
-
-        # Access rendered prompt
-        prompt_result = payload.result
-
-        # Example: Add metadata to context
-        context.metadata["processed_by"] = self.name
-
-        # Example: Modify response
-        for message in prompt_result.messages:
-            message.content.text = message.content.text.replace(
-                "old_text", "new_text"
-            )
-
-        return PromptPosthookResult(
-            modified_payload=payload
-        )
+class ContentFilterPlugin(Plugin):
+    """Convention-based hook - method name matches hook type."""
 
     async def tool_pre_invoke(
         self,
         payload: ToolPreInvokePayload,
         context: PluginContext
     ) -> ToolPreInvokeResult:
-        """Process tool before invocation."""
+        """This hook is automatically discovered by its name."""
 
-        # Access tool name and arguments
-        tool_name = payload.name
-        args = payload.args
-
-        # Example: Block dangerous operations
-        if tool_name == "file_delete" and "system" in str(args):
+        # Block dangerous operations
+        if payload.name == "file_delete" and "system" in str(payload.args):
+            from mcpgateway.plugins.framework import PluginViolation
             return ToolPreInvokeResult(
                 continue_processing=False,
                 violation=PluginViolation(
-                    reason="Dangerous operation blocked",
-                    description="Dangerous operation blocked",
                     code="DANGEROUS_OP",
-                    details={"tool": tool_name}
+                    reason="Dangerous operation blocked",
+                    description=f"Cannot delete system files"
                 )
             )
 
-        # Example: Modify arguments
-        if "sanitize_me" in args:
-            args["sanitize_me"] = self.sanitize_input(args["sanitize_me"])
-            return ToolPreInvokeResult(
-                modified_payload=ToolPreInvokePayload(tool_name, args)
-            )
+        # Modify arguments
+        modified_args = {**payload.args, "processed": True}
+        modified_payload = ToolPreInvokePayload(
+            name=payload.name,
+            args=modified_args,
+            headers=payload.headers
+        )
 
-        return ToolPreInvokeResult()
+        return ToolPreInvokeResult(
+            modified_payload=modified_payload,
+            metadata={"processed_by": self.name}
+        )
+```
 
-    async def tool_post_invoke(
+**When to use:** Default choice for implementing standard framework hooks.
+
+#### Pattern 2: Decorator-Based (Custom Method Names)
+
+Use the `@hook` decorator to register a hook with a custom method name:
+
+```python
+from mcpgateway.plugins.framework import Plugin, PluginContext
+from mcpgateway.plugins.framework.decorator import hook
+from mcpgateway.plugins.framework import (
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+)
+
+class AuditPlugin(Plugin):
+    """Decorator-based hook with descriptive method name."""
+
+    @hook(ToolHookType.TOOL_POST_INVOKE)
+    async def audit_tool_execution(
         self,
         payload: ToolPostInvokePayload,
         context: PluginContext
     ) -> ToolPostInvokeResult:
-        """Process tool after invocation."""
+        """Method name doesn't match hook type, but @hook decorator registers it."""
 
-        # Access tool result
-        tool_name = payload.name
-        result = payload.result
+        # Log tool execution
+        self.logger.info(f"Tool executed: {payload.name}")
 
-        # Example: Filter sensitive data from results
-        if isinstance(result, dict) and "sensitive_data" in result:
-            result["sensitive_data"] = "[REDACTED]"
-            return ToolPostInvokeResult(
-                modified_payload=ToolPostInvokePayload(tool_name, result)
+        # Filter sensitive data from results
+        if isinstance(payload.result, dict) and "password" in payload.result:
+            filtered_result = {**payload.result, "password": "[REDACTED]"}
+            modified_payload = ToolPostInvokePayload(
+                name=payload.name,
+                result=filtered_result
             )
+            return ToolPostInvokeResult(modified_payload=modified_payload)
 
-        # Example: Add audit metadata
-        context.metadata["tool_executed"] = tool_name
-        context.metadata["execution_time"] = time.time()
+        return ToolPostInvokeResult(continue_processing=True)
+```
 
-        return ToolPostInvokeResult()
+**When to use:** When you want descriptive method names that better match your plugin's purpose.
 
-    async def resource_pre_fetch(
+#### Pattern 3: Custom Hooks (Advanced)
+
+Register completely new hook types with custom payload and result types:
+
+```python
+from mcpgateway.plugins.framework import (
+    Plugin,
+    PluginContext,
+    PluginPayload,
+    PluginResult
+)
+from mcpgateway.plugins.framework.decorator import hook
+
+# Define custom payload type
+class EmailPayload(PluginPayload):
+    recipient: str
+    subject: str
+    body: str
+
+# Define custom result type
+class EmailResult(PluginResult[EmailPayload]):
+    pass
+
+class EmailPlugin(Plugin):
+    """Custom hook with new hook type."""
+
+    @hook("email_pre_send", EmailPayload, EmailResult)
+    async def validate_email(
         self,
-        payload: ResourcePreFetchPayload,
+        payload: EmailPayload,
         context: PluginContext
-    ) -> ResourcePreFetchResult:
-        """Process resource before fetching."""
+    ) -> EmailResult:
+        """Completely new hook type: 'email_pre_send'"""
 
-        # Access resource URI and metadata
-        uri = payload.uri
-        metadata = payload.metadata
-
-        # Example: Block certain protocols
-        from urllib.parse import urlparse
-        parsed = urlparse(uri)
-        if parsed.scheme not in ["http", "https", "file"]:
-        return ResourcePreFetchResult(
-            continue_processing=False,
-            violation=PluginViolation(
-                reason="Protocol not allowed",
-                description=f"Protocol {parsed.scheme} not allowed",
-                code="PROTOCOL_BLOCKED",
-                details={"uri": uri, "protocol": parsed.scheme}
+        # Validate email address
+        if "@" not in payload.recipient:
+            modified_payload = EmailPayload(
+                recipient=f"{payload.recipient}@example.com",
+                subject=payload.subject,
+                body=payload.body
             )
-        )
-
-        # Example: Add metadata
-        metadata["validated_by"] = self.name
-        return ResourcePreFetchResult(
-            modified_payload=ResourcePreFetchPayload(uri, metadata)
-        )
-
-    async def resource_post_fetch(
-        self,
-        payload: ResourcePostFetchPayload,
-        context: PluginContext
-    ) -> ResourcePostFetchResult:
-        """Process resource after fetching."""
-
-        # Access resource content
-        uri = payload.uri
-        content = payload.content
-
-        # Example: Redact sensitive patterns from text content
-        if hasattr(content, 'text') and content.text:
-            # Redact email addresses
-            import re
-            content.text = re.sub(
-                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-                '[EMAIL_REDACTED]',
-                content.text
+            return EmailResult(
+                modified_payload=modified_payload,
+                metadata={"fixed_email": True}
             )
 
-        return ResourcePostFetchResult(
-            modified_payload=ResourcePostFetchPayload(uri, content)
-        )
+        return EmailResult(continue_processing=True)
+```
+
+**When to use:** When extending the framework with domain-specific hook points not covered by standard hooks.
+
+### Hook Method Signature Requirements
+
+All hook methods must follow these rules:
+
+1. **Must be async**: All hooks are asynchronous
+2. **Three parameters**: `self`, `payload`, `context`
+3. **Type hints required**: Payload and result types must be properly typed for validation
+4. **Return appropriate result type**: Each hook returns a `PluginResult` typed with the hook's payload type
+
+```python
+async def hook_name(
+    self,
+    payload: PayloadType,           # Specific to the hook (e.g., ToolPreInvokePayload)
+    context: PluginContext          # Always PluginContext
+) -> PluginResult[PayloadType]:     # PluginResult parameterized by payload type
+    """Hook implementation."""
+    pass
+```
+
+**Understanding Result Types:**
+
+Each hook has a corresponding result type that is actually a type alias for `PluginResult[PayloadType]`:
+
+```python
+# These are type aliases defined in the framework
+ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
+ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
+PromptPrehookResult = PluginResult[PromptPrehookPayload]
+HttpAuthResolveUserResult = PluginResult[dict]  # Special case for user dict
+# ... and so on for each hook type
+```
+
+This means when you return a result, you're returning a `PluginResult` instance:
+
+```python
+# All of these are valid ways to construct results:
+return ToolPreInvokeResult(continue_processing=True)
+return ToolPreInvokeResult(modified_payload=new_payload)
+return ToolPreInvokeResult(
+    modified_payload=new_payload,
+    metadata={"processed": True}
+)
+```
+
+### Plugin Lifecycle Methods
+
+Plugins can implement optional lifecycle methods:
+
+```python
+class MyPlugin(Plugin):
+    async def initialize(self):
+        """Called when plugin is loaded."""
+        # Set up resources, connections, etc.
+        self._session = aiohttp.ClientSession()
 
     async def shutdown(self):
-        """Cleanup when plugin shuts down."""
-        # Close connections, save state, etc.
-        pass
+        """Called when plugin manager shuts down."""
+        # Cleanup resources
+        if hasattr(self, '_session'):
+            await self._session.close()
 ```
 
 ### Plugin Context and State
@@ -1226,7 +1366,7 @@ Secure external plugin servers as you would any service (authentication, TLS). T
 - **Hot Configuration Reload:** Update plugin configs without restart
 - **Advanced Caching:** Redis-backed caching for external service calls
 
-### Long-term Vision (v0.8.0+)
+### Long-term Vision (v0.9.0+)
 
 - **Plugin Marketplace:** Community plugin sharing and discovery
 - **Advanced Analytics:** Plugin performance analytics and optimization recommendations

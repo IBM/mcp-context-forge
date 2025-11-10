@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 0.8.0](https://img.shields.io/badge/Version-0.8.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.8.0](https://img.shields.io/badge/AppVersion-0.8.0-informational?style=flat-square)
+![Version: 0.9.0](https://img.shields.io/badge/Version-0.9.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 0.9.0](https://img.shields.io/badge/AppVersion-0.9.0-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -156,6 +156,9 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.secret.JWT_ALGORITHM | string | `"HS256"` |  |
 | mcpContextForge.secret.TOKEN_EXPIRY | string | `"10080"` |  |
 | mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `"my-test-salt"` |  |
+| mcpContextForge.secret.ENABLE_ED25519_SIGNING | string | `"false"` | Enable Ed25519 signing for certificates |
+| mcpContextForge.secret.ED25519_PRIVATE_KEY | string | `""` | Ed25519 private key for signing (PEM format) |
+| mcpContextForge.secret.PREV_ED25519_PRIVATE_KEY | string | `""` | Previous Ed25519 private key for key rotation |
 | mcpContextForge.envFrom[0].secretRef.name | string | `"mcp-gateway-secret"` |  |
 | mcpContextForge.envFrom[1].configMapRef.name | string | `"mcp-gateway-config"` |  |
 | migration.enabled | bool | `true` |  |
@@ -290,7 +293,7 @@ Kubernetes: `>=1.21.0`
 | mcpFastTimeServer.enabled | bool | `true` |  |
 | mcpFastTimeServer.replicaCount | int | `2` |  |
 | mcpFastTimeServer.image.repository | string | `"ghcr.io/ibm/fast-time-server"` |  |
-| mcpFastTimeServer.image.tag | string | `"0.8.0"` |  |
+| mcpFastTimeServer.image.tag | string | `"0.9.0"` |  |
 | mcpFastTimeServer.image.pullPolicy | string | `"IfNotPresent"` |  |
 | mcpFastTimeServer.port | int | `8080` |  |
 | mcpFastTimeServer.ingress.enabled | bool | `true` |  |
@@ -317,3 +320,106 @@ Kubernetes: `>=1.21.0`
 | mcpFastTimeServer.resources.limits.memory | string | `"64Mi"` |  |
 | mcpFastTimeServer.resources.requests.cpu | string | `"25m"` |  |
 | mcpFastTimeServer.resources.requests.memory | string | `"10Mi"` |  |
+
+----------------------------------------------
+
+## Ed25519 Certificate Signing
+
+The MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification. This ensures that CA certificates used by the gateway are authentic and haven't been tampered with.
+
+### Configuration
+
+Ed25519 signing is configured through secret values in `mcpContextForge.secret`:
+
+```yaml
+mcpContextForge:
+  secret:
+    # Enable Ed25519 signing
+    ENABLE_ED25519_SIGNING: "true"
+
+    # Current signing key (PEM format)
+    ED25519_PRIVATE_KEY: |
+      -----BEGIN PRIVATE KEY-----
+      MC4CAQAwBQYDK2VwBCIEIJ5pW... (your key here)
+      -----END PRIVATE KEY-----
+
+    # Previous key for rotation (optional)
+    PREV_ED25519_PRIVATE_KEY: |
+      -----BEGIN PRIVATE KEY-----
+      MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
+      -----END PRIVATE KEY-----
+```
+
+### How It Works
+
+1. **Certificate Signing** - When `ENABLE_ED25519_SIGNING=true`, the gateway signs the CA certificate of each MCP server/gateway using the Ed25519 private key.
+
+2. **Certificate Validation** - Before using a CA certificate for subsequent calls, the gateway validates its signature to ensure authenticity and integrity.
+
+3. **Disabled Mode** - When `ENABLE_ED25519_SIGNING=false` (default), certificates are neither signed nor validated.
+
+### Key Generation
+
+Generate a new Ed25519 key pair:
+
+```bash
+# Using the gateway's built-in utility
+kubectl exec -it deployment/mcp-context-forge -- \
+  python mcpgateway/utils/generate_keys.py
+
+# Or using a running pod
+kubectl exec -it <pod-name> -- \
+  python mcpgateway/utils/generate_keys.py
+```
+
+The output will show:
+- Private key (set this to `ED25519_PRIVATE_KEY`)
+- Public key (derived automatically from private key)
+
+### Key Rotation
+
+To rotate keys without invalidating existing signed certificates:
+
+1. Move the current `ED25519_PRIVATE_KEY` value to `PREV_ED25519_PRIVATE_KEY`
+2. Generate a new key pair using the command above
+3. Set the new private key to `ED25519_PRIVATE_KEY`
+4. Apply the updated Helm values
+
+The gateway will automatically re-sign valid certificates at the point of key change.
+
+### Best Practices
+
+- **Store keys securely**: Use Kubernetes Secrets or external secret management (Vault, AWS Secrets Manager, etc.)
+- **Rotate keys periodically**: Recommended every 90-180 days
+- **Never commit keys to Git**: Use encrypted values files or external secret injection
+- **Use separate keys per environment**: Development, staging, and production should have different keys
+
+### Example with External Secrets
+
+Using [External Secrets Operator](https://external-secrets.io/):
+
+```yaml
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: mcp-gateway-ed25519-keys
+spec:
+  secretStoreRef:
+    name: vault-backend
+    kind: SecretStore
+  target:
+    name: mcp-gateway-secret
+    template:
+      mergePolicy: Merge
+  data:
+    - secretKey: ED25519_PRIVATE_KEY
+      remoteRef:
+        key: mcp-gateway/ed25519
+        property: private_key
+    - secretKey: PREV_ED25519_PRIVATE_KEY
+      remoteRef:
+        key: mcp-gateway/ed25519
+        property: prev_private_key
+```
+
+----------------------------------------------

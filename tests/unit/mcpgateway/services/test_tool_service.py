@@ -69,6 +69,10 @@ def mock_gateway():
     gw.transport = "sse"
     gw.auth_type = None
     gw.auth_value = {}
+    gw.passthrough_headers = []
+    gw.ca_certificate = None
+    gw.ca_certificate_sig = None
+    gw.signing_algorithm = None
 
     gw.enabled = True
     gw.reachable = True
@@ -76,7 +80,7 @@ def mock_gateway():
 
 
 @pytest.fixture
-def mock_tool():
+def mock_tool(mock_gateway):
     """Create a mock tool model."""
     tool = MagicMock(spec=DbTool)
     tool.id = "1"
@@ -1640,15 +1644,38 @@ class TestToolService:
         mock_scalar_1 = Mock()
         mock_scalar_1.scalar_one_or_none.return_value = mock_tool
 
-        mock_scalar_2 = Mock()
         mock_gateway.auth_type = "basic"
         mock_gateway.auth_value = basic_auth_value
         mock_gateway.enabled = True
         mock_gateway.reachable = True
         mock_gateway.id = mock_tool.gateway_id
-        mock_scalar_2.scalar_one_or_none.return_value = mock_gateway
+        mock_gateway.slug="test-gateway"
+        mock_gateway.capabilities = {"tools": {"listChanged": True}}
+        mock_gateway.transport = "SSE"
+        mock_gateway.passthrough_headers = []
 
-        test_db.execute = Mock(side_effect=[mock_scalar_1, mock_scalar_1, mock_scalar_2])
+        # Ensure the service reads headers from the gateway attached to the tool
+        # The invoke path uses `gateway = tool.gateway` for auth header calculation
+        mock_tool.gateway = mock_gateway
+
+        # Two DB selects occur in this path: first for tool, then for gateway
+        # Return the tool on first call and the gateway on second call
+        returns = [mock_tool, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = mock_gateway
+
+            # Return an object whose scalar_one_or_none() returns the real value
+            class Result:
+                def scalar_one_or_none(self_inner):
+                    return value
+
+            return Result()
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
 
         expected_result = ToolResult(content=[TextContent(type="text", text="MCP response")])
 
@@ -1685,6 +1712,7 @@ class TestToolService:
         sse_client_mock.assert_called_once_with(
             url=mock_gateway.url,
             headers={"Authorization": "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="},
+            httpx_client_factory=ANY,
         )
 
     @pytest.mark.asyncio

@@ -43,6 +43,7 @@ from datetime import datetime, timezone
 import logging
 import mimetypes
 import os
+import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
@@ -90,6 +91,7 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -406,6 +408,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         finally:
             await validation_client.aclose()
 
+    def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
+        """Create an SSL context with the provided CA certificate.
+
+        Args:
+            ca_certificate: CA certificate in PEM format
+
+        Returns:
+            ssl.SSLContext: Configured SSL context
+        """
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=ca_certificate)
+        return ctx
+
     async def initialize(self) -> None:
         """Initialize the service and start health check if this instance is the leader.
 
@@ -585,7 +600,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 authentication_headers = None
 
             oauth_config = getattr(gateway, "oauth_config", None)
-            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config)
+            ca_certificate = getattr(gateway, "ca_certificate", None)
+            capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
 
             tools = [
                 DbTool(
@@ -696,6 +712,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 team_id=team_id,
                 owner_email=owner_email,
                 visibility=visibility,
+                ca_certificate=gateway.ca_certificate,
+                ca_certificate_sig=gateway.ca_certificate_sig,
+                signing_algorithm=gateway.signing_algorithm,
             )
 
             # Add to DB
@@ -1235,7 +1254,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     prompts_to_add = []
 
                     try:
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config)
+                        ca_certificate = getattr(gateway, "ca_certificate", None)
+                        capabilities, tools, resources, prompts = await self._initialize_gateway(
+                            gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
+                        )
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
@@ -1985,6 +2007,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> service = GatewayService()
             >>> db = MagicMock()
             >>> gateways = [MagicMock()]
+            >>> gateways[0].ca_certificate = None
             >>> import asyncio
             >>> result = asyncio.run(service.check_health_of_gateways(db, gateways))
             >>> isinstance(result, bool)
@@ -2004,6 +2027,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     gw.enabled = True
             ...     gw.reachable = True
             ...     gw.auth_value = {}
+            ...     gw.ca_certificate = None
             >>> multi_result = asyncio.run(service.check_health_of_gateways(db, multiple_gateways))
             >>> isinstance(multi_result, bool)
             True
@@ -2012,22 +2036,56 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
-            # Reuse a single HTTP client for all requests
-            async with httpx.AsyncClient() as client:
-                for gateway in gateways:
-                    # Create span for individual gateway health check
-                    with create_span(
-                        "gateway.health_check",
-                        {
-                            "gateway.name": gateway.name,
-                            "gateway.id": str(gateway.id),
-                            "gateway.url": gateway.url,
-                            "gateway.transport": gateway.transport,
-                            "gateway.enabled": gateway.enabled,
-                            "http.method": "GET",
-                            "http.url": gateway.url,
-                        },
-                    ) as span:
+            for gateway in gateways:
+                # Create span for individual gateway health check
+                with create_span(
+                    "gateway.health_check",
+                    {
+                        "gateway.name": gateway.name,
+                        "gateway.id": str(gateway.id),
+                        "gateway.url": gateway.url,
+                        "gateway.transport": gateway.transport,
+                        "gateway.enabled": gateway.enabled,
+                        "http.method": "GET",
+                        "http.url": gateway.url,
+                    },
+                ) as span:
+                    valid = False
+                    if gateway.ca_certificate:
+                        if settings.enable_ed25519_signing:
+                            public_key_pem = settings.ed25519_public_key
+                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                        else:
+                            valid = True
+                    if valid:
+                        ssl_context = self.create_ssl_context(gateway.ca_certificate)
+                    else:
+                        ssl_context = None
+
+                    def get_httpx_client_factory(
+                        headers: dict[str, str] | None = None,
+                        timeout: httpx.Timeout | None = None,
+                        auth: httpx.Auth | None = None,
+                    ) -> httpx.AsyncClient:
+                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                        Args:
+                            headers: Optional headers for the client
+                            timeout: Optional timeout for the client
+                            auth: Optional auth for the client
+
+                        Returns:
+                            httpx.AsyncClient: Configured HTTPX async client
+                        """
+                        return httpx.AsyncClient(
+                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
+                            follow_redirects=True,
+                            headers=headers,
+                            timeout=timeout or httpx.Timeout(30.0),
+                            auth=auth,
+                        )
+
+                    async with httpx.AsyncClient(verify=ssl_context) as client:
                         logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
                         try:
                             # Handle different authentication types
@@ -2095,7 +2153,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     if span:
                                         span.set_attribute("http.status_code", response.status_code)
                             elif (gateway.transport).lower() == "streamablehttp":
-                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout) as (read_stream, write_stream, _get_session_id):
+                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
                                     async with ClientSession(read_stream, write_stream) as session:
                                         # Initialize the session
                                         response = await session.initialize()
@@ -2244,7 +2306,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             self._event_subscribers.remove(queue)
 
     async def _initialize_gateway(
-        self, url: str, authentication: Optional[Dict[str, str]] = None, transport: str = "SSE", auth_type: Optional[str] = None, oauth_config: Optional[Dict[str, Any]] = None
+        self,
+        url: str,
+        authentication: Optional[Dict[str, str]] = None,
+        transport: str = "SSE",
+        auth_type: Optional[str] = None,
+        oauth_config: Optional[Dict[str, Any]] = None,
+        ca_certificate: Optional[bytes] = None,
     ) -> tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
         """Initialize connection to a gateway and retrieve its capabilities.
 
@@ -2258,6 +2326,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             transport: Transport protocol - "SSE" or "StreamableHTTP"
             auth_type: Authentication type - "basic", "bearer", "headers", "oauth" or None
             oauth_config: OAuth configuration if auth_type is "oauth"
+            ca_certificate: CA certificate for SSL verification
 
         Returns:
             tuple[Dict[str, Any], List[ToolCreate], List[ResourceCreate], List[PromptCreate]]:
@@ -2324,13 +2393,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if auth_type in ("basic", "bearer", "headers") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if transport.lower() == "sse":
-                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication)
+                capabilities, tools, resources, prompts = await self.connect_to_sse_server(url, authentication, ca_certificate)
             elif transport.lower() == "streamablehttp":
-                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication)
+                capabilities, tools, resources, prompts = await self.connect_to_streamablehttp_server(url, authentication, ca_certificate)
 
             return capabilities, tools, resources, prompts
         except Exception as e:
-            logger.debug(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
+            logger.error(f"Gateway initialization failed for {url}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to initialize gateway at {url}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
@@ -2975,23 +3044,50 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"SSE connection error details: {type(e).__name__}: {str(e)}", exc_info=True)
             raise GatewayConnectionError(f"Failed to connect to SSE server at {server_url}: {str(e)}")
 
-    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+    async def connect_to_sse_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
         """Connect to an MCP server running with SSE transport.
 
         Args:
             server_url: The URL of the SSE MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
+            ca_certificate: Optional CA certificate for SSL verification.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
         """
         if authentication is None:
             authentication = {}
-        # Use authentication directly instead
+
+        def get_httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx.AsyncClient: Configured HTTPX async client
+            """
+            if ca_certificate:
+                ctx = self.create_ssl_context(ca_certificate)
+            else:
+                ctx = None
+            return httpx.AsyncClient(
+                verify=ctx if ctx else True,
+                follow_redirects=True,
+                headers=headers,
+                timeout=timeout or httpx.Timeout(30.0),
+                auth=auth,
+            )
 
         if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="SSE"):
             # Use async with for both sse_client and ClientSession
-            async with sse_client(url=server_url, headers=authentication) as streams:
+            async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
                 async with ClientSession(*streams) as session:
                     # Initialize the session
                     response = await session.initialize()
@@ -3068,12 +3164,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
 
-    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
+    async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
         """Connect to an MCP server running with Streamable HTTP transport.
 
         Args:
             server_url: The URL of the Streamable HTTP MCP server to connect to.
             authentication: Optional dictionary containing authentication headers.
+            ca_certificate: Optional CA certificate for SSL verification.
 
         Returns:
             Tuple containing (capabilities, tools, resources, prompts) from the MCP server.
@@ -3082,10 +3179,34 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             authentication = {}
         # Use authentication directly instead
 
-        # The _validate_gateway_url logic is flawed for streamablehttp, so we bypass it
-        # and go straight to the client connection. The outer try/except in
-        # _initialize_gateway will handle any connection errors.
-        async with streamablehttp_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+        def get_httpx_client_factory(
+            headers: dict[str, str] | None = None,
+            timeout: httpx.Timeout | None = None,
+            auth: httpx.Auth | None = None,
+        ) -> httpx.AsyncClient:
+            """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+            Args:
+                headers: Optional headers for the client
+                timeout: Optional timeout for the client
+                auth: Optional auth for the client
+
+            Returns:
+                httpx.AsyncClient: Configured HTTPX async client
+            """
+            if ca_certificate:
+                ctx = self.create_ssl_context(ca_certificate)
+            else:
+                ctx = None
+            return httpx.AsyncClient(
+                verify=ctx if ctx else True,
+                follow_redirects=True,
+                headers=headers,
+                timeout=timeout or httpx.Timeout(30.0),
+                auth=auth,
+            )
+
+        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Initialize the session
                 response = await session.initialize()

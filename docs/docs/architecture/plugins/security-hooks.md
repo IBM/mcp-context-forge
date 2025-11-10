@@ -1,17 +1,28 @@
 # MCP Security Hooks
 
-This document details the security-focused hook points in the MCP Gateway Plugin Framework, covering the complete MCP protocol request/response lifecycle.
+This document details the security-focused hook points in the MCP Gateway Plugin Framework, covering the complete MCP protocol request/response lifecycle and HTTP authentication.
 
 ## MCP Security Hook Functions
 
 Legend: ✅ = Completed | 🚧 = In Progress | 📋 = Planned
 
-The framework provides eight primary hook points covering the complete MCP request/response lifecycle:
+The framework provides comprehensive hook points covering the complete MCP request/response lifecycle and HTTP authentication:
+
+### HTTP Authentication & Middleware Hooks (✅ Implemented)
 
 | Hook Function | Description | When It Executes | Primary Use Cases | Status |
 |---------------|-------------|-------------------|-------------------|--------|
-| [`http_pre_forwarding_call()`](#http-pre-forwarding-hook) | Process HTTP headers before forwarding requests to tools/gateways | Before HTTP calls are made to external services | Authentication token injection, request labeling, session management, header validation | 🚧 |
-| [`http_post_forwarding_call()`](#http-post-forwarding-hook) | Process HTTP headers after forwarding requests to tools/gateways | After HTTP responses are received from external services | Response header validation, data flow labeling, session tracking, compliance metadata | 🚧 |
+| [`http_pre_request()`](../../using/plugins/http-auth-hooks.md#http_pre_request) | Transform HTTP headers before authentication | Before user authentication | Custom token formats, header transformation, correlation IDs | ✅ |
+| [`http_auth_resolve_user()`](../../using/plugins/http-auth-hooks.md#http_auth_resolve_user) | Custom user authentication | During authentication flow | LDAP, mTLS, custom tokens, external auth services | ✅ |
+| [`http_auth_check_permission()`](../../using/plugins/http-auth-hooks.md#http_auth_check_permission) | Custom permission checking | Before RBAC checks | Token-based permissions, time-based access, custom authorization | ✅ |
+| [`http_post_request()`](../../using/plugins/http-auth-hooks.md#http_post_request) | Process responses and add headers | After request completion | Audit logging, response headers, correlation tracking | ✅ |
+
+See the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md) for detailed implementation and the [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete example.
+
+### MCP Protocol Hooks
+
+| Hook Function | Description | When It Executes | Primary Use Cases | Status |
+|---------------|-------------|-------------------|-------------------|--------|
 | [`prompt_post_list()`](#) | Process a `prompts/list` request before the results are returned to the client. | After a `prompts/list` is returned from the server | Detection or [poisoning](#) threats. | 📋 |
 | [`prompt_pre_fetch()`](#prompt-pre-fetch-hook) | Process prompt requests before template retrieval and rendering | Before prompt template is loaded and processed | Input validation, argument sanitization, access control, PII detection | ✅ |
 | [`prompt_post_fetch()`](#prompt-post-fetch-hook) | Process prompt responses after template rendering into messages | After prompt template is rendered into final messages | Output filtering, content transformation, response validation, compliance checks | ✅ |
@@ -27,121 +38,183 @@ The framework provides eight primary hook points covering the complete MCP reque
 | [`sampling_pre_create()`](#) | Process sampling requests sent to MCP host LLMs | Before the sampling request is returned to the MCP client | Prompt injection, goal manipulation, denial of wallet | 📋 |
 | [`sampling_post_complete()`](#) | Process sampling requests returned from the LLM | Before returning the LLM response to the MCP server | Sensitive information leakage, prompt injection, tool poisoning, PII detection | 📋 |
 
+### Agent-to-Agent (A2A) Hooks (✅ Implemented)
+
+| Hook Function | Description | When It Executes | Primary Use Cases | Status |
+|---------------|-------------|-------------------|-------------------|--------|
+| [`agent_pre_invoke()`](#agent-pre-invoke-hook) | Process agent invocations before execution | Before agent processes the request | Message filtering, tool restrictions, access control, content moderation, model override | ✅ |
+| [`agent_post_invoke()`](#agent-post-invoke-hook) | Process agent responses after execution | After agent completes processing | Response filtering, PII redaction, audit logging, content moderation, compliance checks | ✅ |
+
+Agent hooks enable security controls for Agent-to-Agent interactions, allowing you to:
+- **Pre-invoke**: Filter messages, restrict tool access, override model/system prompts, block malicious requests
+- **Post-invoke**: Filter responses, redact sensitive data, log interactions, apply content moderation
+
+See [A2A Documentation](../../using/agents/a2a.md) for more information on Agent-to-Agent features.
+
 ## MCP Security Hook Reference
 
 Each hook has specific function signatures, payloads, and use cases detailed below:
 
-### HTTP Pre-Forwarding Hook
+### HTTP Pre-Request Hook
 
-**Function Signature**: `async def http_pre_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult`
-
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| **Payload** | `HttpHeaderPayload` | Dictionary of HTTP headers to be processed |
-| **Context** | `PluginContext` | Plugin execution context with request metadata |
-| **Return** | `HttpHeaderPayloadResult` | Modified headers and processing status |
-
-**Payload Structure**: `HttpHeaderPayload` (dictionary of headers)
-```python
-# Example payload
-headers = HttpHeaderPayload({
-    "Authorization": "Bearer token123",
-    "Content-Type": "application/json",
-    "User-Agent": "MCP-Gateway/1.0",
-    "X-Request-ID": "req-456"
-})
-```
-
-**Common Use Cases and Examples**:
-
-| Use Case | Example Implementation | Business Value |
-|----------|----------------------|----------------|
-| **Authentication Token Injection** | Add OAuth tokens or API keys to outbound requests | Secure service-to-service communication |
-| **Request Data Labeling** | Add classification headers (`X-Data-Classification: sensitive`) | Compliance and data governance tracking |
-| **Session Management** | Inject session tokens (`X-Session-ID: session123`) | Stateful request tracking across services |
-| **Header Validation** | Block requests with malicious headers | Security and input validation |
-| **Rate Limiting Headers** | Add rate limiting metadata (`X-Rate-Limit-Remaining: 100`) | API usage management |
-
-```python
-# Example: Authentication token injection plugin
-async def http_pre_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult:
-    # Inject authentication token based on user context
-    modified_headers = dict(payload.root)
-
-    if context.global_context.user:
-        token = await self.get_user_token(context.global_context.user)
-        modified_headers["Authorization"] = f"Bearer {token}"
-
-    # Add data classification label
-    modified_headers["X-Data-Classification"] = "internal"
-
-    return HttpHeaderPayloadResult(
-        continue_processing=True,
-        modified_payload=HttpHeaderPayload(modified_headers),
-        metadata={"plugin": "auth_injector", "action": "token_added"}
-    )
-```
-
-### HTTP Post-Forwarding Hook
-
-**Function Signature**: `async def http_post_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult`
+**Function Signature**: `async def http_pre_request(self, payload: HttpPreRequestPayload, context: PluginContext) -> HttpPreRequestResult`
 
 | Attribute | Type | Description |
 |-----------|------|-------------|
-| **Payload** | `HttpHeaderPayload` | Dictionary of HTTP headers from response |
+| **Payload** | `HttpPreRequestPayload` | HTTP request metadata and headers before authentication |
 | **Context** | `PluginContext` | Plugin execution context with request metadata |
-| **Return** | `HttpHeaderPayloadResult` | Modified headers and processing status |
+| **Return** | `HttpPreRequestResult` | Modified headers and processing status |
 
-**Payload Structure**: `HttpHeaderPayload` (dictionary of response headers)
+**Payload Structure**: `HttpPreRequestPayload`
 ```python
-# Example payload (response headers)
-headers = HttpHeaderPayload({
-    "Content-Type": "application/json",
-    "X-Rate-Limit-Remaining": "99",
-    "X-Response-Time": "150ms",
-    "Cache-Control": "no-cache"
-})
+class HttpPreRequestPayload(PluginPayload):
+    path: str                                         # HTTP path being requested
+    method: str                                       # HTTP method (GET, POST, etc.)
+    client_host: str | None = None                   # Client IP address
+    client_port: int | None = None                   # Client port
+    headers: HttpHeaderPayload                        # HTTP headers (modifiable)
 ```
 
-**Common Use Cases and Examples**:
+**Common Use Cases**:
+- Transform custom authentication headers (e.g., X-API-Key → Authorization: Bearer)
+- Add correlation IDs for request tracking
+- Inject metadata headers for downstream processing
+- Validate header format before authentication
 
-| Use Case | Example Implementation | Business Value |
-|----------|----------------------|----------------|
-| **Response Header Validation** | Validate security headers are present | Ensure proper security controls |
-| **Session Tracking** | Extract and store session state from response | Maintain stateful interactions |
-| **Compliance Metadata** | Add audit headers (`X-Audit-ID: audit123`) | Regulatory compliance tracking |
-| **Performance Monitoring** | Extract timing headers for metrics | Operational observability |
-| **Data Flow Labeling** | Tag responses with data handling instructions | Data governance and compliance |
+**Example**: See [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md#http_pre_request) for detailed examples.
 
+### HTTP Auth Resolve User Hook
+
+**Function Signature**: `async def http_auth_resolve_user(self, payload: HttpAuthResolveUserPayload, context: PluginContext) -> HttpAuthResolveUserResult`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| **Payload** | `HttpAuthResolveUserPayload` | Authentication credentials and request context |
+| **Context** | `PluginContext` | Plugin execution context with request metadata |
+| **Return** | `HttpAuthResolveUserResult` | Authenticated user data or continue signal |
+
+**Payload Structure**: `HttpAuthResolveUserPayload`
 ```python
-# Example: Compliance metadata plugin
-async def http_post_forwarding_call(self, payload: HttpHeaderPayload, context: PluginContext) -> HttpHeaderPayloadResult:
-    modified_headers = dict(payload.root)
+class HttpAuthResolveUserPayload(PluginPayload):
+    credentials: dict | None = None                   # HTTP authorization credentials
+    headers: HttpHeaderPayload                        # Full request headers
+    client_host: str | None = None                   # Client IP address
+    client_port: int | None = None                   # Client port
+```
 
-    # Add compliance audit trail
-    modified_headers["X-Audit-Trail"] = f"processed-by-{context.global_context.request_id}"
-    modified_headers["X-Processing-Timestamp"] = datetime.utcnow().isoformat()
+**Common Use Cases**:
+- Implement custom authentication (LDAP, mTLS, token-based)
+- Validate API keys or custom tokens
+- Integrate with external authentication services
+- Replace JWT authentication with alternative systems
 
-    # Validate required security headers are present
-    required_headers = ["Content-Security-Policy", "X-Frame-Options"]
-    missing_headers = [h for h in required_headers if h not in payload.root]
+**Security Considerations**:
+- Use `continue_processing=True` with `modified_payload` to provide user data
+- Raise `PluginViolationError` to explicitly deny authentication
+- Store `auth_method` in `metadata` for downstream permission checks
 
-    if missing_headers:
-        return HttpHeaderPayloadResult(
-            continue_processing=False,
-            violation=PluginViolation(
-                code="MISSING_SECURITY_HEADERS",
-                reason="Required security headers missing",
-                description=f"Missing headers: {missing_headers}"
-            )
-        )
+**Example**: See [Simple Token Auth Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/examples/simple_token_auth) for a complete implementation.
 
-    return HttpHeaderPayloadResult(
-        continue_processing=True,
-        modified_payload=HttpHeaderPayload(modified_headers),
-        metadata={"plugin": "compliance_validator", "audit_added": True}
+### HTTP Auth Check Permission Hook
+
+**Function Signature**: `async def http_auth_check_permission(self, payload: HttpAuthCheckPermissionPayload, context: PluginContext) -> HttpAuthCheckPermissionResult`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| **Payload** | `HttpAuthCheckPermissionPayload` | Permission check request with user and resource context |
+| **Context** | `PluginContext` | Plugin execution context with request metadata |
+| **Return** | `HttpAuthCheckPermissionResult` | Permission grant/deny decision |
+
+**Payload Structure**: `HttpAuthCheckPermissionPayload`
+```python
+class HttpAuthCheckPermissionPayload(PluginPayload):
+    user_email: str                                   # Email of authenticated user
+    permission: str                                   # Required permission (e.g., "tools.read")
+    resource_type: str | None = None                 # Type of resource being accessed
+    team_id: str | None = None                       # Team context for permission
+    is_admin: bool = False                           # Whether user has admin privileges
+    auth_method: str | None = None                   # Authentication method used
+    client_host: str | None = None                   # Client IP address
+    user_agent: str | None = None                    # User agent string
+```
+
+**Return Structure**: `HttpAuthCheckPermissionResultPayload`
+```python
+class HttpAuthCheckPermissionResultPayload(PluginPayload):
+    granted: bool                                     # Whether permission is granted
+    reason: str | None = None                        # Optional reason for decision
+```
+
+**Common Use Cases**:
+- Bypass RBAC for token-authenticated users
+- Implement time-based access control
+- IP-based permission restrictions
+- Custom authorization logic based on auth method
+- Grant temporary elevated permissions
+
+**Security Considerations**:
+- Only handle requests for specific `auth_method` values
+- Return `granted=True` to allow, `granted=False` to deny
+- Use `reason` field for audit logging
+- Use `continue_processing=True` to let other plugins run
+
+**Example**: See [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md#http_auth_check_permission) for detailed examples.
+
+### HTTP Post-Request Hook
+
+**Function Signature**: `async def http_post_request(self, payload: HttpPostRequestPayload, context: PluginContext) -> HttpPostRequestResult`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| **Payload** | `HttpPostRequestPayload` | Request and response metadata after processing |
+| **Context** | `PluginContext` | Plugin execution context with request metadata |
+| **Return** | `HttpPostRequestResult` | Modified response headers |
+
+**Payload Structure**: `HttpPostRequestPayload`
+```python
+class HttpPostRequestPayload(PluginPayload):
+    path: str                                         # HTTP path that was requested
+    method: str                                       # HTTP method used
+    client_host: str | None = None                   # Client IP address
+    client_port: int | None = None                   # Client port
+    headers: HttpHeaderPayload                        # Request headers
+    response_headers: HttpHeaderPayload | None = None # Response headers (modifiable)
+    status_code: int | None = None                   # HTTP status code
+```
+
+**Common Use Cases**:
+- Add audit headers (X-Auth-Method, X-Auth-User)
+- Propagate correlation IDs to response
+- Add security headers (CORS, CSP)
+- Log authentication events
+- Add authentication status indicators
+
+**Example**:
+```python
+async def http_post_request(self, payload: HttpPostRequestPayload, context: PluginContext) -> HttpPostRequestResult:
+    response_headers = dict(payload.response_headers.root) if payload.response_headers else {}
+
+    # Add auth metadata from context
+    auth_method = context.state.get("auth_method")
+    if auth_method:
+        response_headers["X-Auth-Method"] = auth_method
+
+    auth_email = context.state.get("auth_email")
+    if auth_email:
+        response_headers["X-Auth-User"] = auth_email
+
+    # Add correlation ID
+    request_headers = dict(payload.headers.root)
+    if "x-correlation-id" in request_headers:
+        response_headers["x-correlation-id"] = request_headers["x-correlation-id"]
+
+    return HttpPostRequestResult(
+        modified_payload=HttpHeaderPayload(response_headers),
+        continue_processing=True
     )
 ```
+
+For more detailed HTTP authentication examples, see the [HTTP Authentication Hooks Guide](../../using/plugins/http-auth-hooks.md).
 
 ### Prompt Pre-Fetch Hook
 
@@ -754,6 +827,140 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
     return ResourcePostFetchResult()
 ```
 
+### Agent Pre-Invoke Hook
+
+**Function Signature**: `async def agent_pre_invoke(self, payload: AgentPreInvokePayload, context: PluginContext) -> AgentPreInvokeResult`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| **Payload** | `AgentPreInvokePayload` | Agent invocation details including messages, tools, and configuration |
+| **Context** | `PluginContext` | Plugin execution context with request metadata |
+| **Return** | `AgentPreInvokeResult` | Modified agent invocation and processing status |
+
+**Payload Structure**: `AgentPreInvokePayload`
+```python
+class AgentPreInvokePayload(PluginPayload):
+    agent_id: str                                    # Agent identifier (can be modified for routing)
+    messages: List[Message]                          # Conversation messages (can be filtered/transformed)
+    tools: Optional[List[str]] = None                # Available tools (can be restricted)
+    headers: Optional[HttpHeaderPayload] = None      # HTTP headers
+    model: Optional[str] = None                      # Model override
+    system_prompt: Optional[str] = None              # System instructions override
+    parameters: Optional[Dict[str, Any]] = None      # LLM parameters (temperature, max_tokens, etc.)
+```
+
+**Common Use Cases and Examples**:
+
+| Use Case | Example Implementation | Business Value |
+|----------|----------------------|----------------|
+| **Message Content Filtering** | Scan messages for offensive/sensitive content before agent processing | Content moderation and compliance |
+| **Tool Access Control** | Restrict which tools are available to specific agents | Security and resource protection |
+| **Model Override** | Force specific models based on request context or user tier | Cost control and capability management |
+| **System Prompt Injection** | Add safety guidelines to system prompts | Behavioral guardrails |
+| **Request Blocking** | Block agent invocations that violate policies | Security enforcement |
+
+```python
+# Example: Agent safety filter plugin
+async def agent_pre_invoke(self, payload: AgentPreInvokePayload, context: PluginContext) -> AgentPreInvokeResult:
+    # Restrict dangerous tools
+    if payload.tools:
+        dangerous_tools = ["file_delete", "system_exec", "shell_command"]
+        safe_tools = [t for t in payload.tools if t not in dangerous_tools]
+
+        if len(safe_tools) < len(payload.tools):
+            self.logger.warning(f"Restricted {len(payload.tools) - len(safe_tools)} dangerous tools for agent {payload.agent_id}")
+            payload.tools = safe_tools
+
+    # Filter offensive content in messages
+    for msg in payload.messages:
+        if self._contains_offensive_content(msg.content):
+            violation = PluginViolation(
+                reason="Offensive content detected",
+                description=f"Message contains prohibited content",
+                code="OFFENSIVE_CONTENT"
+            )
+            return AgentPreInvokeResult(continue_processing=False, violation=violation)
+
+    # Add safety instructions to system prompt
+    if not payload.system_prompt:
+        payload.system_prompt = ""
+
+    payload.system_prompt += "\n\nIMPORTANT: You must not generate harmful, illegal, or unethical content."
+
+    return AgentPreInvokeResult(
+        modified_payload=payload,
+        metadata={"safety_checked": True, "tools_restricted": len(payload.tools or []) < len(payload.tools or [])}
+    )
+```
+
+### Agent Post-Invoke Hook
+
+**Function Signature**: `async def agent_post_invoke(self, payload: AgentPostInvokePayload, context: PluginContext) -> AgentPostInvokeResult`
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| **Payload** | `AgentPostInvokePayload` | Agent response including messages and tool calls |
+| **Context** | `PluginContext` | Plugin execution context with request metadata |
+| **Return** | `AgentPostInvokeResult` | Modified agent response and processing status |
+
+**Payload Structure**: `AgentPostInvokePayload`
+```python
+class AgentPostInvokePayload(PluginPayload):
+    agent_id: str                                    # Agent identifier
+    messages: List[Message]                          # Response messages (can be filtered/transformed)
+    tool_calls: Optional[List[Dict[str, Any]]] = None  # Tool invocations made by agent
+```
+
+**Common Use Cases and Examples**:
+
+| Use Case | Example Implementation | Business Value |
+|----------|----------------------|----------------|
+| **Response Content Filtering** | Redact PII or sensitive data from agent responses | Privacy and compliance |
+| **Audit Logging** | Log all agent interactions and tool calls | Security monitoring and debugging |
+| **Content Moderation** | Scan responses for prohibited content | Safety and compliance |
+| **Tool Call Monitoring** | Track which tools agents are using | Usage analytics and security |
+| **Response Transformation** | Format or enhance agent responses | User experience improvement |
+
+```python
+# Example: Agent response auditing and filtering plugin
+async def agent_post_invoke(self, payload: AgentPostInvokePayload, context: PluginContext) -> AgentPostInvokeResult:
+    # Audit log all agent interactions
+    self.logger.info(f"Agent {payload.agent_id} processed request", extra={
+        "agent_id": payload.agent_id,
+        "message_count": len(payload.messages),
+        "tool_calls": payload.tool_calls,
+        "request_id": context.global_context.request_id
+    })
+
+    # Filter PII from response messages
+    import re
+    for msg in payload.messages:
+        if hasattr(msg.content, 'text') and msg.content.text:
+            # Redact email addresses
+            msg.content.text = re.sub(
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
+                '[EMAIL_REDACTED]',
+                msg.content.text
+            )
+
+            # Redact phone numbers
+            msg.content.text = re.sub(
+                r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b',
+                '[PHONE_REDACTED]',
+                msg.content.text
+            )
+
+    # Store tool call metrics in context
+    if payload.tool_calls:
+        context.metadata["tool_calls_count"] = len(payload.tool_calls)
+        context.metadata["tools_used"] = [tc.get("name") for tc in payload.tool_calls]
+
+    return AgentPostInvokeResult(
+        modified_payload=payload,
+        metadata={"pii_filtered": True, "audit_logged": True}
+    )
+```
+
 ## Hook Execution Summary
 
 | Hook | Timing | Primary Use Cases |
@@ -764,6 +971,8 @@ async def resource_post_fetch(self, payload: ResourcePostFetchPayload, context: 
 | `tool_post_invoke` | After tool execution | Result filtering, output validation, transformation |
 | `resource_pre_fetch` | Before resource fetching | URI validation, access control, protocol checks |
 | `resource_post_fetch` | After resource content loading | Content validation, filtering, enhancement |
+| `agent_pre_invoke` | Before agent invocation | Message filtering, tool restrictions, access control, model override |
+| `agent_post_invoke` | After agent response | Response filtering, PII redaction, audit logging, content moderation |
 
 **Performance Notes**:
 

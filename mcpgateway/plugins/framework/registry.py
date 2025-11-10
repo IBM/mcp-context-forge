@@ -26,7 +26,7 @@ class PluginInstanceRegistry:
 
     Examples:
         >>> from mcpgateway.plugins.framework import Plugin, PluginConfig
-        >>> from mcpgateway.plugins.mcp.entities import HookType
+        >>> from mcpgateway.plugins.framework.hooks.prompts import PromptHookType
         >>> registry = PluginInstanceRegistry()
         >>> config = PluginConfig(
         ...     name="test",
@@ -34,14 +34,16 @@ class PluginInstanceRegistry:
         ...     author="test",
         ...     kind="test.Plugin",
         ...     version="1.0",
-        ...     hooks=[HookType.PROMPT_PRE_FETCH],
+        ...     hooks=[PromptHookType.PROMPT_PRE_FETCH],
         ...     tags=[]
         ... )
+        >>> async def prompt_pre_fetch(payload, context): ...
         >>> plugin = Plugin(config)
+        >>> plugin.prompt_pre_fetch = prompt_pre_fetch
         >>> registry.register(plugin)
         >>> registry.get_plugin("test").name
         'test'
-        >>> len(registry.get_plugins_for_hook(HookType.PROMPT_PRE_FETCH))
+        >>> len(registry.get_hook_refs_for_hook(PromptHookType.PROMPT_PRE_FETCH))
         1
         >>> registry.unregister("test")
         >>> registry.get_plugin("test") is None

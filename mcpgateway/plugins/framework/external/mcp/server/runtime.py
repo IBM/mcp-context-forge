@@ -51,6 +51,9 @@ async def get_plugin_configs() -> list[dict]:
 
     Returns:
         JSON string containing list of plugin configuration dictionaries.
+
+    Raises:
+        RuntimeError: If plugin server not initialized.
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -65,6 +68,9 @@ async def get_plugin_config(name: str) -> dict:
 
     Returns:
         JSON string containing plugin configuration dictionary.
+
+    Raises:
+        RuntimeError: If plugin server not initialized.
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -85,6 +91,9 @@ async def invoke_hook(hook_type: str, plugin_name: str, payload: Dict[str, Any],
 
     Returns:
         Result dictionary with payload, context and any error information.
+
+    Raises:
+        RuntimeError: If plugin server not initialized.
     """
     if not SERVER:
         raise RuntimeError("Plugin server not initialized")
@@ -165,9 +174,6 @@ class SSLCapableFastMCP(FastMCP):
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
 
-            Args:
-                request: the http request from which the health check occurs.
-
             Returns:
                 JSON response with health status.
             """
@@ -198,9 +204,6 @@ class SSLCapableFastMCP(FastMCP):
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
-
-            Args:
-                request: the http request from which the health check occurs.
 
             Returns:
                 JSON response with health status.

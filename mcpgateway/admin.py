@@ -31,28 +31,33 @@ import os
 from pathlib import Path
 import tempfile
 import time
-from typing import Any, cast, Dict, List, Optional, Union
+from typing import Any
+from typing import cast as typing_cast
+from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import and_, case, desc, func, or_, select
+from sqlalchemy import and_, case, cast, desc, func, or_, select, String
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import Prompt as DbPrompt
+from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     A2AAgentCreate,
@@ -118,6 +123,7 @@ from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.validate_signature import sign_data
 
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
@@ -1034,14 +1040,36 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
         )
@@ -1061,7 +1089,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
 
         # Ensure default visibility is private and assign to personal team when available
-        team_id_cast = cast(Optional[str], team_id)
+        team_id_cast = typing_cast(Optional[str], team_id)
         await server_service.register_server(
             db,
             server,
@@ -1238,14 +1266,36 @@ async def admin_edit_server(
             except json.JSONDecodeError:
                 LOGGER.warning("Failed to parse allToolIds JSON, falling back to checked tools")
 
+        # Handle "Select All" for resources
+        associated_resources_list = form.getlist("associatedResources")
+        if form.get("selectAllResources") == "true":
+            all_resource_ids_json = str(form.get("allResourceIds", "[]"))
+            try:
+                all_resource_ids = json.loads(all_resource_ids_json)
+                associated_resources_list = all_resource_ids
+                LOGGER.info(f"Select All resources enabled for edit: {len(all_resource_ids)} resources selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allResourceIds JSON, falling back to checked resources")
+
+        # Handle "Select All" for prompts
+        associated_prompts_list = form.getlist("associatedPrompts")
+        if form.get("selectAllPrompts") == "true":
+            all_prompt_ids_json = str(form.get("allPromptIds", "[]"))
+            try:
+                all_prompt_ids = json.loads(all_prompt_ids_json)
+                associated_prompts_list = all_prompt_ids
+                LOGGER.info(f"Select All prompts enabled for edit: {len(all_prompt_ids)} prompts selected")
+            except json.JSONDecodeError:
+                LOGGER.warning("Failed to parse allPromptIds JSON, falling back to checked prompts")
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
             description=form.get("description"),
             icon=form.get("icon"),
             associated_tools=",".join(str(x) for x in associated_tools_list),
-            associated_resources=",".join(str(x) for x in form.getlist("associatedResources")),
-            associated_prompts=",".join(str(x) for x in form.getlist("associatedPrompts")),
+            associated_resources=",".join(str(x) for x in associated_resources_list),
+            associated_prompts=",".join(str(x) for x in associated_prompts_list),
             tags=tags,
             visibility=visibility,
             team_id=team_id,
@@ -2456,6 +2506,7 @@ async def admin_ui(
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
+            "observability_enabled": getattr(settings, "observability_enabled", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
@@ -5142,6 +5193,430 @@ async def admin_search_tools(
     return {"tools": tools, "count": len(tools)}
 
 
+@admin_router.get("/prompts/partial", response_class=HTMLResponse)
+async def admin_prompts_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated prompts HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    prompts. It supports three render modes:
+
+    - default: full table partial (rows + controls)
+    - ``render="controls"``: return only pagination controls
+    - ``render="selector"``: return selector items for infinite scroll
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive prompts in results.
+        render (Optional[str]): Render mode; one of None, "controls", "selector".
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: A rendered template response
+        containing either the table partial, pagination controls, or selector
+        items depending on ``render``. The response contains JSON-serializable
+        encoded prompt data when templates expect it.
+    """
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbPrompt)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbPrompt.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+    access_conditions.append(DbPrompt.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbPrompt.is_active.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination ordering and limits
+    offset = (page - 1) * per_page
+    query = query.order_by(DbPrompt.name, DbPrompt.id).offset(offset).limit(per_page)
+
+    prompts_db = list(db.scalars(query).all())
+
+    # Convert to schemas using PromptService
+    local_prompt_service = PromptService()
+    prompts_data = []
+    for p in prompts_db:
+        try:
+            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
+            if prompt_dict:
+                prompts_data.append(prompt_dict)
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert prompt {p.id} to schema: {e}")
+            continue
+
+    data = jsonable_encoder(prompts_data)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    base_url = f"{settings.app_root_path}/admin/prompts/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#prompts-table-body",
+                "hx_indicator": "#prompts-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "prompts_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "prompts_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/resources/partial", response_class=HTMLResponse)
+async def admin_resources_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(50, ge=1, le=500, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return HTML partial for paginated resources list (HTMX endpoint).
+
+    This endpoint mirrors the behavior of the tools and prompts partial
+    endpoints. It returns a template fragment suitable for HTMX-based
+    pagination/infinite-scroll within the admin UI.
+
+    Args:
+        request (Request): FastAPI request object used by the template engine.
+        page (int): Page number (1-indexed).
+        per_page (int): Number of items per page (bounded by settings).
+        include_inactive (bool): If True, include inactive resources in results.
+        render (Optional[str]): Render mode; when set to "controls" returns only
+            pagination controls. Other supported value: "selector" for selector
+            items used by infinite scroll selectors.
+        db (Session): Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        Union[HTMLResponse, TemplateResponse]: Rendered template response with the
+        resources partial (rows + controls), pagination controls only, or selector
+        items depending on the ``render`` parameter.
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+
+    # Normalize per_page
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    user_email = get_user_email(user)
+
+    # Team scoping
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    # Build base query
+    query = select(DbResource)
+
+    # Apply active/inactive filter
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    # Access conditions: owner, team, public
+    access_conditions = [DbResource.owner_email == user_email]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    access_conditions.append(DbResource.visibility == "public")
+
+    query = query.where(or_(*access_conditions))
+
+    # Count total items
+    count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if not include_inactive:
+        count_query = count_query.where(DbResource.is_active.is_(True))
+
+    total_items = db.scalar(count_query) or 0
+
+    # Apply pagination ordering and limits
+    offset = (page - 1) * per_page
+    query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
+
+    resources_db = list(db.scalars(query).all())
+
+    # Convert to schemas using ResourceService
+    local_resource_service = ResourceService()
+    resources_data = []
+    for r in resources_db:
+        try:
+            resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
+        except Exception as e:
+            LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
+            continue
+
+    data = jsonable_encoder(resources_data)
+
+    # Build pagination metadata
+    pagination = PaginationMeta(
+        page=page,
+        per_page=per_page,
+        total_items=total_items,
+        total_pages=math.ceil(total_items / per_page) if per_page > 0 else 0,
+        has_next=page < math.ceil(total_items / per_page) if per_page > 0 else False,
+        has_prev=page > 1,
+    )
+
+    base_url = f"{settings.app_root_path}/admin/resources/partial"
+    links = generate_pagination_links(
+        base_url=base_url,
+        page=page,
+        per_page=per_page,
+        total_pages=pagination.total_pages,
+        query_params={"include_inactive": "true"} if include_inactive else {},
+    )
+
+    if render == "controls":
+        return request.app.state.templates.TemplateResponse(
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#resources-table-body",
+                "hx_indicator": "#resources-loading",
+                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    if render == "selector":
+        return request.app.state.templates.TemplateResponse(
+            "resources_selector_items.html",
+            {
+                "request": request,
+                "data": data,
+                "pagination": pagination.model_dump(),
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    return request.app.state.templates.TemplateResponse(
+        "resources_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
+
+
+@admin_router.get("/prompts/ids", response_class=JSONResponse)
+async def admin_get_all_prompt_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all prompt IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of prompts the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): When True include prompts that are inactive.
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "prompt_ids": List[str] of accessible prompt IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbPrompt.id)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    prompt_ids = [row[0] for row in db.execute(query).all()]
+    return {"prompt_ids": prompt_ids, "count": len(prompt_ids)}
+
+
+@admin_router.get("/resources/ids", response_class=JSONResponse)
+async def admin_get_all_resource_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return all resource IDs accessible to the current user (select-all helper).
+
+    This endpoint is used by UI "Select All" helpers to fetch only the IDs
+    of resources the requesting user can access (owner, team, or public).
+
+    Args:
+        include_inactive (bool): Whether to include inactive resources in the results.
+        db (Session): Database session dependency.
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing two keys:
+            - "resource_ids": List[str] of accessible resource IDs.
+            - "count": int number of IDs returned.
+    """
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbResource.id)
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+    resource_ids = [row[0] for row in db.execute(query).all()]
+    return {"resource_ids": resource_ids, "count": len(resource_ids)}
+
+
+@admin_router.get("/prompts/search", response_class=JSONResponse)
+async def admin_search_prompts(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search prompts by name or description for selector search.
+
+    Performs a case-insensitive search over prompt names and descriptions
+    and returns a limited list of matching prompts suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include prompts that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "prompts": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched prompts returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"prompts": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
+    if not include_inactive:
+        query = query.where(DbPrompt.is_active.is_(True))
+
+    access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
+
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [func.lower(DbPrompt.name).contains(search_query), func.lower(coalesce(DbPrompt.description, "")).contains(search_query)]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbPrompt.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbPrompt.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    prompts = []
+    for row in results:
+        prompts.append({"id": row.id, "name": row.name, "description": row.description})
+
+    return {"prompts": prompts, "count": len(prompts)}
+
+
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
 async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
@@ -6055,7 +6530,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/gateways")
-async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
+async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
     Expects form fields:
@@ -6271,6 +6746,29 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
+        ca_certificate: Optional[str] = None
+        sig: Optional[str] = None
+
+        # CA certificate(s) handled by JavaScript validation (supports single or multiple files)
+        # JavaScript validates, orders (root→intermediate→leaf), and concatenates into hidden field
+        if "ca_certificate" in form:
+            ca_cert_value = form["ca_certificate"]
+            if isinstance(ca_cert_value, str) and ca_cert_value.strip():
+                ca_certificate = ca_cert_value.strip()
+                LOGGER.info("✅ CA certificate(s) received and validated by frontend")
+
+                if settings.enable_ed25519_signing:
+                    try:
+                        private_key_pem = settings.ed25519_private_key.get_secret_value()
+                        sig = sign_data(ca_certificate.encode(), private_key_pem)
+                    except Exception as e:
+                        LOGGER.error(f"Error signing CA certificate: {e}")
+                        sig = None
+                        raise RuntimeError("Failed to sign CA certificate") from e
+                else:
+                    LOGGER.warning("⚠️  Ed25519 signing is disabled; CA certificate will be stored without signature")
+                    sig = None
+
         gateway = GatewayCreate(
             name=str(form["name"]),
             url=str(form["url"]),
@@ -6287,6 +6785,9 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             oauth_config=oauth_config,
             passthrough_headers=passthrough_headers,
             visibility=visibility,
+            ca_certificate=ca_certificate,
+            ca_certificate_sig=sig if sig else None,
+            signing_algorithm="ed25519" if sig else None,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
@@ -6295,6 +6796,11 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     except ValidationError as ex:
         # --- Getting only the custom message from the ValueError ---
         error_ctx = [str(err["ctx"]["error"]) for err in ex.errors()]
+        return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
+
+    except RuntimeError as re:
+        # --- Getting only the custom message from the ValueError ---
+        error_ctx = [str(re)]
         return JSONResponse(content={"success": False, "message": "; ".join(error_ctx)}, status_code=422)
 
     user_email = get_user_email(user)
@@ -6307,7 +6813,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        team_id_cast = cast(Optional[str], team_id)
+        team_id_cast = typing_cast(Optional[str], team_id)
         await gateway_service.register_gateway(
             db,
             gateway,
@@ -6858,6 +7364,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         ...     ("name", "Test Resource"),
         ...     ("description", "A test resource"),
         ...     ("mimeType", "text/plain"),
+        ...     ("template", ""),
         ...     ("content", "Sample content"),
         ... ])
         >>> mock_request = MagicMock(spec=Request)
@@ -6889,12 +7396,16 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
+        # Handle template field: convert empty string to None for optional field
+        template_value = form.get("template")
+        template = template_value if template_value else None
+
         resource = ResourceCreate(
             uri=str(form["uri"]),
             name=str(form["name"]),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
-            template=cast(str | None, form.get("template")),
+            template=template,
             content=str(form["content"]),
             tags=tags,
             visibility=visibility,
@@ -8549,7 +9060,7 @@ async def admin_import_tools(
             },
         }
 
-        rd = cast(Dict[str, Any], response_data)
+        rd = typing_cast(Dict[str, Any], response_data)
         if len(errors) == 0:
             rd["message"] = f"Successfully imported all {len(created)} tools"
         else:
@@ -8610,7 +9121,7 @@ async def admin_get_logs(
         HTTPException: If validation fails or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         return {"logs": [], "total": 0, "stats": {}}
 
@@ -8688,7 +9199,7 @@ async def admin_stream_logs(
         HTTPException: If log level is invalid or service unavailable
     """
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
@@ -8907,7 +9418,7 @@ async def admin_export_logs(
         raise HTTPException(400, f"Invalid format: {export_format}. Use 'json' or 'csv'")
 
     # Get log storage from logging service
-    storage = cast(Any, logging_service).get_storage()
+    storage = typing_cast(Any, logging_service).get_storage()
     if not storage:
         raise HTTPException(503, "Log storage not available")
 
@@ -11253,3 +11764,1678 @@ async def admin_generate_support_bundle(
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
+
+
+# ============================================================================
+# Observability Routes
+# ============================================================================
+
+
+@admin_router.get("/observability/partial", response_class=HTMLResponse)
+async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
+    """Render the observability dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered observability dashboard template
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse("observability_partial.html", {"request": request, "root_path": root_path})
+
+
+@admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
+async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
+    """Render the advanced metrics dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered metrics dashboard template
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse("observability_metrics.html", {"request": request, "root_path": root_path})
+
+
+@admin_router.get("/observability/stats", response_class=HTMLResponse)
+async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
+    """Get observability statistics for the dashboard.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back for statistics (1-168)
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered statistics template with trace counts and averages
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        # pylint: disable=not-callable
+        total_traces = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time).scalar() or 0
+
+        success_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "ok").scalar() or 0
+
+        error_count = db.query(func.count(ObservabilityTrace.trace_id)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.status == "error").scalar() or 0
+        # pylint: enable=not-callable
+
+        avg_duration = db.query(func.avg(ObservabilityTrace.duration_ms)).filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None)).scalar() or 0
+
+        stats = {
+            "total_traces": total_traces,
+            "success_count": success_count,
+            "error_count": error_count,
+            "avg_duration_ms": avg_duration,
+        }
+
+        return request.app.state.templates.TemplateResponse("observability_stats.html", {"request": request, "stats": stats})
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/traces", response_class=HTMLResponse)
+async def get_observability_traces(
+    request: Request,
+    time_range: str = Query("24h"),
+    status_filter: str = Query("all"),
+    limit: int = Query(50),
+    min_duration: Optional[float] = Query(None),
+    max_duration: Optional[float] = Query(None),
+    http_method: Optional[str] = Query(None),
+    user_email: Optional[str] = Query(None),
+    name_search: Optional[str] = Query(None),
+    attribute_search: Optional[str] = Query(None),
+    tool_name: Optional[str] = Query(None),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get list of traces for the dashboard.
+
+    Args:
+        request: FastAPI request object
+        time_range: Time range filter (1h, 6h, 24h, 7d)
+        status_filter: Status filter (all, ok, error)
+        limit: Maximum number of traces to return
+        min_duration: Minimum duration in ms
+        max_duration: Maximum duration in ms
+        http_method: HTTP method filter
+        user_email: User email filter
+        name_search: Trace name search
+        attribute_search: Full-text attribute search
+        tool_name: Filter by tool name (shows traces that invoked this tool)
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered traces list template
+    """
+    db = next(get_db())
+    try:
+        # Parse time range
+        time_map = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}
+        hours = time_map.get(time_range, 24)
+        cutoff_time = datetime.now() - timedelta(hours=hours)
+
+        query = db.query(ObservabilityTrace).filter(ObservabilityTrace.start_time >= cutoff_time)
+
+        # Apply status filter
+        if status_filter != "all":
+            query = query.filter(ObservabilityTrace.status == status_filter)
+
+        # Apply duration filters
+        if min_duration is not None:
+            query = query.filter(ObservabilityTrace.duration_ms >= min_duration)
+        if max_duration is not None:
+            query = query.filter(ObservabilityTrace.duration_ms <= max_duration)
+
+        # Apply HTTP method filter
+        if http_method:
+            query = query.filter(ObservabilityTrace.http_method == http_method)
+
+        # Apply user email filter
+        if user_email:
+            query = query.filter(ObservabilityTrace.user_email.ilike(f"%{user_email}%"))
+
+        # Apply name search
+        if name_search:
+            query = query.filter(ObservabilityTrace.name.ilike(f"%{name_search}%"))
+
+        # Apply attribute search
+        if attribute_search:
+            # Escape special characters for SQL LIKE
+            safe_search = attribute_search.replace("%", "\\%").replace("_", "\\_")
+            query = query.filter(cast(ObservabilityTrace.attributes, String).ilike(f"%{safe_search}%"))
+
+        # Apply tool name filter (join with spans to find traces that invoked a specific tool)
+        if tool_name:
+            # Subquery to find trace_ids that have tool invocations matching the tool name
+            tool_trace_ids = (
+                db.query(ObservabilitySpan.trace_id)
+                .filter(
+                    ObservabilitySpan.name == "tool.invoke",
+                    func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),  # pylint: disable=not-callable
+                )
+                .distinct()
+                .subquery()
+            )
+            query = query.filter(ObservabilityTrace.trace_id.in_(select(tool_trace_ids.c.trace_id)))
+
+        # Get traces ordered by most recent
+        traces = query.order_by(ObservabilityTrace.start_time.desc()).limit(limit).all()
+
+        root_path = request.scope.get("root_path", "")
+        return request.app.state.templates.TemplateResponse("observability_traces_list.html", {"request": request, "traces": traces, "root_path": root_path})
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
+async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
+    """Get detailed trace information with spans.
+
+    Args:
+        request: FastAPI request object
+        trace_id: UUID of the trace to retrieve
+        _user: Authenticated user with admin permissions (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered trace detail template with waterfall view
+
+    Raises:
+        HTTPException: 404 if trace not found
+    """
+    db = next(get_db())
+    try:
+        trace = db.query(ObservabilityTrace).filter_by(trace_id=trace_id).options(joinedload(ObservabilityTrace.spans).joinedload(ObservabilitySpan.events)).first()
+
+        if not trace:
+            raise HTTPException(status_code=404, detail="Trace not found")
+
+        root_path = request.scope.get("root_path", "")
+        return request.app.state.templates.TemplateResponse("observability_trace_detail.html", {"request": request, "trace": trace, "root_path": root_path})
+    finally:
+        db.close()
+
+
+@admin_router.post("/observability/queries", response_model=dict)
+async def save_observability_query(
+    request: Request,  # pylint: disable=unused-argument
+    name: str = Body(..., description="Name for the saved query"),
+    description: Optional[str] = Body(None, description="Optional description"),
+    filter_config: dict = Body(..., description="Filter configuration as JSON"),
+    is_shared: bool = Body(False, description="Whether query is shared with team"),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Save a new observability query filter configuration.
+
+    Args:
+        request: FastAPI request object
+        name: User-given name for the query
+        description: Optional description
+        filter_config: Dictionary containing all filter values
+        is_shared: Whether this query is visible to other users
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Created query details with id
+
+    Raises:
+        HTTPException: 400 if validation fails
+    """
+    db = next(get_db())
+    try:
+        # Get user email from authenticated user
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Create new saved query
+        query = ObservabilitySavedQuery(name=name, description=description, user_email=user_email, filter_config=filter_config, is_shared=is_shared)
+
+        db.add(query)
+        db.commit()
+        db.refresh(query)
+
+        return {"id": query.id, "name": query.name, "description": query.description, "filter_config": query.filter_config, "is_shared": query.is_shared, "created_at": query.created_at.isoformat()}
+    except Exception as e:
+        db.rollback()
+        LOGGER.error(f"Failed to save query: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/queries", response_model=list)
+async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+    """List saved observability queries for the current user.
+
+    Returns user's own queries plus any shared queries.
+
+    Args:
+        request: FastAPI request object
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        list: List of saved query dictionaries
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Get user's own queries + shared queries
+        queries = (
+            db.query(ObservabilitySavedQuery)
+            .filter(or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True))
+            .order_by(desc(ObservabilitySavedQuery.created_at))
+            .all()
+        )
+
+        return [
+            {
+                "id": q.id,
+                "name": q.name,
+                "description": q.description,
+                "filter_config": q.filter_config,
+                "is_shared": q.is_shared,
+                "user_email": q.user_email,
+                "created_at": q.created_at.isoformat(),
+                "last_used_at": q.last_used_at.isoformat() if q.last_used_at else None,
+                "use_count": q.use_count,
+            }
+            for q in queries
+        ]
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/queries/{query_id}", response_model=dict)
+async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+    """Get a specific saved query by ID.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the saved query
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Query details
+
+    Raises:
+        HTTPException: 404 if query not found or unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only access own queries or shared queries
+        query = (
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
+        )
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        return {
+            "id": query.id,
+            "name": query.name,
+            "description": query.description,
+            "filter_config": query.filter_config,
+            "is_shared": query.is_shared,
+            "user_email": query.user_email,
+            "created_at": query.created_at.isoformat(),
+            "last_used_at": query.last_used_at.isoformat() if query.last_used_at else None,
+            "use_count": query.use_count,
+        }
+    finally:
+        db.close()
+
+
+@admin_router.put("/observability/queries/{query_id}", response_model=dict)
+async def update_observability_query(
+    request: Request,  # pylint: disable=unused-argument
+    query_id: int,
+    name: Optional[str] = Body(None),
+    description: Optional[str] = Body(None),
+    filter_config: Optional[dict] = Body(None),
+    is_shared: Optional[bool] = Body(None),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Update an existing saved query.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query to update
+        name: New name (optional)
+        description: New description (optional)
+        filter_config: New filter configuration (optional)
+        is_shared: New sharing status (optional)
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Updated query details
+
+    Raises:
+        HTTPException: 404 if query not found, 403 if unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only update own queries
+        query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        # Update fields if provided
+        if name is not None:
+            query.name = name
+        if description is not None:
+            query.description = description
+        if filter_config is not None:
+            query.filter_config = filter_config
+        if is_shared is not None:
+            query.is_shared = is_shared
+
+        db.commit()
+        db.refresh(query)
+
+        return {
+            "id": query.id,
+            "name": query.name,
+            "description": query.description,
+            "filter_config": query.filter_config,
+            "is_shared": query.is_shared,
+            "updated_at": query.updated_at.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        LOGGER.error(f"Failed to update query: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.delete("/observability/queries/{query_id}", status_code=204)
+async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+    """Delete a saved query.
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query to delete
+        user: Authenticated user (required by dependency)
+
+    Raises:
+        HTTPException: 404 if query not found, 403 if unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can only delete own queries
+        query = db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, ObservabilitySavedQuery.user_email == user_email).first()
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        db.delete(query)
+        db.commit()
+    finally:
+        db.close()
+
+
+@admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
+async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
+    """Track usage of a saved query (increments use count and updates last_used_at).
+
+    Args:
+        request: FastAPI request object
+        query_id: ID of the query being used
+        user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Updated query usage stats
+
+    Raises:
+        HTTPException: 404 if query not found or unauthorized
+    """
+    db = next(get_db())
+    try:
+        user_email = user.email if hasattr(user, "email") else "unknown"
+
+        # Can track usage for own queries or shared queries
+        query = (
+            db.query(ObservabilitySavedQuery).filter(ObservabilitySavedQuery.id == query_id, or_(ObservabilitySavedQuery.user_email == user_email, ObservabilitySavedQuery.is_shared is True)).first()
+        )
+
+        if not query:
+            raise HTTPException(status_code=404, detail="Query not found or unauthorized")
+
+        # Update usage tracking
+        query.use_count += 1
+        query.last_used_at = utc_now()
+
+        db.commit()
+        db.refresh(query)
+
+        return {"use_count": query.use_count, "last_used_at": query.last_used_at.isoformat()}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        LOGGER.error(f"Failed to track query usage: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/percentiles", response_model=dict)
+async def get_latency_percentiles(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get latency percentiles (p50, p90, p95, p99) over time.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Time-series data with percentiles
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query all traces with duration in time range
+        traces = (
+            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+            .order_by(ObservabilityTrace.start_time)
+            .all()
+        )
+
+        if not traces:
+            return {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
+
+        # Group traces into time buckets
+        buckets: Dict[datetime, List[float]] = defaultdict(list)
+        for trace in traces:
+            # Round down to nearest interval
+            bucket_time = trace.start_time.replace(second=0, microsecond=0)
+            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
+            buckets[bucket_time].append(trace.duration_ms)
+
+        # Calculate percentiles for each bucket
+        timestamps = []
+        p50_values = []
+        p90_values = []
+        p95_values = []
+        p99_values = []
+
+        for bucket_time in sorted(buckets.keys()):
+            durations = sorted(buckets[bucket_time])
+            n = len(durations)
+
+            if n > 0:
+                # Calculate percentile indices
+                p50_idx = max(0, int(n * 0.50) - 1)
+                p90_idx = max(0, int(n * 0.90) - 1)
+                p95_idx = max(0, int(n * 0.95) - 1)
+                p99_idx = max(0, int(n * 0.99) - 1)
+
+                timestamps.append(bucket_time.isoformat())
+                p50_values.append(round(durations[p50_idx], 2))
+                p90_values.append(round(durations[p90_idx], 2))
+                p95_values.append(round(durations[p95_idx], 2))
+                p99_values.append(round(durations[p99_idx], 2))
+
+        return {"timestamps": timestamps, "p50": p50_values, "p90": p90_values, "p95": p95_values, "p99": p99_values}
+    except Exception as e:
+        LOGGER.error(f"Failed to calculate latency percentiles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/timeseries", response_model=dict)
+async def get_timeseries_metrics(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    interval_minutes: int = Query(60, ge=5, le=1440, description="Aggregation interval in minutes"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get time-series metrics (request rate, error rate, throughput).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        interval_minutes: Aggregation interval in minutes (5-1440)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Time-series data with request counts, error rates, and throughput
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Query traces grouped by time bucket
+        traces = db.query(ObservabilityTrace.start_time, ObservabilityTrace.status).filter(ObservabilityTrace.start_time >= cutoff_time).order_by(ObservabilityTrace.start_time).all()
+
+        if not traces:
+            return {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
+
+        # Group traces into time buckets
+        buckets: Dict[datetime, Dict[str, int]] = defaultdict(lambda: {"total": 0, "success": 0, "error": 0})
+        for trace in traces:
+            # Round down to nearest interval
+            bucket_time = trace.start_time.replace(second=0, microsecond=0)
+            bucket_time = bucket_time - timedelta(minutes=bucket_time.minute % interval_minutes, seconds=bucket_time.second, microseconds=bucket_time.microsecond)
+
+            buckets[bucket_time]["total"] += 1
+            if trace.status == "ok":
+                buckets[bucket_time]["success"] += 1
+            elif trace.status == "error":
+                buckets[bucket_time]["error"] += 1
+
+        # Build time-series arrays
+        timestamps = []
+        request_counts = []
+        success_counts = []
+        error_counts = []
+        error_rates = []
+
+        for bucket_time in sorted(buckets.keys()):
+            bucket = buckets[bucket_time]
+            error_rate = (bucket["error"] / bucket["total"] * 100) if bucket["total"] > 0 else 0
+
+            timestamps.append(bucket_time.isoformat())
+            request_counts.append(bucket["total"])
+            success_counts.append(bucket["success"])
+            error_counts.append(bucket["error"])
+            error_rates.append(round(error_rate, 2))
+
+        return {
+            "timestamps": timestamps,
+            "request_count": request_counts,
+            "success_count": success_counts,
+            "error_count": error_counts,
+            "error_rate": error_rates,
+        }
+    except Exception as e:
+        LOGGER.error(f"Failed to calculate timeseries metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-slow", response_model=dict)
+async def get_top_slow_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N slowest endpoints by average duration.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of slowest endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and calculate average duration
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("count"),  # pylint: disable=not-callable
+                func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
+                func.max(ObservabilityTrace.duration_ms).label("max_duration"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .order_by(desc("avg_duration"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "count": row.count,
+                    "avg_duration_ms": round(row.avg_duration, 2),
+                    "max_duration_ms": round(row.max_duration, 2),
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top slow endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-volume", response_model=dict)
+async def get_top_volume_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N highest volume endpoints by request count.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of highest volume endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and count requests
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("count"),  # pylint: disable=not-callable
+                func.avg(ObservabilityTrace.duration_ms).label("avg_duration"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time)
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .order_by(desc("count"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "count": row.count,
+                    "avg_duration_ms": round(row.avg_duration, 2) if row.avg_duration else 0,
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top volume endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/top-errors", response_model=dict)
+async def get_top_error_endpoints(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(10, ge=1, le=100, description="Number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get top N error-prone endpoints by error count and rate.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Number of results to return (1-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: List of error-prone endpoints with stats
+
+    Raises:
+        HTTPException: 500 if query fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Group by endpoint and count errors
+        results = (
+            db.query(
+                ObservabilityTrace.http_url,
+                ObservabilityTrace.http_method,
+                func.count(ObservabilityTrace.trace_id).label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(ObservabilityTrace.start_time >= cutoff_time)
+            .group_by(ObservabilityTrace.http_url, ObservabilityTrace.http_method)
+            .having(func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)) > 0)
+            .order_by(desc("error_count"))
+            .limit(limit)
+            .all()
+        )
+
+        endpoints = []
+        for row in results:
+            error_rate = (row.error_count / row.total_count * 100) if row.total_count > 0 else 0
+            endpoints.append(
+                {
+                    "endpoint": f"{row.http_method} {row.http_url}",
+                    "method": row.http_method,
+                    "url": row.http_url,
+                    "total_count": row.total_count,
+                    "error_count": row.error_count,
+                    "error_rate": round(error_rate, 2),
+                }
+            )
+
+        return {"endpoints": endpoints}
+    except Exception as e:
+        LOGGER.error(f"Failed to get top error endpoints: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/metrics/heatmap", response_model=dict)
+async def get_latency_heatmap(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    time_buckets: int = Query(24, ge=10, le=100, description="Number of time buckets"),
+    latency_buckets: int = Query(20, ge=5, le=50, description="Number of latency buckets"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get latency distribution heatmap data.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        time_buckets: Number of time buckets (10-100)
+        latency_buckets: Number of latency buckets (5-50)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Heatmap data with time and latency dimensions
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        # Remove timezone info for SQLite compatibility
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query all traces with duration
+        traces = (
+            db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
+            .filter(ObservabilityTrace.start_time >= cutoff_time_naive, ObservabilityTrace.duration_ms.isnot(None))
+            .order_by(ObservabilityTrace.start_time)
+            .all()
+        )
+
+        if not traces:
+            return {"time_labels": [], "latency_labels": [], "data": []}
+
+        # Calculate time bucket size
+        time_range = hours * 60  # minutes
+        time_bucket_minutes = time_range / time_buckets
+
+        # Find latency range and create buckets
+        durations = [t.duration_ms for t in traces]
+        min_duration = min(durations)
+        max_duration = max(durations)
+        latency_range = max_duration - min_duration
+        latency_bucket_size = latency_range / latency_buckets if latency_range > 0 else 1
+
+        # Initialize heatmap matrix
+        heatmap = [[0 for _ in range(time_buckets)] for _ in range(latency_buckets)]
+
+        # Populate heatmap
+        for trace in traces:
+            # Calculate time bucket index
+            time_diff = (trace.start_time - cutoff_time_naive).total_seconds() / 60  # minutes
+            time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
+
+            # Calculate latency bucket index
+            latency_idx = min(int((trace.duration_ms - min_duration) / latency_bucket_size), latency_buckets - 1)
+
+            heatmap[latency_idx][time_idx] += 1
+
+        # Generate labels
+        time_labels = []
+        for i in range(time_buckets):
+            bucket_time = cutoff_time_naive + timedelta(minutes=i * time_bucket_minutes)
+            time_labels.append(bucket_time.strftime("%H:%M"))
+
+        latency_labels = []
+        for i in range(latency_buckets):
+            bucket_min = min_duration + i * latency_bucket_size
+            bucket_max = bucket_min + latency_bucket_size
+            latency_labels.append(f"{bucket_min:.0f}-{bucket_max:.0f}ms")
+
+        return {"time_labels": time_labels, "latency_labels": latency_labels, "data": heatmap}
+    except Exception as e:
+        LOGGER.error(f"Failed to generate latency heatmap: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/usage", response_model=dict)
+async def get_tool_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool usage frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query tool invocations from spans
+        # Note: Using $."tool.name" because the JSON key contains a dot
+        tool_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_invocations = sum(row.count for row in tool_usage)
+
+        tools = [
+            {
+                "tool_name": row.tool_name,
+                "count": row.count,
+                "percentage": round((row.count / total_invocations * 100) if total_invocations > 0 else 0, 2),
+            }
+            for row in tool_usage
+        ]
+
+        return {"tools": tools, "total_invocations": total_invocations, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/performance", response_model=dict)
+async def get_tool_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # First, get all tool invocations with durations
+        tool_spans = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .all()
+        )
+
+        # Group by tool name and calculate percentiles
+        tool_durations = defaultdict(list)
+        for span in tool_spans:
+            tool_durations[span.tool_name].append(span.duration_ms)
+
+        # Calculate metrics for each tool
+        tools_data = []
+        for tool_name, durations in tool_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            tools_data.append(
+                {
+                    "tool_name": tool_name,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        tools_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        tools = tools_data[:limit]
+
+        return {"tools": tools, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/errors", response_model=dict)
+async def get_tool_errors(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of tools to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool error rates and statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of tools to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool error statistics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query tool error rates
+        tool_errors = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .order_by(func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        tools = [
+            {
+                "tool_name": row.tool_name,
+                "total_count": row.total_count,
+                "error_count": row.error_count or 0,
+                "error_rate": round((row.error_count / row.total_count * 100) if row.total_count > 0 and row.error_count else 0, 2),
+            }
+            for row in tool_errors
+        ]
+
+        return {"tools": tools, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool error statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/chains", response_model=dict)
+async def get_tool_chains(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of chains to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get tool chain analysis (which tools are invoked together in the same trace).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of chains to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Tool chain statistics showing common tool sequences
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all tool invocations grouped by trace_id
+        tool_spans = (
+            db.query(
+                ObservabilitySpan.trace_id,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                ObservabilitySpan.start_time,
+            )
+            .filter(
+                ObservabilitySpan.name == "tool.invoke",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+            )
+            .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
+            .all()
+        )
+
+        # Group tools by trace and create chains
+        trace_tools = {}
+        for span in tool_spans:
+            if span.trace_id not in trace_tools:
+                trace_tools[span.trace_id] = []
+            trace_tools[span.trace_id].append(span.tool_name)
+
+        # Count tool chain frequencies
+        chain_counts = {}
+        for tools in trace_tools.values():
+            if len(tools) > 1:
+                # Create a chain string (sorted to treat [A,B] and [B,A] as same chain)
+                chain = " -> ".join(tools)
+                chain_counts[chain] = chain_counts.get(chain, 0) + 1
+
+        # Sort by frequency and take top N
+        sorted_chains = sorted(chain_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+
+        chains = [{"chain": chain, "count": count} for chain, count in sorted_chains]
+
+        return {"chains": chains, "total_traces_with_tools": len(trace_tools), "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get tool chain statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
+async def get_tools_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the tool invocation metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered tool metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_tools.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
+
+
+# ==============================================================================
+# Prompts Observability Endpoints
+# ==============================================================================
+
+
+@admin_router.get("/observability/prompts/usage", response_model=dict)
+async def get_prompt_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt rendering frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of prompts to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query prompt renders from spans (looking for prompts/get calls)
+        # The prompt id should be in attributes as "prompt.id"
+        prompt_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_renders = sum(row.count for row in prompt_usage)
+
+        prompts = [
+            {
+                "prompt_id": row.prompt_id,
+                "count": row.count,
+                "percentage": round((row.count / total_renders * 100) if total_renders > 0 else 0, 2),
+            }
+            for row in prompt_usage
+        ]
+
+        return {"prompts": prompts, "total_renders": total_renders, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get prompt usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/prompts/performance", response_model=dict)
+async def get_prompt_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of prompts to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of prompts to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # First, get all prompt renders with durations
+        prompt_spans = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+            )
+            .all()
+        )
+
+        # Group by prompt id and calculate percentiles
+        prompt_durations = defaultdict(list)
+        for span in prompt_spans:
+            prompt_durations[span.prompt_id].append(span.duration_ms)
+
+        # Calculate metrics for each prompt
+        prompts_data = []
+        for prompt_id, durations in prompt_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            prompts_data.append(
+                {
+                    "prompt_id": prompt_id,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        prompts_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        prompts = prompts_data[:limit]
+
+        return {"prompts": prompts, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get prompt performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/prompts/errors", response_model=dict)
+async def get_prompts_errors(
+    hours: int = Query(24, description="Time range in hours"),
+    limit: int = Query(20, description="Maximum number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get prompt error rates.
+
+    Args:
+        hours: Time range in hours to analyze
+        limit: Maximum number of prompts to return
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Prompt error statistics
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all prompt spans with their status
+        prompt_stats = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                func.count().label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(
+                ObservabilitySpan.name == "prompt.render",
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .all()
+        )
+
+        prompts_data = []
+        for stat in prompt_stats:
+            total = stat.total_count
+            errors = stat.error_count or 0
+            error_rate = round((errors / total * 100), 2) if total > 0 else 0
+
+            prompts_data.append({"prompt_id": stat.prompt_id, "total_count": total, "error_count": errors, "error_rate": error_rate})
+
+        # Sort by error rate descending
+        prompts_data.sort(key=lambda x: x["error_rate"], reverse=True)
+        prompts_data = prompts_data[:limit]
+
+        return {"prompts": prompts_data, "time_range_hours": hours}
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
+async def get_prompts_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the prompt rendering metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered prompt metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_prompts.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )
+
+
+# ==============================================================================
+# Resources Observability Endpoints
+# ==============================================================================
+
+
+@admin_router.get("/observability/resources/usage", response_model=dict)
+async def get_resource_usage(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource fetch frequency statistics.
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of resources to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource usage statistics with counts and percentages
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Query resource reads from spans (looking for resources/read calls)
+        # The resource URI should be in attributes
+        resource_usage = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
+            .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
+            .limit(limit)
+            .all()
+        )
+
+        total_fetches = sum(row.count for row in resource_usage)
+
+        resources = [
+            {
+                "resource_uri": row.resource_uri,
+                "count": row.count,
+                "percentage": round((row.count / total_fetches * 100) if total_fetches > 0 else 0, 2),
+            }
+            for row in resource_usage
+        ]
+
+        return {"resources": resources, "total_fetches": total_fetches, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get resource usage statistics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/performance", response_model=dict)
+async def get_resource_performance(
+    request: Request,  # pylint: disable=unused-argument
+    hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
+    limit: int = Query(20, ge=5, le=100, description="Number of resources to return"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource performance metrics (avg, min, max duration).
+
+    Args:
+        request: FastAPI request object
+        hours: Number of hours to look back (1-168)
+        limit: Maximum number of resources to return (5-100)
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource performance metrics
+
+    Raises:
+        HTTPException: 500 if calculation fails
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # First, get all resource reads with durations
+        resource_spans = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                ObservabilitySpan.duration_ms,
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                ObservabilitySpan.duration_ms.isnot(None),
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+            )
+            .all()
+        )
+
+        # Group by resource URI and calculate percentiles
+        resource_durations = defaultdict(list)
+        for span in resource_spans:
+            resource_durations[span.resource_uri].append(span.duration_ms)
+
+        # Calculate metrics for each resource
+        resources_data = []
+        for resource_uri, durations in resource_durations.items():
+            durations_sorted = sorted(durations)
+            n = len(durations_sorted)
+
+            if n == 0:
+                continue
+
+            # Calculate percentiles
+            def percentile(data, p):
+                if not data:
+                    return 0
+                k = (len(data) - 1) * p
+                f = int(k)
+                c = min(f + 1, len(data) - 1)
+                if f == c:
+                    return data[f]
+                return data[f] * (c - k) + data[c] * (k - f)
+
+            resources_data.append(
+                {
+                    "resource_uri": resource_uri,
+                    "count": n,
+                    "avg_duration_ms": round(sum(durations) / n, 2),
+                    "min_duration_ms": round(min(durations), 2),
+                    "max_duration_ms": round(max(durations), 2),
+                    "p50": round(percentile(durations_sorted, 0.50), 2),
+                    "p90": round(percentile(durations_sorted, 0.90), 2),
+                    "p95": round(percentile(durations_sorted, 0.95), 2),
+                    "p99": round(percentile(durations_sorted, 0.99), 2),
+                }
+            )
+
+        # Sort by average duration descending and limit
+        resources_data.sort(key=lambda x: x["avg_duration_ms"], reverse=True)
+        resources = resources_data[:limit]
+
+        return {"resources": resources, "time_range_hours": hours}
+    except Exception as e:
+        LOGGER.error(f"Failed to get resource performance metrics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/errors", response_model=dict)
+async def get_resources_errors(
+    hours: int = Query(24, description="Time range in hours"),
+    limit: int = Query(20, description="Maximum number of results"),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get resource error rates.
+
+    Args:
+        hours: Time range in hours to analyze
+        limit: Maximum number of resources to return
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        dict: Resource error statistics
+    """
+    db = next(get_db())
+    try:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
+
+        # Get all resource spans with their status
+        resource_stats = (
+            db.query(
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                func.count().label("total_count"),  # pylint: disable=not-callable
+                func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
+            )
+            .filter(
+                ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
+                ObservabilitySpan.start_time >= cutoff_time_naive,
+                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+            )
+            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .all()
+        )
+
+        resources_data = []
+        for stat in resource_stats:
+            total = stat.total_count
+            errors = stat.error_count or 0
+            error_rate = round((errors / total * 100), 2) if total > 0 else 0
+
+            resources_data.append({"resource_uri": stat.resource_uri, "total_count": total, "error_count": errors, "error_rate": error_rate})
+
+        # Sort by error rate descending
+        resources_data.sort(key=lambda x: x["error_rate"], reverse=True)
+        resources_data = resources_data[:limit]
+
+        return {"resources": resources_data, "time_range_hours": hours}
+    finally:
+        db.close()
+
+
+@admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
+async def get_resources_partial(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Render the resource fetch metrics dashboard HTML partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user (required by dependency)
+
+    Returns:
+        HTMLResponse: Rendered resource metrics dashboard partial
+    """
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        "observability_resources.html",
+        {
+            "request": request,
+            "root_path": root_path,
+        },
+    )

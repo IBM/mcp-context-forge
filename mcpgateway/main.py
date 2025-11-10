@@ -70,6 +70,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
@@ -1061,6 +1062,10 @@ else:
     # Add streamable HTTP middleware for /mcp routes
     app.add_middleware(MCPPathRewriteMiddleware)
 
+# Add HTTP authentication hook middleware for plugins (before auth dependencies)
+if plugin_manager:
+    app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
+
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
 
@@ -1070,6 +1075,26 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # Add request logging middleware if enabled
 if settings.log_requests:
     app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
+
+# Add observability middleware if enabled
+# Note: Middleware runs in REVERSE order (last added runs first)
+# We add ObservabilityMiddleware first so it wraps AuthContextMiddleware
+# Execution order will be: AuthContext -> Observability -> Request Handler
+if settings.observability_enabled:
+    # First-Party
+    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+
+    app.add_middleware(ObservabilityMiddleware, enabled=True)
+    logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
+
+    # Add authentication context middleware (runs BEFORE observability in execution)
+    # First-Party
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+
+    app.add_middleware(AuthContextMiddleware)
+    logger.info("🔐 Authentication context middleware enabled - extracting user info for observability")
+else:
+    logger.info("🔍 Observability middleware disabled")
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -4668,6 +4693,16 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+
+# Conditionally include observability router if enabled
+if settings.observability_enabled:
+    # First-Party
+    from mcpgateway.routers.observability import router as observability_router
+
+    app.include_router(observability_router)
+    logger.info("Observability router included - observability API endpoints enabled")
+else:
+    logger.info("Observability router not included - observability disabled")
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:

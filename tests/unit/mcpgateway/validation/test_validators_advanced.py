@@ -84,7 +84,7 @@ def patch_logger(monkeypatch):
 
             return logfn
 
-    monkeypatch.setattr("mcpgateway.validators.logger", DummyLogger())
+    monkeypatch.setattr("mcpgateway.common.validators.logger", DummyLogger())
     yield logs
 
 

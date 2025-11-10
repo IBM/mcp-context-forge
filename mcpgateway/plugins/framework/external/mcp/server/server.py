@@ -111,16 +111,14 @@ class ExternalPluginServer:
             >>> import asyncio
             >>> import os
             >>> os.environ["PYTHONPATH"] = "."
-            >>> from mcpgateway.plugins.framework import GlobalContext, PromptPrehookPayload, PluginContext, PromptPrehookResult
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway.plugins/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
-            >>> def prompt_pre_fetch_func(plugin: Plugin, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
-            ...     return plugin.prompt_pre_fetch(payload, context)
-            >>> payload = PromptPrehookPayload(name="test_prompt", args={"user": "This is so innovative"})
+            >>> from mcpgateway.plugins.framework import GlobalContext, Plugin, PromptHookType, PromptPrehookPayload, PluginContext, PromptPrehookResult
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> payload = PromptPrehookPayload(prompt_id="123", name="test_prompt", args={"user": "This is so innovative"})
             >>> context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
             >>> initialized = asyncio.run(server.initialize())
             >>> initialized
             True
-            >>> result = asyncio.run(server.invoke_hook(PromptPrehookPayload, prompt_pre_fetch_func, "DenyListPlugin", payload.model_dump(), context.model_dump()))
+            >>> result = asyncio.run(server.invoke_hook(PromptHookType.PROMPT_PRE_FETCH, "DenyListPlugin", payload.model_dump(), context.model_dump()))
             >>> result is not None
             True
             >>> result["result"]["continue_processing"]

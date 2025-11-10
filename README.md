@@ -486,7 +486,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 
 # Note: when not running over SSL, use SECURE_COOKIES=false to prevent the browser denying access.
 
@@ -494,7 +494,7 @@ docker run -d --name mcpgateway \
 docker logs -f mcpgateway
 
 # Generating an API key
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.8.0 \
+docker run --rm -it ghcr.io/ibm/mcp-context-forge:0.9.0 \
   python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key
 ```
 
@@ -525,7 +525,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 SQLite now lives on the host at `./data/mcp.db`.
@@ -552,7 +552,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -v $(pwd)/data:/data \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
@@ -568,7 +568,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 #### 2 - Persist SQLite
@@ -587,7 +587,7 @@ podman run -d --name mcpgateway \
   -p 4444:4444 \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 #### 3 - Host networking (rootless)
@@ -605,7 +605,7 @@ podman run -d --name mcpgateway \
   --network=host \
   -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  ghcr.io/ibm/mcp-context-forge:0.8.0
+  ghcr.io/ibm/mcp-context-forge:0.9.0
 ```
 
 ---
@@ -614,7 +614,7 @@ podman run -d --name mcpgateway \
 <summary><strong>✏️ Docker/Podman tips</strong></summary>
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
-* **Pinned tags** - Use an explicit version (e.g. `v0.8.0`) instead of `latest` for reproducible builds.
+* **Pinned tags** - Use an explicit version (e.g. `v0.9.0`) instead of `latest` for reproducible builds.
 * **JWT tokens** - Generate one in the running container:
 
   ```bash
@@ -660,7 +660,7 @@ docker run --rm -i \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:0.8.0 \
+  ghcr.io/ibm/mcp-context-forge:0.9.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -708,7 +708,7 @@ python3 -m mcpgateway.wrapper
 <summary><strong>Expected responses from mcpgateway.wrapper</strong></summary>
 
 ```json
-{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.8.0"}}}
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-03-26","capabilities":{"experimental":{},"prompts":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false},"tools":{"listChanged":false}},"serverInfo":{"name":"mcpgateway-wrapper","version":"0.9.0"}}}
 
 # When there's no tools
 {"jsonrpc":"2.0","id":2,"result":{"tools":[]}}
@@ -742,7 +742,7 @@ docker run -i --rm \
   -e MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_AUTH=${MCP_AUTH} \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
-  ghcr.io/ibm/mcp-context-forge:0.8.0 \
+  ghcr.io/ibm/mcp-context-forge:0.9.0 \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -1506,6 +1506,76 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 > Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) are always protected by authentication.
 > By default, they require Bearer token authentication. Setting `DOCS_ALLOW_BASIC_AUTH=true` enables HTTP Basic Authentication as an additional method using the same credentials as `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`.
 
+### Ed25519 Certificate Signing
+
+MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification. This cryptographic signing mechanism ensures that CA certificates used by the gateway are authentic and haven't been tampered with.
+
+| Setting                     | Description                                      | Default | Options |
+| --------------------------- | ------------------------------------------------ | ------- | ------- |
+| `ENABLE_ED25519_SIGNING`    | Enable Ed25519 signing for certificates          | `false` | bool    |
+| `ED25519_PRIVATE_KEY`       | Ed25519 private key for signing (PEM format)     | (none)  | string  |
+| `PREV_ED25519_PRIVATE_KEY`  | Previous Ed25519 private key for key rotation    | (none)  | string  |
+
+**How It Works:**
+
+1. **Certificate Signing** - When `ENABLE_ED25519_SIGNING=true`, the gateway signs the CA certificate of each MCP server/gateway using the Ed25519 private key.
+
+2. **Certificate Validation** - Before using a CA certificate for subsequent calls, the gateway validates its signature to ensure authenticity and integrity.
+
+3. **Disabled Mode** - When `ENABLE_ED25519_SIGNING=false`, certificates are neither signed nor validated (default behavior).
+
+**Key Generation:**
+
+```bash
+# Generate a new Ed25519 key pair
+python mcpgateway/utils/generate_keys.py
+
+# Output will show:
+# - Private key (set this to ED25519_PRIVATE_KEY)
+```
+
+**Key Rotation:**
+
+To rotate keys without invalidating existing signed certificates:
+
+1. Move the current `ED25519_PRIVATE_KEY` value to `PREV_ED25519_PRIVATE_KEY`
+2. Generate a new key pair using the command above
+3. Set the new private key to `ED25519_PRIVATE_KEY`
+4. The gateway will automatically re-sign valid certificates at the point of key change
+
+**Example Configuration:**
+
+```bash
+# Enable Ed25519 signing
+ENABLE_ED25519_SIGNING=true
+
+# Current signing key (PEM format)
+ED25519_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIJ5pW... (your key here)
+-----END PRIVATE KEY-----"
+
+# Previous key for rotation (optional)
+PREV_ED25519_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
+-----END PRIVATE KEY-----"
+```
+
+> 🔐 **Security Best Practices:**
+> - Store private keys securely (use secrets management tools like Vault, AWS Secrets Manager, etc.)
+> - Rotate keys periodically (recommended: every 90-180 days)
+> - Never commit private keys to version control
+> - Use environment variables or encrypted config files
+>
+> 🔑 **Public Key Derivation:**
+> - Public keys are automatically derived from private keys
+> - No need to configure public keys separately
+> - Both `ED25519_PUBLIC_KEY` and `PREV_ED25519_PUBLIC_KEY` are computed at startup
+>
+> ⚡ **Performance:**
+> - Ed25519 signing is extremely fast (~64 microseconds per signature)
+> - Minimal impact on gateway performance
+> - Recommended for production deployments requiring certificate integrity
+
 ### Response Compression
 
 MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS). Compression is negotiated automatically based on client `Accept-Encoding` headers with algorithm priority: **Brotli** (best compression) > **Zstd** (fastest) > **GZip** (universal fallback).
@@ -1619,7 +1689,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `true`                | `true`, `false`                           |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.8.0`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `0.9.0`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -1669,6 +1739,81 @@ mcpgateway
 > 🚀 **Zero Overhead**: When `OTEL_ENABLE_OBSERVABILITY=false`, all tracing is disabled with no performance impact
 >
 > 📊 **View Traces**: Phoenix UI at `http://localhost:6006`, Jaeger at `http://localhost:16686`, or your configured backend
+
+### Internal Observability & Tracing
+
+The gateway includes built-in observability features for tracking HTTP requests, spans, and traces independent of OpenTelemetry. This provides database-backed trace storage and analysis directly in the Admin UI.
+
+| Setting                              | Description                                           | Default                                              | Options          |
+| ------------------------------------ | ----------------------------------------------------- | ---------------------------------------------------- | ---------------- |
+| `OBSERVABILITY_ENABLED`              | Enable internal observability tracing and metrics     | `false`                                              | bool             |
+| `OBSERVABILITY_TRACE_HTTP_REQUESTS`  | Automatically trace HTTP requests                     | `true`                                               | bool             |
+| `OBSERVABILITY_TRACE_RETENTION_DAYS` | Number of days to retain trace data                   | `7`                                                  | int (≥ 1)        |
+| `OBSERVABILITY_MAX_TRACES`           | Maximum number of traces to retain                    | `100000`                                             | int (≥ 1000)     |
+| `OBSERVABILITY_SAMPLE_RATE`          | Trace sampling rate (0.0-1.0)                        | `1.0`                                                | float (0.0-1.0)  |
+| `OBSERVABILITY_EXCLUDE_PATHS`        | Paths to exclude from tracing (regex patterns)        | `/health,/healthz,/ready,/metrics,/static/.*`        | comma-separated  |
+| `OBSERVABILITY_METRICS_ENABLED`      | Enable metrics collection                             | `true`                                               | bool             |
+| `OBSERVABILITY_EVENTS_ENABLED`       | Enable event logging within spans                     | `true`                                               | bool             |
+
+**Key Features:**
+- 📊 **Database-backed storage**: Traces stored in SQLite/PostgreSQL for persistence
+- 🔍 **Admin UI integration**: View traces, spans, and metrics in the diagnostics tab
+- 🎯 **Sampling control**: Configure sampling rate to reduce overhead in high-traffic scenarios
+- 🕐 **Automatic cleanup**: Old traces automatically purged based on retention settings
+- 🚫 **Path filtering**: Exclude health checks and static resources from tracing
+
+**Configuration Effects:**
+- `OBSERVABILITY_ENABLED=false`: Completely disables internal observability (no database writes, zero overhead)
+- `OBSERVABILITY_SAMPLE_RATE=0.1`: Traces 10% of requests (useful for high-volume production)
+- `OBSERVABILITY_EXCLUDE_PATHS=/health,/metrics`: Prevents noisy endpoints from creating traces
+
+> 📝 **Note**: This is separate from OpenTelemetry. You can use both systems simultaneously - internal observability for Admin UI visibility and OpenTelemetry for external systems like Phoenix/Jaeger.
+>
+> 🎛️ **Admin UI Access**: When enabled, traces appear in **Admin → Diagnostics → Observability** tab with filtering, search, and export capabilities
+
+### Prometheus Metrics
+
+The gateway exposes Prometheus-compatible metrics at `/metrics/prometheus` for monitoring and alerting.
+
+| Setting                      | Description                                              | Default   | Options          |
+| ---------------------------- | -------------------------------------------------------- | --------- | ---------------- |
+| `ENABLE_METRICS`             | Enable Prometheus metrics instrumentation                | `true`    | bool             |
+| `METRICS_EXCLUDED_HANDLERS`  | Regex patterns for paths to exclude from metrics         | (empty)   | comma-separated  |
+| `METRICS_NAMESPACE`          | Prometheus metrics namespace (prefix)                    | `default` | string           |
+| `METRICS_SUBSYSTEM`          | Prometheus metrics subsystem (secondary prefix)          | (empty)   | string           |
+| `METRICS_CUSTOM_LABELS`      | Static custom labels for app_info gauge                  | (empty)   | `key=value,...`  |
+
+**Key Features:**
+- 📊 **Standard metrics**: HTTP request duration, response codes, active requests
+- 🏷️ **Custom labels**: Add static labels (environment, region, team) for filtering in Prometheus/Grafana
+- 🚫 **Path exclusions**: Prevent high-cardinality issues by excluding dynamic paths
+- 📈 **Namespace isolation**: Group metrics by application or organization
+
+**Configuration Examples:**
+
+```bash
+# Production deployment with custom labels
+ENABLE_METRICS=true
+METRICS_NAMESPACE=mycompany
+METRICS_SUBSYSTEM=gateway
+METRICS_CUSTOM_LABELS=environment=production,region=us-east-1,team=platform
+
+# Exclude high-volume endpoints from metrics
+METRICS_EXCLUDED_HANDLERS=/servers/.*/sse,/static/.*,.*health.*
+
+# Disable metrics for development
+ENABLE_METRICS=false
+```
+
+**Metric Names:**
+- With namespace + subsystem: `mycompany_gateway_http_requests_total`
+- Default (no namespace/subsystem): `default_http_requests_total`
+
+> ⚠️ **High-Cardinality Warning**: Never use high-cardinality values (user IDs, request IDs, timestamps) in `METRICS_CUSTOM_LABELS`. Only use low-cardinality static values (environment, region, cluster).
+>
+> 📊 **Prometheus Endpoint**: Access metrics at `GET /metrics/prometheus` (requires authentication if `AUTH_REQUIRED=true`)
+>
+> 🎯 **Grafana Integration**: Import metrics into Grafana dashboards using the configured namespace as a filter
 
 ### Transport
 
