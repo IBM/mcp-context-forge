@@ -52,9 +52,9 @@ document.addEventListener("DOMContentLoaded", () => {
         row.style.display = name.includes(query) ? "" : "none";
       });
     });
-  
-  // Generic API call for Enrich/Validate
-  async function callToolOpsAPI(endpoint) {
+
+    // Generic API call for Enrich/Validate
+  async function callEnrichment(endpoint) {
     // const selectedTools = getSelectedTools();
     console.log('global selected Tools...')
     console.log(selectedTools)
@@ -64,65 +64,67 @@ document.addEventListener("DOMContentLoaded", () => {
       responseDiv.textContent = "⚠️ Please select at least one tool.";
       return;
     }
-  
-    responseDiv.textContent = `Running ${endpoint.replace("_", " ")} for ${selectedTools.length} tools...`;
-  
     try {
-      const res = await fetch(`/${endpoint}_util`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tools: selectedTools }),
-      });
-  
-      if (!res.ok) throw new Error(`Server error: ${res.status}`);
-      const data = await res.json();
-      if (endpoint === "tool_validation") {
-        console.log(JSON.stringify(data));
-        openValidationModal(data.details);
-      } else {
-        enrichedDescription = data
-        responseDiv.textContent = data.message || "Enrich Tools completed successfully.";
-      }
+      const testCases = 2;
+      const variations = 2;
+      console.log(selectedTools)
+      selectedTools.forEach(toolId => {
+        console.log(toolId)
+        const res = fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tool_id: toolId }),
+          });
+        });
+    //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    //   const data = await res.json();
+    //   enrichedDescription = data
+    //   responseDiv.textContent = "Tool description enrichment has started.";
+    showSuccessMessage("Tool description enrichment has started.");
   
     } catch (err) {
-      responseDiv.textContent = `❌ Error: ${err.message}`;
+    //   responseDiv.textContent = `❌ Error: ${err.message}`;
+      showErrorMessage(`❌ Error: ${err.message}`);
     }
   }
 
-  // Modal Logic
-   function openValidationModal(results) {
-    const modal = document.getElementById("validationModal");
-    const tableBody = document.getElementById("validationResultsTable");
-    tableBody.innerHTML = "";
-  
-    results.forEach(item => {
-      const row = document.createElement("tr");
-      row.innerHTML = `
-        <td class="border px-4 py-2">${item.tool}</td>
-        <td class="border px-4 py-2">${item.status}</td>
-      `;
-      tableBody.appendChild(row);
-    });
-  
-    modal.classList.remove("hidden");
-    modal.classList.add("flex");
-  }
-
-  document.getElementById("closeValidationModal").addEventListener("click", () => {
-    const modal = document.getElementById("validationModal");
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
-  });
-
-  document.getElementById("crossValidationModal").addEventListener("click", () => {
-    const modal = document.getElementById("validationModal");
-    modal.classList.add("hidden");
-    modal.classList.remove("flex");
-  });
-  
+    async function callTestCaseGeneration() {
+        // const selectedTools = getSelectedTools();
+        console.log('global selected Tools...')
+        console.log(selectedTools)
+        const responseDiv = document.getElementById("toolOpsResponse");
+      
+        if (selectedTools.length === 0) {
+          responseDiv.textContent = "⚠️ Please select at least one tool.";
+          return;
+        }
+        try {
+          const testCases = 2;
+          const variations = 2;
+          selectedTools.forEach(toolId => {
+            const res = fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
+              method: "POST",
+              headers: { "Cache-Control": "no-cache",
+                  Pragma: "no-cache", "Content-Type": "application/json" },
+              body: JSON.stringify({ tool_id: toolId }),
+            });
+          });
+      
+        //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
+        //   const data = await res.json();
+        //   console.log(JSON.stringify(data));
+          // openValidationModal(data.details);
+        //   responseDiv.textContent = "Test case generation for tool validation has started.";
+        showSuccessMessage("Test case generation for tool validation has started.");
+        } catch (err) {
+        //   responseDiv.textContent = `❌ Error: ${err.message}`;
+          showErrorMessage(`❌ Error: ${err.message}`);
+        }
+      }
   // Button listeners
-  document.getElementById("enrichToolsBtn").addEventListener("click", () => callToolOpsAPI("enrich_tools"));
-  document.getElementById("validateToolsBtn").addEventListener("click", () => callToolOpsAPI("tool_validation"));
+  document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
+  document.getElementById("validateToolsBtn").addEventListener("click", () => callTestCaseGeneration());
   });
 
   
@@ -6483,10 +6485,10 @@ async function enrichTool(toolId) {
         const oldDesc = safeGetElement("view-old-description");
 
         if (newDesc) {
-            newDesc.textContent = "Test Tool: " + (data.enriched_desc || "Unknown");
+            newDesc.textContent = (data.enriched_desc || "Unknown");
         }
         if (oldDesc) {
-            oldDesc.textContent = "Test Tool: " + (data.original_desc || "Unknown");
+            oldDesc.textContent = (data.original_desc || "Unknown");
         }
         openModal('description-view-modal');
         // showSuccessMessage(`Tool enriched successfully`);
@@ -6851,7 +6853,7 @@ async function validateTool(toolId) {
                 
                 if (validationResponse.ok) {
                     const vres = await validationResponse.json()
-                    console.log(JSON.stringify(vres))
+                    // console.log(JSON.stringify(vres))
                     testCases = await vres;
                 }
                 

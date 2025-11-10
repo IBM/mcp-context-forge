@@ -2318,7 +2318,7 @@
                     {% for tool in tools %}
                     <tr data-name="{{ tool.name | lower }}" data-status="{{ tool.status }}">
                       <td class="px-4 py-3">
-                        <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded" data-tool="{{ tool.name }}">
+                        <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded" data-tool="{{ tool.name+'###'+tool.id }}">
                       </td>
                       <td class="px-4 py-3">{{ tool.name }}</td>
                       <td class="px-4 py-3">{{ tool.integrationType }}</td>
@@ -2437,7 +2437,7 @@
                     <button 
                       id="validateToolsBtn" 
                       class="w-full px-3 py-2 bg-blue-600 text-white rounded-md text-sm hover:bg-blue-700">
-                      Tool Validation
+                      Generate Test Cases
                     </button>
                   </div>
                   
@@ -2455,27 +2455,6 @@
           <h3 class="text-lg font-semibold mb-3">Tool Details</h3>
           <div id="modalContent" class="text-sm text-gray-700 space-y-2"></div>
           <button id="closeModal" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md">Close</button>
-        </div>
-      </div>
-
-      <!-- Tool Validation Modal -->
-      <div id="validationModal" class="fixed inset-0 bg-gray-800 bg-opacity-50 hidden items-center justify-center">
-        <div class="bg-white rounded-lg shadow-lg w-2/3 p-6">
-          <div class="flex justify-between items-center border-b pb-2 mb-4">
-            <h2 class="text-xl font-semibold">Tool Validation Results</h2>
-            <button id="crossValidationModal" class="text-gray-500 hover:text-gray-700 text-lg">&times;</button>
-          </div>
-
-          <table class="min-w-full border border-gray-300 rounded-md text-sm">
-            <thead class="bg-gray-100">
-              <tr>
-                <th class="border px-4 py-2 text-left">Tool Name</th>
-                <th class="border px-4 py-2 text-left">Status</th>
-              </tr>
-            </thead>
-            <tbody id="validationResultsTable"></tbody>
-          </table>
-          <button id="closeValidationModal" class="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md">Close</button>
         </div>
       </div>
 
@@ -6561,6 +6540,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         min="1"
         class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
         placeholder="e.g., 5"
+        value="2"
         required
       />
     </div>
@@ -6580,6 +6560,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         min="1"
         class="mt-1 block w-full rounded-md shadow-sm p-2 bg-gray-200 dark:bg-gray-800"
         placeholder="e.g., 3"
+        value="2"
         required
       />
     </div>
