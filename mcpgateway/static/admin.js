@@ -1,4 +1,4 @@
-var enrichedDescription;
+var toolopsTools;
 
 document.addEventListener("DOMContentLoaded", () => {
     const checkboxes = document.querySelectorAll(".tool-checkbox");
@@ -2306,10 +2306,7 @@ async function editTool(toolId) {
         }
 
         const tool = await response.json();
-        if(enrichedDescription != null) {
-            console.log(JSON.stringify(enrichedDescription))
-            tool.description = enrichedDescription['enriched_desc']
-        }
+        
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -6393,6 +6390,105 @@ async function testTool(toolId) {
     }
 }
 
+async function loadTools() {
+    const toolBody = document.getElementById("toolBody");
+    console.log('Loading tools...');
+  
+    toolBody.innerHTML = `
+      <tr>
+        <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
+      </tr>
+    `;
+  
+    try {
+      const response = await fetch(`${window.ROOT_PATH}/tools`, { method: "GET" });
+  
+      if (!response.ok) throw new Error("Failed to load tools");
+  
+      const tools = await response.json(); // 👈 expect JSON array
+      console.log("Fetched tools:", tools);
+  
+    //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
+  
+      if (!tools.length) {
+        toolBody.innerHTML = `
+          <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
+        `;
+        return;
+      }
+  
+      // ✅ Build HTML rows dynamically
+      const rows = tools.map(tool => {
+        const { id, name, integrationType, enabled, reachable } = tool;
+        let statusText = "";
+        let statusClass = "";
+  
+        if (enabled && reachable) {
+          statusText = "Online";
+          statusClass = "bg-green-100 text-green-800";
+        } else if (enabled) {
+          statusText = "Offline";
+          statusClass = "bg-yellow-100 text-yellow-800";
+        } else {
+          statusText = "Inactive";
+          statusClass = "bg-red-100 text-red-800";
+        }
+  
+        return `
+          <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
+            <td class="px-4 py-3">
+              <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                     data-tool="${name}###${id}">
+            </td>
+            <td class="px-4 py-3">${name}</td>
+            <td class="px-4 py-3">${integrationType || "-"}</td>
+            <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
+              <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
+                ${statusText}
+              </span>
+            </td>
+            <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
+              <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                <button onclick="validateTool('${id}')"
+                  class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
+                  Validate
+                </button>
+                <button onclick="generateToolTestCases('${id}')"
+                  class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
+                  Generate Test Cases
+                </button>
+                <button onclick="enrichTool('${id}')"
+                  class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
+                  Enrich
+                </button>
+                <button onclick="viewTool('${id}')"
+                  class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
+                  View
+                </button>
+                <button onclick="editTool('${id}')"
+                  class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
+                  Edit
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("");
+  
+      toolBody.innerHTML = rows;
+  
+    } catch (error) {
+      console.error("Error loading tools:", error);
+      toolBody.innerHTML = `
+        <tr>
+          <td colspan="5" class="text-center py-4 text-red-500">Failed to load tools. Please try again.</td>
+        </tr>
+      `;
+    }
+  }
+  
+  document.addEventListener("DOMContentLoaded", loadTools);
+
 async function enrichTool(toolId) {
     try {
         console.log(`Enriching tool ID: ${toolId}`);
@@ -6474,7 +6570,6 @@ async function enrichTool(toolId) {
         }
     
         const data = await response.json();
-        enrichedDescription = data;
         enrichButton.disabled = false;
         enrichButton.textContent = "Enrich";
         enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
@@ -8546,12 +8641,6 @@ async function viewTool(toolId) {
         }
 
         const tool = await response.json();
-
-        if(enrichedDescription != null) {
-            console.log(JSON.stringify(enrichedDescription))
-            tool.description = enrichedDescription['enriched_desc']
-        }
-
         // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
