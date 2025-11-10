@@ -50,6 +50,10 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
+from mcpgateway.models import Gateway as PydanticGateway
+from mcpgateway.models import TextContent
+from mcpgateway.models import Tool as PydanticTool
+from mcpgateway.models import ToolResult
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
@@ -1272,15 +1276,14 @@ class ToolService:
                         # Don't mark as successful for error responses - success remains False
                     else:
                         result = response.json()
+                        logger.info(f" Rest API Tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         success = True
-
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                             success = bool(valid)
-
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
                     # gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1437,16 +1440,26 @@ class ToolService:
                         tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
-                    content = tool_call_result.model_dump(by_alias=True).get("content", [])
+                    logger.info(f"Tool call result: {tool_call_result}")
+                    logger.info(f"Tool call result content type : {type(tool_call_result)})")
+                    dump = tool_call_result.model_dump(by_alias=True)
+                    logger.info(f"Tool call result dump: {dump}")
+                    content = dump.get("content", [])
+                    # Accept both alias and pythonic names for structured content
+                    structured = dump.get("structuredContent") or dump.get("structured_content")
+                    logger.info(f"content: {content}, structuredContent: {structured}")
 
+                    # Use textual content for jq extraction, but keep structured payload available
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=filtered_response)
-                    success = True
-                    # If output schema is present, validate and attach structured content
-                    if getattr(tool, "output_schema", None):
-                        valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
-                        logger.info(f"Structured content validation result: {valid}")
-                        success = bool(valid)
+                    logger.info(f"filtered_response: {filtered_response}")
+                    tool_result = ToolResult(
+                                content=filtered_response,
+                                structured_content=structured,
+                                is_error=tool_call_result.isError,
+                                meta=getattr(tool_call_result, 'meta', None)
+                            )
+                    logger.info(f"Final tool_result: {tool_result}")
+                    #tool_result=tool_call_result    
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
