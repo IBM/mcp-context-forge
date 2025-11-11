@@ -180,7 +180,7 @@ class GatewayNameConflictError(GatewayError):
 class GatewayDuplicateConflictError(GatewayError):
     """Raised when a gateway conflicts with existing gateway (same URL + credentials).
 
-    This error is raised when attempting to register a gateway with a URL and 
+    This error is raised when attempting to register a gateway with a URL and
     authentication credentials that already exist within the same scope:
     - Public: Global uniqueness required
     - Team: Uniqueness within the same team
@@ -197,7 +197,7 @@ class GatewayDuplicateConflictError(GatewayError):
         ...     conflict_type="auth_value"
         ... )
         >>> str(error)
-        'Gateway with URL "https://api.example.com" and same authentication credentials 
+        'Gateway with URL "https://api.example.com" and same authentication credentials
         already exists in public scope (ID: abc-123, Status: active, Owner: alice@example.com)'
 
         >>> # Team gateway conflict with OAuth
@@ -206,12 +206,12 @@ class GatewayDuplicateConflictError(GatewayError):
         ...     conflict_type="oauth_config"
         ... )
         >>> str(error)
-        'Gateway with URL "https://api.example.com" and same OAuth configuration 
+        'Gateway with URL "https://api.example.com" and same OAuth configuration
         already exists in team "engineering-team" (ID: def-456, Status: inactive, Owner: bob@example.com)'
     """
 
     def __init__(
-        self, 
+        self,
         duplicate_gateway: "DbGateway",
     ):
         """Initialize the error with gateway information.
@@ -231,7 +231,7 @@ class GatewayDuplicateConflictError(GatewayError):
         if self.visibility == "public":
             scope_desc = "Public scope"
         elif self.visibility == "team" and self.team_id:
-            scope_desc = f'the Team'
+            scope_desc = f"the Team"
         else:
             scope_desc = f'"{self.visibility}" scope'
 
@@ -239,10 +239,7 @@ class GatewayDuplicateConflictError(GatewayError):
         status = "active" if self.enabled else "inactive"
 
         # Construct error message
-        message = (
-            f'The Server already exists in {scope_desc} '
-            f'(Name: {self.name}, Status: {status})'
-        )
+        message = f"The Server already exists in {scope_desc} " f"(Name: {self.name}, Status: {status})"
 
         # Add helpful hint for inactive gateways
         if not self.enabled:
@@ -513,19 +510,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         return team.name if team else None
 
     def _check_gateway_uniqueness(
-        self, 
-        db: Session, 
-        url: str, 
-        auth_value: Optional[Dict[str, str]], 
+        self,
+        db: Session,
+        url: str,
+        auth_value: Optional[Dict[str, str]],
         oauth_config: Optional[Dict[str, Any]],
         team_id: Optional[str],
-        owner_email: str,  
+        owner_email: str,
         visibility: str,
-        gateway_id: Optional[str] = None
+        gateway_id: Optional[str] = None,
     ) -> Optional[DbGateway]:
         """
         Check if a gateway with the same URL and credentials already exists.
-        
+
         Args:
             db: Database session
             url: Gateway URL (normalized)
@@ -535,36 +532,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             owner_email: Email of the gateway owner
             visibility: Gateway visibility (public/team/private)
             gateway_id: Optional gateway ID to exclude from check (for updates)
-        
+
         Returns:
             DbGateway if duplicate found, None otherwise
         """
         # Build base query based on visibility
         if visibility == "public":
-            query = db.query(DbGateway).filter(
-                DbGateway.url == url,
-                DbGateway.visibility == "public"
-            )
+            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "public")
         elif visibility == "team" and team_id:
-            query = db.query(DbGateway).filter(
-                DbGateway.url == url,
-                DbGateway.visibility == "team",
-                DbGateway.team_id == team_id
-            )
+            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "team", DbGateway.team_id == team_id)
         elif visibility == "private":
             # Check for duplicates within the same user's private gateways
-            query = db.query(DbGateway).filter(
-                DbGateway.url == url,
-                DbGateway.visibility == "private",
-                DbGateway.owner_email == owner_email  # Scoped to same user
-            )
+            query = db.query(DbGateway).filter(DbGateway.url == url, DbGateway.visibility == "private", DbGateway.owner_email == owner_email)  # Scoped to same user
         else:
             return None
-        
+
         # Exclude current gateway if updating
         if gateway_id:
             query = query.filter(DbGateway.id != gateway_id)
-        
+
         existing_gateways = query.all()
 
         # Check each existing gateway
@@ -574,37 +560,37 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Compare OAuth configs (exclude dynamic fields like tokens)
                 existing_oauth = existing.oauth_config or {}
                 new_oauth = oauth_config or {}
-                
+
                 # Compare key OAuth fields
-                oauth_keys = ['grant_type', 'client_id', 'authorization_url', 'token_url', 'scope']
+                oauth_keys = ["grant_type", "client_id", "authorization_url", "token_url", "scope"]
                 if all(existing_oauth.get(k) == new_oauth.get(k) for k in oauth_keys):
                     return existing  # Duplicate OAuth config found
-            
+
             # Case 2: Both have auth_value (need to decrypt and compare)
             elif auth_value and existing.auth_value:
-                
+
                 try:
                     # Decrypt existing auth_value
                     if isinstance(existing.auth_value, str):
                         existing_decoded = decode_auth(existing.auth_value)
-                        
+
                     elif isinstance(existing.auth_value, dict):
                         existing_decoded = existing.auth_value
-                        
+
                     else:
                         continue
-                    
+
                     # Compare decoded auth values
                     if auth_value == existing_decoded:
                         return existing  # Duplicate credentials found
                 except Exception as e:
                     logger.warning(f"Failed to decode auth_value for comparison: {e}")
                     continue
-            
+
             # Case 3: Both have no auth (URL only, not allowed)
             elif not auth_value and not oauth_config and not existing.auth_value and not existing.oauth_config:
                 return existing  # Duplicate URL without credentials
-        
+
         return None  # No duplicate found
 
     async def register_gateway(
@@ -686,7 +672,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Normalize the gateway URL
             normalized_url = self.normalize_url(str(gateway.url))
-          
+
             decoded_auth_value = None
             if gateway.auth_value:
                 if isinstance(gateway.auth_value, str):
@@ -698,22 +684,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 elif isinstance(gateway.auth_value, dict):
                     decoded_auth_value = gateway.auth_value
 
-            # Check for duplicate gateway 
+            # Check for duplicate gateway
             duplicate_gateway = self._check_gateway_uniqueness(
-                db=db,
-                url=normalized_url,
-                auth_value=decoded_auth_value,
-                oauth_config=gateway.oauth_config,
-                team_id=team_id,
-                owner_email=owner_email,
-                visibility=visibility
+                db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
             )
 
             if duplicate_gateway:
-          
-                raise GatewayDuplicateConflictError(
-                    duplicate_gateway = duplicate_gateway
-                )
+
+                raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
 
             # Prevent URL-only gateways (no auth at all)
             # if not decoded_auth_value and not gateway.oauth_config:
@@ -721,7 +699,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             #         f"Gateway with URL '{normalized_url}' must have either auth_value or oauth_config. "
             #         "URL-only gateways are not allowed."
             #     )
-
 
             auth_type = getattr(gateway, "auth_type", None)
             # Support multiple custom headers
@@ -1283,7 +1260,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if gateway_update.url is not None:
                     normalized_url = self.normalize_url(str(gateway_update.url))
 
-
                 # Prepare decoded auth_value for uniqueness check
                 decoded_auth_value = None
                 if gateway_update.auth_value:
@@ -1297,9 +1273,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Determine final values for uniqueness check
                 final_url = normalized_url
-                final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (
-                    decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value
-                )
+                final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value)
                 final_oauth_config = gateway_update.oauth_config if gateway_update.oauth_config is not None else gateway.oauth_config
                 final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
 
@@ -1312,14 +1286,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     team_id=gateway.team_id,
                     visibility=final_visibility,
                     gateway_id=gateway_id,  # Exclude current gateway from check
-                    owner_email=user_email
+                    owner_email=user_email,
                 )
 
                 if duplicate_gateway:
-                    raise GatewayDuplicateConflictError(
-                        duplicate_gateway=duplicate_gateway
-                    )
-    
+                    raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
 
                 # FIX for Issue #1025: Determine if URL actually changed before we update it
                 # We need this early because we update gateway.url below, and need to know
