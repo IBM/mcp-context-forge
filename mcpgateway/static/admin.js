@@ -6621,18 +6621,6 @@ document.addEventListener("DOMContentLoaded", () => {
       showErrorMessage(`❌ Error: ${err.message}`);
     }
   }
-  
-  function showSuccessMessage(msg) {
-    const responseDiv = document.getElementById("toolOpsResponse");
-    responseDiv.textContent = msg;
-    responseDiv.className = "text-green-600 font-semibold";
-  }
-  
-  function showErrorMessage(msg) {
-    const responseDiv = document.getElementById("toolOpsResponse");
-    responseDiv.textContent = msg;
-    responseDiv.className = "text-red-600 font-semibold";
-  }
     
     function clearAllSelections() {
         // Uncheck all checkboxes
