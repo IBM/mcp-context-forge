@@ -1,27 +1,30 @@
 var toolopsTools;
 
 document.addEventListener("DOMContentLoaded", () => {
-    const checkboxes = document.querySelectorAll(".tool-checkbox");
+    const toolBody = document.getElementById("toolBody");
     const selectedList = document.getElementById("selectedList");
     const selectedCount = document.getElementById("selectedCount");
     const searchBox = document.getElementById("searchBox");
-    const toolRows = document.querySelectorAll("#toolBody tr");
   
     let selectedTools = [];
+    let selectedToolIds = []
   
-    // --- Selection logic ---
-    checkboxes.forEach(cb => {
-      cb.addEventListener("change", () => {
+    // ✅ Use event delegation for dynamically added checkboxes
+    toolBody.addEventListener("change", (event) => {
+      const cb = event.target;
+      if (cb.classList.contains("tool-checkbox")) {
         const toolName = cb.getAttribute("data-tool");
+  
         if (cb.checked) {
           if (!selectedTools.includes(toolName)) {
-            selectedTools.push(toolName);
+            selectedTools.push(toolName.split('###')[0]);
+            selectedToolIds.push(toolName.split('###')[1]);
           }
         } else {
           selectedTools = selectedTools.filter(t => t !== toolName);
         }
         updateSelectedList();
-      });
+      }
     });
   
     function updateSelectedList() {
@@ -32,10 +35,14 @@ document.addEventListener("DOMContentLoaded", () => {
         selectedTools.forEach(tool => {
           const item = document.createElement("div");
           item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
-          item.innerHTML = `<span>${tool}</span><button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>`;
+          item.innerHTML = `
+            <span>${tool}</span>
+            <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
+          `;
           item.querySelector(".remove-btn").addEventListener("click", () => {
             selectedTools = selectedTools.filter(t => t !== tool);
-            document.querySelector(`.tool-checkbox[data-tool="${tool}"]`).checked = false;
+            const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
+            if (box) box.checked = false;
             updateSelectedList();
           });
           selectedList.appendChild(item);
@@ -47,17 +54,15 @@ document.addEventListener("DOMContentLoaded", () => {
     // --- Search logic ---
     searchBox.addEventListener("input", () => {
       const query = searchBox.value.trim().toLowerCase();
-      toolRows.forEach(row => {
+      document.querySelectorAll("#toolBody tr").forEach(row => {
         const name = row.dataset.name;
         row.style.display = name.includes(query) ? "" : "none";
       });
     });
 
     // Generic API call for Enrich/Validate
-  async function callEnrichment(endpoint) {
+  async function callEnrichment() {
     // const selectedTools = getSelectedTools();
-    console.log('global selected Tools...')
-    console.log(selectedTools)
     const responseDiv = document.getElementById("toolOpsResponse");
   
     if (selectedTools.length === 0) {
@@ -65,10 +70,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     try {
-      const testCases = 2;
-      const variations = 2;
-      console.log(selectedTools)
-      selectedTools.forEach(toolId => {
+      console.log(selectedToolIds)
+      selectedToolIds.forEach(toolId => {
         console.log(toolId)
         const res = fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
             method: "POST",
@@ -82,6 +85,15 @@ document.addEventListener("DOMContentLoaded", () => {
     //   enrichedDescription = data
     //   responseDiv.textContent = "Tool description enrichment has started.";
     showSuccessMessage("Tool description enrichment has started.");
+    // Uncheck all checkboxes
+    document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+    
+    // Empty the selected tools array
+    selectedTools = [];
+    selectedToolIds = [];
+    
+    // Update the selected tools list UI
+    updateSelectedList();
   
     } catch (err) {
     //   responseDiv.textContent = `❌ Error: ${err.message}`;
@@ -95,14 +107,14 @@ document.addEventListener("DOMContentLoaded", () => {
         console.log(selectedTools)
         const responseDiv = document.getElementById("toolOpsResponse");
       
-        if (selectedTools.length === 0) {
+        if (selectedToolIds.length === 0) {
           responseDiv.textContent = "⚠️ Please select at least one tool.";
           return;
         }
         try {
           const testCases = 2;
           const variations = 2;
-          selectedTools.forEach(toolId => {
+          selectedToolIds.forEach(toolId => {
             const res = fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
               method: "POST",
               headers: { "Cache-Control": "no-cache",
@@ -117,14 +129,35 @@ document.addEventListener("DOMContentLoaded", () => {
           // openValidationModal(data.details);
         //   responseDiv.textContent = "Test case generation for tool validation has started.";
         showSuccessMessage("Test case generation for tool validation has started.");
+        // Uncheck all checkboxes
+        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+        
+        // Empty the selected tools array
+        selectedTools = [];
+        selectedToolIds = [];
+        
+        // Update the selected tools list UI
+        updateSelectedList();
         } catch (err) {
         //   responseDiv.textContent = `❌ Error: ${err.message}`;
           showErrorMessage(`❌ Error: ${err.message}`);
         }
       }
+    
+    function clearAllSelections() {
+        // Uncheck all checkboxes
+        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+        
+        // Empty the selected tools array
+        selectedTools = [];
+        
+        // Update the selected tools list UI
+        updateSelectedList();
+      }
   // Button listeners
   document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
   document.getElementById("validateToolsBtn").addEventListener("click", () => callTestCaseGeneration());
+  document.getElementById("clearToolsBtn").addEventListener("click", () => clearAllSelections());
   });
 
   
