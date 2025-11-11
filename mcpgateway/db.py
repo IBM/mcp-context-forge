@@ -2820,7 +2820,7 @@ class Gateway(Base):
 
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
-        UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
+        # UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
     )
 
 

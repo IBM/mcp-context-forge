@@ -37,7 +37,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
-    GatewayUrlConflictError,
+    GatewayDuplicateConflictError,
 )
 
 # ---------------------------------------------------------------------------
@@ -559,7 +559,7 @@ class TestGatewayService:
             description="Gateway with existing tools",
         )
 
-        with pytest.raises(GatewayUrlConflictError) as exc_info:
+        with pytest.raises(GatewayDuplicateConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         err = exc_info.value
