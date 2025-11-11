@@ -231,7 +231,7 @@ class GatewayDuplicateConflictError(GatewayError):
         if self.visibility == "public":
             scope_desc = "Public scope"
         elif self.visibility == "team" and self.team_id:
-            scope_desc = f"the Team"
+            scope_desc = "the Team"
         else:
             scope_desc = f'"{self.visibility}" scope'
 
@@ -1257,22 +1257,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 visibility=existing_gateway.visibility,
                             )
                 # Check for existing gateway with the same URL and visibility
+                normalized_url = ""
                 if gateway_update.url is not None:
                     normalized_url = self.normalize_url(str(gateway_update.url))
+                else:
+                    normalized_url = None
 
                 # Prepare decoded auth_value for uniqueness check
                 decoded_auth_value = None
                 if gateway_update.auth_value:
                     if isinstance(gateway_update.auth_value, str):
                         try:
-                            decoded_auth_value = decode_auth(gatewayupdate.auth_value)
+                            decoded_auth_value = decode_auth(gateway_update.auth_value)
                         except Exception as e:
                             logger.warning(f"Failed to decode provided auth_value: {e}")
                     elif isinstance(gateway_update.auth_value, dict):
                         decoded_auth_value = gateway_update.auth_value
 
                 # Determine final values for uniqueness check
-                final_url = normalized_url
                 final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value)
                 final_oauth_config = gateway_update.oauth_config if gateway_update.oauth_config is not None else gateway.oauth_config
                 final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
@@ -1280,7 +1282,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Check for duplicates with updated credentials
                 duplicate_gateway = self._check_gateway_uniqueness(
                     db=db,
-                    url=final_url,
+                    url=normalized_url,
                     auth_value=final_auth_value,
                     oauth_config=final_oauth_config,
                     team_id=gateway.team_id,
