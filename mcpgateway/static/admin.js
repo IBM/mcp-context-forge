@@ -1,169 +1,3 @@
-var toolopsTools;
-
-document.addEventListener("DOMContentLoaded", () => {
-    const toolBody = document.getElementById("toolBody");
-    const selectedList = document.getElementById("selectedList");
-    const selectedCount = document.getElementById("selectedCount");
-    const searchBox = document.getElementById("searchBox");
-  
-    let selectedTools = [];
-    let selectedToolIds = []
-  
-    // ✅ Use event delegation for dynamically added checkboxes
-    toolBody.addEventListener("change", (event) => {
-      const cb = event.target;
-      if (cb.classList.contains("tool-checkbox")) {
-        const toolName = cb.getAttribute("data-tool");
-  
-        if (cb.checked) {
-          if (!selectedTools.includes(toolName)) {
-            selectedTools.push(toolName.split('###')[0]);
-            selectedToolIds.push(toolName.split('###')[1]);
-          }
-        } else {
-          selectedTools = selectedTools.filter(t => t !== toolName);
-        }
-        updateSelectedList();
-      }
-    });
-  
-    function updateSelectedList() {
-      selectedList.innerHTML = "";
-      if (selectedTools.length === 0) {
-        selectedList.textContent = "No tools selected";
-      } else {
-        selectedTools.forEach(tool => {
-          const item = document.createElement("div");
-          item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
-          item.innerHTML = `
-            <span>${tool}</span>
-            <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
-          `;
-          item.querySelector(".remove-btn").addEventListener("click", () => {
-            selectedTools = selectedTools.filter(t => t !== tool);
-            const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
-            if (box) box.checked = false;
-            updateSelectedList();
-          });
-          selectedList.appendChild(item);
-        });
-      }
-      selectedCount.textContent = selectedTools.length;
-    }
-  
-    // --- Search logic ---
-    searchBox.addEventListener("input", () => {
-      const query = searchBox.value.trim().toLowerCase();
-      document.querySelectorAll("#toolBody tr").forEach(row => {
-        const name = row.dataset.name;
-        row.style.display = name.includes(query) ? "" : "none";
-      });
-    });
-
-    // Generic API call for Enrich/Validate
-  async function callEnrichment() {
-    // const selectedTools = getSelectedTools();
-    const responseDiv = document.getElementById("toolOpsResponse");
-  
-    if (selectedTools.length === 0) {
-      responseDiv.textContent = "⚠️ Please select at least one tool.";
-      return;
-    }
-    try {
-      console.log(selectedToolIds)
-      selectedToolIds.forEach(toolId => {
-        console.log(toolId)
-        const res = fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
-            method: "POST",
-            headers: { "Cache-Control": "no-cache",
-                Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify({ tool_id: toolId }),
-          });
-        });
-    //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
-    //   const data = await res.json();
-    //   enrichedDescription = data
-    //   responseDiv.textContent = "Tool description enrichment has started.";
-    showSuccessMessage("Tool description enrichment has started.");
-    // Uncheck all checkboxes
-    document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
-    
-    // Empty the selected tools array
-    selectedTools = [];
-    selectedToolIds = [];
-    
-    // Update the selected tools list UI
-    updateSelectedList();
-  
-    } catch (err) {
-    //   responseDiv.textContent = `❌ Error: ${err.message}`;
-      showErrorMessage(`❌ Error: ${err.message}`);
-    }
-  }
-
-    async function callTestCaseGeneration() {
-        // const selectedTools = getSelectedTools();
-        console.log('global selected Tools...')
-        console.log(selectedTools)
-        const responseDiv = document.getElementById("toolOpsResponse");
-      
-        if (selectedToolIds.length === 0) {
-          responseDiv.textContent = "⚠️ Please select at least one tool.";
-          return;
-        }
-        try {
-          const testCases = 2;
-          const variations = 2;
-          selectedToolIds.forEach(toolId => {
-            const res = fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
-              method: "POST",
-              headers: { "Cache-Control": "no-cache",
-                  Pragma: "no-cache", "Content-Type": "application/json" },
-              body: JSON.stringify({ tool_id: toolId }),
-            });
-          });
-      
-        //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
-        //   const data = await res.json();
-        //   console.log(JSON.stringify(data));
-          // openValidationModal(data.details);
-        //   responseDiv.textContent = "Test case generation for tool validation has started.";
-        showSuccessMessage("Test case generation for tool validation has started.");
-        // Uncheck all checkboxes
-        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
-        
-        // Empty the selected tools array
-        selectedTools = [];
-        selectedToolIds = [];
-        
-        // Update the selected tools list UI
-        updateSelectedList();
-        } catch (err) {
-        //   responseDiv.textContent = `❌ Error: ${err.message}`;
-          showErrorMessage(`❌ Error: ${err.message}`);
-        }
-      }
-    
-    function clearAllSelections() {
-        // Uncheck all checkboxes
-        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
-        
-        // Empty the selected tools array
-        selectedTools = [];
-        
-        // Update the selected tools list UI
-        updateSelectedList();
-      }
-  // Button listeners
-  document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
-  document.getElementById("validateToolsBtn").addEventListener("click", () => callTestCaseGeneration());
-  document.getElementById("clearToolsBtn").addEventListener("click", () => clearAllSelections());
-  });
-
-  
-  
-  
-
 // Add three fields to passthrough section on Advanced button click
 function handleAddPassthrough() {
     const passthroughContainer = safeGetElement("passthrough-container");
@@ -6636,6 +6470,189 @@ async function enrichTool(toolId) {
     }
 }
 
+var toolopsTools;
+
+document.addEventListener("DOMContentLoaded", () => {
+    const toolBody = document.getElementById("toolBody");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const searchBox = document.getElementById("searchBox");
+  
+    let selectedTools = [];
+    let selectedToolIds = [];
+
+  
+    // ✅ Use event delegation for dynamically added checkboxes
+    toolBody.addEventListener("change", (event) => {
+      const cb = event.target;
+      if (cb.classList.contains("tool-checkbox")) {
+        const toolName = cb.getAttribute("data-tool");
+  
+        if (cb.checked) {
+          if (!selectedTools.includes(toolName)) {
+            selectedTools.push(toolName.split('###')[0]);
+            selectedToolIds.push(toolName.split('###')[1]);
+          }
+        } else {
+          selectedTools = selectedTools.filter(t => t !== toolName.split('###')[0]);
+          selectedToolIds = selectedToolIds.filter(t => t !== toolName.split('###')[1]);
+        }
+        updateSelectedList();
+      }
+    });
+  
+    function updateSelectedList() {
+      selectedList.innerHTML = "";
+      if (selectedTools.length === 0) {
+        selectedList.textContent = "No tools selected";
+      } else {
+        selectedTools.forEach(tool => {
+          const item = document.createElement("div");
+          item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+          item.innerHTML = `
+            <span>${tool}</span>
+            <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
+          `;
+          item.querySelector(".remove-btn").addEventListener("click", () => {
+            selectedTools = selectedTools.filter(t => t !== tool);
+            const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
+            if (box) box.checked = false;
+            updateSelectedList();
+          });
+          selectedList.appendChild(item);
+        });
+      }
+      selectedCount.textContent = selectedTools.length;
+    }
+  
+    // --- Search logic ---
+    searchBox.addEventListener("input", () => {
+      const query = searchBox.value.trim().toLowerCase();
+      document.querySelectorAll("#toolBody tr").forEach(row => {
+        const name = row.dataset.name;
+        row.style.display = name.includes(query) ? "" : "none";
+      });
+    });
+
+    // Generic API call for Enrich/Validate
+  async function callEnrichment() {
+    // const selectedTools = getSelectedTools();
+    const responseDiv = document.getElementById("toolOpsResponse");
+  
+    if (selectedTools.length === 0) {
+      responseDiv.textContent = "⚠️ Please select at least one tool.";
+      return;
+    }
+    try {
+      console.log(selectedToolIds)
+      selectedToolIds.forEach(toolId => {
+        console.log(toolId)
+        const res = fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify({ tool_id: toolId }),
+          });
+        });
+    //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
+    //   const data = await res.json();
+    //   enrichedDescription = data
+    //   responseDiv.textContent = "Tool description enrichment has started.";
+    showSuccessMessage("Tool description enrichment has started.");
+    // Uncheck all checkboxes
+    document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+    
+    // Empty the selected tools array
+    selectedTools = [];
+    selectedToolIds = [];
+    
+    // Update the selected tools list UI
+    updateSelectedList();
+  
+    } catch (err) {
+    //   responseDiv.textContent = `❌ Error: ${err.message}`;
+      showErrorMessage(`❌ Error: ${err.message}`);
+    }
+  }
+
+  function openTestCaseModal() {
+    if (selectedToolIds.length === 0) {
+      showErrorMessage("⚠️ Please select at least one tool.");
+      return;
+    }
+  
+    // Show modal
+    document.getElementById("bulk-testcase-gen-modal").classList.remove("hidden");
+    document.getElementById("bulk-generate-btn").addEventListener("click", generateBulkTestCases);
+
+  }
+  
+  window.generateBulkTestCases = async function() {
+    const testCases = parseInt(document.getElementById("gen-bulk-testcase-count").value);
+    const variations = parseInt(document.getElementById("gen-bulk-nl-variation-count").value);
+  
+    if (!testCases || !variations || testCases < 1 || variations < 1) {
+      showErrorMessage("Please enter valid numbers for test cases and variations.");
+      return;
+    }
+  
+    try {
+      for (const toolId of selectedToolIds) {
+        fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
+          method: "POST",
+          headers: {
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ tool_id: toolId }),
+        });
+      }
+      showSuccessMessage("Test case generation for tool validation has started.");
+      // Reset selections
+      document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+      selectedTools = [];
+      selectedToolIds = [];
+      updateSelectedList();
+  
+      // Close modal immediately after clicking Generate
+      closeModal("bulk-testcase-gen-modal");
+    } catch (err) {
+      showErrorMessage(`❌ Error: ${err.message}`);
+    }
+  }
+  
+  function showSuccessMessage(msg) {
+    const responseDiv = document.getElementById("toolOpsResponse");
+    responseDiv.textContent = msg;
+    responseDiv.className = "text-green-600 font-semibold";
+  }
+  
+  function showErrorMessage(msg) {
+    const responseDiv = document.getElementById("toolOpsResponse");
+    responseDiv.textContent = msg;
+    responseDiv.className = "text-red-600 font-semibold";
+  }
+    
+    function clearAllSelections() {
+        // Uncheck all checkboxes
+        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+        
+        // Empty the selected tools array
+        selectedTools = [];
+        selectedToolIds = [];
+        
+        // Update the selected tools list UI
+        updateSelectedList();
+      }
+  // Button listeners
+  document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
+  document.getElementById("validateToolsBtn").addEventListener("click", () => openTestCaseModal());
+  document.getElementById("clearToolsBtn").addEventListener("click", () => clearAllSelections());
+  });
+
+
+
 async function generateToolTestCases(toolId) {
     try {
         console.log(`Generating Test cases for tool ID: ${toolId}`);
@@ -6714,6 +6731,7 @@ async function generateToolTestCases(toolId) {
         }
     }
 }
+
 
 async function generateTestCases(){
     const testCases = document.getElementById("gen-testcase-count").value;
