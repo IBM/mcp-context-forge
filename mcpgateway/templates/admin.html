@@ -8876,20 +8876,19 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=50&render=selector"
+                        hx-trigger="load"
+                        hx-swap="innerHTML"
+                        hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
                       >
-                        {% for resource in resources %}
-                        <label
-                          class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-blue-50 dark:hover:bg-blue-900 rounded-md p-1"
-                        >
-                          <input
-                            type="checkbox"
-                            name="associatedResources"
-                            value="{{ resource.id }}"
-                            class="resource-checkbox form-checkbox h-5 w-5 text-blue-600 dark:bg-gray-800 dark:border-gray-600"
-                          />
-                          <span class="select-none">{{ resource.name }}</span>
-                        </label>
-                        {% endfor %}
+                        <!-- Resources will be loaded via HTMX -->
+                        <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                          <svg class="animate-spin h-5 w-5 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span class="ml-2">Loading resources...</span>
+                        </div>
                       </div>
                       <div class="flex justify-end gap-3 mt-3">
                         <button
@@ -8931,20 +8930,19 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&render=selector"
+                        hx-trigger="load"
+                        hx-swap="innerHTML"
+                        hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
                       >
-                        {% for prompt in prompts %}
-                        <label
-                          class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1"
-                        >
-                          <input
-                            type="checkbox"
-                            name="associatedPrompts"
-                            value="{{ prompt.id }}"
-                            class="prompt-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
-                          />
-                          <span class="select-none">{{ prompt.name }}</span>
-                        </label>
-                        {% endfor %}
+                        <!-- Prompts will be loaded via HTMX -->
+                        <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                          <svg class="animate-spin h-5 w-5 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          <span class="ml-2">Loading prompts...</span>
+                        </div>
                       </div>
                       <div class="flex justify-end gap-3 mt-3">
                         <button
@@ -12639,63 +12637,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         }
       });
 
-      // Select All / Clear All handlers for create server form
-      document.addEventListener('DOMContentLoaded', function() {
-        // Resources Select All / Clear All for create form
-        const selectAllResourcesBtn = document.getElementById('selectAllResourcesBtn');
-        const clearAllResourcesBtn = document.getElementById('clearAllResourcesBtn');
-        if (selectAllResourcesBtn && clearAllResourcesBtn) {
-          selectAllResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedResources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedResources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        // Prompts Select All / Clear All for create form
-        const selectAllPromptsBtn = document.getElementById('selectAllPromptsBtn');
-        const clearAllPromptsBtn = document.getElementById('clearAllPromptsBtn');
-        if (selectAllPromptsBtn && clearAllPromptsBtn) {
-          selectAllPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedPrompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#associatedPrompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        // Select All / Clear All handlers for edit server form (should already exist but let's add them)
-        const selectAllEditResourcesBtn = document.getElementById('selectAllEditResourcesBtn');
-        const clearAllEditResourcesBtn = document.getElementById('clearAllEditResourcesBtn');
-        if (selectAllEditResourcesBtn && clearAllEditResourcesBtn) {
-          selectAllEditResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-resources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllEditResourcesBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-resources input[type="checkbox"][name="associatedResources"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-
-        const selectAllEditPromptsBtn = document.getElementById('selectAllEditPromptsBtn');
-        const clearAllEditPromptsBtn = document.getElementById('clearAllEditPromptsBtn');
-        if (selectAllEditPromptsBtn && clearAllEditPromptsBtn) {
-          selectAllEditPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-prompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = true);
-          });
-          clearAllEditPromptsBtn.addEventListener('click', function() {
-            const checkboxes = document.querySelectorAll('#edit-server-prompts input[type="checkbox"][name="associatedPrompts"]');
-            checkboxes.forEach(checkbox => checkbox.checked = false);
-          });
-        }
-      });
+      // NOTE: Select All / Clear All handlers for Resources and Prompts are now handled
+      // by initResourceSelect() and initPromptSelect() functions in admin.js.
+      // Those functions properly fetch ALL IDs from the server and maintain state,
+      // so items that load via pagination are also included in the selection.
+      // The handlers are attached via HTMX's hx-on::after-swap attribute.
 
       // Download sample JSON for bulk import
       function downloadSampleJSON() {

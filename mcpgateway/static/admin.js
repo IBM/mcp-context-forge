@@ -5103,7 +5103,48 @@ async function editServer(serverId) {
             );
         }
 
+        // Set associated resources data attribute on the container
+        const editResourcesContainer = document.getElementById(
+            "edit-server-resources",
+        );
+        if (editResourcesContainer && server.associatedResources) {
+            editResourcesContainer.setAttribute(
+                "data-server-resources",
+                JSON.stringify(server.associatedResources),
+            );
+        }
+
+        // Set associated prompts data attribute on the container
+        const editPromptsContainer = document.getElementById(
+            "edit-server-prompts",
+        );
+        if (editPromptsContainer && server.associatedPrompts) {
+            editPromptsContainer.setAttribute(
+                "data-server-prompts",
+                JSON.stringify(server.associatedPrompts),
+            );
+        }
+
         openModal("server-edit-modal");
+
+        // Initialize the select handlers for resources and prompts in the edit modal
+        initResourceSelect(
+            "edit-server-resources",
+            "selectedEditResourcesPills",
+            "selectedEditResourcesWarning",
+            6,
+            "selectAllEditResourcesBtn",
+            "clearAllEditResourcesBtn",
+        );
+
+        initPromptSelect(
+            "edit-server-prompts",
+            "selectedEditPromptsPills",
+            "selectedEditPromptsWarning",
+            6,
+            "selectAllEditPromptsBtn",
+            "clearAllEditPromptsBtn",
+        );
 
         // Use multiple approaches to ensure checkboxes get set
         setEditServerAssociations(server);
@@ -5448,6 +5489,213 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                     }
                 }
             }, 10); // Small delay to ensure DOM is updated
+        }
+    });
+}
+
+// Set up HTMX handler for auto-checking newly loaded resources when Select All is active
+if (window.htmx && !window._resourcesHtmxHandlerAttached) {
+    window._resourcesHtmxHandlerAttached = true;
+
+    window.htmx.on("htmx:afterSettle", function (evt) {
+        // Only handle resource pagination requests
+        if (
+            evt.detail.pathInfo &&
+            evt.detail.pathInfo.requestPath &&
+            evt.detail.pathInfo.requestPath.includes("/admin/resources/partial")
+        ) {
+            setTimeout(() => {
+                // Find the container
+                let container = null;
+                const target = evt.detail.target;
+
+                if (target && target.id === "edit-server-resources") {
+                    container = target;
+                } else if (target && target.id === "associatedResources") {
+                    container = target;
+                } else if (target) {
+                    container =
+                        target.closest("#associatedResources") ||
+                        target.closest("#edit-server-resources");
+                }
+
+                if (!container) {
+                    const editModal =
+                        document.getElementById("server-edit-modal");
+                    const isEditModalOpen =
+                        editModal && !editModal.classList.contains("hidden");
+
+                    if (isEditModalOpen) {
+                        container = document.getElementById(
+                            "edit-server-resources",
+                        );
+                    } else {
+                        container = document.getElementById(
+                            "associatedResources",
+                        );
+                    }
+                }
+
+                if (container) {
+                    const newCheckboxes = container.querySelectorAll(
+                        "input[data-auto-check=true]",
+                    );
+
+                    const selectAllInput = container.querySelector(
+                        'input[name="selectAllResources"]',
+                    );
+
+                    // Check if Select All is active
+                    if (selectAllInput && selectAllInput.value === "true") {
+                        newCheckboxes.forEach((cb) => {
+                            cb.checked = true;
+                            cb.removeAttribute("data-auto-check");
+                        });
+
+                        if (newCheckboxes.length > 0) {
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
+
+                    // Also check for edit mode: pre-select items based on server's associated resources
+                    const dataAttr = container.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        try {
+                            const associatedResourceIds = JSON.parse(dataAttr);
+                            newCheckboxes.forEach((cb) => {
+                                const checkboxValue = parseInt(cb.value);
+                                if (
+                                    associatedResourceIds.includes(
+                                        checkboxValue,
+                                    )
+                                ) {
+                                    cb.checked = true;
+                                }
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            if (newCheckboxes.length > 0) {
+                                const event = new Event("change", {
+                                    bubbles: true,
+                                });
+                                container.dispatchEvent(event);
+                            }
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-server-resources:",
+                                e,
+                            );
+                        }
+                    }
+                }
+            }, 10);
+        }
+    });
+}
+
+// Set up HTMX handler for auto-checking newly loaded prompts when Select All is active
+if (window.htmx && !window._promptsHtmxHandlerAttached) {
+    window._promptsHtmxHandlerAttached = true;
+
+    window.htmx.on("htmx:afterSettle", function (evt) {
+        // Only handle prompt pagination requests
+        if (
+            evt.detail.pathInfo &&
+            evt.detail.pathInfo.requestPath &&
+            evt.detail.pathInfo.requestPath.includes("/admin/prompts/partial")
+        ) {
+            setTimeout(() => {
+                // Find the container
+                let container = null;
+                const target = evt.detail.target;
+
+                if (target && target.id === "edit-server-prompts") {
+                    container = target;
+                } else if (target && target.id === "associatedPrompts") {
+                    container = target;
+                } else if (target) {
+                    container =
+                        target.closest("#associatedPrompts") ||
+                        target.closest("#edit-server-prompts");
+                }
+
+                if (!container) {
+                    const editModal =
+                        document.getElementById("server-edit-modal");
+                    const isEditModalOpen =
+                        editModal && !editModal.classList.contains("hidden");
+
+                    if (isEditModalOpen) {
+                        container = document.getElementById(
+                            "edit-server-prompts",
+                        );
+                    } else {
+                        container =
+                            document.getElementById("associatedPrompts");
+                    }
+                }
+
+                if (container) {
+                    const newCheckboxes = container.querySelectorAll(
+                        "input[data-auto-check=true]",
+                    );
+
+                    const selectAllInput = container.querySelector(
+                        'input[name="selectAllPrompts"]',
+                    );
+
+                    // Check if Select All is active
+                    if (selectAllInput && selectAllInput.value === "true") {
+                        newCheckboxes.forEach((cb) => {
+                            cb.checked = true;
+                            cb.removeAttribute("data-auto-check");
+                        });
+
+                        if (newCheckboxes.length > 0) {
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            container.dispatchEvent(event);
+                        }
+                    }
+
+                    // Also check for edit mode: pre-select items based on server's associated prompts
+                    const dataAttr = container.getAttribute(
+                        "data-server-prompts",
+                    );
+                    if (dataAttr) {
+                        try {
+                            const associatedPromptIds = JSON.parse(dataAttr);
+                            newCheckboxes.forEach((cb) => {
+                                const checkboxValue = parseInt(cb.value);
+                                if (
+                                    associatedPromptIds.includes(checkboxValue)
+                                ) {
+                                    cb.checked = true;
+                                }
+                                cb.removeAttribute("data-auto-check");
+                            });
+
+                            if (newCheckboxes.length > 0) {
+                                const event = new Event("change", {
+                                    bubbles: true,
+                                });
+                                container.dispatchEvent(event);
+                            }
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-server-prompts:",
+                                e,
+                            );
+                        }
+                    }
+                }
+            }, 10);
         }
     });
 }
