@@ -7352,6 +7352,7 @@ async function validateTool(toolId) {
                 document
                     .getElementById("run-all-tests-btn")
                     ?.addEventListener("click", async () => {
+                        showSuccessMessage("🔍 Validation in progress; View results by expanding each test case.")
                     const total = testCases.length;
                     for (let i = 0; i < total; i++) {
                         await runToolValidation(i);
