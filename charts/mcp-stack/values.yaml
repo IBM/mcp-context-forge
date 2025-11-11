@@ -305,7 +305,7 @@ mcpContextForge:
     PLUGINS_MTLS_VERIFY: "true"              # verify remote plugin certificates
     PLUGINS_MTLS_CHECK_HOSTNAME: "true"      # enforce hostname verification when verifying certs
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
-    PLUGINS_CLI_MARKUP_MODE: ""      # set markup mode for plugins CLI
+    PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
     # ─ OpenTelemetry Observability ─
     OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
@@ -323,7 +323,7 @@ mcpContextForge:
     OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
     OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
     OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
-    OBSERVABILITY_EXCLUDE_PATHS: "/health,/healthz,/ready,/metrics,/static/.*" # paths to exclude from tracing
+    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing
     OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
     OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
 
