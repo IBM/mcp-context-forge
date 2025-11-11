@@ -229,9 +229,9 @@ class GatewayDuplicateConflictError(GatewayError):
 
         # Build scope description
         if self.visibility == "public":
-            scope_desc = "public scope"
+            scope_desc = "Public scope"
         elif self.visibility == "team" and self.team_id:
-            scope_desc = f'team "{self.team_id}"'
+            scope_desc = f'the Team'
         else:
             scope_desc = f'"{self.visibility}" scope'
 
@@ -240,7 +240,7 @@ class GatewayDuplicateConflictError(GatewayError):
 
         # Construct error message
         message = (
-            f'The Gateway with URL "{self.url}" already exists in {scope_desc} '
+            f'The Server already exists in {scope_desc} '
             f'(Name: {self.name}, Status: {status})'
         )
 
@@ -701,11 +701,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             if duplicate_gateway:
           
-                error_msg = (
-                    f"The Gateway already exists "
-                    f"(ID: {duplicate_gateway.id}, Name: {duplicate_gateway.name}, enabled: {duplicate_gateway.enabled})"
-                )
-                
                 raise GatewayDuplicateConflictError(
                     duplicate_gateway = duplicate_gateway
                 )
