@@ -519,6 +519,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         auth_value: Optional[Dict[str, str]], 
         oauth_config: Optional[Dict[str, Any]],
         team_id: Optional[str],
+        owner_email: str,  
         visibility: str,
         gateway_id: Optional[str] = None
     ) -> Optional[DbGateway]:
@@ -531,6 +532,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             auth_value: Decoded auth_value dict (not encrypted)
             oauth_config: OAuth configuration dict
             team_id: Team ID for team-scoped gateways
+            owner_email: Email of the gateway owner
             visibility: Gateway visibility (public/team/private)
             gateway_id: Optional gateway ID to exclude from check (for updates)
         
@@ -549,8 +551,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 DbGateway.visibility == "team",
                 DbGateway.team_id == team_id
             )
-        else:  # private
-            return None  # Private gateways don't need cross-user uniqueness
+        elif visibility == "private":
+            # Check for duplicates within the same user's private gateways
+            query = db.query(DbGateway).filter(
+                DbGateway.url == url,
+                DbGateway.visibility == "private",
+                DbGateway.owner_email == owner_email  # Scoped to same user
+            )
+        else:
+            return None
         
         # Exclude current gateway if updating
         if gateway_id:
@@ -696,6 +705,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth_value=decoded_auth_value,
                 oauth_config=gateway.oauth_config,
                 team_id=team_id,
+                owner_email=owner_email,
                 visibility=visibility
             )
 
@@ -1272,30 +1282,44 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Check for existing gateway with the same URL and visibility
                 if gateway_update.url is not None:
                     normalized_url = self.normalize_url(str(gateway_update.url))
-                    if gateway_update.visibility is not None:
-                        vis = gateway_update.visibility
-                    else:
-                        vis = gateway.visibility
-                    if vis == "public":
-                        existing_gateway = db.execute(select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "public", DbGateway.id != gateway_id)).scalar_one_or_none()
-                        if existing_gateway:
-                            raise GatewayDuplicateConflictError(
-                                normalized_url,
-                                enabled=existing_gateway.enabled,
-                                gateway_id=existing_gateway.id,
-                                visibility=existing_gateway.visibility,
-                            )
-                    elif vis == "team" and gateway.team_id:
-                        existing_gateway = db.execute(
-                            select(DbGateway).where(DbGateway.url == normalized_url, DbGateway.visibility == "team", DbGateway.team_id == gateway.team_id, DbGateway.id != gateway_id)
-                        ).scalar_one_or_none()
-                        if existing_gateway:
-                            raise GatewayDuplicateConflictError(
-                                normalized_url,
-                                enabled=existing_gateway.enabled,
-                                gateway_id=existing_gateway.id,
-                                visibility=existing_gateway.visibility,
-                            )
+
+
+                # Prepare decoded auth_value for uniqueness check
+                decoded_auth_value = None
+                if gateway_update.auth_value:
+                    if isinstance(gateway_update.auth_value, str):
+                        try:
+                            decoded_auth_value = decode_auth(gatewayupdate.auth_value)
+                        except Exception as e:
+                            logger.warning(f"Failed to decode provided auth_value: {e}")
+                    elif isinstance(gateway_update.auth_value, dict):
+                        decoded_auth_value = gateway_update.auth_value
+
+                # Determine final values for uniqueness check
+                final_url = normalized_url
+                final_auth_value = decoded_auth_value if gateway_update.auth_value is not None else (
+                    decode_auth(gateway.auth_value) if isinstance(gateway.auth_value, str) else gateway.auth_value
+                )
+                final_oauth_config = gateway_update.oauth_config if gateway_update.oauth_config is not None else gateway.oauth_config
+                final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
+
+                # Check for duplicates with updated credentials
+                duplicate_gateway = self._check_gateway_uniqueness(
+                    db=db,
+                    url=final_url,
+                    auth_value=final_auth_value,
+                    oauth_config=final_oauth_config,
+                    team_id=gateway.team_id,
+                    visibility=final_visibility,
+                    gateway_id=gateway_id,  # Exclude current gateway from check
+                    owner_email=user_email
+                )
+
+                if duplicate_gateway:
+                    raise GatewayDuplicateConflictError(
+                        duplicate_gateway=duplicate_gateway
+                    )
+    
 
                 # FIX for Issue #1025: Determine if URL actually changed before we update it
                 # We need this early because we update gateway.url below, and need to know
