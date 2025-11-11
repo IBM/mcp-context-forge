@@ -7354,6 +7354,12 @@ async function validateTool(toolId) {
                     ?.addEventListener("click", async () => {
                         showSuccessMessage("🔍 Validation in progress; View results by expanding each test case.")
                     const total = testCases.length;
+                    document.querySelectorAll("#tool-validation-form-fields > div").forEach((acc) => {
+                        const body = acc.querySelector("div.hidden");
+                        const icon = acc.querySelector(".toggle-icon");
+                        if (body) body.classList.remove("hidden");
+                        if (icon) icon.textContent = "−";
+                      });
                     for (let i = 0; i < total; i++) {
                         await runToolValidation(i);
                     }
