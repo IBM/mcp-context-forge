@@ -1433,7 +1433,7 @@ class ToolService:
                         # Reconstruct ToolResult from modified result
                         modified_result = post_result.modified_payload.result
                         if isinstance(modified_result, dict) and "content" in modified_result:
-                            tool_result = ToolResult(content=modified_result["content"])
+                            tool_result = ToolResult(content=modified_result["content"], structured_content=modified_result["structuredContent"] if "structuredContent" in modified_result else modified_result["structured_content"])
                         else:
                             # If result is not in expected format, convert it to text content
                             tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
