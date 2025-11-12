@@ -18,6 +18,7 @@ spec:
       targetPort: console
       protocol: TCP
   selector:
-    {{- include "mcp-stack.selectorLabels" . | nindent 4 }}
+    {{- include "mcp-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: minio
+    app: {{ include "mcp-stack.fullname" . }}-minio
 {{- end }}

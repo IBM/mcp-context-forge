@@ -1,0 +1,88 @@
+{{- $targetVersion := .Values.postgres.upgrade.targetVersion | toString -}}
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-postgres-restore
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres-restore
+  annotations:
+    "helm.sh/hook": post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": "before-hook-creation,hook-succeeded"
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: postgres-restore
+          image: "{{ .Values.postgres.image.repository }}:{{- if eq $targetVersion "18" -}}18{{- else -}}{{ .Values.postgres.image.tag }}{{- end -}}"  # Using target version PostgreSQL
+          command:
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              set -e
+              
+              echo "Starting PostgreSQL restore..."
+              
+              # Install MinIO client and jq
+              apt-get update && apt-get install -y wget jq
+              wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+              chmod +x /tmp/mc
+              
+              # Configure MinIO client
+              /tmp/mc alias set minio http://{{ include "mcp-stack.fullname" . }}-minio:{{ .Values.minio.service.apiPort }} $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+              
+              # List and find the latest backup file - mc ls --json returns individual JSON lines
+              # Collect the keys and timestamps, sort by timestamp, get the most recent
+              LATEST_BACKUP=$(/tmp/mc ls --json minio/postgres-backups/ | jq -r '"\(.time) \(.key)"' | sort -r | head -n1 | cut -d' ' -f2-)
+              
+              if [ -z "$LATEST_BACKUP" ]; then
+                echo "No backup file found in MinIO!"
+                exit 1
+              fi
+              
+              echo "Found backup file: $LATEST_BACKUP"
+              
+              # Download the backup file from MinIO
+              /tmp/mc cp minio/postgres-backups/$LATEST_BACKUP /tmp/
+              
+              # Wait for PostgreSQL to be ready
+              echo "Waiting for PostgreSQL 18 to be ready..."
+              until pg_isready -h localhost -U {{ .Values.postgres.credentials.user }}; do
+                sleep 2
+              done
+              
+              # Import the backup
+              psql -h localhost -U {{ .Values.postgres.credentials.user }} -d {{ .Values.postgres.credentials.database }} -f /tmp/$LATEST_BACKUP
+              
+              echo "Database restored successfully from backup: $LATEST_BACKUP"
+              
+              # Clean up
+              rm /tmp/$LATEST_BACKUP
+              
+              echo "PostgreSQL 18 restore completed"
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_PASSWORD
+{{- end }}

@@ -643,6 +643,12 @@ postgres:
       successThreshold: 1
       failureThreshold: 5
 
+  # ─── PostgreSQL Upgrade Configuration ───
+  upgrade:
+    enabled: false              # Set to true to enable the upgrade process
+    targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
+    backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
 ########################################################################
 # REDIS CACHE
 ########################################################################
@@ -803,7 +809,7 @@ redisCommander:
 # MINIO - S3 Compatible Object Storage
 ########################################################################
 minio:
-  enabled: false # Set to true to deploy MinIO
+  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
 
   image:
     repository: minio/minio

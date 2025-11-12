@@ -7,6 +7,14 @@
      - Adds resource requests / limits pulled from values.yaml.
      ------------------------------------------------------------------- */}}
 
+{{- $targetVersion := .Values.postgres.upgrade.targetVersion | toString -}}
+{{- $postgresImage := "" -}}
+{{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") -}}
+{{- $postgresImage = printf "%s:18" .Values.postgres.image.repository -}}
+{{- else -}}
+{{- $postgresImage = printf "%s:%s" .Values.postgres.image.repository .Values.postgres.image.tag -}}
+{{- end -}}
+
 {{- if .Values.postgres.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -21,6 +29,11 @@ spec:
   selector:
     matchLabels:
       app: {{ include "mcp-stack.fullname" . }}-postgres
+  {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") }}
+  # For PostgreSQL 18 upgrade, we need to perform a rolling update
+  strategy:
+    type: Recreate  # Recreate strategy to ensure clean transition during upgrade
+  {{- end }}
   template:
     metadata:
       labels:
@@ -33,9 +46,59 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      initContainers:
+      {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
+        # Init container to restore data from backup if this is a PostgreSQL 18 upgrade
+        - name: postgres-restore
+          image: "{{ .Values.postgres.image.repository }}:18"  # Using PostgreSQL 18 for restore
+          command:
+            - /bin/bash
+            - -c
+            - |
+              #!/bin/bash
+              set -e
+              
+              # Install MinIO client and jq
+              apt-get update && apt-get install -y wget jq
+              wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+              chmod +x /tmp/mc
+              
+              # Configure MinIO client
+              /tmp/mc alias set minio http://{{ include "mcp-stack.fullname" . }}-minio:{{ .Values.minio.service.apiPort }} $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+              
+              # List and find the latest backup file - mc ls --json returns individual JSON lines
+              # Collect the keys and timestamps, sort by timestamp, get the most recent
+              LATEST_BACKUP=$(/tmp/mc ls --json minio/postgres-backups/ | jq -r '"\(.time) \(.key)"' | sort -r | head -n1 | cut -d' ' -f2-)
+              
+              if [ -z "$LATEST_BACKUP" ]; then
+                echo "No backup file found in MinIO, assuming fresh install..."
+                exit 0
+              fi
+              
+              echo "Found backup file: $LATEST_BACKUP"
+              
+              # Download the backup file from MinIO
+              /tmp/mc cp minio/postgres-backups/$LATEST_BACKUP /docker-entrypoint-initdb.d/
+              
+              echo "Backup downloaded to initdb directory: $LATEST_BACKUP"
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_USER
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
+                  key: MINIO_ROOT_PASSWORD
+          volumeMounts:
+            - name: postgredb
+              mountPath: /docker-entrypoint-initdb.d
+      {{- end }}
       containers:
         - name: postgres
-          image: "{{ .Values.postgres.image.repository }}:{{ .Values.postgres.image.tag }}"
+          image: "{{ $postgresImage }}"
           imagePullPolicy: "{{ .Values.postgres.image.pullPolicy }}"
 
           # Expose Postgres TCP port inside the pod

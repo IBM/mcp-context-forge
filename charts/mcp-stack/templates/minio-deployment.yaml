@@ -10,13 +10,14 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "mcp-stack.selectorLabels" . | nindent 6 }}
+      {{- include "mcp-stack.labels" . | nindent 6 }}
       app.kubernetes.io/component: minio
   template:
     metadata:
       labels:
-        {{- include "mcp-stack.selectorLabels" . | nindent 8 }}
+        {{- include "mcp-stack.labels" . | nindent 8 }}
         app.kubernetes.io/component: minio
+        app: {{ include "mcp-stack.fullname" . }}-minio
     spec:
       containers:
         - name: minio
