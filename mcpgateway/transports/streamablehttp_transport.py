@@ -359,12 +359,25 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     """
     Handles tool invocation via the MCP Server.
 
+    This function supports the MCP protocol's tool calling with structured content validation.
+    It can return either unstructured content only, or both unstructured and structured content
+    when the tool defines an outputSchema.
+
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
 
     Returns:
-        List of content (TextContent, ImageContent, or EmbeddedResource) from the tool response.
+        Union[List[ContentBlock], Tuple[List[ContentBlock], Dict[str, Any]]]:
+            - If structured content is not present: Returns a list of content blocks
+              (TextContent, ImageContent, or EmbeddedResource)
+            - If structured content is present: Returns a tuple of (unstructured_content, structured_content)
+              where structured_content is a dictionary that will be validated against the tool's outputSchema
+
+        The MCP SDK's call_tool decorator automatically handles both return types:
+        - List return → CallToolResult with content only
+        - Tuple return → CallToolResult with both content and structuredContent fields
+
         Logs and returns an empty list on failure.
 
     Examples:

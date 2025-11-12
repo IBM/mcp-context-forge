@@ -1240,7 +1240,7 @@ class ToolService:
                         # Don't mark as successful for error responses - success remains False
                     else:
                         result = response.json()
-                        logger.info(f" Rest API Tool response: {result}")
+                        logger.debug(f"REST API tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         success = True
@@ -1405,7 +1405,7 @@ class ToolService:
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
                     dump = tool_call_result.model_dump(by_alias=True)
-                    logger.info(f"Tool call result dump: {dump}")
+                    logger.debug(f"Tool call result dump: {dump}")
                     content = dump.get("content", [])
                     # Accept both alias and pythonic names for structured content
                     structured = dump.get("structuredContent") or dump.get("structured_content")
@@ -1415,7 +1415,7 @@ class ToolService:
                     if is_err is None:
                         is_err = getattr(tool_call_result, "isError", False)
                     tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
-                    logger.info(f"Final tool_result: {tool_result}")
+                    logger.debug(f"Final tool_result: {tool_result}")
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
@@ -1435,14 +1435,9 @@ class ToolService:
                         if isinstance(modified_result, dict) and "content" in modified_result:
                             # Safely obtain structured content using .get() to avoid KeyError when
                             # plugins provide only the content without structured content fields.
-                            structured = None
-                            if isinstance(modified_result, dict):
-                                structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
+                            structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
 
-                            tool_result = ToolResult(
-                                content=modified_result["content"],
-                                structured_content=structured
-                            )
+                            tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
                         else:
                             # If result is not in expected format, convert it to text content
                             tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
