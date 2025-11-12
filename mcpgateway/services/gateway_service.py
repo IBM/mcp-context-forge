@@ -3351,7 +3351,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 timeout=timeout or httpx.Timeout(30.0),
                 auth=auth,
             )
-        await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="STREAMABLEHTTP")    
         if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="STREAMABLEHTTP"):
             async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
