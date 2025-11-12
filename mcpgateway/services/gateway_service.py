@@ -178,36 +178,41 @@ class GatewayNameConflictError(GatewayError):
 
 
 class GatewayDuplicateConflictError(GatewayError):
-    """Raised when a gateway conflicts with existing gateway (same URL + credentials).
+    """Raised when a gateway conflicts with an existing gateway (same URL + credentials).
 
     This error is raised when attempting to register a gateway with a URL and
     authentication credentials that already exist within the same scope:
-    - Public: Global uniqueness required
-    - Team: Uniqueness within the same team
-    - Private: No uniqueness check (this error won't be raised)
+    - Public: Global uniqueness required across all public gateways.
+    - Team: Uniqueness required within the same team.
+    - Private: Uniqueness required for the same user, a user cannot have two private gateways with the same URL and credentials.
 
     Args:
-        duplicate_gateway: The existing conflicting gateway (DbGateway instance)
-        conflict_type: Type of credential conflict ("auth_value", "oauth_config", "no_auth")
+        duplicate_gateway: The existing conflicting gateway (DbGateway instance).
 
     Examples:
-        >>> # Public gateway conflict with basic auth
+        >>> # Public gateway conflict with the same URL and basic auth
+        >>> existing_gw = DbGateway(url="https://api.example.com", id="abc-123", enabled=True, visibility="public", team_id=None, name="API Gateway", owner_email="alice@example.com")
         >>> error = GatewayDuplicateConflictError(
-        ...     duplicate_gateway=existing_gw,
-        ...     conflict_type="auth_value"
+        ...     duplicate_gateway=existing_gw
         ... )
         >>> str(error)
-        'Gateway with URL "https://api.example.com" and same authentication credentials
-        already exists in public scope (ID: abc-123, Status: active, Owner: alice@example.com)'
+        'The Server already exists in Public scope (Name: API Gateway, Status: active)'
 
-        >>> # Team gateway conflict with OAuth
+        >>> # Team gateway conflict with the same URL and OAuth credentials
+        >>> team_gw = DbGateway(url="https://api.example.com", id="def-456", enabled=False, visibility="team", team_id="engineering-team", name="API Gateway", owner_email="bob@example.com")
         >>> error = GatewayDuplicateConflictError(
-        ...     duplicate_gateway=team_gw,
-        ...     conflict_type="oauth_config"
+        ...     duplicate_gateway=team_gw
         ... )
         >>> str(error)
-        'Gateway with URL "https://api.example.com" and same OAuth configuration
-        already exists in team "engineering-team" (ID: def-456, Status: inactive, Owner: bob@example.com)'
+        'The Server already exists in your Team (Name: API Gateway, Status: inactive). You may want to re-enable the existing gateway instead.'
+
+        >>> # Private gateway conflict (same user cannot have two gateways with the same URL)
+        >>> private_gw = DbGateway(url="https://api.example.com", id="ghi-789", enabled=True, visibility="private", team_id="none", name="API Gateway", owner_email="charlie@example.com")
+        >>> error = GatewayDuplicateConflictError(
+        ...     duplicate_gateway=private_gw
+        ... )
+        >>> str(error)
+        'The Server already exists in "private" scope (Name: API Gateway, Status: active)'
     """
 
     def __init__(
@@ -231,7 +236,7 @@ class GatewayDuplicateConflictError(GatewayError):
         if self.visibility == "public":
             scope_desc = "Public scope"
         elif self.visibility == "team" and self.team_id:
-            scope_desc = "the Team"
+            scope_desc = "your Team"
         else:
             scope_desc = f'"{self.visibility}" scope'
 
