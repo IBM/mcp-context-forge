@@ -6537,10 +6537,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // Generic API call for Enrich/Validate
   async function callEnrichment() {
     // const selectedTools = getSelectedTools();
-    const responseDiv = document.getElementById("toolOpsResponse");
   
     if (selectedTools.length === 0) {
-      responseDiv.textContent = "⚠️ Please select at least one tool.";
+        showErrorMessage("⚠️ Please select at least one tool.");
       return;
     }
     try {
@@ -6592,7 +6591,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const variations = parseInt(document.getElementById("gen-bulk-nl-variation-count").value);
   
     if (!testCases || !variations || testCases < 1 || variations < 1) {
-      showErrorMessage("Please enter valid numbers for test cases and variations.");
+      showErrorMessage("⚠️ Please enter valid numbers for test cases and variations.");
       return;
     }
   
