@@ -48,9 +48,9 @@ spec:
       {{- end }}
       initContainers:
       {{- if and .Values.postgres.upgrade.enabled (eq $targetVersion "18") .Values.postgres.upgrade.backupCompleted }}
-        # Init container to restore data from backup if this is a PostgreSQL 18 upgrade
+        # Init container to upgrade PostgreSQL data from version 17 to 18
         - name: postgres-restore
-          image: "{{ .Values.postgres.image.repository }}:18"  # Using PostgreSQL 18 for restore
+          image: "{{ .Values.postgres.image.repository }}:17"  # Use PostgreSQL 17 image to access the old data
           command:
             - /bin/bash
             - -c
@@ -58,29 +58,72 @@ spec:
               #!/bin/bash
               set -e
               
-              # Install MinIO client and jq
-              apt-get update && apt-get install -y wget jq
-              wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
-              chmod +x /tmp/mc
+              PGDATA="/var/lib/postgresql/data/pgdata"
+              INITDB_DONE_FILE="$PGDATA/.initdb_done"
               
-              # Configure MinIO client
-              /tmp/mc alias set minio http://{{ include "mcp-stack.fullname" . }}-minio:{{ .Values.minio.service.apiPort }} $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
-              
-              # List and find the latest backup file - mc ls --json returns individual JSON lines
-              # Collect the keys and timestamps, sort by timestamp, get the most recent
-              LATEST_BACKUP=$(/tmp/mc ls --json minio/postgres-backups/ | jq -r '"\(.time) \(.key)"' | sort -r | head -n1 | cut -d' ' -f2-)
-              
-              if [ -z "$LATEST_BACKUP" ]; then
-                echo "No backup file found in MinIO, assuming fresh install..."
+              echo "Checking PostgreSQL data directory..."
+              if [ -d "$PGDATA" ]; then
+                ls -la "$PGDATA" | head -20
+              else
+                echo "Data directory does not exist yet"
                 exit 0
               fi
               
-              echo "Found backup file: $LATEST_BACKUP"
+              # Check if this is a data upgrade scenario (PG_VERSION file exists with version 17)
+              if [ -f "$PGDATA/PG_VERSION" ]; then
+                CURRENT_VERSION=$(cat "$PGDATA/PG_VERSION" 2>/dev/null || echo "")
+                echo "Found PG_VERSION file with version: $CURRENT_VERSION"
+                
+                if [ "$CURRENT_VERSION" = "17" ]; then
+                  echo "PostgreSQL 17 data detected - this should be removed to allow PostgreSQL 18 to initialize fresh and reload from dump"
+                  
+                  # Install MinIO client and jq
+                  apt-get update && apt-get install -y wget jq
+                  wget https://dl.min.io/client/mc/release/linux-amd64/mc -O /tmp/mc
+                  chmod +x /tmp/mc
+                  
+                  # Configure MinIO client
+                  /tmp/mc alias set minio http://{{ include "mcp-stack.fullname" . }}-minio:{{ .Values.minio.service.apiPort }} $MINIO_ROOT_USER $MINIO_ROOT_PASSWORD
+                  
+                  # List and find the latest backup file
+                  LATEST_BACKUP=$(/tmp/mc ls --json minio/postgres-backups/ | jq -r '"\(.time) \(.key)"' | sort -r | head -n1 | cut -d' ' -f2-)
+                  
+                  if [ -z "$LATEST_BACKUP" ]; then
+                    echo "No backup file found in MinIO - cannot perform upgrade"
+                    exit 0  # Allow to continue but no dump will be loaded
+                  fi
+                  
+                  echo "Found backup file: $LATEST_BACKUP"
+                  
+                  # Download the backup file to the initdb directory
+                  /tmp/mc cp minio/postgres-backups/$LATEST_BACKUP /docker-entrypoint-initdb.d/
+                  
+                  # Remove the old data directory to allow PostgreSQL 18 to initialize fresh
+                  echo "Removing old PostgreSQL 17 data to allow fresh initialization with PG18..."
+                  # Move current data to backup directory first  
+                  mv "$PGDATA" "/tmp/postgres-data-old"
+                  
+                  # Create new data directory
+                  mkdir -p "$PGDATA"
+                  
+                  # Set proper ownership
+                  chown -R postgres:postgres /var/lib/postgresql/data
+                  chown -R postgres:postgres /docker-entrypoint-initdb.d
+                  
+                  echo "Old data backed up and directory prepared for PostgreSQL 18 initialization"
+                else
+                  echo "Data version ($CURRENT_VERSION) is not 17, skipping removal"
+                  # Still touch the initdb_done file to indicate this is not a fresh install
+                  touch "$PGDATA/.initdb_done"
+                fi
+              else
+                echo "No PG_VERSION file found - this is likely a fresh install"
+                # Create the directory if doesn't exist
+                mkdir -p "$PGDATA"
+                touch "$PGDATA/.initdb_done"
+              fi
               
-              # Download the backup file from MinIO
-              /tmp/mc cp minio/postgres-backups/$LATEST_BACKUP /docker-entrypoint-initdb.d/
-              
-              echo "Backup downloaded to initdb directory: $LATEST_BACKUP"
+              echo "Init container completed successfully"
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -92,9 +135,23 @@ spec:
                 secretKeyRef:
                   name: {{ if .Values.minio.existingSecret }}{{ .Values.minio.existingSecret }}{{ else }}{{ include "mcp-stack.fullname" . }}-minio{{ end }}
                   key: MINIO_ROOT_PASSWORD
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_USER
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: POSTGRES_PASSWORD
           volumeMounts:
             - name: postgredb
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-initdb
               mountPath: /docker-entrypoint-initdb.d
+          securityContext:
+            runAsUser: 0  # Run as root to have permission to move files
       {{- end }}
       containers:
         - name: postgres
@@ -134,6 +191,8 @@ spec:
           volumeMounts:
             - name: postgredb
               mountPath: /var/lib/postgresql/data
+            - name: postgres-initdb
+              mountPath: /docker-entrypoint-initdb.d
 
           # ─── Resource limits & requests ───
           resources:
@@ -147,4 +206,6 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        - name: postgres-initdb
+          emptyDir: {}
 {{- end }}
