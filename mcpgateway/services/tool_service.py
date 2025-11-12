@@ -1240,15 +1240,14 @@ class ToolService:
                         # Don't mark as successful for error responses - success remains False
                     else:
                         result = response.json()
+                        logger.debug(f"REST API tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
                         success = True
-
                         # If output schema is present, validate and attach structured content
                         if getattr(tool, "output_schema", None):
                             valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
                             success = bool(valid)
-
                 elif tool.integration_type == "MCP":
                     transport = tool.request_type.lower()
                     # gateway = db.execute(select(DbGateway).where(DbGateway.id == tool.gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1405,15 +1404,18 @@ class ToolService:
                         tool_call_result = await connect_to_sse_server(tool_gateway.url, headers=headers)
                     elif transport == "streamablehttp":
                         tool_call_result = await connect_to_streamablehttp_server(tool_gateway.url, headers=headers)
-                    content = tool_call_result.model_dump(by_alias=True).get("content", [])
-
+                    dump = tool_call_result.model_dump(by_alias=True)
+                    logger.debug(f"Tool call result dump: {dump}")
+                    content = dump.get("content", [])
+                    # Accept both alias and pythonic names for structured content
+                    structured = dump.get("structuredContent") or dump.get("structured_content")
                     filtered_response = extract_using_jq(content, tool.jsonpath_filter)
-                    tool_result = ToolResult(content=filtered_response)
-                    success = True
-                    # If output schema is present, validate and attach structured content
-                    if getattr(tool, "output_schema", None):
-                        valid = self._extract_and_validate_structured_content(tool, tool_result, candidate=filtered_response)
-                        success = bool(valid)
+
+                    is_err = getattr(tool_call_result, "is_error", None)
+                    if is_err is None:
+                        is_err = getattr(tool_call_result, "isError", False)
+                    tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
+                    logger.debug(f"Final tool_result: {tool_result}")
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
 
@@ -1431,7 +1433,11 @@ class ToolService:
                         # Reconstruct ToolResult from modified result
                         modified_result = post_result.modified_payload.result
                         if isinstance(modified_result, dict) and "content" in modified_result:
-                            tool_result = ToolResult(content=modified_result["content"])
+                            # Safely obtain structured content using .get() to avoid KeyError when
+                            # plugins provide only the content without structured content fields.
+                            structured = modified_result.get("structuredContent") if "structuredContent" in modified_result else modified_result.get("structured_content")
+
+                            tool_result = ToolResult(content=modified_result["content"], structured_content=structured)
                         else:
                             # If result is not in expected format, convert it to text content
                             tool_result = ToolResult(content=[TextContent(type="text", text=str(modified_result))])
