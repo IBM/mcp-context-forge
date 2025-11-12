@@ -416,7 +416,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 logger.info(f"Validating gateway URL {url}, received status {response.status_code}, content_type: {content_type}")
 
                 # Authentication failures mean the endpoint is not usable
-                if response.status_code in (401, 403,404):
+                if response.status_code in (401, 403, 404):
                     logger.debug(f"Authentication failed for {url} with status {response.status_code}")
                     return False
 
@@ -3322,6 +3322,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if authentication is None:
             authentication = {}
+
         # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
@@ -3349,6 +3350,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 timeout=timeout or httpx.Timeout(30.0),
                 auth=auth,
             )
+
         if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="STREAMABLEHTTP"):
             async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
