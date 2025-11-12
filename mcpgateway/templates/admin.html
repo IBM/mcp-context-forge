@@ -424,6 +424,7 @@
             >
               🛠️ Tools
             </a>
+            {% if toolops_enabled %}
             <a
               href="#tool-ops"
               id="tab-tool-ops"
@@ -433,6 +434,7 @@
             >
               ⚙️ ToolOps
             </a>
+            {% endif %}
             <a
               href="#prompts"
               id="tab-prompts"
@@ -3028,7 +3030,7 @@
           </form>
         </div>
       </div>
-
+      {% if toolops_enabled %}
       <div id="tool-ops-panel" class="tab-panel">
         <div class="flex justify-between items-center mb-4">
           <div>
@@ -3132,7 +3134,7 @@
           </div>
         </div>
       </div>
-
+      {% endif %}
       <div id="toolModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center">
         <div class="bg-white p-6 rounded-lg shadow-lg w-96">
           <h3 class="text-lg font-semibold mb-3">Tool Details</h3>

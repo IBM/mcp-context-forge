@@ -1185,6 +1185,14 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### ToolOps
+
+ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `TOOLOPS_ENABLED`             | Enable ToolOps functionality          | `false` | bool    |
+
 ### LLM Chat MCP Client
 
 The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers. This feature enables natural language interaction with tools, resources, and prompts exposed by MCP servers.
@@ -1245,10 +1253,15 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
 | `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
 
+> ⚙️ **ToolOps**: To manage the complete tool workflow — enrich tools, generate test cases automatically, and validate them with ease.
 > 🤖 **LLM Chat Integration**: Chat with MCP servers using natural language powered by Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, or Ollama
 > 🔧 **Flexible Providers**: Switch between different LLM providers without changing your MCP integration
 > 🔒 **Security**: API keys and credentials are securely stored and never exposed in responses
 > 🎛️ **Admin UI**: Dedicated LLM Chat tab in the admin interface for interactive conversations
+
+**ToolOps Configuration Effects:**
+- `TOOLOPS_ENABLED=false` (default): Completely disables ToolOps features (API endpoints return 404, admin tab hidden)
+- `TOOLOPS_ENABLED=true`: Enables ToolOps functionality in the UI
 
 **LLM Chat Configuration Effects:**
 - `LLMCHAT_ENABLED=false` (default): Completely disables LLM Chat features (API endpoints return 404, admin tab hidden)
