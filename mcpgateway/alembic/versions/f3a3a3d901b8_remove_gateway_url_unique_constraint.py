@@ -28,7 +28,24 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def constraint_exists(inspector, table_name, constraint_name):
-    """Check if a constraint exists in the table."""
+    """
+    Check if a specific unique constraint exists on a given table.
+
+    This function queries the database using the provided SQLAlchemy
+    inspector to determine if a constraint with the given name exists.
+    If the check fails due to an exception (e.g., database connectivity issues),
+    it conservatively assumes that the constraint exists.
+
+    Args:
+        inspector (sqlalchemy.engine.reflection.Inspector): SQLAlchemy inspector
+            instance for database introspection.
+        table_name (str): Name of the table to inspect.
+        constraint_name (str): Name of the unique constraint to check.
+
+    Returns:
+        bool: True if the constraint exists or if the check could not be performed,
+              False if the constraint does not exist.
+    """
     try:
         unique_constraints = inspector.get_unique_constraints(table_name)
         return any(uc["name"] == constraint_name for uc in unique_constraints)
