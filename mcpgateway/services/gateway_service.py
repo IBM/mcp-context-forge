@@ -397,7 +397,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if timeout is None:
             timeout = settings.gateway_validation_timeout
-
         validation_client = ResilientHttpClient(
             client_args={
                 "timeout": settings.gateway_validation_timeout,
@@ -417,7 +416,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 logger.info(f"Validating gateway URL {url}, received status {response.status_code}, content_type: {content_type}")
 
                 # Authentication failures mean the endpoint is not usable
-                if response.status_code in (401, 403):
+                if response.status_code in (401, 403,404):
                     logger.debug(f"Authentication failed for {url} with status {response.status_code}")
                     return False
 
@@ -3324,7 +3323,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if authentication is None:
             authentication = {}
         # Use authentication directly instead
-
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx.Timeout | None = None,
@@ -3408,3 +3406,4 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             logger.warning(f"Failed to fetch prompts: {e}")
 
                     return capabilities, tools, resources, prompts
+        raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")
