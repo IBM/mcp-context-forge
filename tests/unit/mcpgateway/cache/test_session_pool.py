@@ -51,17 +51,31 @@ class TestSessionPool:
         assert mock_transport._intialization_complete is True
         assert mock_transport._last_activity == 12345
 
-    @pytest.mark.asyncio
-    async def test_create_new_session_sse(self, mock_registry):
-        with patch("mcpgateway.cache.session_pool.SSETransport", AsyncMock) as mock_sse:
-            mock_instance = AsyncMock()
-            mock_instance.session_id = "sess-1"
-            mock_sse.return_value = mock_instance
-            pool = SessionPool(mock_registry)
-            pool.TRANSPORT_CLASSES[TransportType.SSE] = mock_sse
-            session = await pool._create_new_session("u1", "s1", "http://x", TransportType.SSE)
-            assert session.transport == mock_instance
-            assert "sess-1" in mock_instance.session_id
+@pytest.mark.asyncio
+async def test_create_new_session_sse(self, mock_registry):
+    # Mock the _registry.add_session since it's awaited
+    mock_registry.add_session = AsyncMock()
+
+    # Patch the SSETransport class used in session_pool
+    with patch("mcpgateway.cache.session_pool.SSETransport", autospec=True) as mock_sse_cls:
+        # Create a mock instance that will be returned by SSETransport()
+        mock_instance = MagicMock()
+        mock_instance.session_id = "sess-1"
+        mock_instance.connect = AsyncMock()  # connect() is awaited in code
+        mock_sse_cls.return_value = mock_instance
+
+        pool = SessionPool(mock_registry)
+        pool.TRANSPORT_CLASSES[TransportType.SSE] = mock_sse_cls
+
+        # Act: Call method under test
+        session = await pool._create_new_session("u1", "s1", "http://x", TransportType.SSE)
+
+        # Assert: Correct behavior
+        mock_sse_cls.assert_called_once_with(base_url="http://x", pooled=True, pool_key="u1:s1")
+        mock_instance.connect.assert_awaited_once()
+        mock_registry.add_session.assert_awaited_once_with("sess-1", mock_instance, pooled=True)
+        assert session.transport is mock_instance
+        assert session.transport.session_id == "sess-1"
 
     @pytest.mark.asyncio
     async def test_is_session_valid_true(self, mock_transport, mock_registry):

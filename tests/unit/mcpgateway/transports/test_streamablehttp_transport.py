@@ -724,7 +724,10 @@ async def test_read_resource_success(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+    async def fake_read_resource(*args, **kwargs):
+        return mock_result
+
+    monkeypatch.setattr(resource_service, "read_resource", fake_read_resource)
 
     test_uri = AnyUrl("file:///test.txt")
     result = await read_resource(test_uri)
@@ -751,7 +754,10 @@ async def test_read_resource_no_content(monkeypatch, caplog):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+    async def fake_read_resource(*args, **kwargs):
+        return mock_result
+
+    monkeypatch.setattr(resource_service, "read_resource", fake_read_resource)
 
     test_uri = AnyUrl("file:///empty.txt")
     with caplog.at_level("WARNING"):
@@ -776,7 +782,10 @@ async def test_read_resource_no_result(monkeypatch, caplog):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=None))
+    async def fake_read_resource(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(resource_service, "read_resource", fake_read_resource)
 
     test_uri = AnyUrl("file:///missing.txt")
     with caplog.at_level("WARNING"):
