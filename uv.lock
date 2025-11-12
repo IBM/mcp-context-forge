@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
@@ -3131,8 +3131,8 @@ requires-dist = [
     { name = "langchain-openai", marker = "extra == 'llmchat'", specifier = ">=1.0.2" },
     { name = "langgraph", marker = "extra == 'llmchat'", specifier = ">=1.0.2" },
     { name = "mcp", specifier = ">=1.21.0" },
-    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.8.0" },
-    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.8.0" },
+    { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.9.0" },
+    { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.9.0" },
     { name = "oauthlib", specifier = ">=3.3.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.38.0" },
     { name = "opentelemetry-sdk", marker = "extra == 'observability'", specifier = ">=1.38.0" },
