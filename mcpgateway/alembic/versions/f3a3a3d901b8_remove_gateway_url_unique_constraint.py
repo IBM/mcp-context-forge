@@ -18,7 +18,6 @@ from typing import Sequence, Union
 
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.engine import Inspector
 
 # revision identifiers, used by Alembic.
