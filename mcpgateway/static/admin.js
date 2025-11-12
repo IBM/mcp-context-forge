@@ -7369,22 +7369,64 @@ function initGatewaySelect() {
         // Select All - only selects visible items
         if (selectAllBtn && !selectAllBtn._gateway_bound) {
             selectAllBtn.addEventListener('click', () => {
-                const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-                checkboxes.forEach(cb => {
-                    const parent = cb.closest('.tool-item');
-                    if (!parent) return;
-                    if (getComputedStyle(parent).display !== 'none') cb.checked = true;
-                });
-                updatePills();
+                try {
+                    console.debug('selectAllGatewayBtn clicked');
+                    // ensure current search filter is applied so visibility is accurate
+                    applySearch();
+                    // run in next frame to ensure styles settled
+                    requestAnimationFrame(() => {
+                        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+                        console.debug('selectAll: found checkboxes', checkboxes.length);
+                        let selected = 0;
+                        checkboxes.forEach(cb => {
+                            // prefer the .tool-item wrapper, fallback to the checkbox itself
+                            const parent = cb.closest('.tool-item') || cb;
+                            if (!parent) {
+                                console.debug('selectAll: no parent for checkbox', cb);
+                                return;
+                            }
+                            const disp = getComputedStyle(parent).display;
+                            // consider visible if not 'none'
+                            if (disp && disp !== 'none') {
+                                cb.checked = true;
+                                // dispatch change so other listeners react
+                                try {
+                                    cb.dispatchEvent(new Event('change', { bubbles: true }));
+                                } catch (e) {
+                                    console.debug('selectAll: dispatch change failed', e);
+                                }
+                                selected += 1;
+                            } else {
+                                console.debug('selectAll: skipping hidden item, display=', disp, parent);
+                            }
+                        });
+                        console.debug('selectAll: selected count', selected);
+                        updatePills();
+                        console.debug('selectAllGatewayBtn completed');
+                    });
+                } catch (e) {
+                    console.error('Error in selectAllGatewayBtn handler', e);
+                }
             });
             selectAllBtn._gateway_bound = true;
         }
 
         if (clearAllBtn && !clearAllBtn._gateway_bound) {
             clearAllBtn.addEventListener('click', () => {
-                const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-                checkboxes.forEach(cb => (cb.checked = false));
-                updatePills();
+                try {
+                    console.debug('clearAllGatewayBtn clicked');
+                    requestAnimationFrame(() => {
+                        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+                        checkboxes.forEach(cb => {
+                            cb.checked = false;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
+                        updatePills();
+                        console.debug('clearAllGatewayBtn completed');
+                    });
+                } catch (e) {
+                    console.error('Error in clearAllGatewayBtn handler', e);
+                }
             });
             clearAllBtn._gateway_bound = true;
         }
@@ -7415,6 +7457,9 @@ if (document.readyState === 'loading') {
     initGatewaySelect();
 }
 setTimeout(initGatewaySelect, 800);
+// Delegated safety: if the Select All / Clear All buttons are replaced by HTMX
+// or other dynamic swaps, re-run initGatewaySelect on capture of clicks targeting them
+document.addEventListener('click', (e) => { if (e.target && e.target.closest && (e.target.closest('#selectAllGatewayBtn') || e.target.closest('#clearAllGatewayBtn'))) { try { initGatewaySelect(); } catch (err) { console.debug('delegated gateway init failed', err); } } }, true);
 
 // ===================================================================
 // INACTIVE ITEMS HANDLING
