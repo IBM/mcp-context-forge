@@ -4643,6 +4643,37 @@ async function viewServer(serverId) {
             associatedDiv.appendChild(associatedTitle);
 
             // Tools section
+            // Gateways (MCP Servers) section - show gateway names from server payload
+            if (server.associatedGateways && server.associatedGateways.length > 0) {
+                const gatewaysSection = document.createElement("div");
+                gatewaysSection.className = "mt-3";
+
+                const gatewaysLabel = document.createElement("p");
+                const gatewaysStrong = document.createElement("strong");
+                gatewaysStrong.textContent = "MCP Servers: ";
+                gatewaysLabel.appendChild(gatewaysStrong);
+
+                const gatewaysList = document.createElement("div");
+                gatewaysList.className = "mt-1 space-y-1";
+
+                server.associatedGateways.forEach((gatewayName) => {
+                    const gatewayItem = document.createElement("div");
+                    gatewayItem.className = "flex items-center space-x-2";
+
+                    const gatewayBadge = document.createElement("span");
+                    gatewayBadge.className =
+                        "inline-block bg-gray-100 text-gray-800 text-xs px-2 py-1 rounded-full dark:bg-gray-800 dark:text-gray-200";
+                    gatewayBadge.textContent = gatewayName;
+
+                    gatewayItem.appendChild(gatewayBadge);
+                    gatewaysList.appendChild(gatewayItem);
+                });
+
+                gatewaysLabel.appendChild(gatewaysList);
+                gatewaysSection.appendChild(gatewaysLabel);
+                associatedDiv.appendChild(gatewaysSection);
+            }
+
             if (server.associatedTools && server.associatedTools.length > 0) {
                 const toolsSection = document.createElement("div");
                 toolsSection.className = "mt-3";
@@ -5123,6 +5154,20 @@ async function editServer(serverId) {
                 "data-server-prompts",
                 JSON.stringify(server.associatedPrompts),
             );
+        }
+
+        // Populate MCP Servers panel (left column) for the edit/add server form
+        // Load full gateway list and mark selected names from server.associatedGateways
+        const gatewaysContainer = document.getElementById("associatedGateways");
+        if (gatewaysContainer) {
+            // Use the loader to fetch and render checkboxes with selection
+            try {
+                // call loader with selected names
+                setTimeout(() => loadGatewaysIntoAssociatedGateways(server.associatedGateways || []), 0);
+            } catch (e) {
+                console.error('Failed to populate gateways in edit modal:', e);
+                gatewaysContainer.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400">No MCP servers attached</div>';
+            }
         }
 
         openModal("server-edit-modal");
@@ -7280,6 +7325,170 @@ function initPromptSelect(
                     }
                 }
 
+                update();
+            }
+        });
+    }
+}
+
+// Gateway select behaves like tools/resources/prompts but uses gateway endpoints
+function initGatewaySelect(
+    selectId,
+    pillsId,
+    warnId,
+    max = 6,
+    selectBtnId = null,
+    clearBtnId = null,
+) {
+    // Reuse the same implementation pattern as initToolSelect but tailored for gateways
+    // We'll copy the logic from initToolSelect with endpoint adjustments
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+
+    if (!container || !pillsBox || !warnBox) {
+        console.warn(`Gateway select elements not found: ${selectId}, ${pillsId}, ${warnId}`);
+        return;
+    }
+
+    const pillClasses = 'inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-800 dark:text-indigo-100';
+
+    function update() {
+        try {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+
+            // Select All handling uses hidden inputs named selectAllGateways / allGatewayIds
+            const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
+            const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+
+            let count = checked.length;
+            if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error('Error parsing allGatewayIds:', e);
+                }
+            }
+
+            // Rebuild pills
+            pillsBox.innerHTML = '';
+            const maxPillsToShow = 3;
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
+                const span = document.createElement('span');
+                span.className = pillClasses;
+                span.textContent = cb.nextElementSibling?.textContent?.trim() || 'Unnamed';
+                pillsBox.appendChild(span);
+            });
+
+            if (count > maxPillsToShow) {
+                const span = document.createElement('span');
+                span.className = pillClasses + ' cursor-pointer';
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
+
+            if (count > max) {
+                warnBox.textContent = `Selected ${count} gateways. Selecting more than ${max} gateways can degrade performance.`;
+            } else {
+                warnBox.textContent = '';
+            }
+        } catch (error) {
+            console.error('Error updating gateway select:', error);
+        }
+    }
+
+    // Clear button
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = 'true';
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = 'true';
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+        newClearBtn.addEventListener('click', () => {
+            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            checkboxes.forEach((cb) => (cb.checked = false));
+            const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
+            if (selectAllInput) selectAllInput.remove();
+            const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+            if (allIdsInput) allIdsInput.remove();
+            update();
+        });
+    }
+
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = 'true';
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = 'true';
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+        newSelectBtn.addEventListener('click', async () => {
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = 'Selecting all gateways...';
+            try {
+                const resp = await fetch(`${window.ROOT_PATH}/admin/gateways/ids`);
+                if (!resp.ok) throw new Error('Failed to fetch gateway IDs');
+                const data = await resp.json();
+                const allIds = data.gateway_ids || [];
+
+                const loadedCheckboxes = container.querySelectorAll('input[type="checkbox"]');
+                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+
+                let selectAllInput = container.querySelector('input[name="selectAllGateways"]');
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement('input');
+                    selectAllInput.type = 'hidden';
+                    selectAllInput.name = 'selectAllGateways';
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = 'true';
+
+                let allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement('input');
+                    allIdsInput.type = 'hidden';
+                    allIdsInput.name = 'allGatewayIds';
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allIds);
+
+                update();
+                newSelectBtn.textContent = `✓ All ${allIds.length} gateways selected`;
+                setTimeout(() => { newSelectBtn.textContent = originalText; }, 2000);
+            } catch (error) {
+                console.error('Error selecting all gateways:', error);
+                alert('Failed to select all gateways. Please try again.');
+            } finally {
+                newSelectBtn.disabled = false;
+            }
+        });
+    }
+
+    update();
+
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = 'true';
+        container.addEventListener('change', (e) => {
+            if (e.target.type === 'checkbox') {
+                const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
+                const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+                if (selectAllInput && selectAllInput.value === 'true' && allIdsInput) {
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const id = e.target.value;
+                        if (e.target.checked) {
+                            if (!allIds.includes(id)) allIds.push(id);
+                        } else {
+                            allIds = allIds.filter((x) => x !== id);
+                        }
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (err) {
+                        console.error('Error updating allGatewayIds:', err);
+                    }
+                }
                 update();
             }
         });
@@ -9734,6 +9943,102 @@ async function handleServerFormSubmit(e) {
         }
     }
 }
+// Populate MCP Servers panel for Add Server (fetch available gateways)
+async function loadGatewaysIntoAssociatedGateways(selectedNames = []) {
+    try {
+        const container = document.getElementById('associatedGateways');
+        if (!container) return;
+
+        // Fetch gateways list from backend
+        const resp = await fetchWithTimeout(`${window.ROOT_PATH}/admin/gateways`);
+        if (!resp.ok) {
+            console.warn('Failed to fetch gateways:', resp.statusText);
+            container.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400">Unable to load MCP servers</div>';
+            return;
+        }
+
+        const data = await resp.json();
+
+        // Expecting an array of gateway objects
+        if (!Array.isArray(data) || data.length === 0) {
+            container.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400">No MCP servers available</div>';
+            return;
+        }
+
+        // Build checkbox list similar to Associated Tools selector
+        container.innerHTML = '';
+        const list = document.createElement('div');
+        list.className = 'space-y-2';
+
+        data.forEach((gw) => {
+            const id = gw.id || gw.uuid || gw.name;
+            const name = gw.name || id || 'Unnamed';
+
+            const item = document.createElement('div');
+            item.className = 'flex items-center space-x-2';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.name = 'associatedGateways';
+            checkbox.value = id;
+            checkbox.id = `gateway-${id}`;
+            checkbox.className = 'form-checkbox h-4 w-4 text-indigo-600';
+
+            // If server provided selected names (by name), check accordingly
+            if (Array.isArray(selectedNames) && selectedNames.includes(name)) {
+                checkbox.checked = true;
+            }
+
+            const label = document.createElement('label');
+            label.setAttribute('for', `gateway-${id}`);
+            label.className = 'text-sm text-gray-700 dark:text-gray-300';
+            label.textContent = ` ${name}`;
+
+            item.appendChild(checkbox);
+            item.appendChild(label);
+            list.appendChild(item);
+        });
+
+        container.appendChild(list);
+
+        // Initialize selection controls (select all / clear) and pills/warning
+        try {
+            if (typeof initGatewaySelect === 'function') {
+                initGatewaySelect('associatedGateways', 'selectedGatewaysPills', 'selectedGatewaysWarning', 6, 'selectAllGatewaysBtn', 'clearAllGatewaysBtn');
+            }
+        } catch (e) {
+            console.warn('initGatewaySelect not available or failed:', e);
+        }
+
+        // Hook up client-side search/filter
+        const searchInput = document.getElementById('searchGateways');
+        if (searchInput) {
+            const rows = Array.from(list.children);
+            const filterFn = () => {
+                const q = (searchInput.value || '').toLowerCase().trim();
+                rows.forEach((row) => {
+                    const text = row.textContent.toLowerCase();
+                    row.style.display = q === '' || text.includes(q) ? '' : 'none';
+                });
+            };
+            searchInput.removeEventListener('input', filterFn);
+            searchInput.addEventListener('input', filterFn);
+        }
+    } catch (error) {
+        console.error('Error loading gateways for Add Server:', error);
+        const container = document.getElementById('associatedGateways');
+        if (container) container.innerHTML = '<div class="text-sm text-gray-500 dark:text-gray-400">Failed to load MCP servers</div>';
+    }
+}
+
+// Immediately try to populate gateways on page load for Add Server form
+document.addEventListener('DOMContentLoaded', () => {
+    // Only call when the Add Server placeholder exists
+    if (document.getElementById('associatedGateways')) {
+        // Defer slightly to allow HTMX to replace tools container if necessary
+        setTimeout(() => loadGatewaysIntoAssociatedGateways(), 100);
+    }
+});
 
 // Handle Add A2A Form Submit
 async function handleA2AFormSubmit(e) {

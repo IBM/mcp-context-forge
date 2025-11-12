@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 import httpx
 from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 # First-Party
 from mcpgateway.config import settings
@@ -246,6 +246,22 @@ class ServerService:
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
+        # Collect associated gateway names from the tools attached to this server (if any)
+        try:
+            gateway_names = []
+            if server.tools:
+                for t in server.tools:
+                    # Some tools may be federated and reference a gateway relationship
+                    gw = getattr(t, "gateway", None)
+                    if gw and getattr(gw, "name", None):
+                        gateway_names.append(gw.name)
+            # Deduplicate while preserving order
+            seen = set()
+            associated_gateways = [x for x in gateway_names if not (x in seen or seen.add(x))]
+        except Exception:
+            associated_gateways = []
+
+        server_dict["associated_gateways"] = associated_gateways
         server_dict["tags"] = server.tags or []
 
         # Include metadata fields for proper API response
@@ -524,7 +540,7 @@ class ServerService:
             >>> isinstance(result, list)
             True
         """
-        query = select(DbServer)
+        query = select(DbServer).options(joinedload(DbServer.tools).joinedload(DbTool.gateway))
         if not include_inactive:
             query = query.where(DbServer.is_active)
 
@@ -564,7 +580,7 @@ class ServerService:
         user_teams = await team_service.get_user_teams(user_email)
         team_ids = [team.id for team in user_teams]
 
-        query = select(DbServer)
+        query = select(DbServer).options(joinedload(DbServer.tools).joinedload(DbTool.gateway))
 
         # Apply active/inactive filter
         if not include_inactive:
@@ -638,7 +654,11 @@ class ServerService:
             >>> asyncio.run(service.get_server(db, 'server_id'))
             'server_read'
         """
-        server = db.get(DbServer, server_id)
+        # Eagerly load tools and their gateway relationships to ensure
+        # gateway data is available when converting to ServerRead.
+        server = db.execute(
+            select(DbServer).where(DbServer.id == server_id).options(joinedload(DbServer.tools).joinedload(DbTool.gateway))
+        ).unique().scalar_one_or_none()
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
         server_data = {

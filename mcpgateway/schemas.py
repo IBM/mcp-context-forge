@@ -3697,6 +3697,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[int] = []
     associated_prompts: List[int] = []
     associated_a2a_agents: List[str] = []
+    associated_gateways: List[str] = []
     metrics: ServerMetrics
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
 
