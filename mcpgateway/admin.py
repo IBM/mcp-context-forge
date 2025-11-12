@@ -2451,6 +2451,7 @@ async def admin_ui(
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
+            "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin") if isinstance(user, dict) else False),
