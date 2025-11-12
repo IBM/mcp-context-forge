@@ -165,6 +165,10 @@ async def test_call_tool_success(monkeypatch):
     mock_content.type = "text"
     mock_content.text = "hello"
     mock_result.content = [mock_content]
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", AsyncMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock())))
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
@@ -192,6 +196,11 @@ async def test_call_tool_success(monkeypatch):
     async def fake_get_db():
         yield mock_db
 
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
 
@@ -200,6 +209,54 @@ async def test_call_tool_success(monkeypatch):
     assert isinstance(result[0], types.TextContent)
     assert result[0].type == "text"
     assert result[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_structured_content(monkeypatch):
+    """Test call_tool returns tuple with both unstructured and structured content."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = '{"result": "success"}'
+    mock_result.content = [mock_content]
+
+    # Simulate structured content being present
+    mock_structured = {"status": "ok", "data": {"value": 42}}
+    mock_result.structured_content = mock_structured
+    mock_result.model_dump = lambda by_alias=True: {
+        "content": [{"type": "text", "text": '{"result": "success"}'}],
+        "structuredContent": mock_structured
+    }
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    # When structured content is present, result should be a tuple
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+
+    # First element should be the unstructured content list
+    unstructured, structured = result
+    assert isinstance(unstructured, list)
+    assert len(unstructured) == 1
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == '{"result": "success"}'
+
+    # Second element should be the structured content dict
+    assert isinstance(structured, dict)
+    assert structured == mock_structured
+    assert structured["status"] == "ok"
+    assert structured["data"]["value"] == 42
 
 
 @pytest.mark.asyncio
