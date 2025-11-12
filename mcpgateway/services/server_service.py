@@ -264,6 +264,7 @@ class ServerService:
         resources: Optional[List[str]],
         prompts: Optional[List[str]],
         a2a_agents: Optional[List[str]] = None,
+        gateways: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble the associated items dictionary from the separate fields.
@@ -304,6 +305,7 @@ class ServerService:
             "resources": resources or [],
             "prompts": prompts or [],
             "a2a_agents": a2a_agents or [],
+            "gateways": gateways or [],
         }
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
