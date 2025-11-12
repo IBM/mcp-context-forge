@@ -58,7 +58,7 @@ When `postgres.upgrade.enabled` is `true` and `postgres.upgrade.targetVersion` i
 The following files were added/modified to support PostgreSQL upgrade:
 
 - `templates/job-postgres-backup.yaml` - Backup job
-- `templates/job-postgres-restore.yaml` - Restore job (for alternative approach)
+- `templates/job-postgres-backup.yaml` - Backup job
 - `templates/job-postgres-migration-check.yaml` - Verification job
 - `templates/configmap-postgres-upgrade-status.yaml` - Status tracking
 - `values.yaml` - Added upgrade configuration section
