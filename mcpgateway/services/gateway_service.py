@@ -397,36 +397,44 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if timeout is None:
             timeout = settings.gateway_validation_timeout
-        validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify,"follow_redirects": True,  # Let httpx handle redirects properly
-        "max_redirects": 5})
+
+        validation_client = ResilientHttpClient(
+            client_args={
+                "timeout": settings.gateway_validation_timeout,
+                "verify": not settings.skip_ssl_verify,
+                # Let httpx follow only proper HTTP redirects (3xx) and
+                # enforce a sensible redirect limit.
+                "follow_redirects": True,
+                "max_redirects": settings.gateway_max_redirects,
+            }
+        )
+
         try:
+            # Make a single request and let httpx follow valid redirects.
             async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
                 response_headers = dict(response.headers)
-                location = response_headers.get("location")
-                content_type = response_headers.get("content-type")
+                content_type = response_headers.get("content-type", "")
+                logger.info(f"Validating gateway URL {url}, received status {response.status_code}, content_type: {content_type}")
+
+                # Authentication failures mean the endpoint is not usable
                 if response.status_code in (401, 403):
                     logger.debug(f"Authentication failed for {url} with status {response.status_code}")
                     return False
 
+                # STREAMABLEHTTP: expect an MCP session id and JSON content
                 if transport_type == "STREAMABLEHTTP":
-                    logger.info(f"Validating StreamableHTTP gateway at {url},location: {location}, content_type: {content_type}")
-                    if location:
-                        logger.info(f"Following redirect to {location} for StreamableHTTP validation")
-                        async with validation_client.client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
-                            response_headers = dict(response_redirect.headers)
-                            mcp_session_id = response_headers.get("mcp-session-id")
-                            content_type = response_headers.get("content-type")
-                            if response_redirect.status_code in (401, 403):
-                                logger.debug(f"Authentication failed at redirect location {location}")
-                                return False
-                            if mcp_session_id is not None and mcp_session_id != "":
-                                if content_type is not None and content_type != "" and "application/json" in content_type:
-                                    return True
-
-                elif transport_type == "SSE":
-                    if content_type is not None and content_type != "" and "text/event-stream" in content_type:
+                    logger.info(f"Validating StreamableHTTP gateway URL {url}")
+                    mcp_session_id = response_headers.get("mcp-session-id")
+                    if mcp_session_id and "application/json" in content_type:
                         return True
-                return False
+
+                # SSE: expect text/event-stream
+                if transport_type == "SSE":
+                    logger.info(f"Validating SSE gateway URL {url}")
+                    if "text/event-stream" in content_type:
+                        return True
+
+            return False
         except httpx.UnsupportedProtocol as e:
             logger.debug(f"Gateway URL Unsupported Protocol for {url}: {str(e)}", exc_info=True)
             return False
