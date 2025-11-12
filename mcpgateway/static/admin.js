@@ -7287,6 +7287,136 @@ function initPromptSelect(
 }
 
 // ===================================================================
+// GATEWAY SELECT (Associated MCP Servers) - search/select/clear
+// ===================================================================
+function initGatewaySelect() {
+    try {
+        const container = document.getElementById('associatedGateways');
+        if (!container) return;
+
+        const searchInput = document.getElementById('searchGateways');
+        const selectAllBtn = document.getElementById('selectAllGatewayBtn');
+        const clearAllBtn = document.getElementById('clearAllGatewayBtn');
+        const pillsBox = document.getElementById('selectedGatewayPills');
+        const warnBox = document.getElementById('selectedGatewayWarning');
+        const noMsg = document.getElementById('noGatewayMessage');
+        const searchQuerySpan = document.getElementById('searchQuery');
+
+        function updatePills() {
+            try {
+                const checkboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
+                const checked = checkboxes.filter(cb => cb.checked);
+                pillsBox.innerHTML = '';
+                const maxShow = 6;
+                checked.slice(0, maxShow).forEach(cb => {
+                    const span = document.createElement('span');
+                    span.className = 'inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full';
+                    span.textContent = cb.nextElementSibling?.textContent?.trim() || cb.value;
+                    pillsBox.appendChild(span);
+                });
+                if (checked.length > maxShow) {
+                    const span = document.createElement('span');
+                    span.className = 'inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full';
+                    span.textContent = `+${checked.length - maxShow} more`;
+                    pillsBox.appendChild(span);
+                }
+
+                // Warning if too many selected
+                if (checked.length > 12) {
+                    warnBox.textContent = `Selected ${checked.length} MCP servers. Selecting many servers may impact performance.`;
+                } else {
+                    warnBox.textContent = '';
+                }
+            } catch (e) {
+                console.error('Error updating gateway pills', e);
+            }
+        }
+
+        function applySearch() {
+            try {
+                const q = (searchInput && searchInput.value || '').toLowerCase().trim();
+                const items = Array.from(container.querySelectorAll('.tool-item'));
+                let visible = 0;
+                items.forEach(item => {
+                    const text = (item.textContent || '').toLowerCase();
+                    if (!q || text.includes(q)) {
+                        item.style.display = '';
+                        visible += 1;
+                    } else {
+                        item.style.display = 'none';
+                    }
+                });
+
+                if (noMsg) {
+                    if (q && visible === 0) {
+                        noMsg.style.display = 'block';
+                        if (searchQuerySpan) searchQuerySpan.textContent = q;
+                    } else {
+                        noMsg.style.display = 'none';
+                    }
+                }
+            } catch (e) {
+                console.error('Error applying gateway search', e);
+            }
+        }
+
+        // Bind search
+        if (searchInput && !searchInput._gateway_bound) {
+            searchInput.addEventListener('input', applySearch);
+            searchInput._gateway_bound = true;
+        }
+
+        // Select All - only selects visible items
+        if (selectAllBtn && !selectAllBtn._gateway_bound) {
+            selectAllBtn.addEventListener('click', () => {
+                const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+                checkboxes.forEach(cb => {
+                    const parent = cb.closest('.tool-item');
+                    if (!parent) return;
+                    if (getComputedStyle(parent).display !== 'none') cb.checked = true;
+                });
+                updatePills();
+            });
+            selectAllBtn._gateway_bound = true;
+        }
+
+        if (clearAllBtn && !clearAllBtn._gateway_bound) {
+            clearAllBtn.addEventListener('click', () => {
+                const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+                checkboxes.forEach(cb => (cb.checked = false));
+                updatePills();
+            });
+            clearAllBtn._gateway_bound = true;
+        }
+
+        // Delegate change events
+        if (!container._gateway_change_bound) {
+            container.addEventListener('change', (e) => {
+                if (e.target && e.target.type === 'checkbox') {
+                    updatePills();
+                }
+            });
+            container._gateway_change_bound = true;
+        }
+
+        // Initial run
+        applySearch();
+        updatePills();
+
+    } catch (err) {
+        console.debug('initGatewaySelect failed', err);
+    }
+}
+
+// Run on DOM ready and also on a short timeout for late loads
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initGatewaySelect);
+} else {
+    initGatewaySelect();
+}
+setTimeout(initGatewaySelect, 800);
+
+// ===================================================================
 // INACTIVE ITEMS HANDLING
 // ===================================================================
 
@@ -10746,6 +10876,7 @@ function initializeCodeMirrorEditors() {
 function initializeToolSelects() {
     console.log("Initializing tool selects...");
 
+  
     // Add Server form
     initToolSelect(
         "associatedTools",
@@ -10754,7 +10885,9 @@ function initializeToolSelects() {
         6,
         "selectAllToolsBtn",
         "clearAllToolsBtn",
+    
     );
+
 
     initResourceSelect(
         "associatedResources",
