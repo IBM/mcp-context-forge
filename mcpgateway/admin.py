@@ -4939,6 +4939,8 @@ async def admin_tools_partial_html(
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway id"),
+    gateway_ids: Optional[str] = Query(None, description="Comma-separated gateway ids to filter by"),
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -5003,6 +5005,18 @@ async def admin_tools_partial_html(
         count_query = count_query.where(DbTool.enabled.is_(True))
 
     total_items = db.scalar(count_query) or 0
+
+    # Apply gateway filter if present
+    gw_ids_list = None
+    if gateway_ids:
+        gw_ids_list = [g.strip() for g in gateway_ids.split(",") if g.strip()]
+    elif gateway_id:
+        gw_ids_list = [gateway_id]
+
+    if gw_ids_list:
+        query = query.where(DbTool.gateway_id.in_(gw_ids_list))
+        # Adjust count query as well
+        count_query = count_query.where(DbTool.gateway_id.in_(gw_ids_list))
 
     # Apply pagination
     offset = (page - 1) * per_page
@@ -5137,6 +5151,8 @@ async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway id"),
+    gateway_ids: Optional[str] = Query(None, description="Comma-separated gateway ids to filter by"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5179,6 +5195,16 @@ async def admin_search_tools(
         access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
+
+    # Gateway filtering support
+    gw_ids_list = None
+    if gateway_ids:
+        gw_ids_list = [g.strip() for g in gateway_ids.split(",") if g.strip()]
+    elif gateway_id:
+        gw_ids_list = [gateway_id]
+
+    if gw_ids_list:
+        query = query.where(DbTool.gateway_id.in_(gw_ids_list))
 
     # Add search conditions - search in display fields and description
     # Using the same priority as display: displayName -> customName -> original_name
@@ -5420,6 +5446,18 @@ async def admin_resources_partial_html(
 
     total_items = db.scalar(count_query) or 0
 
+    # Apply gateway filter if present
+    gw_ids_list = None
+    if request.query_params.get('gateway_ids'):
+        gw_ids_list = [g.strip() for g in request.query_params.get('gateway_ids', '').split(',') if g.strip()]
+    elif request.query_params.get('gateway_id'):
+        gw_ids_list = [request.query_params.get('gateway_id')]
+
+    if gw_ids_list:
+        # Resources are not directly tied to gateways in DB, but if they are (gateway_id column), apply filter
+        if hasattr(DbResource, 'gateway_id'):
+            query = query.where(DbResource.gateway_id.in_(gw_ids_list))
+
     # Apply pagination ordering and limits
     offset = (page - 1) * per_page
     query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
@@ -5578,6 +5616,8 @@ async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter prompts by gateway id"),
+    gateway_ids: Optional[str] = Query(None, description="Comma-separated gateway ids to filter prompts"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5617,6 +5657,16 @@ async def admin_search_prompts(
         access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
+
+    # Gateway filtering support for prompts
+    gw_ids_list = None
+    if gateway_ids:
+        gw_ids_list = [g.strip() for g in gateway_ids.split(",") if g.strip()]
+    elif gateway_id:
+        gw_ids_list = [gateway_id]
+
+    if gw_ids_list:
+        query = query.where(DbPrompt.gateway_id.in_(gw_ids_list))
 
     search_conditions = [func.lower(DbPrompt.name).contains(search_query), func.lower(coalesce(DbPrompt.description, "")).contains(search_query)]
     query = query.where(or_(*search_conditions))

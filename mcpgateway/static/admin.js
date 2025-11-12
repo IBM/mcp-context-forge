@@ -10024,6 +10024,19 @@ async function loadGatewaysIntoAssociatedGateways(selectedNames = []) {
             searchInput.removeEventListener('input', filterFn);
             searchInput.addEventListener('input', filterFn);
         }
+
+        // When gateway selection changes, update other selectors (tools/resources/prompts)
+        const updateFn = () => {
+            try {
+                updateSelectorsBasedOnGateways();
+            } catch (e) {
+                console.warn('Failed to update selectors after gateway change:', e);
+            }
+        };
+
+        // Attach change listener to the list container (delegated)
+        list.removeEventListener('change', updateFn);
+        list.addEventListener('change', updateFn);
     } catch (error) {
         console.error('Error loading gateways for Add Server:', error);
         const container = document.getElementById('associatedGateways');
@@ -18313,8 +18326,11 @@ async function serverSideToolSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default tool list
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+                // include gateway filter if any gateways selected
+                const gatewayIds = getSelectedGatewayIds();
+                const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
+                const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector${gwQuery}`,
             );
             if (response.ok) {
                 const html = await response.text();
@@ -18341,8 +18357,10 @@ async function serverSideToolSearch(searchTerm) {
 
     try {
         // Call the new search API
+        const gatewayIds = getSelectedGatewayIds();
+        const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100${gwQuery}`,
         );
 
         if (!response.ok) {
@@ -18458,8 +18476,10 @@ async function serverSidePromptSearch(searchTerm) {
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector
         try {
+            const gatewayIds = getSelectedGatewayIds();
+            const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
             const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector${gwQuery}`,
             );
             if (response.ok) {
                 const html = await response.text();
@@ -18492,8 +18512,10 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
+        const gatewayIds = getSelectedGatewayIds();
+        const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100${gwQuery}`,
         );
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -18574,6 +18596,98 @@ style.textContent = `
   }
 `;
 document.head.appendChild(style);
+
+/**
+ * Return array of selected gateway IDs from the Add/Edit server gateway selector.
+ */
+function getSelectedGatewayIds(containerId = "associatedGateways") {
+    const container = document.getElementById(containerId);
+    if (!container) return [];
+    const checkboxes = container.querySelectorAll('input[name="associatedGateways"]:checked');
+    const ids = Array.from(checkboxes).map((cb) => cb.value).filter(Boolean);
+    // If selectAll hidden input exists and allGatewayIds present, prefer that as authoritative
+    const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+    if (allIdsInput && allIdsInput.value) {
+        try {
+            const parsed = JSON.parse(allIdsInput.value);
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(String);
+        } catch (e) {
+            // ignore parse errors and fallback to checked boxes
+        }
+    }
+    return ids;
+}
+
+/**
+ * When gateway selection changes, refresh tools/resources/prompts selectors
+ * so they only show items for the selected gateway(s).
+ */
+async function updateSelectorsBasedOnGateways() {
+    const gatewayIds = getSelectedGatewayIds();
+
+    // Update tools selector
+    const toolsContainer = document.getElementById("associatedTools");
+    if (toolsContainer) {
+        // If user has typed a search term, reuse serverSideToolSearch which will include gw ids
+        const searchInput = safeGetElement("searchTools", true);
+        if (searchInput && searchInput.value && searchInput.value.trim() !== "") {
+            serverSideToolSearch(searchInput.value.trim());
+        } else {
+            // Fetch first page of selector for selected gateways
+            const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
+            try {
+                const resp = await fetch(`${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector${gwQuery}`);
+                if (resp.ok) {
+                    const html = await resp.text();
+                    toolsContainer.innerHTML = html;
+                    // update mapping and init select behaviors
+                    updateToolMapping(toolsContainer);
+                    initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn');
+                }
+            } catch (e) {
+                console.warn('Failed to refresh tools selector for gateways:', e);
+            }
+        }
+    }
+
+    // Update prompts selector
+    const promptsContainer = document.getElementById("associatedPrompts");
+    if (promptsContainer) {
+        const searchInput = safeGetElement("searchPrompts", true);
+        const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
+        try {
+            if (searchInput && searchInput.value && searchInput.value.trim() !== "") {
+                serverSidePromptSearch(searchInput.value.trim());
+            } else {
+                const resp = await fetch(`${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector${gwQuery}`);
+                if (resp.ok) {
+                    const html = await resp.text();
+                    promptsContainer.innerHTML = html;
+                    initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn');
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to refresh prompts selector for gateways:', e);
+        }
+    }
+
+    // Update resources selector - only if resources are gateway-scoped (best-effort)
+    const resourcesContainer = document.getElementById("associatedResources");
+    if (resourcesContainer) {
+        const gwQuery = gatewayIds.length ? `&gateway_ids=${encodeURIComponent(gatewayIds.join(","))}` : "";
+        try {
+            const resp = await fetch(`${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector${gwQuery}`);
+            if (resp.ok) {
+                const html = await resp.text();
+                resourcesContainer.innerHTML = html;
+                initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn');
+            }
+        } catch (e) {
+            // If resources are not gateway-scoped, ignore error and leave existing list as-is
+            console.warn('Failed to refresh resources selector for gateways (may be unsupported):', e);
+        }
+    }
+}
 
 // ============================================================================
 // CA Certificate Validation Functions
