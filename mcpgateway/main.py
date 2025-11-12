@@ -2295,6 +2295,7 @@ async def list_tools(
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     user=Depends(get_current_user_with_permissions),
@@ -2307,6 +2308,7 @@ async def list_tools(
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
         team_id: Optional team ID to filter tools by specific team
         visibility: Optional visibility filter (private, team, public)
+        gateway_id: Optional gateway ID to filter tools by specific gateway
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         user: Authenticated user with permissions
@@ -2333,6 +2335,10 @@ async def list_tools(
     else:
         # Use existing method for backward compatibility when no team filtering
         data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+
+    # Apply gateway_id filtering if provided
+    if gateway_id:
+        data = [tool for tool in data if str(tool.gateway_id) == gateway_id]
 
     if apijsonpath is None:
         return data
