@@ -422,10 +422,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # STREAMABLEHTTP: expect an MCP session id and JSON content
                 if transport_type == "STREAMABLEHTTP":
-                    logger.info(f"Validating StreamableHTTP gateway URL {url}")
                     mcp_session_id = response_headers.get("mcp-session-id")
-                    if mcp_session_id and "application/json" in content_type:
-                        return True
+                    if mcp_session_id is not None and mcp_session_id != "":
+                        if content_type is not None and content_type != "" and "application/json" in content_type:
+                            return True
 
                 # SSE: expect text/event-stream
                 if transport_type == "SSE":
