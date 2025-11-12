@@ -43,26 +43,29 @@ def test_validate_asymmetric_invalid_public_key(mock_settings: Any):
     mock_settings.jwt_public_key_path = "nonexistent_pub.pem"
     mock_settings.jwt_private_key_path = "nonexistent_priv.pem"
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
-        with patch.object(Path, "is_file", side_effect=lambda: False):
-            with pytest.raises(JWTConfigurationError):
-                validate_jwt_algo_and_keys()
+        with patch.object(Path, "is_absolute", return_value=True):
+            with patch.object(Path, "is_file", return_value=False):
+                with pytest.raises(JWTConfigurationError):
+                    validate_jwt_algo_and_keys()
 
 def test_validate_asymmetric_invalid_private_key(mock_settings: Any):
     mock_settings.jwt_algorithm = "RS256"
     mock_settings.jwt_public_key_path = "public.pem"
     mock_settings.jwt_private_key_path = "private.pem"
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
-        with patch.object(Path, "is_file", side_effect=[True, False]):
-            with pytest.raises(JWTConfigurationError):
-                validate_jwt_algo_and_keys()
+        with patch.object(Path, "is_absolute", return_value=True):
+            with patch.object(Path, "is_file", side_effect=[True, False]):
+                with pytest.raises(JWTConfigurationError):
+                    validate_jwt_algo_and_keys()
 
 def test_validate_asymmetric_valid_keys(mock_settings: Any):
     mock_settings.jwt_algorithm = "RS256"
     mock_settings.jwt_public_key_path = "public.pem"
     mock_settings.jwt_private_key_path = "private.pem"
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
-        with patch.object(Path, "is_file", return_value=True):
-            validate_jwt_algo_and_keys()  # should not raise
+        with patch.object(Path, "is_absolute", return_value=True):
+            with patch.object(Path, "is_file", return_value=True):
+                validate_jwt_algo_and_keys()  # should not raise
 
 def test_get_private_key_or_secret_hmac(mock_settings: Any):
     mock_settings.jwt_algorithm = "HS512"
@@ -75,9 +78,10 @@ def test_get_private_key_or_secret_asymmetric(mock_settings: Any):
     mock_settings.jwt_algorithm = "RS256"
     mock_settings.jwt_private_key_path = "private.pem"
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
-        with patch("builtins.open", return_value=io.StringIO("PRIVATE_KEY_CONTENT")):
-            result = get_jwt_private_key_or_secret()
-            assert result == "PRIVATE_KEY_CONTENT"
+        with patch.object(Path, "is_absolute", return_value=True):
+            with patch("builtins.open", return_value=io.StringIO("PRIVATE_KEY_CONTENT")):
+                result = get_jwt_private_key_or_secret()
+                assert result == "PRIVATE_KEY_CONTENT"
 
 def test_get_public_key_or_secret_hmac(mock_settings: Any):
     mock_settings.jwt_algorithm = "HS256"
@@ -90,9 +94,10 @@ def test_get_public_key_or_secret_asymmetric(mock_settings: Any):
     mock_settings.jwt_algorithm = "RS256"
     mock_settings.jwt_public_key_path = "public.pem"
     with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
-        with patch("builtins.open", return_value=io.StringIO("PUBLIC_KEY_CONTENT")):
-            result = get_jwt_public_key_or_secret()
-            assert result == "PUBLIC_KEY_CONTENT"
+        with patch.object(Path, "is_absolute", return_value=True):
+            with patch("builtins.open", return_value=io.StringIO("PUBLIC_KEY_CONTENT")):
+                result = get_jwt_public_key_or_secret()
+                assert result == "PUBLIC_KEY_CONTENT"
 
 def test_secretstr_handling_hmac(mock_settings: Any):
     class SecretStr:
