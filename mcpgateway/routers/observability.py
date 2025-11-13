@@ -559,6 +559,9 @@ def export_traces(
                 """Yield newline-delimited JSON strings for each trace.
 
                 This nested generator is used to stream NDJSON responses.
+
+                Yields:
+                    str: A JSON-encoded line (with trailing newline) for a trace.
                 """
                 for t in traces:
                     # Standard
