@@ -1021,6 +1021,28 @@
             }
           },
           "additionalProperties": false
+        },
+        "upgrade": {
+          "type": "object",
+          "description": "PostgreSQL upgrade configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable PostgreSQL upgrade process",
+              "default": false
+            },
+            "targetVersion": {
+              "type": ["string", "number"],
+              "description": "Target PostgreSQL version for upgrade",
+              "default": "18"
+            },
+            "backupCompleted": {
+              "type": "boolean",
+              "description": "Flag to indicate if backup has been completed to prevent re-running",
+              "default": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -1310,6 +1332,57 @@
         }
       },
       "additionalProperties": false
+    },
+    "minio": {
+      "type": "object",
+      "description": "Configuration for the MinIO S3-compatible object storage.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable to deploy MinIO."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of an existing secret for MinIO credentials."
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "rootUser": { "type": "string" },
+            "rootPassword": { "type": "string" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "apiPort": { "type": "integer" },
+            "consolePort": { "type": "integer" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClassName": { "type": "string" },
+            "accessModes": { "type": "array", "items": { "type": "string" } },
+            "size": { "type": "string" },
+            "reclaimPolicy": { "type": "string" }
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "CPU/Memory resource requests/limits."
+        }
+      }
     },
     "mcpFastTimeServer": {
       "type": "object",

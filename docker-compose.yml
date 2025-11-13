@@ -9,7 +9,7 @@ networks:
 
 volumes:                # Named volumes survive podman-compose down/up
   pgdata:
-  pgdata18:
+  # pgdata18:  # Enable for postgres 18+
   mariadbdata:
   mysqldata:
   mongodata:
@@ -149,13 +149,14 @@ services:
 ###############################################################################
 
   postgres:
-    image: postgres:18
+    image: postgres:17
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
       - POSTGRES_DB=mcp
     volumes:
-      - pgdata18:/var/lib/postgresql
+      - pgdata:/var/lib/postgresql/data
+      # - pgdata18:/var/lib/postgresql  # Enable for postgres 18+
     networks: [mcpnet]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]

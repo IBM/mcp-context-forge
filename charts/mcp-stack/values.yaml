@@ -643,6 +643,12 @@ postgres:
       successThreshold: 1
       failureThreshold: 5
 
+  # ─── PostgreSQL Upgrade Configuration ───
+  upgrade:
+    enabled: false              # Set to true to enable the upgrade process
+    targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
+    backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
 ########################################################################
 # REDIS CACHE
 ########################################################################
@@ -800,6 +806,46 @@ redisCommander:
       failureThreshold: 5
 
 ########################################################################
+# MINIO - S3 Compatible Object Storage
+########################################################################
+minio:
+  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
+
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z-cpuv1" # Use a specific stable tag
+    pullPolicy: IfNotPresent
+
+  # Credentials for the MinIO root user
+  # It's recommended to use existingSecret in production
+  existingSecret: ""
+  credentials:
+    rootUser: minioadmin
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+
+  service:
+    type: ClusterIP
+    apiPort: 9000 # S3 API
+    consolePort: 9001 # Web UI
+
+  # PersistentVolumeClaim for data durability
+  persistence:
+    enabled: true
+    storageClassName: "" # Use default StorageClass
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+    reclaimPolicy: Retain
+
+  # Resource limits & requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+########################################################################
 # MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
@@ -808,7 +854,7 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "0.9.0"
+    tag: "latest"
     pullPolicy: IfNotPresent
   port: 8080
 
