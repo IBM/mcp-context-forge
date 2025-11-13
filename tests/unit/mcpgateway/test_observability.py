@@ -82,7 +82,7 @@ class TestObservability:
 
         # Verify provider was created and configured
         mock_provider.assert_called_once()
-        provider_instance.add_span_processor.assert_called_once()
+        assert provider_instance.add_span_processor.call_count == 2
         assert result is not None
 
     @patch("mcpgateway.observability.ConsoleSpanExporter")
@@ -100,7 +100,7 @@ class TestObservability:
 
         # Verify console exporter was created
         mock_exporter.assert_called_once()
-        provider_instance.add_span_processor.assert_called_once()
+        assert provider_instance.add_span_processor.call_count == 2
         assert result is not None
 
     def test_init_telemetry_custom_resource_attributes(self):
