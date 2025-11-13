@@ -286,6 +286,195 @@ DEFAULT_PASSTHROUGH_HEADERS=["X-Tenant-Id", "X-Trace-Id", "X-Request-Id"]
 }
 ```
 
+
+## Usage with One-Time Auth
+
+The One-Time Authentication feature enables integration with an authenticated MCP server without persisting server credentials in the database. Authentication is performed using a one-time token during initial registration, combined with passthrough headers to securely forward authentication context for subsequent requests.
+
+### Workflow Overview
+
+The one-time auth workflow consists of three main steps:
+
+1. **Register the Gateway** - Authenticate once to discover tools, then discard credentials
+2. **Create Virtual Servers** - Expose selected tools through virtual server endpoints
+3. **Connect MCP Clients** - Use passthrough headers to authenticate requests
+
+```mermaid
+graph LR
+    A[User] --> B["Add MCP Server"]
+    B --> C{"Enable One-Time Authentication?"}
+    C -->|Yes| D["Do Not Store Credentials in DB"]
+    C -->|No| E["Store Credentials in DB"]
+    D --> F["Configure Passthrough Headers (X-Upstream-Authorization)"]
+    F --> G["Create Virtual Server"]
+    G --> H["Link to MCP Server"]
+    H --> I["Add Authentication Headers"]
+    I --> J["Test Connection"]
+    J --> K["Successful Authentication"]
+    E --> L["Create Virtual Server with Stored Credentials"]
+
+    %% Define styling for steps (Dark mode colors)
+    classDef step fill:#1e1e1e,stroke:#ffffff,stroke-width:2px,color:#f5f5f5;
+    class A,B,C,D,E,F,G,H,I,J,K,L step;
+```
+
+### Step 1: Register Gateway with One-Time Authentication
+
+Register an MCP server with authentication details and enable one-time auth. The gateway will:
+- Use the provided credentials **once** to connect to the MCP server
+- Discover and retrieve all available tools and metadata
+- **Discard the authentication details** without storing them in the database
+
+**API Request:**
+
+```bash
+POST /gateways
+Content-Type: application/json
+Authorization: Bearer <your-gateway-token>
+
+{
+  "name": "my-server",
+  "url": "http://localhost:8005/mcp",
+  "description": "Authenticated MCP server with one-time auth",
+  "transport": "STREAMABLEHTTP",
+  "passthrough_headers": [
+    "X-Upstream-Authorization"
+  ],
+  "auth_type": "bearer",
+  "auth_token": "super-secret-123",
+  "one_time_auth": true
+}
+```
+
+**Key Fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `name` | Yes | Unique identifier for the gateway |
+| `url` | Yes | MCP server endpoint URL |
+| `transport` | Yes | Transport protocol (`STREAMABLEHTTP` or `SSE`) |
+| `passthrough_headers` | Yes | Use include `X-Upstream-Authorization` for `Authorization` headers, for other headers, use as it is |
+| `auth_type` | Yes | Authentication scheme (`bearer` or `basic`, etc) |
+| `auth_token` | Yes | Token used **only once** for initial connection |
+| `one_time_auth` | Yes | Set to `true` to enable one-time authentication |
+
+**What Happens:**
+
+1. Gateway connects to the MCP server using `auth_token`
+2. Tool discovery is performed, retrieving all available tools
+3. Tool metadata and schemas are stored in the database
+4. **Credentials are immediately discarded** - not saved anywhere
+5. Gateway registration completes successfully
+6. Health checks are automatically disabled (no stored credentials available)
+
+### Step 2: Create Virtual Servers
+
+After gateway registration, create virtual servers to expose selected tools from the authenticated MCP server. Virtual servers act as proxies that use passthrough headers for authentication.
+
+**API Request:**
+
+```bash
+POST /servers
+Content-Type: application/json
+Authorization: Bearer <your-gateway-token>
+
+{
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Virtual server exposing authenticated tools",
+    "associated_tools": [
+      "1a4712afecbf44408960da065c5183e3"
+    ],
+    "visibility": "public"
+  }
+}
+```
+
+**Response:**
+
+The API returns the virtual server details including its unique ID (e.g., `aa9980f23d2c45d5a07727993565e9c8`), which is used to construct the MCP endpoint URL.
+
+### Step 3: Connect MCP Clients with Passthrough Headers
+
+Connect any MCP-compatible client to the virtual server, providing authentication via passthrough headers. The client must supply:
+
+1. **Gateway Authentication** - Token to authenticate with Context Forge Gateway (`Authorization` header)
+2. **MCP Server Authentication** - Token forwarded to the upstream MCP server (`X-Upstream-Authorization` header)
+
+#### Example: Claude Desktop Configuration
+
+Add the following configuration to Claude Desktop's MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "new-virtual-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:4444/servers/aa9980f23d2c45d5a07727993565e9c8/mcp",
+        "--header",
+        "Authorization:${GATEWAY_AUTH_TOKEN}",
+        "--header",
+        "X-Upstream-Authorization:${MCP_SERVER_AUTH_TOKEN}"
+      ],
+      "env": {
+        "GATEWAY_AUTH_TOKEN": "Bearer <context_forge_gateway_token>",
+        "MCP_SERVER_AUTH_TOKEN": "Bearer <mcp_server_bearer_token>"
+      }
+    }
+  }
+}
+```
+
+**Configuration Breakdown:**
+
+| Component | Purpose |
+|-----------|---------|
+| `mcp-remote` | NPM package for remote MCP connections |
+| `http://localhost:4444/servers/...` | Virtual server endpoint URL |
+| `Authorization` header | Authenticates with Context Forge Gateway |
+| `X-Upstream-Authorization` header | Forwarded to the upstream MCP server |
+| `GATEWAY_AUTH_TOKEN` | JWT or Bearer token for gateway access |
+| `MCP_SERVER_AUTH_TOKEN` | Bearer token for the authenticated MCP server |
+
+**Environment Variables:**
+
+Replace the placeholder tokens with actual values:
+
+```bash
+# Gateway authentication token (obtained from Context Forge)
+GATEWAY_AUTH_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# MCP server authentication token (your server's auth token)
+MCP_SERVER_AUTH_TOKEN="Bearer super-secret-123"
+```
+
+### Authentication Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Client as MCP Client
+    participant Gateway as Context Forge Gateway
+    participant MCP as MCP Server
+
+    Note over Gateway,MCP: Step 1: One-Time Registration
+    Gateway->>MCP: Connect with auth_token (one-time)
+    MCP-->>Gateway: Return tools & metadata
+    Note over Gateway: Store tools, discard credentials
+
+    Note over Client,MCP: Step 2: Runtime Requests
+    Client->>Gateway: Request with Authorization header
+    Note over Gateway: Validate gateway auth
+    Client->>Gateway: Include X-Upstream-Authorization header
+    Gateway->>MCP: Forward request with Authorization header
+    Note over Gateway: Map X-Upstream-Authorization → Authorization
+    MCP-->>Gateway: Return response
+    Gateway-->>Client: Forward response
+```
+
+
 ## Troubleshooting
 
 ### Common Issues
