@@ -2,7 +2,7 @@
 
 **Status:** Accepted  
 **Date:** 2025-11-10  
-**Deciders:** Keval Mahajan
+**Deciders:** Keval Mahajan  
 **Technical Story:** [#1387](https://github.com/IBM/mcp-context-forge/issues/1387)
 
 ## Context and Problem Statement
