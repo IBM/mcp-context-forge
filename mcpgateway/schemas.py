@@ -612,7 +612,7 @@ class ToolCreate(BaseModel):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -1032,7 +1032,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -2413,6 +2413,10 @@ class GatewayCreate(BaseModel):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # One time auth - do not store the auth in gateway flag
+    one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
@@ -2646,6 +2650,9 @@ class GatewayCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -2676,6 +2683,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # One time auth - do not store the auth in gateway flag
+    one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
@@ -2879,6 +2889,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -3035,6 +3048,10 @@ class GatewayRead(BaseModelWithConfigDict):
         if auth_type == "oauth":
             # OAuth gateways don't have traditional auth_value to decode
             # They use oauth_config instead
+            return self
+
+        if auth_type == "one_time_auth":
+            # One-time auth gateways don't store auth_value
             return self
 
         # If no encoded value is present, nothing to populate
@@ -4141,6 +4158,10 @@ class A2AAgentCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -4425,6 +4446,10 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -4573,6 +4598,9 @@ class A2AAgentRead(BaseModelWithConfigDict):
         if auth_type == "oauth":
             # OAuth gateways don't have traditional auth_value to decode
             # They use oauth_config instead
+            return self
+
+        if auth_type == "one_time_auth":
             return self
 
         # If no encoded value is present, nothing to populate

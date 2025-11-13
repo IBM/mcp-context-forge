@@ -738,6 +738,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ca_certificate = getattr(gateway, "ca_certificate", None)
             capabilities, tools, resources, prompts = await self._initialize_gateway(normalized_url, authentication_headers, gateway.transport, auth_type, oauth_config, ca_certificate)
 
+            if gateway.one_time_auth:
+                # For one-time auth, clear auth_type and auth_value after initialization
+                auth_type = "one_time_auth"
+                auth_value = None
+                oauth_config = None
+
             tools = [
                 DbTool(
                     original_name=tool.name,
@@ -1406,6 +1412,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         new_tool_names = [tool.name for tool in tools]
                         new_resource_uris = [resource.uri for resource in resources]
                         new_prompt_names = [prompt.name for prompt in prompts]
+
+                        if gateway_update.one_time_auth:
+                            # For one-time auth, clear auth_type and auth_value after initialization
+                            gateway.auth_type = "one_time_auth"
+                            gateway.auth_value = None
+                            gateway.oauth_config = None
 
                         # Update tools using helper method
                         tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
@@ -2182,6 +2194,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
             for gateway in gateways:
+
+                if gateway.auth_type == "one_time_auth":
+                    continue  # Skip health check for one-time auth gateways as these are authenticated with passthrough headers only
+
                 # Create span for individual gateway health check
                 with create_span(
                     "gateway.health_check",
