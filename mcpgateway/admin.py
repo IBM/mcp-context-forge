@@ -2917,7 +2917,7 @@ async def admin_password_change_required_handler(request: Request, db: Session =
             try:
                 # Decode JWT to extract user email
                 payload = await verify_jwt_token(jwt_token)
-                
+
                 # Validate token payload and extract user email
                 if not payload or ("sub" not in payload and "email" not in payload):
                     auth_error = "Invalid authentication token"
@@ -2953,7 +2953,7 @@ async def admin_password_change_required_handler(request: Request, db: Session =
             if success:
                 LOGGER.info(f"Password changed successfully for user {current_user.email} via required change")
                 return JSONResponse(content={"success": True, "message": "Password changed successfully! Redirecting to admin panel..."}, status_code=200)
-            
+
             return JSONResponse(content={"success": False, "message": "Failed to change password"}, status_code=500)
 
         except Exception as token_error:
@@ -2970,7 +2970,7 @@ async def admin_password_change_required_handler(request: Request, db: Session =
             return JSONResponse(content={"success": False, "message": "Current password is incorrect"}, status_code=400)
         if isinstance(e, PasswordValidationError):
             return JSONResponse(content={"success": False, "message": str(e)}, status_code=400)
-        
+
         return JSONResponse(content={"success": False, "message": "An error occurred while changing password"}, status_code=500)
 
 
