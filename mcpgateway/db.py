@@ -2818,10 +2818,7 @@ class Gateway(Base):
 
     registered_oauth_clients: Mapped[List["RegisteredOAuthClient"]] = relationship("RegisteredOAuthClient", back_populates="gateway", cascade="all, delete-orphan")
 
-    __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),
-        UniqueConstraint("team_id", "owner_email", "url", name="uq_team_owner_url_gateway"),
-    )
+    __table_args__ = (UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_gateway"),)
 
 
 @event.listens_for(Gateway, "after_update")
