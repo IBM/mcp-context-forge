@@ -557,6 +557,42 @@ async def get_configuration_settings(
         """Mask sensitive configuration values.
 
         Args:
+            value: The configuration value to potentially mask
+            key: The configuration key name to check for sensitive keywords
+
+        Returns:
+            Any: The original value if not sensitive, or "***MASKED***" if sensitive
+
+        Examples:
+            >>> mask_sensitive("secret123", "password")
+            '***MASKED***'
+            >>> mask_sensitive("normal_value", "name")
+            'normal_value'
+            >>> mask_sensitive(None, "password")
+
+            >>> mask_sensitive("", "secret_key")
+            ''
+        """
+        if not value:
+            return value
+
+        sensitive_keywords = ["password", "secret", "key", "token", "auth"]
+        if any(keyword in key.lower() for keyword in sensitive_keywords):
+            return "***MASKED***"
+
+        return value
+        """Mask sensitive configuration values."""
+        if not value:
+            return value
+
+        sensitive_keywords = ["password", "secret", "key", "token", "auth"]
+        if any(keyword in key.lower() for keyword in sensitive_keywords):
+            return "***MASKED***"
+
+        return value
+        """Mask sensitive configuration values.
+
+        Args:
             value: Configuration value to potentially mask
             key: Configuration key name to check for sensitive patterns
 
