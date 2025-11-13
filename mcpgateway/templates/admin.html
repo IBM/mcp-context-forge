@@ -4608,6 +4608,32 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </div>
                 </div>
               </div>
+
+              <div class="mt-4">
+                <label class="flex items-center">
+                  <input
+                    type="checkbox"
+                    name="one_time_auth"
+                    id="single-use-auth-gw"
+                    class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                    x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
+                    onchange="document.getElementById('single-use-auth-hint-gw').style.display = this.checked ? 'block' : 'none'"
+                  />
+                  <span
+                    class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                  >
+                    Use one-time authentication
+                  </span>
+                </label>
+                <p
+                  id="single-use-auth-hint-gw"
+                  style="display: none"
+                  class="mt-2 text-sm text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-md p-2"
+                >
+                  ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
+                </p>
+              </div>
+              
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
@@ -8094,6 +8120,30 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                           </div>
                         </div>
                       </div>
+                    </div>
+                    <div class="mt-4">
+                      <label class="flex items-center">
+                        <input
+                          type="checkbox"
+                          name="one_time_auth"
+                          id="single-use-auth-gw-edit"
+                          class="form-checkbox h-5 w-5 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:bg-gray-800 dark:border-gray-600"
+                          x-tooltip="'💡This will not store the server credentials, Some features may not work.'"
+                          onchange="document.getElementById('single-use-auth-hint-gw-edit').style.display = this.checked ? 'block' : 'none'"
+                        />
+                        <span
+                          class="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
+                          Use one-time authentication
+                        </span>
+                      </label>
+                      <p
+                        id="single-use-auth-hint-gw-edit"
+                        style="display: none"
+                        class="mt-2 text-sm text-gray-700 dark:text-gray-300 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-700 rounded-md p-2"
+                      >
+                        ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
+                      </p>
                     </div>
                     <div>
                       <label
