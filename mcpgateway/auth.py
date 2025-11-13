@@ -356,6 +356,7 @@ async def get_current_user(
             except Exception as revoke_check_error:
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
+                raise
 
         # Check team level token, if applicable. If public token, then will be defaulted to personal team.
         team_id = await get_team_from_token(payload, db)
