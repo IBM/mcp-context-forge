@@ -274,9 +274,10 @@ class ServerService:
             resources: List of resource IDs.
             prompts: List of prompt IDs.
             a2a_agents: List of A2A agent IDs.
+            gateways: List of gateway IDs.
 
         Returns:
-            A dictionary with keys "tools", "resources", "prompts", and "a2a_agents".
+            A dictionary with keys "tools", "resources", "prompts", "a2a_agents", and "gateways".
 
         Examples:
             >>> service = ServerService()
