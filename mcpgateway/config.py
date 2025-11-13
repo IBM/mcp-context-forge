@@ -914,6 +914,7 @@ class Settings(BaseSettings):
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
+    gateway_max_redirects: int = 5
 
     filelock_name: str = "gateway_service_leader.lock"
 

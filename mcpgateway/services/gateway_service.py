@@ -397,33 +397,43 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if timeout is None:
             timeout = settings.gateway_validation_timeout
-        validation_client = ResilientHttpClient(client_args={"timeout": settings.gateway_validation_timeout, "verify": not settings.skip_ssl_verify})
+        validation_client = ResilientHttpClient(
+            client_args={
+                "timeout": settings.gateway_validation_timeout,
+                "verify": not settings.skip_ssl_verify,
+                # Let httpx follow only proper HTTP redirects (3xx) and
+                # enforce a sensible redirect limit.
+                "follow_redirects": True,
+                "max_redirects": settings.gateway_max_redirects,
+            }
+        )
+
         try:
+            # Make a single request and let httpx follow valid redirects.
             async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
                 response_headers = dict(response.headers)
-                location = response_headers.get("location")
-                content_type = response_headers.get("content-type")
-                if response.status_code in (401, 403):
+                content_type = response_headers.get("content-type", "")
+                logger.info(f"Validating gateway URL {url}, received status {response.status_code}, content_type: {content_type}")
+
+                # Authentication failures mean the endpoint is not usable
+                if response.status_code in (401, 403, 404):
                     logger.debug(f"Authentication failed for {url} with status {response.status_code}")
                     return False
 
+                # STREAMABLEHTTP: expect an MCP session id and JSON content
                 if transport_type == "STREAMABLEHTTP":
-                    if location:
-                        async with validation_client.client.stream("GET", location, headers=headers, timeout=timeout) as response_redirect:
-                            response_headers = dict(response_redirect.headers)
-                            mcp_session_id = response_headers.get("mcp-session-id")
-                            content_type = response_headers.get("content-type")
-                            if response_redirect.status_code in (401, 403):
-                                logger.debug(f"Authentication failed at redirect location {location}")
-                                return False
-                            if mcp_session_id is not None and mcp_session_id != "":
-                                if content_type is not None and content_type != "" and "application/json" in content_type:
-                                    return True
+                    mcp_session_id = response_headers.get("mcp-session-id")
+                    if mcp_session_id is not None and mcp_session_id != "":
+                        if content_type is not None and content_type != "" and "application/json" in content_type:
+                            return True
 
-                elif transport_type == "SSE":
-                    if content_type is not None and content_type != "" and "text/event-stream" in content_type:
+                # SSE: expect text/event-stream
+                if transport_type == "SSE":
+                    logger.info(f"Validating SSE gateway URL {url}")
+                    if "text/event-stream" in content_type:
                         return True
-                return False
+
+            return False
         except httpx.UnsupportedProtocol as e:
             logger.debug(f"Gateway URL Unsupported Protocol for {url}: {str(e)}", exc_info=True)
             return False
@@ -3312,8 +3322,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if authentication is None:
             authentication = {}
-        # Use authentication directly instead
 
+        # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
             timeout: httpx.Timeout | None = None,
@@ -3341,59 +3351,61 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth=auth,
             )
 
-        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                # Initialize the session
-                response = await session.initialize()
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug(f"Server capabilities: {capabilities}")
+        if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="STREAMABLEHTTP"):
+            async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                async with ClientSession(read_stream, write_stream) as session:
+                    # Initialize the session
+                    response = await session.initialize()
+                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                    logger.debug(f"Server capabilities: {capabilities}")
 
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                    response = await session.list_tools()
+                    tools = response.tools
+                    tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                tools = [ToolCreate.model_validate(tool) for tool in tools]
-                for tool in tools:
-                    tool.request_type = "STREAMABLEHTTP"
-                if tools:
-                    logger.info(f"Fetched {len(tools)} tools from gateway")
+                    tools = [ToolCreate.model_validate(tool) for tool in tools]
+                    for tool in tools:
+                        tool.request_type = "STREAMABLEHTTP"
+                    if tools:
+                        logger.info(f"Fetched {len(tools)} tools from gateway")
 
-                # Fetch resources if supported
-                resources = []
-                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                if capabilities.get("resources"):
-                    try:
-                        response = await session.list_resources()
-                        raw_resources = response.resources
-                        resources = []
-                        for resource in raw_resources:
-                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                            # Convert AnyUrl to string if present
-                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                resource_data["uri"] = str(resource_data["uri"])
-                            # Add default content if not present
-                            if "content" not in resource_data:
-                                resource_data["content"] = ""
-                            resources.append(ResourceCreate.model_validate(resource_data))
-                        logger.info(f"Fetched {len(resources)} resources from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch resources: {e}")
+                    # Fetch resources if supported
+                    resources = []
+                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    if capabilities.get("resources"):
+                        try:
+                            response = await session.list_resources()
+                            raw_resources = response.resources
+                            resources = []
+                            for resource in raw_resources:
+                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                # Convert AnyUrl to string if present
+                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                    resource_data["uri"] = str(resource_data["uri"])
+                                # Add default content if not present
+                                if "content" not in resource_data:
+                                    resource_data["content"] = ""
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resources: {e}")
 
-                # Fetch prompts if supported
-                prompts = []
-                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                if capabilities.get("prompts"):
-                    try:
-                        response = await session.list_prompts()
-                        raw_prompts = response.prompts
-                        prompts = []
-                        for prompt in raw_prompts:
-                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                            # Add default template if not present
-                            if "template" not in prompt_data:
-                                prompt_data["template"] = ""
-                            prompts.append(PromptCreate.model_validate(prompt_data))
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch prompts: {e}")
+                    # Fetch prompts if supported
+                    prompts = []
+                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    if capabilities.get("prompts"):
+                        try:
+                            response = await session.list_prompts()
+                            raw_prompts = response.prompts
+                            prompts = []
+                            for prompt in raw_prompts:
+                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                # Add default template if not present
+                                if "template" not in prompt_data:
+                                    prompt_data["template"] = ""
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch prompts: {e}")
 
-                return capabilities, tools, resources, prompts
+                    return capabilities, tools, resources, prompts
+        raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")
