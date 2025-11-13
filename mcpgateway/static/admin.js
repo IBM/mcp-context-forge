@@ -7435,7 +7435,29 @@ function initGatewaySelect() {
         if (!container._gateway_change_bound) {
             container.addEventListener('change', (e) => {
                 if (e.target && e.target.type === 'checkbox') {
+                    // Update cached selected IDs synchronously to avoid races
+                    try {
+                        const checkboxes = Array.from(container.querySelectorAll('input[type="checkbox"]:checked'));
+                        window._selectedGatewayIds = checkboxes.map(cb => cb.value).filter(Boolean);
+                    } catch (cacheErr) {
+                        console.debug('Error updating _selectedGatewayIds cache', cacheErr);
+                    }
+
                     updatePills();
+                    // When gateway selection changes, update associated selectors
+                    try {
+                        // Debounce slightly to allow multiple checkbox changes to settle
+                        if (window._gatewaySelectionUpdateTimeout) {
+                            clearTimeout(window._gatewaySelectionUpdateTimeout);
+                        }
+                        window._gatewaySelectionUpdateTimeout = setTimeout(() => {
+                            if (typeof reloadAssociatedSelectors === 'function') {
+                                reloadAssociatedSelectors();
+                            }
+                        }, 50);
+                    } catch (err) {
+                        console.error('Error triggering associated selector reload:', err);
+                    }
                 }
             });
             container._gateway_change_bound = true;
@@ -18162,6 +18184,90 @@ function initializeChatInputResize() {
 /**
  * Perform server-side search for tools and update the tool list
  */
+// Return array of selected gateway ids from the Associated MCP Servers panel
+function getSelectedGatewayIds() {
+    try {
+        // Prefer a cached selection to avoid races where the DOM may be
+        // swapped/replaced by HTMX between the change event and the
+        // subsequent fetch. The cache is updated synchronously in the
+        // gateway change handler below.
+        if (window._selectedGatewayIds && Array.isArray(window._selectedGatewayIds)) {
+            return window._selectedGatewayIds.slice();
+        }
+        const container = document.getElementById("associatedGateways");
+        if (!container) return [];
+        const checked = Array.from(
+            container.querySelectorAll('input[type="checkbox"]:checked'),
+        ).map((cb) => cb.value).filter(Boolean);
+        // Keep a cache for immediate subsequent reads
+        window._selectedGatewayIds = checked.slice();
+        return checked;
+    } catch (err) {
+        console.error('Error reading selected gateways:', err);
+        return [];
+    }
+}
+
+// Build repeated gateway_id query params for fetch URLs: &gateway_id=id1&gateway_id=id2
+function buildGatewayQueryParams() {
+    try {
+        const ids = getSelectedGatewayIds();
+        if (!ids || ids.length === 0) return "";
+        return ids.map(id => `&gateway_id=${encodeURIComponent(id)}`).join("");
+    } catch (err) {
+        console.error('Error building gateway query params:', err);
+        return "";
+    }
+}
+
+// Reload associated selectors (tools, prompts, resources) using currently selected gateways
+async function reloadAssociatedSelectors() {
+    try {
+        // Tools: reuse the existing search input state
+        const searchTools = safeGetElement("searchTools", true);
+        const toolsTerm = searchTools ? searchTools.value || "" : "";
+        // Trigger tool refresh (serverSideToolSearch will include gateway ids)
+        serverSideToolSearch(toolsTerm || "");
+
+        // Prompts: reuse search input
+        const searchPrompts = safeGetElement("searchPrompts", true);
+        const promptsTerm = searchPrompts ? searchPrompts.value || "" : "";
+        serverSidePromptSearch(promptsTerm || "");
+
+        // Resources: perform a partial fetch for resources selector (honors gateway filter)
+        const resourcesContainer = document.getElementById("associatedResources");
+        if (resourcesContainer) {
+            const gatewayParam = buildGatewayQueryParams();
+            // Show a small loading state
+            resourcesContainer.innerHTML = `<div class="text-center py-4 text-sm text-gray-500">Loading resources...</div>`;
+            try {
+                // Debug: log selected gateway ids for troubleshooting intermittent requests
+                console.debug('reloadAssociatedSelectors: resources fetch, gatewayParam=', gatewayParam, 'selectedIds=', getSelectedGatewayIds());
+                const resp = await fetch(`${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector${gatewayParam}`, {
+                    headers: {
+                        // Provide explicit header fallback so server can read selected ids
+                        'X-Selected-Gateway-Ids': getSelectedGatewayIds().join(',') || '',
+                    },
+                    credentials: 'include',
+                });
+                if (resp.ok) {
+                    const html = await resp.text();
+                    resourcesContainer.innerHTML = html;
+                    if (window.htmx && typeof window.htmx.process === 'function') {
+                        try { window.htmx.process(resourcesContainer); } catch (e) { console.debug('htmx.process failed for resourcesContainer', e); }
+                    }
+                } else {
+                    resourcesContainer.innerHTML = `<div class="text-center py-4 text-red-600">Failed to load resources</div>`;
+                }
+            } catch (err) {
+                console.error('Error loading resources partial:', err);
+                resourcesContainer.innerHTML = `<div class="text-center py-4 text-red-600">Error loading resources</div>`;
+            }
+        }
+    } catch (err) {
+        console.error('Error reloading associated selectors:', err);
+    }
+}
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
     const noResultsMessage = safeGetElement("noToolsMessage", true);
@@ -18171,6 +18277,10 @@ async function serverSideToolSearch(searchTerm) {
         console.error("associatedTools container not found");
         return;
     }
+
+    // Helper: build repeated gateway_id params for server requests so tools can be filtered
+    const gatewayQuery = buildGatewayQueryParams();
+    console.debug('serverSideToolSearch: searchTerm=', searchTerm, 'gatewayQuery=', gatewayQuery, 'selected=', getSelectedGatewayIds());
 
     // Show loading state
     container.innerHTML = `
@@ -18187,11 +18297,18 @@ async function serverSideToolSearch(searchTerm) {
         // If search term is empty, reload the default tool list
         try {
             const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector${gatewayQuery}`,
+                {
+                    headers: { 'X-Selected-Gateway-Ids': getSelectedGatewayIds().join(',') || '' },
+                    credentials: 'include',
+                },
             );
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
+                if (window.htmx && typeof window.htmx.process === 'function') {
+                    try { window.htmx.process(container); } catch (e) { console.debug('htmx.process failed for tools container', e); }
+                }
 
                 // Hide no results message
                 if (noResultsMessage) {
@@ -18212,11 +18329,13 @@ async function serverSideToolSearch(searchTerm) {
         return;
     }
 
-    try {
-        // Call the new search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        try {
+            // Call the new search API and include gateway filter if present
+            console.debug('serverSideToolSearch: calling tools/search q=', searchTerm, 'gatewayQuery=', gatewayQuery);
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100${gatewayQuery}`,
+                { headers: { 'X-Selected-Gateway-Ids': getSelectedGatewayIds().join(',') || '' }, credentials: 'include' },
+            );
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -18254,6 +18373,9 @@ async function serverSideToolSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
+            if (window.htmx && typeof window.htmx.process === 'function') {
+                try { window.htmx.process(container); } catch (e) { console.debug('htmx.process failed for tools search results', e); }
+            }
 
             // Update tool mapping with search results
             updateToolMapping(container);
@@ -18328,15 +18450,23 @@ async function serverSidePromptSearch(searchTerm) {
         </div>
     `;
 
+    // Include gateway filter if present (repeated gateway_id params)
+    const gatewayQuery = buildGatewayQueryParams();
+    console.debug('serverSidePromptSearch: searchTerm=', searchTerm, 'gatewayQuery=', gatewayQuery, 'selected=', getSelectedGatewayIds());
+
     if (searchTerm.trim() === "") {
         // If search term is empty, reload the default prompt selector
         try {
             const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector${gatewayQuery}`,
+                { headers: { 'X-Selected-Gateway-Ids': getSelectedGatewayIds().join(',') || '' }, credentials: 'include' },
             );
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
+                if (window.htmx && typeof window.htmx.process === 'function') {
+                    try { window.htmx.process(container); } catch (e) { console.debug('htmx.process failed for prompts container', e); }
+                }
 
                 // Hide no results message
                 if (noResultsMessage) {
@@ -18365,8 +18495,10 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
+        console.debug('serverSidePromptSearch: calling prompts/search q=', searchTerm, 'gatewayQuery=', gatewayQuery);
         const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100${gatewayQuery}`,
+            { headers: { 'X-Selected-Gateway-Ids': getSelectedGatewayIds().join(',') || '' }, credentials: 'include' },
         );
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -18396,6 +18528,9 @@ async function serverSidePromptSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
+            if (window.htmx && typeof window.htmx.process === 'function') {
+                try { window.htmx.process(container); } catch (e) { console.debug('htmx.process failed for prompts search results', e); }
+            }
 
             // Initialize prompt select mapping
             initPromptSelect(

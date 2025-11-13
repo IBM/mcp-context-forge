@@ -259,7 +259,9 @@ def generate_pagination_links(
             params["per_page"] = per_page
 
         if params:
-            return f"{base_url}?{urlencode(params)}"
+            # Use doseq=True so list values are emitted as repeated query keys
+            # e.g. {'gateway_id': ['g1','g2']} -> gateway_id=g1&gateway_id=g2
+            return f"{base_url}?{urlencode(params, doseq=True)}"
         return base_url
 
     # For cursor-based pagination

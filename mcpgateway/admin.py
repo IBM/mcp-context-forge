@@ -4920,6 +4920,7 @@ async def admin_tools_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[List[str]] = Query(None, description="Filter by gateway id(s); repeated param allowed"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -4942,7 +4943,14 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render})")
+    LOGGER.debug(f"Gateway filter param received for tools.partial: {gateway_id}")
 
+    # Coerce gateway_id from alternate sources if repeated params were not provided
+    if not gateway_id:
+        # Try query param csv or header fallback
+        csv = request.query_params.get("gateway_ids_csv") or request.headers.get("x-selected-gateway-ids")
+        if csv:
+            gateway_id = [x for x in csv.split(",") if x]
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
 
@@ -4977,10 +4985,16 @@ async def admin_tools_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Filter by gateway(s) if requested (gateway_id can be repeated)
+    if gateway_id:
+        query = query.where(DbTool.gateway_id.in_(gateway_id))
+
     # Count total items
     count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
     if not include_inactive:
         count_query = count_query.where(DbTool.enabled.is_(True))
+    if gateway_id:
+        count_query = count_query.where(DbTool.gateway_id.in_(gateway_id))
 
     total_items = db.scalar(count_query) or 0
 
@@ -5024,7 +5038,7 @@ async def admin_tools_partial_html(
         page=page,
         per_page=per_page,
         total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
+        query_params={"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
     )
 
     # If render=controls, return only pagination controls
@@ -5037,7 +5051,7 @@ async def admin_tools_partial_html(
                 "base_url": base_url,
                 "hx_target": "#tools-table-body",
                 "hx_indicator": "#tools-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": {"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5050,6 +5064,7 @@ async def admin_tools_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
+                "gateway_ids_csv": ",".join(gateway_id) if gateway_id else "",
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5117,6 +5132,7 @@ async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    gateway_id: Optional[List[str]] = Query(None, description="Filter by gateway id(s); repeated param allowed"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5138,6 +5154,13 @@ async def admin_search_tools(
     """
     user_email = get_user_email(user)
     search_query = q.strip().lower()
+    # If gateway_id was not set via repeated params, allow header/csv fallback
+    if not gateway_id:
+        csv = request.query_params.get("gateway_ids_csv") or request.headers.get("x-selected-gateway-ids")
+        if csv:
+            gateway_id = [x for x in csv.split(",") if x]
+    LOGGER.debug(f"admin_search_tools called with q={q!r}, gateway_id={gateway_id}")
+    LOGGER.debug(f"admin_search_tools called with q={q!r}, gateway_id={gateway_id}")
 
     if not search_query:
         # If no search query, return empty list
@@ -5160,6 +5183,10 @@ async def admin_search_tools(
 
     query = query.where(or_(*access_conditions))
 
+    # Filter by gateway(s) if requested
+    if gateway_id:
+        query = query.where(DbTool.gateway_id.in_(gateway_id))
+
     # Add search conditions - search in display fields and description
     # Using the same priority as display: displayName -> customName -> original_name
     search_conditions = [
@@ -5170,6 +5197,9 @@ async def admin_search_tools(
     ]
 
     query = query.where(or_(*search_conditions))
+
+    if gateway_id:
+        query = query.where(DbTool.gateway_id.in_(gateway_id))
 
     # Order by relevance - prioritize matches at start of names
     query = query.order_by(
@@ -5200,6 +5230,7 @@ async def admin_prompts_partial_html(
     per_page: int = Query(50, ge=1),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    gateway_id: Optional[List[str]] = Query(None, description="Filter by gateway id(s); repeated param allowed"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5230,6 +5261,13 @@ async def admin_prompts_partial_html(
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
+    # Accept csv or header fallback for selected gateway ids
+    if not gateway_id:
+        csv = request.query_params.get("gateway_ids_csv") or request.headers.get("x-selected-gateway-ids")
+        if csv:
+            gateway_id = [x for x in csv.split(",") if x]
+    LOGGER.debug(f"Gateway filter param received for prompts.partial: {gateway_id}")
+
     user_email = get_user_email(user)
 
     # Team scoping
@@ -5250,10 +5288,16 @@ async def admin_prompts_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Filter by gateway(s) if requested
+    if gateway_id:
+        query = query.where(DbPrompt.gateway_id.in_(gateway_id))
+
     # Count total items
     count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
     if not include_inactive:
         count_query = count_query.where(DbPrompt.is_active.is_(True))
+    if gateway_id:
+        count_query = count_query.where(DbPrompt.gateway_id.in_(gateway_id))
 
     total_items = db.scalar(count_query) or 0
 
@@ -5293,7 +5337,7 @@ async def admin_prompts_partial_html(
         page=page,
         per_page=per_page,
         total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
+        query_params={"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
     )
 
     if render == "controls":
@@ -5305,7 +5349,7 @@ async def admin_prompts_partial_html(
                 "base_url": base_url,
                 "hx_target": "#prompts-table-body",
                 "hx_indicator": "#prompts-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": {"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5317,6 +5361,7 @@ async def admin_prompts_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
+                "gateway_ids_csv": ",".join(gateway_id) if gateway_id else "",
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5341,6 +5386,7 @@ async def admin_resources_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[List[str]] = Query(None, description="Filter by gateway id(s); repeated param allowed"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5367,6 +5413,11 @@ async def admin_resources_partial_html(
         items depending on the ``render`` parameter.
     """
     LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+    if not gateway_id:
+        csv = request.query_params.get("gateway_ids_csv") or request.headers.get("x-selected-gateway-ids")
+        if csv:
+            gateway_id = [x for x in csv.split(",") if x]
+    LOGGER.debug(f"Gateway filter param received for resources.partial: {gateway_id}")
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -5393,10 +5444,16 @@ async def admin_resources_partial_html(
 
     query = query.where(or_(*access_conditions))
 
+    # Filter by gateway(s) if requested
+    if gateway_id:
+        query = query.where(DbResource.gateway_id.in_(gateway_id))
+
     # Count total items
     count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
     if not include_inactive:
         count_query = count_query.where(DbResource.is_active.is_(True))
+    if gateway_id:
+        count_query = count_query.where(DbResource.gateway_id.in_(gateway_id))
 
     total_items = db.scalar(count_query) or 0
 
@@ -5434,7 +5491,7 @@ async def admin_resources_partial_html(
         page=page,
         per_page=per_page,
         total_pages=pagination.total_pages,
-        query_params={"include_inactive": "true"} if include_inactive else {},
+        query_params={"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
     )
 
     if render == "controls":
@@ -5446,7 +5503,7 @@ async def admin_resources_partial_html(
                 "base_url": base_url,
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
-                "query_params": {"include_inactive": "true"} if include_inactive else {},
+                "query_params": {"include_inactive": "true", "gateway_id": gateway_id} if include_inactive else ({"gateway_id": gateway_id} if gateway_id else {}),
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5458,6 +5515,7 @@ async def admin_resources_partial_html(
                 "request": request,
                 "data": data,
                 "pagination": pagination.model_dump(),
+                "gateway_ids_csv": ",".join(gateway_id) if gateway_id else "",
                 "root_path": request.scope.get("root_path", ""),
             },
         )
@@ -5558,6 +5616,7 @@ async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[List[str]] = Query(None, description="Filter by gateway id(s); repeated param allowed"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5597,6 +5656,10 @@ async def admin_search_prompts(
         access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
 
     query = query.where(or_(*access_conditions))
+
+    # Filter by gateway(s) if requested
+    if gateway_id:
+        query = query.where(DbPrompt.gateway_id.in_(gateway_id))
 
     search_conditions = [func.lower(DbPrompt.name).contains(search_query), func.lower(coalesce(DbPrompt.description, "")).contains(search_query)]
     query = query.where(or_(*search_conditions))
