@@ -134,7 +134,7 @@ async def list_roles(
     """
     try:
         role_service = RoleService(db)
-        roles = await role_service.list_roles(scope=scope, active_only=active_only)
+        roles = await role_service.list_roles(scope=scope)
 
         return [RoleResponse.from_orm(role) for role in roles]
 
