@@ -102,7 +102,7 @@ from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictE
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -6846,7 +6846,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 
     except GatewayConnectionError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-    except GatewayUrlConflictError as ex:
+    except GatewayDuplicateConflictError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
