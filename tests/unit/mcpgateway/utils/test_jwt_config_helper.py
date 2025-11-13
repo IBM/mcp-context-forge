@@ -1,3 +1,11 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_jwt_config_helper.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit Tests for jwt config helper .
+"""
 import io
 import pytest
 from unittest.mock import patch

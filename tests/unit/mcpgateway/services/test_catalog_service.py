@@ -2,9 +2,9 @@
 """Location: ./tests/unit/mcpgateway/services/test_catalog_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: MCP Gateway Contributors
+Authors: Mihai Criveti
 
-Comprehensive tests for CatalogService to achieve >95% coverage.
+Unit Tests for Catalog Service .
 """
 
 import pytest

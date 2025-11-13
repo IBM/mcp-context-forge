@@ -1,3 +1,15 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_sqlalchemy_modifier.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Madhav Kandukuri
+
+Comprehensive test suite for sqlalchemy_modiier.
+This suite provides complete test coverage for:
+- _ensure_list function
+- json_contains_expr function across supported SQL dialects
+"""
+
 import pytest
 import json
 from unittest.mock import MagicMock, patch

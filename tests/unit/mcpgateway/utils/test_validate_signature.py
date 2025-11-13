@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_validate_signature.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit Tests for ./mcpgateway/utils/validate_signature.py
+"""
+
 import pytest
 import logging
 from cryptography.hazmat.primitives.asymmetric import ed25519
