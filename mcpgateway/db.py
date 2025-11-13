@@ -482,6 +482,8 @@ class EmailUser(Base):
     password_hash_type: Mapped[str] = mapped_column(String(20), default="argon2id", nullable=False)
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -600,6 +602,71 @@ class EmailUser(Base):
             return True
 
         return False
+
+    def is_password_expired(self) -> bool:
+        """Check if the user's password has expired.
+
+        Returns:
+            bool: True if password is expired or change is required, False otherwise
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.is_password_expired()
+            False
+            >>> user.password_change_required = True
+            >>> user.is_password_expired()
+            True
+            >>> from datetime import timedelta
+            >>> user.password_expires_at = utc_now() - timedelta(days=1)
+            >>> user.is_password_expired()
+            True
+        """
+        if self.password_change_required:
+            return True
+
+        if self.password_expires_at is None:
+            return False
+
+        # Handle both timezone-aware and timezone-naive datetimes for comparison
+        current_time = utc_now()
+        expire_time = self.password_expires_at
+
+        # If expire_time is timezone-naive, treat it as UTC for comparison
+        if expire_time.tzinfo is None:
+            expire_time = expire_time.replace(tzinfo=timezone.utc)
+
+        return current_time >= expire_time
+
+    def set_password_expiration(self, days: int = 90) -> None:
+        """Set password expiration date.
+
+        Args:
+            days: Number of days from now when password should expire
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.set_password_expiration(30)
+            >>> user.password_expires_at is not None
+            True
+            >>> user.password_change_required = False
+            >>> user.is_password_expired()
+            False
+        """
+        self.password_expires_at = utc_now() + timedelta(days=days)
+        self.password_change_required = False
+
+    def force_password_change(self) -> None:
+        """Force user to change password on next login.
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.force_password_change()
+            >>> user.password_change_required
+            True
+            >>> user.is_password_expired()
+            True
+        """
+        self.password_change_required = True
 
     # Team relationships
     team_memberships: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", foreign_keys="EmailTeamMember.user_email", back_populates="user")

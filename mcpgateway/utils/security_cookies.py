@@ -11,10 +11,45 @@ security attributes to prevent common cookie-based attacks.
 """
 
 # Third-Party
-from fastapi import Response
+from fastapi import Request, Response
 
 # First-Party
 from mcpgateway.config import settings
+
+
+def get_auth_from_request(request: Request) -> str:
+    """
+    Extract JWT token from request cookies or Authorization header.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        str: JWT token if found, empty string otherwise
+
+    Examples:
+        >>> from fastapi import Request
+        >>> from starlette.datastructures import Headers
+        >>> # Mock request with JWT token cookie
+        >>> mock_request = Request(scope={
+        ...     'type': 'http',
+        ...     'headers': [(b'cookie', b'jwt_token=abc123')],
+        ... })
+        >>> get_auth_from_request(mock_request)
+        'abc123'
+    """
+    # Try to get JWT token from cookie first
+    jwt_token = request.cookies.get("jwt_token", "")
+
+    if jwt_token:
+        return jwt_token
+
+    # Fall back to Authorization header
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+
+    return ""
 
 
 def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -> None:

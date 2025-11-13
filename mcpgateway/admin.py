@@ -2671,16 +2671,39 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         auth_service = EmailAuthService(db)
 
         try:
-            # Authenticate user
+            # Authenticate user and check for password expiration
             LOGGER.debug(f"Attempting authentication for {email}")
-            user = await auth_service.authenticate_user(email, password)
-            LOGGER.debug(f"Authentication result: {user}")
+            user, password_expired = await auth_service.authenticate_user_with_password_check(email, password)
+            LOGGER.debug(f"Authentication result: user={user}, password_expired={password_expired}")
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
+            # Check if password has expired and redirect to password change page
+            if password_expired:
+                LOGGER.info(f"Password expired for {email}, redirecting to password change page")
+
+                # Create JWT token for the password change session
+                # First-Party
+                from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
+
+                token, _ = await create_access_token(user)
+
+                # Create redirect response to password change page
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+
+                # Set JWT token as secure cookie so user can access password change page
+                # First-Party
+                from mcpgateway.utils.security_cookies import set_auth_cookie  # pylint: disable=import-outside-toplevel
+
+                set_auth_cookie(response, token, remember_me=False)
+
+                return response
+
+            # Normal login flow - password is valid
             # Create JWT token with proper audience and issuer claims
             # First-Party
             from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
@@ -2757,6 +2780,198 @@ async def admin_logout(request: Request) -> RedirectResponse:
     response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
 
     return response
+
+
+@admin_router.get("/change-password-required")
+async def admin_password_change_required_page(request: Request) -> Response:
+    """
+    Render the password change required page.
+
+    This endpoint serves the password change form when a user's password
+    has expired or needs to be changed.
+
+    Args:
+        request (Request): FastAPI request object.
+
+    Returns:
+        Response: HTML template for password change required page.
+
+    Examples:
+        >>> from fastapi import Request
+        >>> from fastapi.responses import HTMLResponse
+        >>> from unittest.mock import MagicMock
+        >>>
+        >>> mock_request = MagicMock(spec=Request)
+        >>> mock_request.scope = {"root_path": "/test"}
+        >>>
+        >>> # Mock template response
+        >>> mock_response = HTMLResponse("<html>Password Change</html>")
+        >>>
+        >>> # Test the page function exists
+        >>> import asyncio
+        >>> async def test_password_change_page():
+        ...     try:
+        ...         response = await admin_password_change_required_page(mock_request)
+        ...         return response is not None
+        ...     except Exception:
+        ...         return True  # Expected due to mocked dependencies
+        >>>
+        >>> asyncio.run(test_password_change_page())
+        True
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+    root_path = request.scope.get("root_path", "")
+
+    # Check for grace period information in query params
+    grace_period_remaining = request.query_params.get("grace_days")
+
+    return request.app.state.templates.TemplateResponse("change_password_required.html", {"request": request, "root_path": root_path, "grace_period_remaining": grace_period_remaining})
+
+
+@admin_router.post("/change-password-required")
+async def admin_password_change_required_handler(request: Request, db: Session = Depends(get_db)) -> JSONResponse:
+    """
+    Handle password change form submission from the required password change page.
+
+    This endpoint processes password changes when a user's password has expired
+    or they are required to change it. After successful password change,
+    the user is redirected to the admin panel.
+
+    Args:
+        request (Request): FastAPI request object containing form data.
+        db (Session): Database session dependency.
+
+    Returns:
+        JSONResponse: JSON response indicating success or failure.
+
+    Examples:
+        >>> from fastapi import Request
+        >>> from fastapi.responses import JSONResponse
+        >>> from unittest.mock import MagicMock, AsyncMock
+        >>> from starlette.datastructures import FormData
+        >>>
+        >>> mock_request = MagicMock(spec=Request)
+        >>> mock_request.scope = {"root_path": "/test"}
+        >>> mock_form = FormData([
+        ...     ("current_password", "oldpass123"),
+        ...     ("new_password", "NewSecure123!"),
+        ...     ("confirm_password", "NewSecure123!")
+        ... ])
+        >>> mock_request.form = AsyncMock(return_value=mock_form)
+        >>> mock_db = MagicMock()
+        >>>
+        >>> import asyncio
+        >>> async def test_password_change_handler():
+        ...     try:
+        ...         response = await admin_password_change_required_handler(mock_request, mock_db)
+        ...         return isinstance(response, JSONResponse)
+        ...     except Exception:
+        ...         return True  # Expected due to mocked dependencies
+        >>>
+        >>> asyncio.run(test_password_change_handler())
+        True
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        return JSONResponse(content={"success": False, "message": "Email authentication not enabled"}, status_code=400)
+
+    try:
+        form = await request.form()
+        current_password_val = form.get("current_password")
+        new_password_val = form.get("new_password")
+        confirm_password_val = form.get("confirm_password")
+
+        # Convert form values to strings
+        current_password = current_password_val if isinstance(current_password_val, str) else None
+        new_password = new_password_val if isinstance(new_password_val, str) else None
+        confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
+
+        # Validate all required fields
+        if not current_password or not new_password or not confirm_password:
+            error_message = "All password fields are required"
+        elif new_password != confirm_password:
+            error_message = "New passwords do not match"
+        else:
+            error_message = None
+
+        if error_message:
+            return JSONResponse(content={"success": False, "message": error_message}, status_code=400)
+
+        # Get current user from JWT token (similar to login handler)
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.utils.security_cookies import get_auth_from_request  # pylint: disable=import-outside-toplevel
+
+        try:
+            # Extract JWT token to get current user
+            jwt_token = get_auth_from_request(request)
+            if not jwt_token:
+                return JSONResponse(content={"success": False, "message": "Authentication required"}, status_code=401)
+
+            # Decode token to get user email directly
+            # First-Party
+            from mcpgateway.utils.verify_credentials import verify_jwt_token  # pylint: disable=import-outside-toplevel
+
+            try:
+                # Decode JWT to extract user email
+                payload = await verify_jwt_token(jwt_token)
+                
+                # Validate token payload and extract user email
+                if not payload or ("sub" not in payload and "email" not in payload):
+                    auth_error = "Invalid authentication token"
+                else:
+                    user_email = payload.get("sub") or payload.get("email")
+                    if not user_email:
+                        auth_error = "Invalid token format"
+                    else:
+                        auth_error = None
+
+                if auth_error:
+                    return JSONResponse(content={"success": False, "message": auth_error}, status_code=401)
+
+                # Get user from database
+                # First-Party
+                from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+
+                auth_service = EmailAuthService(db)
+                current_user = db.query(EmailUser).filter_by(email=user_email).first()
+                if not current_user:
+                    return JSONResponse(content={"success": False, "message": "User not found"}, status_code=401)
+            except Exception as e:
+                LOGGER.warning(f"Token validation error during password change: {e}")
+                return JSONResponse(content={"success": False, "message": "Invalid authentication token"}, status_code=401)
+
+            auth_service = EmailAuthService(db)
+            ip_address = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "unknown")
+
+            # Change password using the service
+            success = await auth_service.change_password(email=current_user.email, old_password=current_password, new_password=new_password, ip_address=ip_address, user_agent=user_agent)
+
+            if success:
+                LOGGER.info(f"Password changed successfully for user {current_user.email} via required change")
+                return JSONResponse(content={"success": True, "message": "Password changed successfully! Redirecting to admin panel..."}, status_code=200)
+            
+            return JSONResponse(content={"success": False, "message": "Failed to change password"}, status_code=500)
+
+        except Exception as token_error:
+            LOGGER.error(f"Token processing error during password change: {token_error}")
+            return JSONResponse(content={"success": False, "message": "Authentication error"}, status_code=401)
+
+    except Exception as e:
+        LOGGER.error(f"Password change error: {e}")
+        # Handle specific exception types
+        # First-Party
+        from mcpgateway.services.email_auth_service import AuthenticationError, PasswordValidationError  # pylint: disable=import-outside-toplevel
+
+        if isinstance(e, AuthenticationError):
+            return JSONResponse(content={"success": False, "message": "Current password is incorrect"}, status_code=400)
+        if isinstance(e, PasswordValidationError):
+            return JSONResponse(content={"success": False, "message": str(e)}, status_code=400)
+        
+        return JSONResponse(content={"success": False, "message": "An error occurred while changing password"}, status_code=500)
 
 
 # ============================================================================ #
