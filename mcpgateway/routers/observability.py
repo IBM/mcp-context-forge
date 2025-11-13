@@ -80,7 +80,7 @@ def list_traces(
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
-    
+
     Examples:
         >>> import mcpgateway.routers.observability as obs
         >>> class FakeTrace:
@@ -159,7 +159,7 @@ def query_traces_advanced(
 
     Raises:
         HTTPException: 400 error if request body is invalid
-    
+
     Examples:
         >>> from fastapi import HTTPException
         >>> try:
@@ -173,7 +173,7 @@ def query_traces_advanced(
         ...     def __init__(self):
         ...         self.trace_id = 'tx'
         ...         self.name = 'n'
-         
+
         >>> class FakeService2:
         ...     def query_traces(self, **kwargs):
         ...         return [FakeTrace()]
@@ -241,7 +241,7 @@ def get_trace(trace_id: str, db: Session = Depends(get_db)):
 
     Raises:
         HTTPException: 404 if trace not found
-    
+
     Examples:
         >>> import mcpgateway.routers.observability as obs
         >>> class FakeService:
@@ -295,7 +295,7 @@ def list_spans(
 
     Returns:
         List[ObservabilitySpanRead]: List of spans matching filters
-    
+
     Examples:
         >>> import mcpgateway.routers.observability as obs
         >>> class FakeSpan:
@@ -340,7 +340,7 @@ def cleanup_old_traces(
 
     Returns:
         dict: Number of deleted traces and cutoff time
-    
+
     Examples:
         >>> import mcpgateway.routers.observability as obs
         >>> class FakeService:
@@ -442,7 +442,7 @@ def export_traces(
 
     Raises:
         HTTPException: 400 error if format is invalid or export fails
-    
+
     Examples:
         >>> from fastapi import HTTPException
         >>> try:
@@ -583,7 +583,6 @@ def export_traces(
         raise HTTPException(status_code=400, detail=f"Export failed: {e}")
 
 
-
 @router.get("/analytics/query-performance")
 def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time window in hours"), db: Session = Depends(get_db)):
     """Get query performance analytics.
@@ -599,7 +598,7 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
 
     Returns:
         dict: Performance analytics
-    
+
     Examples:
         >>> import mcpgateway.routers.observability as obs
         >>> class EmptyDB:
@@ -624,7 +623,7 @@ def get_query_performance(hours: int = Query(24, ge=1, le=168, description="Time
         4
 
     """
-    
+
     # Third-Party
 
     # First-Party
