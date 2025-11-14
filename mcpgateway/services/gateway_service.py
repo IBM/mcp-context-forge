@@ -473,11 +473,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         try:
             # STREAMABLE HTTP VALIDATION
             if transport == "STREAMABLEHTTP":
+                # Per MCP spec: client MUST use POST for all messages
                 h.setdefault("Content-Type", "application/json")
+                # Client MUST include Accept header with both content types
                 h.setdefault("Accept", "application/json, text/event-stream")
-                h.setdefault("MCP-Protocol-Version", "2025-06-18")
+                h.setdefault("MCP-Protocol-Version", protocol_version)
 
-                ping = {
+                ping_request = {
                     "jsonrpc": "2.0",
                     "id": "ping-1",
                     "method": "ping",
@@ -485,18 +487,43 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 }
 
                 try:
-                    async with validation_client.client.stream("POST", url, headers=h, timeout=timeout, json=ping) as resp:
+                    async with validation_client.client.stream("POST", url, headers=h, timeout=timeout, json=ping_request) as resp:
                         status = resp.status_code
-                        ctype = resp.headers.get("content-type", "")
 
+                        # Check authentication/not found errors
                         if _auth_or_not_found(status):
                             return False
 
-                        # Accept both JSON and EventStream
-                        if ("application/json" in ctype) or ("text/event-stream" in ctype):
-                            return True
+                        # Check for success status
+                        if status not in (200, 202):
+                            return False
 
-                        return False
+                        ctype = resp.headers.get("content-type", "").lower()
+
+                        # Per spec: server MUST return either application/json or text/event-stream
+                        if "application/json" in ctype:
+                            # Simple JSON response - read and validate it's valid JSON
+                            try:
+                                data = await resp.aread()
+                                json.loads(data)
+                                return True
+                            except Exception:
+                                return False
+
+                        elif "text/event-stream" in ctype:
+                            # SSE response - check if we can read at least one event
+                            try:
+                                async for line in resp.aiter_lines():
+                                    if line.strip():
+                                        return True
+                                # Empty stream is still valid
+                                return True
+                            except Exception:
+                                return False
+
+                        else:
+                            # Invalid content-type
+                            return False
 
                 except Exception:
                     return False
@@ -509,20 +536,25 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 try:
                     async with validation_client.client.stream("GET", url, headers=h, timeout=timeout) as resp:
                         status = resp.status_code
-                        ctype = resp.headers.get("content-type", "")
 
                         if _auth_or_not_found(status):
                             return False
 
+                        if status != 200:
+                            return False
+
+                        ctype = resp.headers.get("content-type", "").lower()
+
                         if "text/event-stream" not in ctype:
                             return False
 
-                        # Check if at least one SSE line arrives
+                        # Verify we can receive at least one SSE event
                         async for line in resp.aiter_lines():
                             if line.strip():
                                 return True
 
-                        return False
+                        # Empty stream is still valid
+                        return True
 
                 except Exception:
                     return False
@@ -532,7 +564,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 return False
 
         finally:
-            # always cleanly close the client
+            # close the client
             await validation_client.aclose()
 
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
