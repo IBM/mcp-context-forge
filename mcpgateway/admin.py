@@ -5005,8 +5005,12 @@ async def admin_tools_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbTool.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbTool.enabled.is_(True))
 
@@ -5288,8 +5292,12 @@ async def admin_prompts_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbPrompt.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbPrompt.is_active.is_(True))
 
@@ -5440,8 +5448,12 @@ async def admin_resources_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbResource.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbResource.is_active.is_(True))
 
