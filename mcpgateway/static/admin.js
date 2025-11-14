@@ -7450,6 +7450,9 @@ function initGatewaySelect(
             }
 
             update();
+            
+            // Reload associated items after clearing selection
+            reloadAssociatedItems();
         });
     }
 
@@ -7523,6 +7526,9 @@ function initGatewaySelect(
                 setTimeout(() => {
                     newSelectBtn.textContent = originalText;
                 }, 2000);
+                
+                // Reload associated items after selecting all
+                reloadAssociatedItems();
             } catch (error) {
                 console.error("Error in Select All:", error);
                 alert("Failed to select all gateways. Please try again.");
@@ -7584,6 +7590,9 @@ function initGatewaySelect(
                 }
 
                 update();
+                
+                // Trigger reload of associated tools, resources, and prompts with selected gateway filter
+                reloadAssociatedItems();
             }
         });
     }
@@ -7591,6 +7600,98 @@ function initGatewaySelect(
     // Initial render
     applySearch();
     update();
+}
+
+/**
+ * Get all selected gateway IDs from the gateway selection container
+ * @returns {string[]} Array of selected gateway IDs
+ */
+function getSelectedGatewayIds() {
+    const container = document.getElementById('associatedGateways');
+    if (!container) {
+        return [];
+    }
+    
+    // Check if "Select All" mode is active
+    const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
+    const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
+    
+    if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
+        try {
+            return JSON.parse(allIdsInput.value);
+        } catch (error) {
+            console.error("Error parsing allGatewayIds:", error);
+        }
+    }
+    
+    // Otherwise, get all checked checkboxes
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
+    return Array.from(checkboxes).map(cb => cb.value);
+}
+
+/**
+ * Reload associated tools, resources, and prompts filtered by selected gateway IDs
+ */
+function reloadAssociatedItems() {
+    const selectedGatewayIds = getSelectedGatewayIds();
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(',') : '';
+    
+    console.log(`[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || 'none (showing all)'}`);
+    
+    // Reload tools
+    const toolsContainer = document.getElementById('associatedTools');
+    if (toolsContainer) {
+        const toolsUrl = gatewayIdParam 
+            ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+        
+        // Use HTMX to reload the content
+        if (window.htmx) {
+            htmx.ajax('GET', toolsUrl, {
+                target: '#associatedTools',
+                swap: 'innerHTML'
+            }).then(() => {
+                // Re-initialize the tool select after content is loaded
+                initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn');
+            });
+        }
+    }
+    
+    // Reload resources
+    const resourcesContainer = document.getElementById('associatedResources');
+    if (resourcesContainer) {
+        const resourcesUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+        
+        if (window.htmx) {
+            htmx.ajax('GET', resourcesUrl, {
+                target: '#associatedResources',
+                swap: 'innerHTML'
+            }).then(() => {
+                // Re-initialize the resource select after content is loaded
+                initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn');
+            });
+        }
+    }
+    
+    // Reload prompts
+    const promptsContainer = document.getElementById('associatedPrompts');
+    if (promptsContainer) {
+        const promptsUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+        
+        if (window.htmx) {
+            htmx.ajax('GET', promptsUrl, {
+                target: '#associatedPrompts',
+                swap: 'innerHTML'
+            }).then(() => {
+                // Re-initialize the prompt select after content is loaded
+                initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn');
+            });
+        }
+    }
 }
 
 // Initialize gateway select on page load

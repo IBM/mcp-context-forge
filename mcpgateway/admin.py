@@ -5079,6 +5079,7 @@ async def admin_tools_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 
@@ -5355,6 +5356,7 @@ async def admin_prompts_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 
@@ -5504,6 +5506,7 @@ async def admin_resources_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 
