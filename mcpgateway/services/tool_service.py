@@ -27,6 +27,9 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 import uuid
 
+# First-Party (early import for correlation_id)
+from mcpgateway.utils.correlation_id import get_correlation_id
+
 # Third-Party
 import httpx
 import jq
@@ -1131,7 +1134,8 @@ class ToolService:
 
         # Plugin hook: tool pre-invoke
         context_table = None
-        request_id = uuid.uuid4().hex
+        # Use correlation ID from context if available, otherwise generate new one
+        request_id = get_correlation_id() or uuid.uuid4().hex
         # Use gateway_id if available, otherwise use a generic server identifier
         gateway_id = getattr(tool, "gateway_id", "unknown")
         server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
