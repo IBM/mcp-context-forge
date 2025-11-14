@@ -84,8 +84,8 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
                         log_record["trace_id"] = format(span_context.trace_id, "032x")
                         log_record["span_id"] = format(span_context.span_id, "016x")
                         log_record["trace_flags"] = format(span_context.trace_flags, "02x")
-            except Exception:
-                # Error accessing span context
+            except Exception:  # nosec B110 - intentionally catching all exceptions for optional tracing
+                # Error accessing span context, continue without trace fields
                 pass
 
 
