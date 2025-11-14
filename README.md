@@ -1763,6 +1763,15 @@ MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
 > - Minimal impact on gateway performance
 > - Recommended for production deployments requiring certificate integrity
 
+### Default roles for users
+
+| Setting | Description | Default | Options |
+| ------- | ----------- | -------:| ------- |
+| `DEFAULT_ROLE_NAME_ADMIN` | Default role name for admin users | `team_admin` | string |
+| `DEFAULT_ROLE_NAME_USER` | Default role name for regular users | `developer` | string |
+| `DEFAULT_USER_SCOPE` | Default scope for users | `team` | string |
+| `DEFAULT_USER_ROLE_EXPIRY_DAYS` | Number of days before user role expires | `30` | int |
+
 ### Response Compression
 
 MCP Gateway includes automatic response compression middleware that reduces bandwidth usage by 30-70% for text-based responses (JSON, HTML, CSS, JS). Compression is negotiated automatically based on client `Accept-Encoding` headers with algorithm priority: **Brotli** (best compression) > **Zstd** (fastest) > **GZip** (universal fallback).

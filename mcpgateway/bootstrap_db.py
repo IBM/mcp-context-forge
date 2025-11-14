@@ -139,12 +139,18 @@ async def bootstrap_default_roles() -> None:
 
             # Default system roles to create
             default_roles = [
-                {"name": "platform_admin", "description": "Platform administrator with all permissions", "scope": "global", "permissions": ["*"], "is_system_role": True},  # All permissions
+                {
+                    "name": "platform_admin",
+                    "description": "Platform administrator with all permissions",
+                    "scope": "global",
+                    "permissions": ["*"],
+                    "is_system_role": True
+                },  # All permissions
                 {
                     "name": "team_admin",
                     "description": "Team administrator with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": ["admin.user_management", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
                 {

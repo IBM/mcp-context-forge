@@ -717,6 +717,28 @@
               "description": "Enable debug mode",
               "default": "false"
             }
+            ,
+            "DEFAULT_ROLE_NAME_ADMIN": {
+              "type": "string",
+              "description": "Default role name for admin users",
+              "default": "team_admin"
+            },
+            "DEFAULT_ROLE_NAME_USER": {
+              "type": "string",
+              "description": "Default role name for regular users",
+              "default": "developer"
+            },
+            "DEFAULT_USER_SCOPE": {
+              "type": "string",
+              "description": "Default scope for users",
+              "default": "team"
+            },
+            "DEFAULT_USER_ROLE_EXPIRY_DAYS": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "Default number of days before user role expires",
+              "default": "30"
+            }
           },
           "additionalProperties": true
         },
