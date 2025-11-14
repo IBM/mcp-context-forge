@@ -1,0 +1,160 @@
+[
+  {
+    "id": "TC_1",
+    "mandatory_params": [],
+    "nl_utterance": [
+      "This tool fetches a list of actions from Salesloft, enabling you to filter by action type, due date, user, person, cadence, and multitouch group, and customize the output with sorting and pagination options.",
+      "The tool returns a list of actions that match the specified filters, along with metadata such as total count and pagination information.",
+      "This tool retrieves a list of actions from Salesloft, allowing you to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group, and customize the output with sorting and pagination options."
+    ],
+    "input_parameters": {}
+  },
+  {
+    "id": "TC_2",
+    "mandatory_params": [],
+    "nl_utterance": [
+      "Can you retrieve a list of actions from Salesloft where the action type is email, due date is after 2018-01-01T00:00:00Z and before 2018-01-01T00:00:00Z, the user guid is 12345678, the person id is 319104110, the cadence id is 1030231, the multitouch group id is 345696969, the action id is 767763892, the step id is An-ID, the updated at date is after 2018-01-01T00:00:00Z and before 2017-01-01T00:00:00.123Z, and also after 2018-01-01T00:00:00Z, and the due on date is after 2018-02-01T00:00:00Z, sorted by updated at in ascending order, with 25 records per page, and include paging counts, and limit paging counts, on page 1.",
+      "I need to get a list of actions from Salesloft with the following filters: action type is email, due date is greater than 2018-01-01T00:00:00Z and less than 2018-01-01T00:00:00Z, user guid is 12345678, person id is 319104110, cadence id is 1030231, multitouch group id is 345696969, action id is 767763892, step id is An-ID, updated at date is greater than 2018-01-01T00:00:00Z, less than 2017-01-01T00:00:00.123Z, and also greater than 2018-01-01T00:00:00Z, due on date is greater than 2018-02-01T00:00:00Z, sorted by updated at in ascending order, with 25 records per page, include paging counts, limit paging counts, on page 1.",
+      "Please provide a list of actions from Salesloft that match these criteria: action type is email, due date is after 2018-01-01T00:00:00Z and before 2018-01-01T00:00:00Z, user guid is 12345678, person id is 319104110, cadence id is 1030231, multitouch group id is 345696969, action id is 767763892, step id is An-ID, updated at date is after 2018-01-01T00:00:00Z, before 2017-01-01T00:00:00.123Z, and also after 2018-01-01T00:00:00Z, due on date is after 2018-02-01T00:00:00Z, sorted by updated at in ascending order, with 25 records per page, include paging counts, limit paging counts, on page 1."
+    ],
+    "input_parameters": {
+      "updated_at[lte]": [
+        "2017-01-01T00:00:00.456Z"
+      ],
+      "due_on[gt]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "user_guid": [
+        "12345678"
+      ],
+      "per_page": [
+        "25"
+      ],
+      "updated_at[gte]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "due_on[lte]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "sort_by": [
+        "updated_at"
+      ],
+      "person_id": [
+        "319104110"
+      ],
+      "updated_at[gt]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "updated_at[lt]": [
+        "2017-01-01T00:00:00.123Z"
+      ],
+      "multitouch_group_id": [
+        "345696969"
+      ],
+      "include_paging_counts": [
+        "true"
+      ],
+      "type": [
+        "email"
+      ],
+      "limit_paging_counts": [
+        "true"
+      ],
+      "ids": [
+        "767763892"
+      ],
+      "cadence_id": [
+        "1030231"
+      ],
+      "sort_direction": [
+        "ASC"
+      ],
+      "page": [
+        "1"
+      ],
+      "due_on[lt]": [
+        "2018-01-02T00:00:00Z"
+      ],
+      "step_id": [
+        "An-ID"
+      ],
+      "due_on[gte]": [
+        "2018-02-01T00:00:00Z"
+      ]
+    }
+  },
+  {
+    "id": "TC_3",
+    "mandatory_params": [],
+    "nl_utterance": [
+      "I need to get actions from Salesloft where the action type is phone, the due date is after 2018-01-01T00:00:00Z and before 2018-01-01T00:00:00Z, the user guid is 12355668, the person id is 345678993, the cadence id is 1034653, the multitouch group id is 767088963, the step id is An-ID, the action id is 345687678, the updated at date is after 2019-01-01T00:00:00Z and before 2017-01-01T00:00:00.456Z, and also after 2019-01-01T00:00:00Z, and the updated at date is less than or equal to 2017-01-01T00:00:00.123Z, sorted by created at in descending order, with 100 records per page, on page 2, and include paging counts and limit paging counts set to false.",
+      "Can you get actions from Salesloft where the type is phone, due date is greater than 2018-01-01T00:00:00Z and less than 2018-01-01T00:00:00Z, the user guid is 12355668, the person id is 345678993, the cadence id is 1034653, the multitouch group id is 767088963, the step id is An-ID, the action id is 345687678, the updated at date is greater than 2019-01-01T00:00:00Z and less than 2017-01-01T00:00:00.456Z, and also greater than 2019-01-01T00:00:00Z, and the updated at date is less than or equal to 2017-01-01T00:00:00.123Z, sorted by created at in descending order, with 100 records per page, on page 2, and include paging counts and limit paging counts set to false.",
+      "I want to retrieve actions from Salesloft with the following filters: action type is phone, due date is after 2018-01-01T00:00:00Z and before 2018-01-01T00:00:00Z, user guid is 12355668, person id is 345678993, cadence id is 1034653, multitouch group id is 767088963, step id is An-ID, action id is 345687678, updated at date is after 2019-01-01T00:00:00Z and before 2017-01-01T00:00:00.456Z, and also after 2019-01-01T00:00:00Z, and the updated at date is less than or equal to 2017-01-01T00:00:00.123Z, sorted by created at in descending order, with 100 records per page, on page 2, and include paging counts and limit paging counts set to false."
+    ],
+    "input_parameters": {
+      "updated_at[lte]": [
+        "2017-01-01T00:00:00.123Z"
+      ],
+      "due_on[gt]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "user_guid": [
+        "12355668"
+      ],
+      "per_page": [
+        "100"
+      ],
+      "updated_at[gte]": [
+        "2019-01-01T00:00:00Z"
+      ],
+      "due_on[lte]": [
+        "2018-01-01T00:00:00Z"
+      ],
+      "sort_by": [
+        "created_at"
+      ],
+      "person_id": [
+        "345678993"
+      ],
+      "updated_at[gt]": [
+        "2019-01-01T00:00:00Z"
+      ],
+      "updated_at[lt]": [
+        "2017-01-01T00:00:00.456Z"
+      ],
+      "multitouch_group_id": [
+        "767088963"
+      ],
+      "include_paging_counts": [
+        "false"
+      ],
+      "type": [
+        "phone"
+      ],
+      "limit_paging_counts": [
+        "false"
+      ],
+      "ids": [
+        "345687678"
+      ],
+      "cadence_id": [
+        "1034653"
+      ],
+      "sort_direction": [
+        "DESC"
+      ],
+      "page": [
+        "2"
+      ],
+      "due_on[lt]": [
+        "2018-01-03T00:00:00Z"
+      ],
+      "step_id": [
+        "An-ID"
+      ],
+      "due_on[gte]": [
+        "2018-03-01T00:00:00Z"
+      ]
+    }
+  }
+]
