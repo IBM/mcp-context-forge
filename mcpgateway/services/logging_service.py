@@ -49,7 +49,7 @@ text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(m
 class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
     """JSON formatter that includes correlation ID and OpenTelemetry trace context."""
 
-    def add_fields(self, log_record: dict, record: logging.LogRecord, message_dict: dict) -> None:
+    def add_fields(self, log_record: dict, record: logging.LogRecord, message_dict: dict) -> None:  # pylint: disable=arguments-renamed
         """Add custom fields to the log record.
 
         Args:
