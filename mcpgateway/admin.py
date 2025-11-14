@@ -4940,6 +4940,7 @@ async def admin_tools_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -4961,7 +4962,7 @@ async def admin_tools_partial_html(
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
@@ -4977,6 +4978,13 @@ async def admin_tools_partial_html(
 
     # Build query
     query = select(DbTool)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbTool.gateway_id.in_(gateway_ids))
+            LOGGER.debug(f"Filtering tools by gateway IDs: {gateway_ids}")
 
     # Apply active/inactive filter
     if not include_inactive:
@@ -5220,6 +5228,7 @@ async def admin_prompts_partial_html(
     per_page: int = Query(50, ge=1),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5259,6 +5268,14 @@ async def admin_prompts_partial_html(
 
     # Build base query
     query = select(DbPrompt)
+    
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbPrompt.gateway_id.in_(gateway_ids))
+            LOGGER.debug(f"Filtering prompts by gateway IDs: {gateway_ids}")
+    
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
 
@@ -5361,6 +5378,7 @@ async def admin_resources_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5386,7 +5404,7 @@ async def admin_resources_partial_html(
         resources partial (rows + controls), pagination controls only, or selector
         items depending on the ``render`` parameter.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -5400,6 +5418,13 @@ async def admin_resources_partial_html(
 
     # Build base query
     query = select(DbResource)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbResource.gateway_id.in_(gateway_ids))
+            LOGGER.debug(f"Filtering resources by gateway IDs: {gateway_ids}")
 
     # Apply active/inactive filter
     if not include_inactive:
