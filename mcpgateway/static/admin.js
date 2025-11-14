@@ -7617,25 +7617,23 @@ function initGatewaySelect(
  */
 function getSelectedGatewayIds() {
     const container = document.getElementById("associatedGateways");
-    console.log(`[Gateway Selection DEBUG] Container found:`, !!container);
+    console.log("[Gateway Selection DEBUG] Container found:", !!container);
 
     if (!container) {
         console.warn(
-            `[Gateway Selection DEBUG] associatedGateways container not found`,
+            "[Gateway Selection DEBUG] associatedGateways container not found",
         );
         return [];
     }
 
     // Check if "Select All" mode is active
     const selectAllInput = container.querySelector(
-        'input[name="selectAllGateways"]',
+        "input[name='selectAllGateways']",
     );
-    const allIdsInput = container.querySelector(
-        'input[name="allGatewayIds"]',
-    );
+    const allIdsInput = container.querySelector("input[name='allGatewayIds']");
 
     console.log(
-        `[Gateway Selection DEBUG] Select All mode:`,
+        "[Gateway Selection DEBUG] Select All mode:",
         selectAllInput?.value === "true",
     );
     if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
@@ -7655,17 +7653,14 @@ function getSelectedGatewayIds() {
 
     // Otherwise, get all checked checkboxes
     const checkboxes = container.querySelectorAll(
-        'input[type="checkbox"]:checked',
+        "input[type='checkbox']:checked",
     );
     const selectedIds = Array.from(checkboxes).map((cb) => cb.value);
 
     console.log(
         `[Gateway Selection DEBUG] Found ${checkboxes.length} checked gateway checkboxes`,
     );
-    console.log(
-        `[Gateway Selection DEBUG] Selected gateway IDs:`,
-        selectedIds,
-    );
+    console.log("[Gateway Selection DEBUG] Selected gateway IDs:", selectedIds);
 
     return selectedIds;
 }
@@ -7682,7 +7677,7 @@ function reloadAssociatedItems() {
         `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
     );
     console.log(
-        `[Filter Update DEBUG] Selected gateway IDs array:`,
+        "[Filter Update DEBUG] Selected gateway IDs array:",
         selectedGatewayIds,
     );
 
@@ -7693,7 +7688,7 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-        console.log(`[Filter Update DEBUG] Tools URL:`, toolsUrl);
+        console.log("[Filter Update DEBUG] Tools URL:", toolsUrl);
 
         // Use HTMX to reload the content
         if (window.htmx) {
@@ -7703,7 +7698,7 @@ function reloadAssociatedItems() {
             })
                 .then(() => {
                     console.log(
-                        `[Filter Update DEBUG] Tools reloaded successfully`,
+                        "[Filter Update DEBUG] Tools reloaded successfully",
                     );
                     // Re-initialize the tool select after content is loaded
                     initToolSelect(
@@ -7717,17 +7712,17 @@ function reloadAssociatedItems() {
                 })
                 .catch((err) => {
                     console.error(
-                        `[Filter Update DEBUG] Tools reload failed:`,
+                        "[Filter Update DEBUG] Tools reload failed:",
                         err,
                     );
                 });
         } else {
             console.error(
-                `[Filter Update DEBUG] HTMX not available for tools reload`,
+                "[Filter Update DEBUG] HTMX not available for tools reload",
             );
         }
     } else {
-        console.warn(`[Filter Update DEBUG] Tools container not found`);
+        console.warn("[Filter Update DEBUG] Tools container not found");
     }
 
     // Reload resources - use fetch directly to avoid HTMX race conditions
@@ -7737,7 +7732,7 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
 
-        console.log(`[Filter Update DEBUG] Resources URL:`, resourcesUrl);
+        console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
 
         // Use fetch() directly instead of htmx.ajax() to avoid race conditions
         fetch(resourcesUrl, {
@@ -7757,7 +7752,7 @@ function reloadAssociatedItems() {
             })
             .then((html) => {
                 console.log(
-                    `[Filter Update DEBUG] Resources fetch successful, HTML length:`,
+                    "[Filter Update DEBUG] Resources fetch successful, HTML length:",
                     html.length,
                 );
                 resourcesContainer.innerHTML = html;
@@ -7771,17 +7766,17 @@ function reloadAssociatedItems() {
                     "clearAllResourcesBtn",
                 );
                 console.log(
-                    `[Filter Update DEBUG] Resources reloaded successfully via fetch`,
+                    "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
             })
             .catch((err) => {
                 console.error(
-                    `[Filter Update DEBUG] Resources reload failed:`,
+                    "[Filter Update DEBUG] Resources reload failed:",
                     err,
                 );
             });
     } else {
-        console.warn(`[Filter Update DEBUG] Resources container not found`);
+        console.warn("[Filter Update DEBUG] Resources container not found");
     }
 
     // Reload prompts
@@ -11001,7 +10996,7 @@ if (window.performance && window.performance.mark) {
 // Tool Tips for components with Alpine.js
 // ===================================================================
 
-/* global Alpine */
+/* global Alpine, htmx */
 function setupTooltipsWithAlpine() {
     document.addEventListener("alpine:init", () => {
         console.log("Initializing Alpine tooltip directive...");
@@ -11295,7 +11290,6 @@ function initializeToolSelects() {
         "selectAllToolsBtn",
         "clearAllToolsBtn",
     );
-
 
     initResourceSelect(
         "associatedResources",
