@@ -70,6 +70,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -1169,6 +1170,13 @@ else:
 # Add HTTP authentication hook middleware for plugins (before auth dependencies)
 if plugin_manager:
     app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
+    logger.info("🔌 HTTP authentication hooks enabled for plugins")
+
+# Add correlation ID middleware if enabled
+# Note: Registered AFTER HttpAuthMiddleware so it executes FIRST (middleware runs in LIFO order)
+if settings.correlation_id_enabled:
+    app.add_middleware(CorrelationIDMiddleware)
+    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)

@@ -28,6 +28,7 @@ from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 

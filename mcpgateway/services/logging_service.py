@@ -25,6 +25,7 @@ from pythonjsonlogger import json as jsonlogger  # You may need to install pytho
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.services.log_storage_service import LogStorageService
+from mcpgateway.utils.correlation_id import get_correlation_id
 
 AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
@@ -38,8 +39,57 @@ except Exception:  # pragma: no cover - environment without anyio
 # Create a text formatter
 text_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
-# Create a JSON formatter
-json_formatter = jsonlogger.JsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+
+class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
+    """JSON formatter that includes correlation ID and OpenTelemetry trace context."""
+
+    def add_fields(self, log_record: dict, record: logging.LogRecord, message_dict: dict) -> None:
+        """Add custom fields to the log record.
+
+        Args:
+            log_record: The dictionary that will be logged as JSON
+            record: The original LogRecord
+            message_dict: Additional message fields
+
+        """
+        super().add_fields(log_record, record, message_dict)
+
+        # Add timestamp in ISO 8601 format with 'Z' suffix for UTC
+        import os
+        import socket
+        from datetime import datetime, timezone
+
+        dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
+        log_record["@timestamp"] = dt.isoformat().replace("+00:00", "Z")
+
+        # Add hostname and process ID for log aggregation
+        log_record["hostname"] = socket.gethostname()
+        log_record["process_id"] = os.getpid()
+
+        # Add correlation ID from context
+        correlation_id = get_correlation_id()
+        if correlation_id:
+            log_record["request_id"] = correlation_id
+
+        # Add OpenTelemetry trace context if available
+        try:
+            from opentelemetry import trace
+
+            span = trace.get_current_span()
+            if span and span.is_recording():
+                span_context = span.get_span_context()
+                if span_context.is_valid:
+                    # Format trace_id and span_id as hex strings
+                    log_record["trace_id"] = format(span_context.trace_id, "032x")
+                    log_record["span_id"] = format(span_context.span_id, "016x")
+                    log_record["trace_flags"] = format(span_context.trace_flags, "02x")
+        except (ImportError, Exception):
+            # OpenTelemetry not available or error accessing span
+            pass
+
+
+# Create a JSON formatter with correlation ID support
+json_formatter = CorrelationIdJsonFormatter("%(asctime)s %(name)s %(levelname)s %(message)s")
 
 # Note: Don't use basicConfig here as it conflicts with our custom dual logging setup
 # The LoggingService.initialize() method will properly configure all handlers

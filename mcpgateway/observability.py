@@ -440,6 +440,24 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
         # Return a no-op context manager if tracing is not configured or available
         return nullcontext()
 
+    # Auto-inject correlation ID into all spans for request tracing
+    try:
+        # Import here to avoid circular dependency
+        from mcpgateway.utils.correlation_id import get_correlation_id
+
+        correlation_id = get_correlation_id()
+        if correlation_id:
+            if attributes is None:
+                attributes = {}
+            # Add correlation ID if not already present
+            if "correlation_id" not in attributes:
+                attributes["correlation_id"] = correlation_id
+            if "request_id" not in attributes:
+                attributes["request_id"] = correlation_id  # Alias for compatibility
+    except ImportError:
+        # Correlation ID module not available, continue without it
+        pass
+
     # Start span and return the context manager
     span_context = _TRACER.start_as_current_span(name)
 

@@ -776,6 +776,12 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Correlation ID Settings
+    correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
+    correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
+    correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
+    correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:

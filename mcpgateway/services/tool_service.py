@@ -26,6 +26,9 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 import uuid
 
+# First-Party (early import for correlation_id)
+from mcpgateway.utils.correlation_id import get_correlation_id
+
 # Third-Party
 import httpx
 import jq
@@ -1224,7 +1227,8 @@ class ToolService:
                 global_context.server_id = gateway_id
         else:
             # Create new context (fallback when middleware didn't run)
-            request_id = uuid.uuid4().hex
+            # Use correlation ID from context if available, otherwise generate new one
+            request_id = get_correlation_id() or uuid.uuid4().hex
             gateway_id = getattr(tool, "gateway_id", "unknown")
             server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
             global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
