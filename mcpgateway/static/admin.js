@@ -7290,20 +7290,22 @@ function initPromptSelect(
 // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
 // ===================================================================
 function initGatewaySelect(
-    selectId = 'associatedGateways',
-    pillsId = 'selectedGatewayPills',
-    warnId = 'selectedGatewayWarning',
+    selectId = "associatedGateways",
+    pillsId = "selectedGatewayPills",
+    warnId = "selectedGatewayWarning",
     max = 12,
-    selectBtnId = 'selectAllGatewayBtn',
-    clearBtnId = 'clearAllGatewayBtn',
-    searchInputId = 'searchGateways',
+    selectBtnId = "selectAllGatewayBtn",
+    clearBtnId = "clearAllGatewayBtn",
+    searchInputId = "searchGateways",
 ) {
     const container = document.getElementById(selectId);
     const pillsBox = document.getElementById(pillsId);
     const warnBox = document.getElementById(warnId);
     const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
     const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
-    const searchInput = searchInputId ? document.getElementById(searchInputId) : null;
+    const searchInput = searchInputId
+        ? document.getElementById(searchInputId)
+        : null;
 
     if (!container || !pillsBox || !warnBox) {
         console.warn(
@@ -7317,34 +7319,36 @@ function initGatewaySelect(
 
     // Search functionality
     function applySearch() {
-        if (!searchInput) return;
-        
+        if (!searchInput) {
+            return;
+        }
+
         try {
             const query = searchInput.value.toLowerCase().trim();
-            const items = container.querySelectorAll('.tool-item');
+            const items = container.querySelectorAll(".tool-item");
             let visibleCount = 0;
 
-            items.forEach(item => {
+            items.forEach((item) => {
                 const text = item.textContent.toLowerCase();
                 if (!query || text.includes(query)) {
-                    item.style.display = '';
+                    item.style.display = "";
                     visibleCount++;
                 } else {
-                    item.style.display = 'none';
+                    item.style.display = "none";
                 }
             });
 
             // Update "no results" message if it exists
-            const noMsg = document.getElementById('noGatewayMessage');
-            const searchQuerySpan = document.getElementById('searchQuery');
+            const noMsg = document.getElementById("noGatewayMessage");
+            const searchQuerySpan = document.getElementById("searchQuery");
             if (noMsg) {
                 if (query && visibleCount === 0) {
-                    noMsg.style.display = 'block';
+                    noMsg.style.display = "block";
                     if (searchQuerySpan) {
                         searchQuerySpan.textContent = query;
                     }
                 } else {
-                    noMsg.style.display = 'none';
+                    noMsg.style.display = "none";
                 }
             }
         } catch (error) {
@@ -7354,8 +7358,8 @@ function initGatewaySelect(
 
     // Bind search input
     if (searchInput && !searchInput.dataset.searchBound) {
-        searchInput.addEventListener('input', applySearch);
-        searchInput.dataset.searchBound = 'true';
+        searchInput.addEventListener("input", applySearch);
+        searchInput.dataset.searchBound = "true";
     }
 
     function update() {
@@ -7450,7 +7454,7 @@ function initGatewaySelect(
             }
 
             update();
-            
+
             // Reload associated items after clearing selection
             reloadAssociatedItems();
         });
@@ -7488,8 +7492,9 @@ function initGatewaySelect(
                     'input[type="checkbox"]',
                 );
                 loadedCheckboxes.forEach((cb) => {
-                    const parent = cb.closest('.tool-item') || cb.parentElement;
-                    const isVisible = parent && getComputedStyle(parent).display !== 'none';
+                    const parent = cb.closest(".tool-item") || cb.parentElement;
+                    const isVisible =
+                        parent && getComputedStyle(parent).display !== "none";
                     if (isVisible) {
                         cb.checked = true;
                     }
@@ -7526,7 +7531,7 @@ function initGatewaySelect(
                 setTimeout(() => {
                     newSelectBtn.textContent = originalText;
                 }, 2000);
-                
+
                 // Reload associated items after selecting all
                 reloadAssociatedItems();
             } catch (error) {
@@ -7549,11 +7554,15 @@ function initGatewaySelect(
             if (e.target.type === "checkbox") {
                 // Log gateway_id when checkbox is clicked
                 const gatewayId = e.target.value;
-                const gatewayName = e.target.nextElementSibling?.textContent?.trim() || "Unknown";
+                const gatewayName =
+                    e.target.nextElementSibling?.textContent?.trim() ||
+                    "Unknown";
                 const isChecked = e.target.checked;
-                
-                console.log(`[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`);
-                
+
+                console.log(
+                    `[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`,
+                );
+
                 // Check if we're in "Select All" mode
                 const selectAllInput = container.querySelector(
                     'input[name="selectAllGateways"]',
@@ -7590,7 +7599,7 @@ function initGatewaySelect(
                 }
 
                 update();
-                
+
                 // Trigger reload of associated tools, resources, and prompts with selected gateway filter
                 reloadAssociatedItems();
             }
@@ -7607,37 +7616,57 @@ function initGatewaySelect(
  * @returns {string[]} Array of selected gateway IDs
  */
 function getSelectedGatewayIds() {
-    const container = document.getElementById('associatedGateways');
+    const container = document.getElementById("associatedGateways");
     console.log(`[Gateway Selection DEBUG] Container found:`, !!container);
-    
+
     if (!container) {
-        console.warn(`[Gateway Selection DEBUG] associatedGateways container not found`);
+        console.warn(
+            `[Gateway Selection DEBUG] associatedGateways container not found`,
+        );
         return [];
     }
-    
+
     // Check if "Select All" mode is active
-    const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
-    const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
-    
-    console.log(`[Gateway Selection DEBUG] Select All mode:`, selectAllInput?.value === "true");
-    
+    const selectAllInput = container.querySelector(
+        'input[name="selectAllGateways"]',
+    );
+    const allIdsInput = container.querySelector(
+        'input[name="allGatewayIds"]',
+    );
+
+    console.log(
+        `[Gateway Selection DEBUG] Select All mode:`,
+        selectAllInput?.value === "true",
+    );
     if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
         try {
             const allIds = JSON.parse(allIdsInput.value);
-            console.log(`[Gateway Selection DEBUG] Returning all gateway IDs (${allIds.length} total)`);
+            console.log(
+                `[Gateway Selection DEBUG] Returning all gateway IDs (${allIds.length} total)`,
+            );
             return allIds;
         } catch (error) {
-            console.error("[Gateway Selection DEBUG] Error parsing allGatewayIds:", error);
+            console.error(
+                "[Gateway Selection DEBUG] Error parsing allGatewayIds:",
+                error,
+            );
         }
     }
-    
+
     // Otherwise, get all checked checkboxes
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
-    const selectedIds = Array.from(checkboxes).map(cb => cb.value);
-    
-    console.log(`[Gateway Selection DEBUG] Found ${checkboxes.length} checked gateway checkboxes`);
-    console.log(`[Gateway Selection DEBUG] Selected gateway IDs:`, selectedIds);
-    
+    const checkboxes = container.querySelectorAll(
+        'input[type="checkbox"]:checked',
+    );
+    const selectedIds = Array.from(checkboxes).map((cb) => cb.value);
+
+    console.log(
+        `[Gateway Selection DEBUG] Found ${checkboxes.length} checked gateway checkboxes`,
+    );
+    console.log(
+        `[Gateway Selection DEBUG] Selected gateway IDs:`,
+        selectedIds,
+    );
+
     return selectedIds;
 }
 
@@ -7646,107 +7675,153 @@ function getSelectedGatewayIds() {
  */
 function reloadAssociatedItems() {
     const selectedGatewayIds = getSelectedGatewayIds();
-    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(',') : '';
-    
-    console.log(`[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || 'none (showing all)'}`);
-    console.log(`[Filter Update DEBUG] Selected gateway IDs array:`, selectedGatewayIds);
-    
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
+    );
+    console.log(
+        `[Filter Update DEBUG] Selected gateway IDs array:`,
+        selectedGatewayIds,
+    );
+
     // Reload tools
-    const toolsContainer = document.getElementById('associatedTools');
+    const toolsContainer = document.getElementById("associatedTools");
     if (toolsContainer) {
-        const toolsUrl = gatewayIdParam 
+        const toolsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
-        
+
         console.log(`[Filter Update DEBUG] Tools URL:`, toolsUrl);
-        
+
         // Use HTMX to reload the content
         if (window.htmx) {
-            htmx.ajax('GET', toolsUrl, {
-                target: '#associatedTools',
-                swap: 'innerHTML'
-            }).then(() => {
-                console.log(`[Filter Update DEBUG] Tools reloaded successfully`);
-                // Re-initialize the tool select after content is loaded
-                initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn');
-            }).catch(err => {
-                console.error(`[Filter Update DEBUG] Tools reload failed:`, err);
-            });
+            htmx.ajax("GET", toolsUrl, {
+                target: "#associatedTools",
+                swap: "innerHTML",
+            })
+                .then(() => {
+                    console.log(
+                        `[Filter Update DEBUG] Tools reloaded successfully`,
+                    );
+                    // Re-initialize the tool select after content is loaded
+                    initToolSelect(
+                        "associatedTools",
+                        "selectedToolsPills",
+                        "selectedToolsWarning",
+                        6,
+                        "selectAllToolsBtn",
+                        "clearAllToolsBtn",
+                    );
+                })
+                .catch((err) => {
+                    console.error(
+                        `[Filter Update DEBUG] Tools reload failed:`,
+                        err,
+                    );
+                });
         } else {
-            console.error(`[Filter Update DEBUG] HTMX not available for tools reload`);
+            console.error(
+                `[Filter Update DEBUG] HTMX not available for tools reload`,
+            );
         }
     } else {
         console.warn(`[Filter Update DEBUG] Tools container not found`);
     }
-    
+
     // Reload resources - use fetch directly to avoid HTMX race conditions
-    const resourcesContainer = document.getElementById('associatedResources');
+    const resourcesContainer = document.getElementById("associatedResources");
     if (resourcesContainer) {
         const resourcesUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
-        
+
         console.log(`[Filter Update DEBUG] Resources URL:`, resourcesUrl);
-        
+
         // Use fetch() directly instead of htmx.ajax() to avoid race conditions
         fetch(resourcesUrl, {
-            method: 'GET',
+            method: "GET",
             headers: {
-                'HX-Request': 'true',
-                'HX-Current-URL': window.location.href
-            }
+                "HX-Request": "true",
+                "HX-Current-URL": window.location.href,
+            },
         })
-        .then(response => {
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-            return response.text();
-        })
-        .then(html => {
-            console.log(`[Filter Update DEBUG] Resources fetch successful, HTML length:`, html.length);
-            resourcesContainer.innerHTML = html;
-            // Re-initialize the resource select after content is loaded
-            initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn');
-            console.log(`[Filter Update DEBUG] Resources reloaded successfully via fetch`);
-        })
-        .catch(err => {
-            console.error(`[Filter Update DEBUG] Resources reload failed:`, err);
-        });
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error(
+                        `HTTP ${response.status}: ${response.statusText}`,
+                    );
+                }
+                return response.text();
+            })
+            .then((html) => {
+                console.log(
+                    `[Filter Update DEBUG] Resources fetch successful, HTML length:`,
+                    html.length,
+                );
+                resourcesContainer.innerHTML = html;
+                // Re-initialize the resource select after content is loaded
+                initResourceSelect(
+                    "associatedResources",
+                    "selectedResourcesPills",
+                    "selectedResourcesWarning",
+                    6,
+                    "selectAllResourcesBtn",
+                    "clearAllResourcesBtn",
+                );
+                console.log(
+                    `[Filter Update DEBUG] Resources reloaded successfully via fetch`,
+                );
+            })
+            .catch((err) => {
+                console.error(
+                    `[Filter Update DEBUG] Resources reload failed:`,
+                    err,
+                );
+            });
     } else {
         console.warn(`[Filter Update DEBUG] Resources container not found`);
     }
-    
+
     // Reload prompts
-    const promptsContainer = document.getElementById('associatedPrompts');
+    const promptsContainer = document.getElementById("associatedPrompts");
     if (promptsContainer) {
         const promptsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
-        
+
         if (window.htmx) {
-            htmx.ajax('GET', promptsUrl, {
-                target: '#associatedPrompts',
-                swap: 'innerHTML'
+            htmx.ajax("GET", promptsUrl, {
+                target: "#associatedPrompts",
+                swap: "innerHTML",
             }).then(() => {
                 // Re-initialize the prompt select after content is loaded
-                initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn');
+                initPromptSelect(
+                    "associatedPrompts",
+                    "selectedPromptsPills",
+                    "selectedPromptsWarning",
+                    6,
+                    "selectAllPromptsBtn",
+                    "clearAllPromptsBtn",
+                );
             });
         }
     }
 }
 
 // Initialize gateway select on page load
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener("DOMContentLoaded", function () {
     // Initialize for the create server form
-    if (document.getElementById('associatedGateways')) {
+    if (document.getElementById("associatedGateways")) {
         initGatewaySelect(
-            'associatedGateways',
-            'selectedGatewayPills',
-            'selectedGatewayWarning',
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
             12,
-            'selectAllGatewayBtn',
-            'clearAllGatewayBtn',
-            'searchGateways'
+            "selectAllGatewayBtn",
+            "clearAllGatewayBtn",
+            "searchGateways",
         );
     }
 });
@@ -11211,7 +11286,6 @@ function initializeCodeMirrorEditors() {
 function initializeToolSelects() {
     console.log("Initializing tool selects...");
 
-  
     // Add Server form
     initToolSelect(
         "associatedTools",
@@ -11220,7 +11294,6 @@ function initializeToolSelects() {
         6,
         "selectAllToolsBtn",
         "clearAllToolsBtn",
-    
     );
 
 
