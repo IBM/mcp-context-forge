@@ -16,6 +16,7 @@ the require_auth or require_basic_auth dependency. The module integrates with
 various services to perform the actual business logic operations on the
 underlying data.
 """
+# pylint: disable=pointless-string-statement, unreachable
 
 # Standard
 from collections import defaultdict
@@ -554,6 +555,42 @@ async def get_configuration_settings(
     """
 
     def mask_sensitive(value: Any, key: str) -> Any:
+        """Mask sensitive configuration values.
+
+        Args:
+            value: The configuration value to potentially mask
+            key: The configuration key name to check for sensitive keywords
+
+        Returns:
+            Any: The original value if not sensitive, or "***MASKED***" if sensitive
+
+        Examples:
+            >>> mask_sensitive("secret123", "password")
+            '***MASKED***'
+            >>> mask_sensitive("normal_value", "name")
+            'normal_value'
+            >>> mask_sensitive(None, "password")
+
+            >>> mask_sensitive("", "secret_key")
+            ''
+        """
+        if not value:
+            return value
+
+        sensitive_keywords = ["password", "secret", "key", "token", "auth"]
+        if any(keyword in key.lower() for keyword in sensitive_keywords):
+            return "***MASKED***"
+
+        return value
+        """Mask sensitive configuration values."""
+        if not value:
+            return value
+
+        sensitive_keywords = ["password", "secret", "key", "token", "auth"]
+        if any(keyword in key.lower() for keyword in sensitive_keywords):
+            return "***MASKED***"
+
+        return value
         """Mask sensitive configuration values.
 
         Args:
@@ -2671,16 +2708,39 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         auth_service = EmailAuthService(db)
 
         try:
-            # Authenticate user
+            # Authenticate user and check for password expiration
             LOGGER.debug(f"Attempting authentication for {email}")
-            user = await auth_service.authenticate_user(email, password)
-            LOGGER.debug(f"Authentication result: {user}")
+            user, password_expired = await auth_service.authenticate_user_with_password_check(email, password)
+            LOGGER.debug(f"Authentication result: user={user}, password_expired={password_expired}")
 
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
+            # Check if password has expired and redirect to password change page
+            if password_expired:
+                LOGGER.info(f"Password expired for {email}, redirecting to password change page")
+
+                # Create JWT token for the password change session
+                # First-Party
+                from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
+
+                token, _ = await create_access_token(user)
+
+                # Create redirect response to password change page
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+
+                # Set JWT token as secure cookie so user can access password change page
+                # First-Party
+                from mcpgateway.utils.security_cookies import set_auth_cookie  # pylint: disable=import-outside-toplevel
+
+                set_auth_cookie(response, token, remember_me=False)
+
+                return response
+
+            # Normal login flow - password is valid
             # Create JWT token with proper audience and issuer claims
             # First-Party
             from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel

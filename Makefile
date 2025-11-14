@@ -503,6 +503,13 @@ test-curl:
 doctest:
 	@echo "🧪 Running doctest on all modules..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@# First try to fix any multiple heads issues
+	@if ! alembic -c mcpgateway/alembic.ini heads 2>&1 | grep -q "Multiple heads"; then \
+		echo "✅ Single head detected, proceeding with doctest..."; \
+	else \
+		echo "⚠️  Multiple heads detected, attempting to fix..."; \
+		$(MAKE) db-fix-head || { echo "❌ Failed to fix multiple heads"; exit 1; }; \
+	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export JWT_SECRET_KEY=secret && \
 		python3 -m pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n auto"

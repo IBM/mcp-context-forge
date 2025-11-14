@@ -436,6 +436,53 @@ class EmailAuthService:
             self.db.add(auth_event)
             self.db.commit()
 
+    async def authenticate_user_with_password_check(self, email: str, password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> tuple[Optional["EmailUser"], bool]:
+        """Authenticate a user and check for password expiration.
+
+        Args:
+            email: User's email address
+            password: Plain text password
+            ip_address: Client IP address for logging
+            user_agent: Client user agent for logging
+
+        Returns:
+            tuple: (EmailUser if authentication successful, password_expired)
+                  Returns (user, True) if password is expired
+                  Returns (user, False) if password is valid
+                  Returns (None, False) if authentication failed
+
+        Examples:
+            # user, expired = await service.authenticate_user_with_password_check("user@example.com", "password")
+            # user.email if user else None  # Returns: 'user@example.com'
+            # expired                       # Returns: True if password expired
+        """
+        # First perform normal authentication
+        user = await self.authenticate_user(email, password, ip_address, user_agent)
+
+        if not user:
+            return None, False
+
+        # Check if user is using default/weak password that should be changed
+        default_passwords = ["changeme", "admin", "password", "123456", "password123"]
+        is_using_default_password = password in default_passwords
+
+        # Debug logging to verify the logic
+        logger.info(f"User {email} login - password: {password}, is_default: {is_using_default_password}")
+
+        # Check if password has expired or change is required
+        password_expired = user.is_password_expired() or is_using_default_password
+
+        if password_expired:
+            if is_using_default_password:
+                logger.info(f"Default password detected for user {email}, forcing password change")
+                # Force password change for users with default passwords
+                user.force_password_change()
+                self.db.commit()
+            else:
+                logger.info(f"Password expired for user {email}")
+
+        return user, password_expired
+
     async def change_password(self, email: str, old_password: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
 
@@ -479,6 +526,10 @@ class EmailAuthService:
             # Hash new password and update
             new_password_hash = self.password_service.hash_password(new_password)
             user.password_hash = new_password_hash
+
+            # Reset password expiration and requirement flags after successful change
+            user.password_change_required = False
+            user.set_password_expiration(days=getattr(settings, "password_expiry_days", 90))
 
             self.db.commit()
             success = True
