@@ -13,7 +13,7 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-load_dotenv(".env.example")
+load_dotenv(".env")
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
 TOOLOPS_TEMPERATURE = 0.1
