@@ -110,8 +110,8 @@ def test_formatter_includes_opentelemetry_trace_context(logger_with_formatter):
     mock_span.is_recording.return_value = True
     mock_span.get_span_context.return_value = mock_span_context
 
-    with patch("opentelemetry.trace.get_current_span") as mock_get_span:
-        mock_get_span.return_value = mock_span
+    with patch("mcpgateway.services.logging_service.trace") as mock_trace:
+        mock_trace.get_current_span.return_value = mock_span
 
         # Log a message
         logger.info("Test with trace context")
