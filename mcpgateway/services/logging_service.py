@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import logging
 from logging.handlers import RotatingFileHandler
 import os
+import socket
 from typing import Any, AsyncGenerator, Dict, List, NotRequired, Optional, TextIO, TypedDict
 
 # Third-Party
@@ -27,17 +28,15 @@ from mcpgateway.config import settings
 from mcpgateway.services.log_storage_service import LogStorageService
 from mcpgateway.utils.correlation_id import get_correlation_id
 
-# Optional OpenTelemetry support
+# Optional OpenTelemetry support (Third-Party)
 try:
-    # Third-Party
     from opentelemetry import trace  # type: ignore[import-untyped]
 except ImportError:
     trace = None  # type: ignore[assignment]
 
 AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
-    # Optional import; only used for filtering a known benign upstream error
-    # Third-Party
+    # Optional import; only used for filtering a known benign upstream error (Third-Party)
     from anyio import ClosedResourceError as AnyioClosedResourceError  # pylint: disable=invalid-name
 except Exception:  # pragma: no cover - environment without anyio
     AnyioClosedResourceError = None  # pylint: disable=invalid-name
@@ -62,10 +61,6 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
         super().add_fields(log_record, record, message_dict)
 
         # Add timestamp in ISO 8601 format with 'Z' suffix for UTC
-        import os
-        import socket
-        from datetime import datetime, timezone
-
         dt = datetime.fromtimestamp(record.created, tz=timezone.utc)
         log_record["@timestamp"] = dt.isoformat().replace("+00:00", "Z")
 
