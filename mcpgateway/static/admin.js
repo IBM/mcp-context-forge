@@ -7541,6 +7541,13 @@ function initGatewaySelect(
         container.dataset.changeListenerAttached = "true";
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
+                // Log gateway_id when checkbox is clicked
+                const gatewayId = e.target.value;
+                const gatewayName = e.target.nextElementSibling?.textContent?.trim() || "Unknown";
+                const isChecked = e.target.checked;
+                
+                console.log(`[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`);
+                
                 // Check if we're in "Select All" mode
                 const selectAllInput = container.querySelector(
                     'input[name="selectAllGateways"]',
@@ -7558,7 +7565,6 @@ function initGatewaySelect(
                     // Update the allGatewayIds array to reflect the change
                     try {
                         let allIds = JSON.parse(allIdsInput.value);
-                        const gatewayId = e.target.value;
 
                         if (e.target.checked) {
                             // Add the ID if it's not already there
