@@ -26,9 +26,6 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 import uuid
 
-# First-Party (early import for correlation_id)
-from mcpgateway.utils.correlation_id import get_correlation_id
-
 # Third-Party
 import httpx
 import jq
@@ -46,6 +43,7 @@ from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
