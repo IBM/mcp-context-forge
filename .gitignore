@@ -261,3 +261,4 @@ nohup.out
 mcpgateway/toolops/mcp-server-setup/toolops_fastmcp_server.py
 .env.example
 .env.example
+.env.example
