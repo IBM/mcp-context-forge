@@ -453,9 +453,9 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                 attributes["correlation_id"] = correlation_id
             if "request_id" not in attributes:
                 attributes["request_id"] = correlation_id  # Alias for compatibility
-    except Exception:
+    except Exception as exc:
         # Correlation ID not available or error getting it, continue without it
-        pass
+        logger.debug("Failed to add correlation_id to span: %s", exc)
 
     # Start span and return the context manager
     span_context = _TRACER.start_as_current_span(name)
