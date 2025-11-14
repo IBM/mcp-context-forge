@@ -1887,6 +1887,26 @@ async def admin_list_gateways(
     gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
+@admin_router.get("/gateways/ids")
+async def admin_list_gateway_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Return a JSON object containing a list of all gateway IDs.
+
+    This endpoint is used by the admin UI to support the "Select All" action
+    for gateways. It returns a simple JSON payload with a single key
+    `gateway_ids` containing an array of gateway identifiers.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested gateway ids list")
+    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
+    ids = [str(g.id) for g in gateways]
+    LOGGER.info(f"Gateway IDs retrieved: {ids}")
+    return {"gateway_ids": ids}
+
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
 async def admin_toggle_gateway(
@@ -8838,6 +8858,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
+
 
 
 ####################
