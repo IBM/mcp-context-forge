@@ -17,6 +17,7 @@ from starlette.types import ASGIApp
 
 # First-Party
 from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
+from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,14 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         if not self.plugin_manager:
             return await call_next(request)
 
-        # Generate request ID for tracing and store in request state
-        # This ensures all hooks and downstream code see the same request ID
-        request_id = uuid.uuid4().hex
+        # Use correlation ID from CorrelationIDMiddleware if available
+        # This ensures all hooks and downstream code see the same unified request ID
+        request_id = get_correlation_id()
+        if not request_id:
+            # Fallback if correlation ID middleware is disabled
+            request_id = generate_correlation_id()
+            logger.debug(f"Correlation ID not found, generated fallback: {request_id}")
+
         request.state.request_id = request_id
 
         # Create global context for hooks
