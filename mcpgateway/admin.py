@@ -1887,6 +1887,7 @@ async def admin_list_gateways(
     gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
+
 @admin_router.get("/gateways/ids")
 async def admin_list_gateway_ids(
     include_inactive: bool = False,
@@ -1899,6 +1900,14 @@ async def admin_list_gateway_ids(
     This endpoint is used by the admin UI to support the "Select All" action
     for gateways. It returns a simple JSON payload with a single key
     `gateway_ids` containing an array of gateway identifiers.
+
+    Args:
+        include_inactive (bool): Whether to include inactive gateways in the results.
+        db (Session): Database session dependency.
+        user: Authenticated user dependency.
+
+    Returns:
+        Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway ids list")
@@ -4955,6 +4964,7 @@ async def admin_tools_partial_html(
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -4963,7 +4973,7 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     LOGGER.info(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
-    
+
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
 
@@ -4981,7 +4991,7 @@ async def admin_tools_partial_html(
 
     # Apply gateway filter if provided
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             query = query.where(DbTool.gateway_id.in_(gateway_ids))
             LOGGER.debug(f"Filtering tools by gateway IDs: {gateway_ids}")
@@ -5008,7 +5018,7 @@ async def admin_tools_partial_html(
     # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             count_query = count_query.where(DbTool.gateway_id.in_(gateway_ids))
     if not include_inactive:
@@ -5252,6 +5262,7 @@ async def admin_prompts_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive prompts in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -5274,14 +5285,14 @@ async def admin_prompts_partial_html(
 
     # Build base query
     query = select(DbPrompt)
-    
+
     # Apply gateway filter if provided
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             query = query.where(DbPrompt.gateway_id.in_(gateway_ids))
             LOGGER.debug(f"Filtering prompts by gateway IDs: {gateway_ids}")
-    
+
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
 
@@ -5296,7 +5307,7 @@ async def admin_prompts_partial_html(
     # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             count_query = count_query.where(DbPrompt.gateway_id.in_(gateway_ids))
     if not include_inactive:
@@ -5407,6 +5418,7 @@ async def admin_resources_partial_html(
         render (Optional[str]): Render mode; when set to "controls" returns only
             pagination controls. Other supported value: "selector" for selector
             items used by infinite scroll selectors.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -5435,7 +5447,7 @@ async def admin_resources_partial_html(
 
     # Apply gateway filter if provided
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             query = query.where(DbResource.gateway_id.in_(gateway_ids))
             LOGGER.info(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
@@ -5457,7 +5469,7 @@ async def admin_resources_partial_html(
     # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
     if gateway_id:
-        gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             count_query = count_query.where(DbResource.gateway_id.in_(gateway_ids))
     if not include_inactive:
@@ -5470,7 +5482,7 @@ async def admin_resources_partial_html(
     query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
 
     resources_db = list(db.scalars(query).all())
-    
+
     LOGGER.info(f"[RESOURCES FILTER DEBUG] Query returned {len(resources_db)} resources (total_items={total_items})")
     if resources_db and gateway_id:
         LOGGER.info(f"[RESOURCES FILTER DEBUG] First few resource names: {[r.name for r in resources_db[:3]]}")
@@ -8910,7 +8922,6 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
-
 
 
 ####################
