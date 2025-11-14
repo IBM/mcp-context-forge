@@ -570,20 +570,6 @@ class TestGatewayService:
             (200, {"content-type": "application/json"}, "SSE", False),
         ],
     )
-    
-    # helper to make SSE validation work:
-    @pytest.mark.parametrize(
-        "status_code,headers,transport_type,expected",
-        [
-            # SSE transport success cases
-            (200, {"content-type": "text/event-stream"}, "SSE", True),
-            # SSE transport failure cases - auth failures
-            (401, {"content-type": "text/event-stream"}, "SSE", False),
-            (403, {"content-type": "text/event-stream"}, "SSE", False),
-            # SSE transport failure cases - wrong content-type
-            (200, {"content-type": "application/json"}, "SSE", False),
-        ],
-    )
     @pytest.mark.asyncio
     async def test_validate_gateway_url_responses(self, gateway_service, httpx_mock, status_code, headers, transport_type, expected):
         """Test various HTTP responses during gateway URL validation."""
@@ -683,7 +669,7 @@ class TestGatewayService:
 
         # All should be True (validation success)
         assert all(results)
-        
+
     # ────────────────────────────────────────────────────────────────────
     # LIST / GET
     # ────────────────────────────────────────────────────────────────────
