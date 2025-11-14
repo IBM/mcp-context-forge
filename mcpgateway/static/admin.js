@@ -7340,7 +7340,9 @@ function initGatewaySelect(
 
             // Update "no results" message if it exists
             const noMsg = document.getElementById("noGatewayMessage");
-            const searchQuerySpan = document.getElementById("searchQuery");
+            const searchQuerySpan =
+                document.getElementById("searchQueryServers");
+
             if (noMsg) {
                 if (query && visibleCount === 0) {
                     noMsg.style.display = "block";
@@ -18522,7 +18524,7 @@ function initializeChatInputResize() {
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
     const noResultsMessage = safeGetElement("noToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQuery", true);
+    const searchQuerySpan = safeGetElement("searchQueryTools", true);
 
     if (!container) {
         console.error("associatedTools container not found");
