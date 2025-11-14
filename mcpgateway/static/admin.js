@@ -7289,177 +7289,319 @@ function initPromptSelect(
 // ===================================================================
 // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
 // ===================================================================
-function initGatewaySelect() {
-    try {
-        const container = document.getElementById('associatedGateways');
-        if (!container) return;
+function initGatewaySelect(
+    selectId = 'associatedGateways',
+    pillsId = 'selectedGatewayPills',
+    warnId = 'selectedGatewayWarning',
+    max = 12,
+    selectBtnId = 'selectAllGatewayBtn',
+    clearBtnId = 'clearAllGatewayBtn',
+    searchInputId = 'searchGateways',
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+    const searchInput = searchInputId ? document.getElementById(searchInputId) : null;
 
-        const searchInput = document.getElementById('searchGateways');
-        const selectAllBtn = document.getElementById('selectAllGatewayBtn');
-        const clearAllBtn = document.getElementById('clearAllGatewayBtn');
-        const pillsBox = document.getElementById('selectedGatewayPills');
-        const warnBox = document.getElementById('selectedGatewayWarning');
-        const noMsg = document.getElementById('noGatewayMessage');
-        const searchQuerySpan = document.getElementById('searchQuery');
-
-        function updatePills() {
-            try {
-                const checkboxes = Array.from(container.querySelectorAll('input[type="checkbox"]'));
-                const checked = checkboxes.filter(cb => cb.checked);
-                pillsBox.innerHTML = '';
-                const maxShow = 6;
-                checked.slice(0, maxShow).forEach(cb => {
-                    const span = document.createElement('span');
-                    span.className = 'inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full';
-                    span.textContent = cb.nextElementSibling?.textContent?.trim() || cb.value;
-                    pillsBox.appendChild(span);
-                });
-                if (checked.length > maxShow) {
-                    const span = document.createElement('span');
-                    span.className = 'inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full';
-                    span.textContent = `+${checked.length - maxShow} more`;
-                    pillsBox.appendChild(span);
-                }
-
-                // Warning if too many selected
-                if (checked.length > 12) {
-                    warnBox.textContent = `Selected ${checked.length} MCP servers. Selecting many servers may impact performance.`;
-                } else {
-                    warnBox.textContent = '';
-                }
-            } catch (e) {
-                console.error('Error updating gateway pills', e);
-            }
-        }
-
-        function applySearch() {
-            try {
-                const q = (searchInput && searchInput.value || '').toLowerCase().trim();
-                const items = Array.from(container.querySelectorAll('.tool-item'));
-                let visible = 0;
-                items.forEach(item => {
-                    const text = (item.textContent || '').toLowerCase();
-                    if (!q || text.includes(q)) {
-                        item.style.display = '';
-                        visible += 1;
-                    } else {
-                        item.style.display = 'none';
-                    }
-                });
-
-                if (noMsg) {
-                    if (q && visible === 0) {
-                        noMsg.style.display = 'block';
-                        if (searchQuerySpan) searchQuerySpan.textContent = q;
-                    } else {
-                        noMsg.style.display = 'none';
-                    }
-                }
-            } catch (e) {
-                console.error('Error applying gateway search', e);
-            }
-        }
-
-        // Bind search
-        if (searchInput && !searchInput._gateway_bound) {
-            searchInput.addEventListener('input', applySearch);
-            searchInput._gateway_bound = true;
-        }
-
-        // Select All - only selects visible items
-        if (selectAllBtn && !selectAllBtn._gateway_bound) {
-            selectAllBtn.addEventListener('click', () => {
-                try {
-                    console.debug('selectAllGatewayBtn clicked');
-                    // ensure current search filter is applied so visibility is accurate
-                    applySearch();
-                    // run in next frame to ensure styles settled
-                    requestAnimationFrame(() => {
-                        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-                        console.debug('selectAll: found checkboxes', checkboxes.length);
-                        let selected = 0;
-                        checkboxes.forEach(cb => {
-                            // prefer the .tool-item wrapper, fallback to the checkbox itself
-                            const parent = cb.closest('.tool-item') || cb;
-                            if (!parent) {
-                                console.debug('selectAll: no parent for checkbox', cb);
-                                return;
-                            }
-                            const disp = getComputedStyle(parent).display;
-                            // consider visible if not 'none'
-                            if (disp && disp !== 'none') {
-                                cb.checked = true;
-                                // dispatch change so other listeners react
-                                try {
-                                    cb.dispatchEvent(new Event('change', { bubbles: true }));
-                                } catch (e) {
-                                    console.debug('selectAll: dispatch change failed', e);
-                                }
-                                selected += 1;
-                            } else {
-                                console.debug('selectAll: skipping hidden item, display=', disp, parent);
-                            }
-                        });
-                        console.debug('selectAll: selected count', selected);
-                        updatePills();
-                        console.debug('selectAllGatewayBtn completed');
-                    });
-                } catch (e) {
-                    console.error('Error in selectAllGatewayBtn handler', e);
-                }
-            });
-            selectAllBtn._gateway_bound = true;
-        }
-
-        if (clearAllBtn && !clearAllBtn._gateway_bound) {
-            clearAllBtn.addEventListener('click', () => {
-                try {
-                    console.debug('clearAllGatewayBtn clicked');
-                    requestAnimationFrame(() => {
-                        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-                        checkboxes.forEach(cb => {
-                            cb.checked = false;
-                            cb.dispatchEvent(new Event('change', { bubbles: true }));
-                        });
-                        updatePills();
-                        console.debug('clearAllGatewayBtn completed');
-                    });
-                } catch (e) {
-                    console.error('Error in clearAllGatewayBtn handler', e);
-                }
-            });
-            clearAllBtn._gateway_bound = true;
-        }
-
-        // Delegate change events
-        if (!container._gateway_change_bound) {
-            container.addEventListener('change', (e) => {
-                if (e.target && e.target.type === 'checkbox') {
-                    updatePills();
-                }
-            });
-            container._gateway_change_bound = true;
-        }
-
-        // Initial run
-        applySearch();
-        updatePills();
-
-    } catch (err) {
-        console.debug('initGatewaySelect failed', err);
+    if (!container || !pillsBox || !warnBox) {
+        console.warn(
+            `Gateway select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
+        );
+        return;
     }
+
+    const pillClasses =
+        "inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-900 dark:text-indigo-200";
+
+    // Search functionality
+    function applySearch() {
+        if (!searchInput) return;
+        
+        try {
+            const query = searchInput.value.toLowerCase().trim();
+            const items = container.querySelectorAll('.tool-item');
+            let visibleCount = 0;
+
+            items.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                if (!query || text.includes(query)) {
+                    item.style.display = '';
+                    visibleCount++;
+                } else {
+                    item.style.display = 'none';
+                }
+            });
+
+            // Update "no results" message if it exists
+            const noMsg = document.getElementById('noGatewayMessage');
+            const searchQuerySpan = document.getElementById('searchQuery');
+            if (noMsg) {
+                if (query && visibleCount === 0) {
+                    noMsg.style.display = 'block';
+                    if (searchQuerySpan) {
+                        searchQuerySpan.textContent = query;
+                    }
+                } else {
+                    noMsg.style.display = 'none';
+                }
+            }
+        } catch (error) {
+            console.error("Error applying gateway search:", error);
+        }
+    }
+
+    // Bind search input
+    if (searchInput && !searchInput.dataset.searchBound) {
+        searchInput.addEventListener('input', applySearch);
+        searchInput.dataset.searchBound = 'true';
+    }
+
+    function update() {
+        try {
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+
+            // Check if "Select All" mode is active
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllGateways"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allGatewayIds"]',
+            );
+
+            let count = checked.length;
+
+            // If Select All mode is active, use the count from allGatewayIds
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allGatewayIds:", e);
+                }
+            }
+
+            // Rebuild pills safely - show first 3, then summarize the rest
+            pillsBox.innerHTML = "";
+            const maxPillsToShow = 3;
+
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
+                const span = document.createElement("span");
+                span.className = pillClasses;
+                span.textContent =
+                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                pillsBox.appendChild(span);
+            });
+
+            // If more than maxPillsToShow, show a summary pill
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected gateways";
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
+
+            // Warning when > max
+            if (count > max) {
+                warnBox.textContent = `Selected ${count} MCP servers. Selecting more than ${max} servers may impact performance.`;
+            } else {
+                warnBox.textContent = "";
+            }
+        } catch (error) {
+            console.error("Error updating gateway select:", error);
+        }
+    }
+
+    // Remove old event listeners by cloning and replacing (preserving ID)
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
+            checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Clear the "select all" flag
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllGateways"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allGatewayIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
+            update();
+        });
+    }
+
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+
+        newSelectBtn.addEventListener("click", async () => {
+            // Disable button and show loading state
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all gateways...";
+
+            try {
+                // Fetch all gateway IDs from the server
+                const response = await fetch(
+                    `${window.ROOT_PATH}/admin/gateways/ids`,
+                );
+                if (!response.ok) {
+                    throw new Error("Failed to fetch gateway IDs");
+                }
+
+                const data = await response.json();
+                const allGatewayIds = data.gateway_ids || [];
+
+                // Apply search filter first to determine which items are visible
+                applySearch();
+
+                // Check only currently visible checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => {
+                    const parent = cb.closest('.tool-item') || cb.parentElement;
+                    const isVisible = parent && getComputedStyle(parent).display !== 'none';
+                    if (isVisible) {
+                        cb.checked = true;
+                    }
+                });
+
+                // Add a hidden input to indicate "select all" mode
+                // Remove any existing one first
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllGateways"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllGateways";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Also store the IDs as a JSON array for the backend
+                let allIdsInput = container.querySelector(
+                    'input[name="allGatewayIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allGatewayIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allGatewayIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+            } catch (error) {
+                console.error("Error in Select All:", error);
+                alert("Failed to select all gateways. Please try again.");
+                newSelectBtn.disabled = false;
+                newSelectBtn.textContent = originalText;
+            } finally {
+                newSelectBtn.disabled = false;
+            }
+        });
+    }
+
+    update(); // Initial render
+
+    // Attach change listeners to checkboxes (using delegation for dynamic content)
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                // Check if we're in "Select All" mode
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllGateways"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allGatewayIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    // User is manually checking/unchecking after Select All
+                    // Update the allGatewayIds array to reflect the change
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+                        const gatewayId = e.target.value;
+
+                        if (e.target.checked) {
+                            // Add the ID if it's not already there
+                            if (!allIds.includes(gatewayId)) {
+                                allIds.push(gatewayId);
+                            }
+                        } else {
+                            // Remove the ID from the array
+                            allIds = allIds.filter((id) => id !== gatewayId);
+                        }
+
+                        // Update the hidden field
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (error) {
+                        console.error("Error updating allGatewayIds:", error);
+                    }
+                }
+
+                update();
+            }
+        });
+    }
+
+    // Initial render
+    applySearch();
+    update();
 }
 
-// Run on DOM ready and also on a short timeout for late loads
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initGatewaySelect);
-} else {
-    initGatewaySelect();
-}
-setTimeout(initGatewaySelect, 800);
-// Delegated safety: if the Select All / Clear All buttons are replaced by HTMX
-// or other dynamic swaps, re-run initGatewaySelect on capture of clicks targeting them
-document.addEventListener('click', (e) => { if (e.target && e.target.closest && (e.target.closest('#selectAllGatewayBtn') || e.target.closest('#clearAllGatewayBtn'))) { try { initGatewaySelect(); } catch (err) { console.debug('delegated gateway init failed', err); } } }, true);
+// Initialize gateway select on page load
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize for the create server form
+    if (document.getElementById('associatedGateways')) {
+        initGatewaySelect(
+            'associatedGateways',
+            'selectedGatewayPills',
+            'selectedGatewayWarning',
+            12,
+            'selectAllGatewayBtn',
+            'clearAllGatewayBtn',
+            'searchGateways'
+        );
+    }
+});
 
 // ===================================================================
 // INACTIVE ITEMS HANDLING
