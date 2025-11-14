@@ -4962,8 +4962,8 @@ async def admin_tools_partial_html(
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
-
+    LOGGER.info(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
+    
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
 
@@ -5261,6 +5261,7 @@ async def admin_prompts_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded prompt data when templates expect it.
     """
+    LOGGER.info(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -5414,7 +5415,10 @@ async def admin_resources_partial_html(
         resources partial (rows + controls), pagination controls only, or selector
         items depending on the ``render`` parameter.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
+    # Log the full request URL and query parameters for debugging
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] Full request URL: {request.url}")
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] Query params: {dict(request.query_params)}")
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -5434,7 +5438,9 @@ async def admin_resources_partial_html(
         gateway_ids = [gid.strip() for gid in gateway_id.split(',') if gid.strip()]
         if gateway_ids:
             query = query.where(DbResource.gateway_id.in_(gateway_ids))
-            LOGGER.debug(f"Filtering resources by gateway IDs: {gateway_ids}")
+            LOGGER.info(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
+    else:
+        LOGGER.info("[RESOURCES FILTER DEBUG] No gateway_id filter provided, showing all resources")
 
     # Apply active/inactive filter
     if not include_inactive:
@@ -5464,6 +5470,11 @@ async def admin_resources_partial_html(
     query = query.order_by(DbResource.name, DbResource.id).offset(offset).limit(per_page)
 
     resources_db = list(db.scalars(query).all())
+    
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] Query returned {len(resources_db)} resources (total_items={total_items})")
+    if resources_db and gateway_id:
+        LOGGER.info(f"[RESOURCES FILTER DEBUG] First few resource names: {[r.name for r in resources_db[:3]]}")
+        LOGGER.info(f"[RESOURCES FILTER DEBUG] First few resource gateway_ids: {[r.gateway_id for r in resources_db[:3]]}")
 
     # Convert to schemas using ResourceService
     local_resource_service = ResourceService()
@@ -5476,6 +5487,7 @@ async def admin_resources_partial_html(
             continue
 
     data = jsonable_encoder(resources_data)
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] Converted {len(data)} resources to JSON")
 
     # Build pagination metadata
     pagination = PaginationMeta(

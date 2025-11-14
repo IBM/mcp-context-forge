@@ -7608,7 +7608,10 @@ function initGatewaySelect(
  */
 function getSelectedGatewayIds() {
     const container = document.getElementById('associatedGateways');
+    console.log(`[Gateway Selection DEBUG] Container found:`, !!container);
+    
     if (!container) {
+        console.warn(`[Gateway Selection DEBUG] associatedGateways container not found`);
         return [];
     }
     
@@ -7616,17 +7619,26 @@ function getSelectedGatewayIds() {
     const selectAllInput = container.querySelector('input[name="selectAllGateways"]');
     const allIdsInput = container.querySelector('input[name="allGatewayIds"]');
     
+    console.log(`[Gateway Selection DEBUG] Select All mode:`, selectAllInput?.value === "true");
+    
     if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
         try {
-            return JSON.parse(allIdsInput.value);
+            const allIds = JSON.parse(allIdsInput.value);
+            console.log(`[Gateway Selection DEBUG] Returning all gateway IDs (${allIds.length} total)`);
+            return allIds;
         } catch (error) {
-            console.error("Error parsing allGatewayIds:", error);
+            console.error("[Gateway Selection DEBUG] Error parsing allGatewayIds:", error);
         }
     }
     
     // Otherwise, get all checked checkboxes
     const checkboxes = container.querySelectorAll('input[type="checkbox"]:checked');
-    return Array.from(checkboxes).map(cb => cb.value);
+    const selectedIds = Array.from(checkboxes).map(cb => cb.value);
+    
+    console.log(`[Gateway Selection DEBUG] Found ${checkboxes.length} checked gateway checkboxes`);
+    console.log(`[Gateway Selection DEBUG] Selected gateway IDs:`, selectedIds);
+    
+    return selectedIds;
 }
 
 /**
@@ -7637,6 +7649,7 @@ function reloadAssociatedItems() {
     const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(',') : '';
     
     console.log(`[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || 'none (showing all)'}`);
+    console.log(`[Filter Update DEBUG] Selected gateway IDs array:`, selectedGatewayIds);
     
     // Reload tools
     const toolsContainer = document.getElementById('associatedTools');
@@ -7645,34 +7658,62 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
         
+        console.log(`[Filter Update DEBUG] Tools URL:`, toolsUrl);
+        
         // Use HTMX to reload the content
         if (window.htmx) {
             htmx.ajax('GET', toolsUrl, {
                 target: '#associatedTools',
                 swap: 'innerHTML'
             }).then(() => {
+                console.log(`[Filter Update DEBUG] Tools reloaded successfully`);
                 // Re-initialize the tool select after content is loaded
                 initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn');
+            }).catch(err => {
+                console.error(`[Filter Update DEBUG] Tools reload failed:`, err);
             });
+        } else {
+            console.error(`[Filter Update DEBUG] HTMX not available for tools reload`);
         }
+    } else {
+        console.warn(`[Filter Update DEBUG] Tools container not found`);
     }
     
-    // Reload resources
+    // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = document.getElementById('associatedResources');
     if (resourcesContainer) {
         const resourcesUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
         
-        if (window.htmx) {
-            htmx.ajax('GET', resourcesUrl, {
-                target: '#associatedResources',
-                swap: 'innerHTML'
-            }).then(() => {
-                // Re-initialize the resource select after content is loaded
-                initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn');
-            });
-        }
+        console.log(`[Filter Update DEBUG] Resources URL:`, resourcesUrl);
+        
+        // Use fetch() directly instead of htmx.ajax() to avoid race conditions
+        fetch(resourcesUrl, {
+            method: 'GET',
+            headers: {
+                'HX-Request': 'true',
+                'HX-Current-URL': window.location.href
+            }
+        })
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            return response.text();
+        })
+        .then(html => {
+            console.log(`[Filter Update DEBUG] Resources fetch successful, HTML length:`, html.length);
+            resourcesContainer.innerHTML = html;
+            // Re-initialize the resource select after content is loaded
+            initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn');
+            console.log(`[Filter Update DEBUG] Resources reloaded successfully via fetch`);
+        })
+        .catch(err => {
+            console.error(`[Filter Update DEBUG] Resources reload failed:`, err);
+        });
+    } else {
+        console.warn(`[Filter Update DEBUG] Resources container not found`);
     }
     
     // Reload prompts
