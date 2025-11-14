@@ -1888,6 +1888,35 @@ async def admin_list_gateways(
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
 
+@admin_router.get("/gateways/ids")
+async def admin_list_gateway_ids(
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Return a JSON object containing a list of all gateway IDs.
+
+    This endpoint is used by the admin UI to support the "Select All" action
+    for gateways. It returns a simple JSON payload with a single key
+    `gateway_ids` containing an array of gateway identifiers.
+
+    Args:
+        include_inactive (bool): Whether to include inactive gateways in the results.
+        db (Session): Database session dependency.
+        user: Authenticated user dependency.
+
+    Returns:
+        Dict[str, Any]: JSON object containing the `gateway_ids` list and metadata.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested gateway ids list")
+    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive)
+    ids = [str(g.id) for g in gateways]
+    LOGGER.info(f"Gateway IDs retrieved: {ids}")
+    return {"gateway_ids": ids}
+
+
 @admin_router.post("/gateways/{gateway_id}/toggle")
 async def admin_toggle_gateway(
     gateway_id: str,
@@ -4920,6 +4949,7 @@ async def admin_tools_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -4934,6 +4964,7 @@ async def admin_tools_partial_html(
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -4941,7 +4972,7 @@ async def admin_tools_partial_html(
     Returns:
         HTMLResponse with tools table rows and pagination controls.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render})")
+    LOGGER.debug(f"User {get_user_email(user)} requested tools HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
@@ -4957,6 +4988,13 @@ async def admin_tools_partial_html(
 
     # Build query
     query = select(DbTool)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbTool.gateway_id.in_(gateway_ids))
+            LOGGER.debug(f"Filtering tools by gateway IDs: {gateway_ids}")
 
     # Apply active/inactive filter
     if not include_inactive:
@@ -4977,8 +5015,12 @@ async def admin_tools_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbTool.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbTool.enabled.is_(True))
 
@@ -5051,6 +5093,7 @@ async def admin_tools_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 
@@ -5200,6 +5243,7 @@ async def admin_prompts_partial_html(
     per_page: int = Query(50, ge=1),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5218,6 +5262,7 @@ async def admin_prompts_partial_html(
         per_page (int): Number of items per page (bounded by settings).
         include_inactive (bool): If True, include inactive prompts in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -5227,6 +5272,7 @@ async def admin_prompts_partial_html(
         items depending on ``render``. The response contains JSON-serializable
         encoded prompt data when templates expect it.
     """
+    LOGGER.debug(f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id})")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -5239,6 +5285,14 @@ async def admin_prompts_partial_html(
 
     # Build base query
     query = select(DbPrompt)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbPrompt.gateway_id.in_(gateway_ids))
+            LOGGER.debug(f"Filtering prompts by gateway IDs: {gateway_ids}")
+
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
 
@@ -5250,8 +5304,12 @@ async def admin_prompts_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbPrompt).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbPrompt.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbPrompt.is_active.is_(True))
 
@@ -5318,6 +5376,7 @@ async def admin_prompts_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 
@@ -5341,6 +5400,7 @@ async def admin_resources_partial_html(
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5358,6 +5418,7 @@ async def admin_resources_partial_html(
         render (Optional[str]): Render mode; when set to "controls" returns only
             pagination controls. Other supported value: "selector" for selector
             items used by infinite scroll selectors.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -5366,7 +5427,8 @@ async def admin_resources_partial_html(
         resources partial (rows + controls), pagination controls only, or selector
         items depending on the ``render`` parameter.
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render})")
+
+    LOGGER.debug(f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id})")
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -5381,6 +5443,15 @@ async def admin_resources_partial_html(
     # Build base query
     query = select(DbResource)
 
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            query = query.where(DbResource.gateway_id.in_(gateway_ids))
+            LOGGER.info(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
+    else:
+        LOGGER.info("[RESOURCES FILTER DEBUG] No gateway_id filter provided, showing all resources")
+
     # Apply active/inactive filter
     if not include_inactive:
         query = query.where(DbResource.is_active.is_(True))
@@ -5393,8 +5464,12 @@ async def admin_resources_partial_html(
 
     query = query.where(or_(*access_conditions))
 
-    # Count total items
+    # Count total items - must include gateway filter for accurate count
     count_query = select(func.count()).select_from(DbResource).where(or_(*access_conditions))  # pylint: disable=not-callable
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            count_query = count_query.where(DbResource.gateway_id.in_(gateway_ids))
     if not include_inactive:
         count_query = count_query.where(DbResource.is_active.is_(True))
 
@@ -5417,6 +5492,7 @@ async def admin_resources_partial_html(
             continue
 
     data = jsonable_encoder(resources_data)
+    LOGGER.info(f"[RESOURCES FILTER DEBUG] Converted {len(data)} resources to JSON")
 
     # Build pagination metadata
     pagination = PaginationMeta(
@@ -5459,6 +5535,7 @@ async def admin_resources_partial_html(
                 "data": data,
                 "pagination": pagination.model_dump(),
                 "root_path": request.scope.get("root_path", ""),
+                "gateway_id": gateway_id,
             },
         )
 

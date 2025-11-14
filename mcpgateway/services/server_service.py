@@ -264,6 +264,7 @@ class ServerService:
         resources: Optional[List[str]],
         prompts: Optional[List[str]],
         a2a_agents: Optional[List[str]] = None,
+        gateways: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Assemble the associated items dictionary from the separate fields.
@@ -273,37 +274,39 @@ class ServerService:
             resources: List of resource IDs.
             prompts: List of prompt IDs.
             a2a_agents: List of A2A agent IDs.
+            gateways: List of gateway IDs.
 
         Returns:
-            A dictionary with keys "tools", "resources", "prompts", and "a2a_agents".
+            A dictionary with keys "tools", "resources", "prompts", "a2a_agents", and "gateways".
 
         Examples:
             >>> service = ServerService()
             >>> # Test with all None values
             >>> result = service._assemble_associated_items(None, None, None)
             >>> result
-            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': [], 'gateways': []}
 
             >>> # Test with empty lists
             >>> result = service._assemble_associated_items([], [], [])
             >>> result
-            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': []}
+            {'tools': [], 'resources': [], 'prompts': [], 'a2a_agents': [], 'gateways': []}
 
             >>> # Test with actual values
             >>> result = service._assemble_associated_items(['tool1', 'tool2'], ['res1'], ['prompt1'])
             >>> result
-            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1'], 'a2a_agents': []}
+            {'tools': ['tool1', 'tool2'], 'resources': ['res1'], 'prompts': ['prompt1'], 'a2a_agents': [], 'gateways': []}
 
             >>> # Test with mixed None and values
             >>> result = service._assemble_associated_items(['tool1'], None, ['prompt1'])
             >>> result
-            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1'], 'a2a_agents': []}
+            {'tools': ['tool1'], 'resources': [], 'prompts': ['prompt1'], 'a2a_agents': [], 'gateways': []}
         """
         return {
             "tools": tools or [],
             "resources": resources or [],
             "prompts": prompts or [],
             "a2a_agents": a2a_agents or [],
+            "gateways": gateways or [],
         }
 
     def _get_team_name(self, db: Session, team_id: Optional[str]) -> Optional[str]:
