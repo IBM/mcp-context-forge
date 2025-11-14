@@ -27,6 +27,13 @@ from mcpgateway.config import settings
 from mcpgateway.services.log_storage_service import LogStorageService
 from mcpgateway.utils.correlation_id import get_correlation_id
 
+# Optional OpenTelemetry support
+try:
+    # Third-Party
+    from opentelemetry import trace  # type: ignore[import-untyped]
+except ImportError:
+    trace = None  # type: ignore[assignment]
+
 AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
     # Optional import; only used for filtering a known benign upstream error
@@ -72,20 +79,19 @@ class CorrelationIdJsonFormatter(jsonlogger.JsonFormatter):
             log_record["request_id"] = correlation_id
 
         # Add OpenTelemetry trace context if available
-        try:
-            from opentelemetry import trace
-
-            span = trace.get_current_span()
-            if span and span.is_recording():
-                span_context = span.get_span_context()
-                if span_context.is_valid:
-                    # Format trace_id and span_id as hex strings
-                    log_record["trace_id"] = format(span_context.trace_id, "032x")
-                    log_record["span_id"] = format(span_context.span_id, "016x")
-                    log_record["trace_flags"] = format(span_context.trace_flags, "02x")
-        except (ImportError, Exception):
-            # OpenTelemetry not available or error accessing span
-            pass
+        if trace is not None:
+            try:
+                span = trace.get_current_span()
+                if span and span.is_recording():
+                    span_context = span.get_span_context()
+                    if span_context.is_valid:
+                        # Format trace_id and span_id as hex strings
+                        log_record["trace_id"] = format(span_context.trace_id, "032x")
+                        log_record["span_id"] = format(span_context.span_id, "016x")
+                        log_record["trace_flags"] = format(span_context.trace_flags, "02x")
+            except Exception:
+                # Error accessing span context
+                pass
 
 
 # Create a JSON formatter with correlation ID support
