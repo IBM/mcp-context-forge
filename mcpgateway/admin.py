@@ -16,6 +16,7 @@ the require_auth or require_basic_auth dependency. The module integrates with
 various services to perform the actual business logic operations on the
 underlying data.
 """
+# pylint: disable=pointless-string-statement, unreachable
 
 # Standard
 from collections import defaultdict
