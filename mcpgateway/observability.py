@@ -15,10 +15,9 @@ import logging
 import os
 from typing import Any, Callable, cast, Dict, Optional
 
-# Try to import OpenTelemetry core components - make them truly optional
+# Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
 try:
-    # Third-Party
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
@@ -92,6 +91,9 @@ except ImportError:
     except Exception as exc:  # nosec B110 - best-effort optional shim
         # Shimming is a non-critical, best-effort step for tests; log and continue.
         logging.getLogger(__name__).debug("Skipping OpenTelemetry shim setup: %s", exc)
+
+# First-Party
+from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402
 
 # Try to import optional exporters
 try:
@@ -442,9 +444,6 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
 
     # Auto-inject correlation ID into all spans for request tracing
     try:
-        # Import here to avoid circular dependency
-        from mcpgateway.utils.correlation_id import get_correlation_id
-
         correlation_id = get_correlation_id()
         if correlation_id:
             if attributes is None:
@@ -454,8 +453,8 @@ def create_span(name: str, attributes: Optional[Dict[str, Any]] = None) -> Any:
                 attributes["correlation_id"] = correlation_id
             if "request_id" not in attributes:
                 attributes["request_id"] = correlation_id  # Alias for compatibility
-    except ImportError:
-        # Correlation ID module not available, continue without it
+    except Exception:
+        # Correlation ID not available or error getting it, continue without it
         pass
 
     # Start span and return the context manager
