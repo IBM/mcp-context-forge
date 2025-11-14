@@ -93,7 +93,7 @@ except ImportError:
         logging.getLogger(__name__).debug("Skipping OpenTelemetry shim setup: %s", exc)
 
 # First-Party
-from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402
+from mcpgateway.utils.correlation_id import get_correlation_id  # noqa: E402  # pylint: disable=wrong-import-position
 
 # Try to import optional exporters
 try:
