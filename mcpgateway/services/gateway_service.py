@@ -792,13 +792,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     decoded_auth_value = gateway.auth_value
 
             # Check for duplicate gateway
-            duplicate_gateway = self._check_gateway_uniqueness(
-                db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
-            )
+            if not gateway.one_time_auth:
+                duplicate_gateway = self._check_gateway_uniqueness(
+                    db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
+                )
 
-            if duplicate_gateway:
-
-                raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
+                if duplicate_gateway:
+                    raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
 
             # Prevent URL-only gateways (no auth at all)
             # if not decoded_auth_value and not gateway.oauth_config:
@@ -1393,19 +1393,20 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 final_visibility = gateway_update.visibility if gateway_update.visibility is not None else gateway.visibility
 
                 # Check for duplicates with updated credentials
-                duplicate_gateway = self._check_gateway_uniqueness(
-                    db=db,
-                    url=normalized_url,
-                    auth_value=final_auth_value,
-                    oauth_config=final_oauth_config,
-                    team_id=gateway.team_id,
-                    visibility=final_visibility,
-                    gateway_id=gateway_id,  # Exclude current gateway from check
-                    owner_email=user_email,
-                )
+                if not gateway_update.one_time_auth:
+                    duplicate_gateway = self._check_gateway_uniqueness(
+                        db=db,
+                        url=normalized_url,
+                        auth_value=final_auth_value,
+                        oauth_config=final_oauth_config,
+                        team_id=gateway.team_id,
+                        visibility=final_visibility,
+                        gateway_id=gateway_id,  # Exclude current gateway from check
+                        owner_email=user_email,
+                    )
 
-                if duplicate_gateway:
-                    raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
+                    if duplicate_gateway:
+                        raise GatewayDuplicateConflictError(duplicate_gateway=duplicate_gateway)
 
                 # FIX for Issue #1025: Determine if URL actually changed before we update it
                 # We need this early because we update gateway.url below, and need to know
