@@ -396,6 +396,7 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 0.8.0
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
+    toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
