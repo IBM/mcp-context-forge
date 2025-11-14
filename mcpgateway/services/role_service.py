@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Permissions, Role, UserRole, utc_now
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -657,6 +658,9 @@ class RoleService:
             ...     asyncio.run(service.revoke_role_from_user('u','r','team','t'))
             True
         """
+        if user_email == settings.platform_admin_email:
+            raise ValueError("Cannot revoke roles from the platform admin")
+
         user_role = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)
 
         if not user_role or not user_role.is_active:
