@@ -8,7 +8,6 @@ This middleware allows plugins to:
 
 # Standard
 import logging
-import uuid
 
 # Third-Party
 from fastapi import Request
