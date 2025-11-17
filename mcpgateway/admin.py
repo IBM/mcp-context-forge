@@ -5501,7 +5501,7 @@ async def admin_resources_partial_html(
             continue
 
     data = jsonable_encoder(resources_data)
-   
+
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
