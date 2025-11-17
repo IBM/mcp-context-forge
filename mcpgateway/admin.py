@@ -2339,8 +2339,13 @@ async def admin_ui(
                 vis = item.get("visibility")
             if isinstance(vis, str) and vis.lower() == "public":
                 return True
-        except Exception:
-            pass
+        except Exception as exc:  # pragma: no cover - defensive logging for unexpected types
+            LOGGER.debug(
+                "Error checking visibility on item (type=%s): %s",
+                type(item),
+                exc,
+                exc_info=True,
+            )
         # item may be a pydantic model or dict-like
         # check common fields for team membership
         candidates = []
