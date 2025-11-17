@@ -1496,7 +1496,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.auth_value = decoded_auth
 
                 # Try to reinitialize connection if URL actually changed
-                #if url_changed:
+                # if url_changed:
                 # Initialize empty lists in case initialization fails
                 tools_to_add = []
                 resources_to_add = []
