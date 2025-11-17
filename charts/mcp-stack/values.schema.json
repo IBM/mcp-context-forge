@@ -726,7 +726,7 @@
             "DEFAULT_ROLE_NAME_USER": {
               "type": "string",
               "description": "Default role name for regular users",
-              "default": "developer"
+              "default": "team_member"
             },
             "DEFAULT_USER_SCOPE": {
               "type": "string",

@@ -154,14 +154,14 @@ async def bootstrap_default_roles() -> None:
                     "is_system_role": True,
                 },
                 {
-                    "name": "developer",
+                    "name": "team_member",
                     "description": "Developer with tool and resource access",
                     "scope": "team",
                     "permissions": ["teams.join", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
                 {
-                    "name": "viewer",
+                    "name": "team_viewer",
                     "description": "Read-only access to resources",
                     "scope": "team",
                     "permissions": ["teams.join", "tools.read", "resources.read", "prompts.read"],

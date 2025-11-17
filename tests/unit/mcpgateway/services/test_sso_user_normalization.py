@@ -405,7 +405,7 @@ class TestKeycloakNormalization:
             "sub": "keycloak-user-id",
             "preferred_username": "testuser",
             "picture": "https://keycloak.company.com/avatar.jpg",
-            "realm_access": {"roles": ["admin", "developer", "user"]},
+            "realm_access": {"roles": ["admin", "team_member", "user"]},
             "groups": ["engineering", "platform-team"],
         }
 
@@ -418,7 +418,7 @@ class TestKeycloakNormalization:
         assert normalized["username"] == "testuser"
         assert normalized["provider"] == "keycloak"
         # Check groups as set since order may vary
-        assert set(normalized["groups"]) == {"admin", "developer", "user", "engineering", "platform-team"}
+        assert set(normalized["groups"]) == {"admin", "team_member", "user", "engineering", "platform-team"}
 
     def test_keycloak_with_client_roles(self, sso_service):
         """Test Keycloak normalization with client roles enabled."""
@@ -442,7 +442,7 @@ class TestKeycloakNormalization:
             "name": "Test User",
             "sub": "keycloak-user-id",
             "preferred_username": "testuser",
-            "resource_access": {"mcp-gateway": {"roles": ["gateway-admin", "gateway-user"]}, "another-client": {"roles": ["viewer"]}},
+            "resource_access": {"mcp-gateway": {"roles": ["gateway-admin", "gateway-user"]}, "another-client": {"roles": ["team_viewer"]}},
         }
 
         normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
@@ -592,7 +592,7 @@ class TestKeycloakNormalization:
             "sub": "keycloak-user-id",
             "realm_access": {"roles": ["admin", "user"]},
             "resource_access": {"mcp-gateway": {"roles": ["admin"]}},  # "admin" duplicates realm role
-            "groups": ["user", "developer"],  # "user" duplicates realm role
+            "groups": ["user", "team_member"],  # "user" duplicates realm role
         }
 
         normalized = sso_service._normalize_user_info(keycloak_provider, user_data)
@@ -603,7 +603,7 @@ class TestKeycloakNormalization:
         assert "admin" in groups
         assert "user" in groups
         assert "mcp-gateway:admin" in groups  # Client role is namespaced, so not a duplicate
-        assert "developer" in groups
+        assert "team_member" in groups
 
 
 class TestGenericOIDCNormalization:

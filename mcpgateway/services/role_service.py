@@ -89,7 +89,7 @@ class RoleService:
         Examples:
             Basic role creation parameters:
             >>> from mcpgateway.services.role_service import RoleService
-            >>> role_name = "developer"
+            >>> role_name = "team_member"
             >>> len(role_name) > 0
             True
             >>> role_scope = "team"
