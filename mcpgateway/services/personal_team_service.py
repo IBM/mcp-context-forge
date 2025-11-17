@@ -179,109 +179,109 @@ class PersonalTeamService:
             logger.error(f"Failed to get personal team for {user_email}: {e}")
             return None
 
-    async def ensure_personal_team(self, user: EmailUser) -> EmailTeam:
-        """Ensure a user has a personal team, creating one if needed.
+    # async def ensure_personal_team(self, user: EmailUser) -> EmailTeam:
+    #     """Ensure a user has a personal team, creating one if needed.
 
-        Args:
-            user: EmailUser instance
+    #     Args:
+    #         user: EmailUser instance
 
-        Returns:
-            EmailTeam: The user's personal team (existing or newly created)
+    #     Returns:
+    #         EmailTeam: The user's personal team (existing or newly created)
 
-        Raises:
-            Exception: If team creation or retrieval fails
+    #     Raises:
+    #         Exception: If team creation or retrieval fails
 
-        Examples:
-            >>> import asyncio
-            >>> from unittest.mock import Mock
-            >>> service = PersonalTeamService(Mock())
-            >>> asyncio.iscoroutinefunction(service.ensure_personal_team)
-            True
-        """
-        try:
-            # Try to get existing personal team
-            team = await self.get_personal_team(user.email)
+    #     Examples:
+    #         >>> import asyncio
+    #         >>> from unittest.mock import Mock
+    #         >>> service = PersonalTeamService(Mock())
+    #         >>> asyncio.iscoroutinefunction(service.ensure_personal_team)
+    #         True
+    #     """
+    #     try:
+    #         # Try to get existing personal team
+    #         team = await self.get_personal_team(user.email)
 
-            if team is None:
-                # Create personal team if it doesn't exist
-                logger.info(f"Creating missing personal team for user {user.email}")
-                team = await self.create_personal_team(user)
+    #         if team is None:
+    #             # Create personal team if it doesn't exist
+    #             logger.info(f"Creating missing personal team for user {user.email}")
+    #             team = await self.create_personal_team(user)
 
-            return team
+    #         return team
 
-        except ValueError:
-            # User already has a team, get it
-            team = await self.get_personal_team(user.email)
-            if team is None:
-                raise Exception(f"Failed to get or create personal team for {user.email}")
-            return team
+    #     except ValueError:
+    #         # User already has a team, get it
+    #         team = await self.get_personal_team(user.email)
+    #         if team is None:
+    #             raise Exception(f"Failed to get or create personal team for {user.email}")
+    #         return team
 
-    def is_personal_team(self, team_id: str) -> bool:
-        """Check if a team is a personal team.
+    # def is_personal_team(self, team_id: str) -> bool:
+    #     """Check if a team is a personal team.
 
-        Args:
-            team_id: ID of the team to check
+    #     Args:
+    #         team_id: ID of the team to check
 
-        Returns:
-            bool: True if the team is a personal team, False otherwise
+    #     Returns:
+    #         bool: True if the team is a personal team, False otherwise
 
-        Examples:
-            >>> from unittest.mock import Mock
-            >>> service = PersonalTeamService(Mock())
-            >>> callable(service.is_personal_team)
-            True
-        """
-        try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
+    #     Examples:
+    #         >>> from unittest.mock import Mock
+    #         >>> service = PersonalTeamService(Mock())
+    #         >>> callable(service.is_personal_team)
+    #         True
+    #     """
+    #     try:
+    #         team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
 
-            return team is not None and team.is_personal
+    #         return team is not None and team.is_personal
 
-        except Exception as e:
-            logger.error(f"Failed to check if team {team_id} is personal: {e}")
-            return False
+    #     except Exception as e:
+    #         logger.error(f"Failed to check if team {team_id} is personal: {e}")
+    #         return False
 
-    async def delete_personal_team(self, team_id: str) -> bool:
-        """Delete a personal team (not allowed).
+    # async def delete_personal_team(self, team_id: str) -> bool:
+    #     """Delete a personal team (not allowed).
 
-        Personal teams cannot be deleted, only deactivated.
+    #     Personal teams cannot be deleted, only deactivated.
 
-        Args:
-            team_id: ID of the team to delete
+    #     Args:
+    #         team_id: ID of the team to delete
 
-        Returns:
-            bool: False (personal teams cannot be deleted)
+    #     Returns:
+    #         bool: False (personal teams cannot be deleted)
 
-        Raises:
-            ValueError: Always, as personal teams cannot be deleted
+    #     Raises:
+    #         ValueError: Always, as personal teams cannot be deleted
 
-        Examples:
-            >>> import asyncio
-            >>> from unittest.mock import Mock
-            >>> service = PersonalTeamService(Mock())
-            >>> asyncio.iscoroutinefunction(service.delete_personal_team)
-            True
-        """
-        if self.is_personal_team(team_id):
-            raise ValueError("Personal teams cannot be deleted")
-        return False
+    #     Examples:
+    #         >>> import asyncio
+    #         >>> from unittest.mock import Mock
+    #         >>> service = PersonalTeamService(Mock())
+    #         >>> asyncio.iscoroutinefunction(service.delete_personal_team)
+    #         True
+    #     """
+    #     if self.is_personal_team(team_id):
+    #         raise ValueError("Personal teams cannot be deleted")
+    #     return False
 
-    async def get_personal_team_owner(self, team_id: str) -> Optional[str]:
-        """Get the owner email of a personal team.
+    # async def get_personal_team_owner(self, team_id: str) -> Optional[str]:
+    #     """Get the owner email of a personal team.
 
-        Args:
-            team_id: ID of the personal team
+    #     Args:
+    #         team_id: ID of the personal team
 
-        Returns:
-            str: Owner email address or None if not found
+    #     Returns:
+    #         str: Owner email address or None if not found
 
-        Examples:
-            Used for access control and team management operations.
-        """
-        try:
-            team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
+    #     Examples:
+    #         Used for access control and team management operations.
+    #     """
+    #     try:
+    #         team = self.db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_personal.is_(True), EmailTeam.is_active.is_(True)).first()
 
-            return team.created_by if team else None
+    #         return team.created_by if team else None
 
-        except Exception as e:
-            logger.error(f"Failed to get personal team owner for {team_id}: {e}")
-            return None
+    #     except Exception as e:
+    #         logger.error(f"Failed to get personal team owner for {team_id}: {e}")
+    #         return None
