@@ -1243,6 +1243,49 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
             detail="Invalid JSON in request body",
         )
 
+
+from pydantic import BaseModel, Field
+class ToolNLTestInput(BaseModel):
+    tool_id: str | None = Field(
+        default=None, title="Tool ID", max_length=300)
+    tool_nl_test_cases: list | None = Field(
+        default=None, title="List of natural language test cases for testing MCP tool with the agent")
+
+from mcpgateway.toolops.services import execute_tool_nl_test_cases
+@toolops_router.post("/validation/execute_tool_nl_testcases")
+async def execute_tool_nl_testcases(tool_nl_test_input:ToolNLTestInput,db: Session = Depends(get_db)) -> List:
+    """
+    Execute test cases for a tool
+
+    This endpoint handles the automated test case generation for a tool by accepting
+    a tool id . The `require_auth` dependency ensures that
+    the user is authenticated before proceeding.
+
+    Args:
+        tool_id: Tool ID in context forge.
+        tool_nl_test_cases: List of natural language test cases for testing MCP tool with the agent
+        user (str): The authenticated user (from `require_auth` dependency).
+
+    Returns:
+        List: A list of tool outputs for the provided tool nl test cases
+
+    Raises:
+        HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
+    """
+    try:
+        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
+        tool_id = tool_nl_test_input.tool_id
+        tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
+        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db )
+        return tool_nl_test_cases_output
+
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid JSON in request body",
+        )
+
+
 from mcpgateway.toolops.services import enrich_tool
 @toolops_router.post("/enrichment/enrich_tool")
 async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db)) -> dict[str, Any]:
