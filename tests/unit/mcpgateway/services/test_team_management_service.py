@@ -61,7 +61,7 @@ class TestTeamManagementService:
         membership = MagicMock(spec=EmailTeamMember)
         membership.team_id = "team123"
         membership.user_email = "user@example.com"
-        membership.role = "member"
+        membership.role = "team_member"
         membership.is_active = True
         return membership
 
@@ -207,7 +207,7 @@ class TestTeamManagementService:
             assert mock_existing_team.is_active is True
 
             # Verify existing membership was reactivated
-            assert mock_existing_membership.role == "owner"
+            assert mock_existing_membership.role == "team_owner"
             assert mock_existing_membership.is_active is True
 
     # =========================================================================
@@ -404,7 +404,7 @@ class TestTeamManagementService:
         mock_db.query.side_effect = side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="team_member")
 
             assert result is True
             assert mock_db.add.call_count == 2
@@ -502,7 +502,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_remove_last_owner_rejected(self, service, mock_team, mock_membership, mock_db):
         """Test removing last owner is rejected."""
-        mock_membership.role = "owner"
+        mock_membership.role = "team_owner"
 
         # Setup query mocks for membership lookup and owner count
         def query_side_effect(model):
@@ -538,10 +538,10 @@ class TestTeamManagementService:
         mock_db.query.return_value = mock_query
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="team_member")
 
             assert result is True
-            assert mock_membership.role == "member"
+            assert mock_membership.role == "team_member"
             assert mock_db.commit.call_count == 2  # One for role update, one for history
 
     @pytest.mark.asyncio
@@ -553,7 +553,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_update_last_owner_role_rejected(self, service, mock_team, mock_membership, mock_db):
         """Test updating last owner role is rejected."""
-        mock_membership.role = "owner"
+        mock_membership.role = "team_owner"
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -573,7 +573,7 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="team_member")
             assert result is False
 
     # =========================================================================
@@ -625,7 +625,7 @@ class TestTeamManagementService:
     async def test_get_user_role_in_team(self, service, mock_db):
         """Test getting user role in team."""
         mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "member"
+        mock_membership.role = "team_member"
 
         mock_query = MagicMock()
         mock_query.filter.return_value.first.return_value = mock_membership
@@ -633,7 +633,7 @@ class TestTeamManagementService:
 
         result = await service.get_user_role_in_team("user@example.com", "team123")
 
-        assert result == "member"
+        assert result == "team_member"
 
     @pytest.mark.asyncio
     async def test_get_user_role_in_team_not_member(self, service, mock_db):
@@ -725,11 +725,11 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="team_member")
 
             assert result is True
             assert mock_membership.is_active is True
-            assert mock_membership.role == "member"
+            assert mock_membership.role == "team_member"
 
     def test_visibility_validation_values(self, service):
         """Test that visibility validation accepts all valid values."""
@@ -742,7 +742,7 @@ class TestTeamManagementService:
 
     def test_role_validation_values(self, service):
         """Test that role validation accepts all valid values."""
-        valid_roles = ["owner", "member"]
+        valid_roles = ["team_owner", "team_member"]
 
         for role in valid_roles:
             # Should not raise an exception during validation

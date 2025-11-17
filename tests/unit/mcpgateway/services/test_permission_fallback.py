@@ -57,7 +57,7 @@ class TestPermissionFallback:
             patch.object(permission_service, "_is_user_admin", return_value=False),
             patch.object(permission_service, "get_user_permissions", return_value=set()),
             patch.object(permission_service, "_is_team_member", return_value=True),
-            patch.object(permission_service, "_get_user_team_role", return_value="owner"),
+            patch.object(permission_service, "_get_user_team_role", return_value="team_owner"),
         ):
             # Team owner should have full permissions on their team
             assert await permission_service.check_permission("owner@example.com", "teams.read", team_id="team-123") == True
@@ -72,7 +72,7 @@ class TestPermissionFallback:
             patch.object(permission_service, "_is_user_admin", return_value=False),
             patch.object(permission_service, "get_user_permissions", return_value=set()),
             patch.object(permission_service, "_is_team_member", return_value=True),
-            patch.object(permission_service, "_get_user_team_role", return_value="member"),
+            patch.object(permission_service, "_get_user_team_role", return_value="team_member"),
         ):
             # Team member should have read permissions
             assert await permission_service.check_permission("member@example.com", "teams.read", team_id="team-123") == True

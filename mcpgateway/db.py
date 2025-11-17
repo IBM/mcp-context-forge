@@ -943,7 +943,7 @@ class EmailTeamMember(Base):
         >>> member = EmailTeamMember(
         ...     team_id="team-123",
         ...     user_email="user@example.com",
-        ...     role="member",
+        ...     role="team_member",
         ...     invited_by="admin@example.com"
         ... )
         >>> member.role
@@ -960,7 +960,7 @@ class EmailTeamMember(Base):
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
 
     # Membership details
-    role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="team_member", nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     invited_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -1004,7 +1004,7 @@ class EmailTeamMemberHistory(Base):
         >>> history = EmailTeamMemberHistory(
         ...     team_id="team-123",
         ...     user_email="user@example.com",
-        ...     role="member",
+        ...     role="team_member",
         ...     action="added",
         ...     action_by="admin@example.com",
         ...     action_timestamp=utc_now()
@@ -1023,7 +1023,7 @@ class EmailTeamMemberHistory(Base):
     team_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_team_members.id"), nullable=False)
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
-    role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="team_member", nullable=False)
     action: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g. "added", "removed", "reactivated", "role_changed"
     action_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
     action_timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -1046,7 +1046,7 @@ class EmailTeamMemberHistory(Base):
             ...     team_member_id="tm-123",
             ...     team_id="team-123",
             ...     user_email="user@example.com",
-            ...     role="member",
+            ...     role="team_member",
             ...     action="added",
             ...     action_by="admin@example.com",
             ...     action_timestamp=utc_now()
@@ -1078,7 +1078,7 @@ class EmailTeamInvitation(Base):
         >>> invitation = EmailTeamInvitation(
         ...     team_id="team-123",
         ...     email="newuser@example.com",
-        ...     role="member",
+        ...     role="team_member",
         ...     invited_by="admin@example.com"
         ... )
         >>> invitation.role
@@ -1095,7 +1095,7 @@ class EmailTeamInvitation(Base):
 
     # Invitation details
     email: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(50), default="member", nullable=False)
+    role: Mapped[str] = mapped_column(String(50), default="team_member", nullable=False)
     invited_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
 
     # Timing
@@ -1129,7 +1129,7 @@ class EmailTeamInvitation(Base):
             >>> invitation = EmailTeamInvitation(
             ...     team_id="team-123",
             ...     email="user@example.com",
-            ...     role="member",
+            ...     role="team_member",
             ...     invited_by="admin@example.com",
             ...     expires_at=utc_now() + timedelta(days=7)
             ... )
@@ -1158,7 +1158,7 @@ class EmailTeamInvitation(Base):
             >>> invitation = EmailTeamInvitation(
             ...     team_id="team-123",
             ...     email="user@example.com",
-            ...     role="member",
+            ...     role="team_member",
             ...     invited_by="admin@example.com",
             ...     expires_at=utc_now() + timedelta(days=7),
             ...     is_active=True

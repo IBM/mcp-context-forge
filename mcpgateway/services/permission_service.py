@@ -293,7 +293,7 @@ class PermissionService:
         if allow_team_admin and hasattr(resource, "visibility") and resource.visibility == "team":
             if hasattr(resource, "team_id") and resource.team_id:
                 user_role = await self._get_user_team_role(user_email, resource.team_id)
-                if user_role == "owner":
+                if user_role == "team_owner":
                     return True
 
         return False
@@ -518,10 +518,10 @@ class PermissionService:
         user_role = await self._get_user_team_role(user_email, team_id)
 
         # Define fallback permissions based on team role
-        if user_role == "owner":
+        if user_role == "team_owner":
             # Team owners get full permissions on their teams
             return permission in ["teams.read", "teams.update", "teams.delete", "teams.manage_members", "teams.create"]
-        if user_role in ["member"]:
+        if user_role in ["team_member"]:
             # Team members get basic read permissions
             return permission in ["teams.read"]
 

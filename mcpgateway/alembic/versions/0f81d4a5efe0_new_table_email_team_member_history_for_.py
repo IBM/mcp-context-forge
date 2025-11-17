@@ -84,7 +84,7 @@ def upgrade() -> None:
                 "team_member_id": row[0],
                 "team_id": row[1],
                 "user_email": row[2],
-                "role": row[3] if row[3] else "member",
+                "role": row[3] if row[3] else "team_member",
                 "action": "migrated",
                 "action_by": None,
                 "action_timestamp": datetime.now(timezone.utc),

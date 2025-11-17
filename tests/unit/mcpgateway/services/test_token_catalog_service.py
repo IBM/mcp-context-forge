@@ -75,7 +75,7 @@ def mock_team_member():
     member = MagicMock(spec=EmailTeamMember)
     member.team_id = "team-123"
     member.user_email = "test@example.com"
-    member.role = "owner"
+    member.role = "team_owner"
     member.is_active = True
     return member
 
