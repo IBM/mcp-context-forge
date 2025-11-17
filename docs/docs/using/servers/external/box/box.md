@@ -416,7 +416,7 @@ class BoxMCPGatewayClient:
   "tool": "share_file",
   "arguments": {
     "file_id": "987654321",
-    "access_level": "viewer",
+    "access_level": "team_viewer",
     "emails": ["user@example.com"],
     "message": "Please review this document",
     "can_download": true,
@@ -647,7 +647,7 @@ async def process_documents(client):
             tool="share_file",
             arguments={
                 "file_id": doc['id'],
-                "access_level": "viewer",
+                "access_level": "team_viewer",
                 "emails": ["legal@company.com"],
                 "message": "AI-flagged document for review"
             }
