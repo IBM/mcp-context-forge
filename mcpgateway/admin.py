@@ -2332,6 +2332,15 @@ async def admin_ui(
         """
         if not tid:
             return True
+        # If an item is explicitly public, it should be visible to any team
+        try:
+            vis = getattr(item, "visibility", None)
+            if vis is None and isinstance(item, dict):
+                vis = item.get("visibility")
+            if isinstance(vis, str) and vis.lower() == "public":
+                return True
+        except Exception:
+            pass
         # item may be a pydantic model or dict-like
         # check common fields for team membership
         candidates = []
