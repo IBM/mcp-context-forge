@@ -4,6 +4,7 @@ import base64
 import datetime
 from typing import Any
 from sqlalchemy.orm import Session
+import asyncio
 
 
 from mcpgateway.services.tool_service import ToolService
@@ -103,6 +104,39 @@ async def validation_generate_test_cases(tool_id,tool_service: ToolService, db: 
         populate_testcases_table(tool_id,test_cases,"failed",db)
     return test_cases
 
+# Execute nl test cases with mcp tool service
+from mcpgateway.services.mcp_client_chat_service import MCPChatService
+from mcpgateway.services.mcp_client_chat_service import MCPClientConfig,MCPServerConfig,LLMConfig
+from mcpgateway.toolops.utils.llm_util import get_llm_instance
+
+toolops_llm_provider = os.getenv("LLM_PROVIDER")
+_,toolops_llm_provider_config = get_llm_instance()
+toolops_llm_config = LLMConfig(provider=toolops_llm_provider,config=toolops_llm_provider_config)
+
+async def execute_tool_nl_test_cases(tool_id,tool_nl_test_cases,tool_service: ToolService, db: Session):
+    tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
+    mcp_cf_tool = tool_schema.to_dict(use_alias=True)
+    tool_url = mcp_cf_tool.get('url')
+    mcp_server_url = tool_url.split("/sse")[0]+"/mcp"
+    config = MCPClientConfig(
+            mcp_server=MCPServerConfig(url=mcp_server_url,transport="streamable_http"),
+            llm=toolops_llm_config
+        )
+    service = MCPChatService(config)
+    await service.initialize()
+    logger.info("MCP tool server - "+str(mcp_server_url)+" is ready for tool validation")
+
+    tool_test_case_outputs = []
+    # we execute each nl test case and if there are any errors we add that to test case output
+    for nl_utterance in tool_nl_test_cases:
+        try:
+            tool_output= await service.chat(message=nl_utterance)
+            tool_test_case_outputs.append(tool_output)
+        except Exception as e:
+            logger.info("Error in executing tool validation test cases with MCP server - "+str(e))
+            tool_test_case_outputs.append(str(e))
+            pass
+    return tool_test_case_outputs
 
 # Enrichment service method
 def get_unique_sessionid() -> str:
@@ -150,4 +184,9 @@ if __name__=='__main__':
     db = SessionLocal()
     asyncio.run(validation_generate_test_cases(tool_id,tool_service,db,number_of_test_cases=4,number_of_nl_variations=3,mode="generate"))
     asyncio.run(enrich_tool(tool_id, tool_service, db))
+    tool_nl_test_cases = ['get all actions', 'get salesloft actions','I need salesloft all actions']
+    tool_outputs=asyncio.run(execute_tool_nl_test_cases(tool_id,tool_nl_test_cases,tool_service, db))
+    print("#"*30)
+    print(tool_outputs)
+    print("len - tool_outputs",len(tool_outputs))
 
