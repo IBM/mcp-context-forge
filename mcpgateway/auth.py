@@ -14,7 +14,7 @@ across different parts of the application without creating circular imports.
 from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Generator, Never, Optional
+from typing import Any, Dict, Generator, Never, Optional
 import uuid
 
 # Third-Party
@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
+from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
@@ -51,6 +52,46 @@ def get_db() -> Generator[Session, Never, None]:
         yield db
     finally:
         db.close()
+
+
+async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[str]:
+    """
+    Extract the team ID from an authentication token payload. If the token does
+    not include a team, the user's personal team is retrieved from the database.
+
+    This function behaves as follows:
+
+    1. If `payload["teams"]` exists and is non-empty:
+       Returns the first team ID from that list.
+
+    2. If no teams are present in the payload:
+       Fetches the user's teams (using `payload["sub"]` as the user email) and
+       returns the ID of the personal team, if one exists.
+
+    Args:
+        payload (Dict[str, Any]):
+            The token payload. Expected fields:
+            - "sub" (str): The user's unique identifier (email).
+            - "teams" (List[str], optional): List containing team ID.
+        db (Session):
+            SQLAlchemy database session used to query team data.
+
+    Returns:
+        Optional[str]:
+            The resolved team ID. Returns `None` if no team can be determined
+            either from the payload or from the database.
+    """
+    team_id = payload.get("teams")[0] if payload.get("teams") else None
+    user_email = payload.get("sub")
+    # If no team found in token, get user's personal team
+    if not team_id:
+
+        team_service = TeamManagementService(db)
+        user_teams = await team_service.get_user_teams(user_email, include_personal=True)
+        personal_team = next((team for team in user_teams if team.is_personal), None)
+        team_id = personal_team.id if personal_team else None
+
+    return team_id
 
 
 async def get_current_user(
@@ -337,5 +378,10 @@ async def get_current_user(
             detail="Account disabled",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Check team level token, if applicable. If public token, then will be defaulted to personal team.
+    team_id = await get_team_from_token(payload, db)
+    if request and hasattr(request, "state"):
+        request.state.team_id = team_id
 
     return user

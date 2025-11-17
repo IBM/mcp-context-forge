@@ -133,6 +133,7 @@ async def get_current_user_with_permissions(
         # (auth_method set by plugin in get_current_user, request_id set by HTTP middleware)
         auth_method = getattr(request.state, "auth_method", None)
         request_id = getattr(request.state, "request_id", None)
+        team_id = getattr(request.state, "team_id", None)
 
         # Add request context for permission auditing
         return {
@@ -144,6 +145,7 @@ async def get_current_user_with_permissions(
             "db": db,
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
+            "team_id": team_id,  # Include team_id from token
         }
     except Exception as e:
         logger.error(f"Authentication failed: {type(e).__name__}: {e}")
