@@ -3,7 +3,9 @@
 * Install dependencies using `pip install .'[dev-all,toolops]'`
 * `uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4 --env-file .env` will start Context forge UI and APIs at http://localhost:4444/docs and toolops API endpoints will be shown. 
 
-    `NOTE: please provide all configurations such as LLM provider , api keys etc., in .env file. And you need to set TOOLOPS_ENABLED=true for enabling toolops functionality`
+### Important NOTE: 
+* Please provide all configurations such as LLM provider, api keys etc., in `.env` file. And you need to set `TOOLOPS_ENABLED=true` for enabling toolops functionality`
+* Toolops depends on `agent life cycle toolkit(ALTK)` which is specified in `pyproject.toml` required packages, to build ALTK please set-up github public key SSH if required.
 
 ### Testing toolops requires MCP server running to set up MCP server using OAPI specification
 * `pip install fastmcp` to install library dependency.
