@@ -139,3 +139,4 @@ def execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600,
 
 if __name__=='__main__':
     print(execute_prompt("what is India capital city"))
+    print(chat_llm_instance.invoke("what is India capital city"))
