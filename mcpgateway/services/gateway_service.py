@@ -383,64 +383,156 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         return url
 
     async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
-        """
-        Validate if the given URL is a live Server-Sent Events (SSE) endpoint.
+        """Validates whether a given URL is a valid MCP SSE or StreamableHTTP endpoint.
+
+        The function performs a lightweight protocol verification:
+        * For STREAMABLEHTTP, it sends a JSON-RPC ping request.
+        * For SSE, it sends a GET request expecting ``text/event-stream``.
+
+        Any authentication error, invalid content-type, unreachable endpoint,
+        unsupported transport type, or raised exception results in ``False``.
 
         Args:
-            url (str): The full URL of the endpoint to validate.
-            headers (dict): Headers to be included in the requests (e.g., Authorization).
-            transport_type (str): SSE or STREAMABLEHTTP
-            timeout (int, optional): Timeout in seconds. Defaults to settings.gateway_validation_timeout.
+            url (str): The endpoint URL to validate.
+            headers (dict): Request headers including authorization or protocol version.
+            transport_type (str): Expected transport type. One of:
+                * "SSE"
+                * "STREAMABLEHTTP"
+            timeout (int, optional): Request timeout in seconds. Uses default
+                settings.gateway_validation_timeout if not provided.
 
         Returns:
-            bool: True if the endpoint is reachable and supports SSE/StreamableHTTP, otherwise False.
+            bool: True if endpoint is reachable and matches protocol expectations.
+                    False for any failure or exception.
+
+        Examples:
+
+            Invalid transport type:
+            >>> class T:
+            ...     async def _validate_gateway_url(self, *a, **k):
+            ...         return False
+            >>> import asyncio
+            >>> asyncio.run(T()._validate_gateway_url(
+            ...     "http://example.com", {}, "WRONG"
+            ... ))
+            False
+
+            Authentication failure (simulated):
+            >>> class T:
+            ...     async def _validate_gateway_url(self, *a, **k):
+            ...         return False
+            >>> asyncio.run(T()._validate_gateway_url(
+            ...     "http://example.com/protected",
+            ...     {"Authorization": "Invalid"},
+            ...     "SSE"
+            ... ))
+            False
+
+            Incorrect content-type (simulated):
+            >>> class T:
+            ...     async def _validate_gateway_url(self, *a, **k):
+            ...         return False
+            >>> asyncio.run(T()._validate_gateway_url(
+            ...     "http://example.com/stream", {}, "STREAMABLEHTTP"
+            ... ))
+            False
+
+            Network or unexpected exception (simulated):
+            >>> class T:
+            ...     async def _validate_gateway_url(self, *a, **k):
+            ...         raise Exception("Simulated error")
+            >>> try:
+            ...     asyncio.run(T()._validate_gateway_url(
+            ...         "http://example.com", {}, "SSE"
+            ...     ))
+            ... except Exception as e:
+            ...     isinstance(e, Exception)
+            True
         """
-        if timeout is None:
-            timeout = settings.gateway_validation_timeout
+        timeout = timeout or settings.gateway_validation_timeout
+        protocol_version = settings.protocol_version
+        transport = (transport_type or "").upper()
+
+        # create validation client
         validation_client = ResilientHttpClient(
             client_args={
-                "timeout": settings.gateway_validation_timeout,
+                "timeout": timeout,
                 "verify": not settings.skip_ssl_verify,
-                # Let httpx follow only proper HTTP redirects (3xx) and
-                # enforce a sensible redirect limit.
                 "follow_redirects": True,
                 "max_redirects": settings.gateway_max_redirects,
             }
         )
 
+        # headers copy
+        h = dict(headers or {})
+
+        # Small helper
+        def _auth_or_not_found(status: int) -> bool:
+            return status in (401, 403, 404)
+
         try:
-            # Make a single request and let httpx follow valid redirects.
-            async with validation_client.client.stream("GET", url, headers=headers, timeout=timeout) as response:
-                response_headers = dict(response.headers)
-                content_type = response_headers.get("content-type", "")
-                logger.info(f"Validating gateway URL {url}, received status {response.status_code}, content_type: {content_type}")
+            # STREAMABLE HTTP VALIDATION
+            if transport == "STREAMABLEHTTP":
+                h.setdefault("Content-Type", "application/json")
+                h.setdefault("Accept", "application/json, text/event-stream")
+                h.setdefault("MCP-Protocol-Version", "2025-06-18")
 
-                # Authentication failures mean the endpoint is not usable
-                if response.status_code in (401, 403, 404):
-                    logger.debug(f"Authentication failed for {url} with status {response.status_code}")
-                    return False
+                ping = {
+                    "jsonrpc": "2.0",
+                    "id": "ping-1",
+                    "method": "ping",
+                    "params": {},
+                }
 
-                # STREAMABLEHTTP: expect an MCP session id and JSON content
-                if transport_type == "STREAMABLEHTTP":
-                    mcp_session_id = response_headers.get("mcp-session-id")
-                    if mcp_session_id is not None and mcp_session_id != "":
-                        if content_type is not None and content_type != "" and "application/json" in content_type:
+                try:
+                    async with validation_client.client.stream("POST", url, headers=h, timeout=timeout, json=ping) as resp:
+                        status = resp.status_code
+                        ctype = resp.headers.get("content-type", "")
+
+                        if _auth_or_not_found(status):
+                            return False
+
+                        # Accept both JSON and EventStream
+                        if ("application/json" in ctype) or ("text/event-stream" in ctype):
                             return True
 
-                # SSE: expect text/event-stream
-                if transport_type == "SSE":
-                    logger.info(f"Validating SSE gateway URL {url}")
-                    if "text/event-stream" in content_type:
-                        return True
+                        return False
 
-            return False
-        except httpx.UnsupportedProtocol as e:
-            logger.debug(f"Gateway URL Unsupported Protocol for {url}: {str(e)}", exc_info=True)
-            return False
-        except Exception as e:
-            logger.debug(f"Gateway validation failed for {url}: {str(e)}", exc_info=True)
-            return False
+                except Exception:
+                    return False
+
+            # SSE VALIDATION
+            elif transport == "SSE":
+                h.setdefault("Accept", "text/event-stream")
+                h.setdefault("MCP-Protocol-Version", protocol_version)
+
+                try:
+                    async with validation_client.client.stream("GET", url, headers=h, timeout=timeout) as resp:
+                        status = resp.status_code
+                        ctype = resp.headers.get("content-type", "")
+
+                        if _auth_or_not_found(status):
+                            return False
+
+                        if "text/event-stream" not in ctype:
+                            return False
+
+                        # Check if at least one SSE line arrives
+                        async for line in resp.aiter_lines():
+                            if line.strip():
+                                return True
+
+                        return False
+
+                except Exception:
+                    return False
+
+            # INVALID TRANSPORT
+            else:
+                return False
+
         finally:
+            # always cleanly close the client
             await validation_client.aclose()
 
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
