@@ -92,7 +92,7 @@ class TeamManagementService:
             >>> from mcpgateway.services.team_management_service import TeamManagementService
             >>> from unittest.mock import Mock
             >>> service = TeamManagementService(Mock())
-            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
+            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "admin@example.com")
         """
         history = EmailTeamMemberHistory(team_member_id=team_member_id, team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
         self.db.add(history)
@@ -195,13 +195,13 @@ class TeamManagementService:
 
                 if existing_membership:
                     # Reactivate existing membership as owner
-                    existing_membership.role = "owner"
+                    existing_membership.role = "team_owner"
                     existing_membership.joined_at = utc_now()
                     existing_membership.is_active = True
                     membership = existing_membership
                 else:
                     # Create new membership
-                    membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
+                    membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="team_owner", joined_at=utc_now(), is_active=True)
                     self.db.add(membership)
 
                 logger.info(f"Reactivated existing team with slug {potential_slug}")
@@ -213,7 +213,7 @@ class TeamManagementService:
                 self.db.flush()  # Get the team ID
 
                 # Add the creator as owner
-                membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="owner", joined_at=utc_now(), is_active=True)
+                membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="team_owner", joined_at=utc_now(), is_active=True)
                 self.db.add(membership)
 
             self.db.commit()
@@ -396,7 +396,7 @@ class TeamManagementService:
             logger.error(f"Failed to delete team {team_id}: {e}")
             return False
 
-    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None) -> bool:
+    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "team_member", invited_by: Optional[str] = None) -> bool:
         """Add a member to a team.
 
         Args:
@@ -418,11 +418,11 @@ class TeamManagementService:
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
             >>> # After adding, EmailTeamMemberHistory is updated
-            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
+            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "admin@example.com")
         """
         try:
             # Validate role
-            valid_roles = ["owner", "member"]
+            valid_roles = ["team_owner", "team_member"]
             if role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
@@ -512,8 +512,8 @@ class TeamManagementService:
                 return False
 
             # Prevent removing the last owner
-            if membership.role == "owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+            if membership.role == "team_owner":
+                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)).count()
 
                 if owner_count <= 1:
                     logger.warning(f"Cannot remove the last owner from team {team_id}")
@@ -552,7 +552,7 @@ class TeamManagementService:
         """
         try:
             # Validate role
-            valid_roles = ["owner", "member"]
+            valid_roles = ["team_owner", "team_member"]
             if new_role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
@@ -574,8 +574,8 @@ class TeamManagementService:
                 return False
 
             # Prevent changing the role of the last owner to non-owner
-            if membership.role == "owner" and new_role != "owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)).count()
+            if membership.role == "team_owner" and new_role != "team_owner":
+                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)).count()
 
                 if owner_count <= 1:
                     logger.warning(f"Cannot remove owner role from the last owner of team {team_id}")
@@ -879,7 +879,7 @@ class TeamManagementService:
                 raise ValueError("Join request has expired")
 
             # Add user to team
-            member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
+            member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="team_member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
             self.db.add(member)
             # Update join request status

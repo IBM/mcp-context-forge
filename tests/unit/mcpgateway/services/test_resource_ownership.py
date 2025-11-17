@@ -103,7 +103,7 @@ class TestCheckResourceOwnership:
 
         # Mock _is_user_admin and _get_user_team_role
         permission_service._is_user_admin = AsyncMock(return_value=False)
-        permission_service._get_user_team_role = AsyncMock(return_value="owner")
+        permission_service._get_user_team_role = AsyncMock(return_value="team_owner")
 
         result = await permission_service.check_resource_ownership("admin@example.com", mock_resource)
 
@@ -119,7 +119,7 @@ class TestCheckResourceOwnership:
 
         # Mock _is_user_admin and _get_user_team_role
         permission_service._is_user_admin = AsyncMock(return_value=False)
-        permission_service._get_user_team_role = AsyncMock(return_value="member")
+        permission_service._get_user_team_role = AsyncMock(return_value="team_member")
 
         result = await permission_service.check_resource_ownership("member2@example.com", mock_resource)
 

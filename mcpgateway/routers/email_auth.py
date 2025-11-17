@@ -131,7 +131,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         },
         # Team memberships for authorization
         "teams": [
-            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
+            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "team_member")}
             for team in teams
         ],
         # Namespace access (backwards compatible)

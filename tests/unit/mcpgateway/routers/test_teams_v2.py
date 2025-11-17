@@ -105,7 +105,7 @@ class TestTeamsRouterV2:
         member.id = str(uuid4())
         member.team_id = str(uuid4())
         member.user_email = "member@example.com"
-        member.role = "member"
+        member.role = "team_member"
         member.joined_at = datetime.now(timezone.utc)
         member.invited_by = "owner@example.com"
         member.is_active = True
@@ -163,7 +163,7 @@ class TestTeamsRouterV2:
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_team_by_id = AsyncMock(return_value=mock_team)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="member")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_member")
             MockService.return_value = mock_service
 
             result = await teams.get_team(team_id, current_user=mock_current_user, db=mock_db)
@@ -197,7 +197,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_owner")
             mock_service.update_team = AsyncMock(return_value=mock_team)
             MockService.return_value = mock_service
 
@@ -213,7 +213,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_owner")
             mock_service.delete_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 
@@ -234,7 +234,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="member")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_member")
             mock_service.get_team_members = AsyncMock(return_value=members)
             MockService.return_value = mock_service
 
@@ -249,19 +249,19 @@ class TestTeamsRouterV2:
         """Test updating a team member's role successfully."""
         team_id = str(uuid4())
         user_email = "member@example.com"
-        request = TeamMemberUpdateRequest(role="owner")
+        request = TeamMemberUpdateRequest(role="team_owner")
 
-        mock_team_member.role = "owner"  # Updated role
+        mock_team_member.role = "team_owner"  # Updated role
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_owner")
             mock_service.update_member_role = AsyncMock(return_value=mock_team_member)
             MockService.return_value = mock_service
 
             result = await teams.update_team_member(team_id, user_email, request, current_user=mock_current_user, db=mock_db)
 
-            assert result.role == "owner"
+            assert result.role == "team_owner"
             mock_service.update_member_role.assert_called_once_with(team_id, user_email, request.role)
 
     @pytest.mark.asyncio
@@ -272,7 +272,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
-            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.get_user_role_in_team = AsyncMock(return_value="team_owner")
             mock_service.remove_member_from_team = AsyncMock(return_value=True)
             MockService.return_value = mock_service
 

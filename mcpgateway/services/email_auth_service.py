@@ -793,7 +793,7 @@ class EmailAuthService:
                 for team in teams_owned:
                     # Find other team owners who can take ownership
                     potential_owners_stmt = (
-                        select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "owner").order_by(EmailTeamMember.role.desc())
+                        select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "team_owner").order_by(EmailTeamMember.role.desc())
                     )
 
                     potential_owners = self.db.execute(potential_owners_stmt).scalars().all()

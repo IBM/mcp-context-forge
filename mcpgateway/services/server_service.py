@@ -970,7 +970,7 @@ class ServerService:
                     # Verify user is a member of the team
                     membership = (
                         db.query(DbEmailTeamMember)
-                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "owner")
+                        .filter(DbEmailTeamMember.team_id == team_id, DbEmailTeamMember.user_email == user_email, DbEmailTeamMember.is_active, DbEmailTeamMember.role == "team_owner")
                         .first()
                     )
                     if not membership:

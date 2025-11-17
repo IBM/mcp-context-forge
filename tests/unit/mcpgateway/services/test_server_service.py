@@ -156,9 +156,9 @@ class TestServerService:
         test_db.query = Mock(return_value=mock_query)
         # Patch db.query(DbEmailTeamMember).filter().first() to return a member with role != 'owner'
         mock_member = MagicMock()
-        mock_member.role = "member"
+        mock_member.role = "team_member"
         member_query = MagicMock()
-        member_query.filter.return_value.first.return_value = None  # The filter for role=="owner" returns None
+        member_query.filter.return_value.first.return_value = None  # The filter for role=="team_owner" returns None
 
         def query_side_effect(model):
             if model.__name__ == "EmailTeam":
@@ -194,7 +194,7 @@ class TestServerService:
         test_db.query = Mock(return_value=mock_query)
         # Patch db.query(DbEmailTeamMember).filter().first() to return a member with role == 'owner'
         mock_member = MagicMock()
-        mock_member.role = "owner"
+        mock_member.role = "team_owner"
         member_query = MagicMock()
         member_query.filter.return_value.first.return_value = mock_member
 

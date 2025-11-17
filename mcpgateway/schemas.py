@@ -5327,7 +5327,7 @@ class TeamMemberResponse(BaseModel):
         ...     id="member-123",
         ...     team_id="team-123",
         ...     user_email="user@example.com",
-        ...     role="member",
+        ...     role="team_member",
         ...     joined_at=datetime.now(timezone.utc),
         ...     is_active=True
         ... )
@@ -5354,14 +5354,14 @@ class TeamInviteRequest(BaseModel):
     Examples:
         >>> invite = TeamInviteRequest(
         ...     email="newuser@example.com",
-        ...     role="member"
+        ...     role="team_member"
         ... )
         >>> invite.email
         'newuser@example.com'
     """
 
     email: EmailStr = Field(..., description="Email address of user to invite")
-    role: Literal["owner", "member"] = Field("member", description="Role to assign to the user")
+    role: Literal["team_owner", "team_member"] = Field("team_member", description="Role to assign to the user")
 
 
 class TeamInvitationResponse(BaseModel):
@@ -5386,7 +5386,7 @@ class TeamInvitationResponse(BaseModel):
         ...     team_id="team-123",
         ...     team_name="Engineering Team",
         ...     email="newuser@example.com",
-        ...     role="member",
+        ...     role="team_member",
         ...     invited_by="admin@example.com",
         ...     invited_at=datetime.now(timezone.utc),
         ...     expires_at=datetime.now(timezone.utc),
@@ -5418,12 +5418,12 @@ class TeamMemberUpdateRequest(BaseModel):
         role: New role for the team member
 
     Examples:
-        >>> update = TeamMemberUpdateRequest(role="member")
+        >>> update = TeamMemberUpdateRequest(role="team_member")
         >>> update.role
         'member'
     """
 
-    role: Literal["owner", "member"] = Field(..., description="New role for the team member")
+    role: Literal["team_owner", "team_member"] = Field(..., description="New role for the team member")
 
 
 class TeamListResponse(BaseModel):

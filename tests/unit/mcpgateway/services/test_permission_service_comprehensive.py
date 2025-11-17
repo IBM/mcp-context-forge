@@ -422,13 +422,13 @@ class TestTeamMembership:
     async def test_get_user_team_role_owner(self, permission_service):
         """Test _get_user_team_role returns owner role."""
         mock_member = MagicMock(spec=EmailTeamMember)
-        mock_member.role = "owner"
+        mock_member.role = "team_owner"
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_member
         permission_service.db.execute.return_value = mock_result
 
         result = await permission_service._get_user_team_role("user@example.com", "team-123")
-        assert result == "owner"
+        assert result == "team_owner"
 
     @pytest.mark.asyncio
     async def test_get_user_team_role_none(self, permission_service):

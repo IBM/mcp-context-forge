@@ -2370,7 +2370,7 @@ async def admin_ui(
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
                             "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
-                            "role": user_role or "member",
+                            "role": user_role or "team_member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -3218,7 +3218,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     # Add user's teams (owned and member)
     for team in user_teams:
         user_role = await team_service.get_user_role_in_team(current_user.email, team.id)
-        relationship = "owner" if user_role == "owner" else "member"
+        relationship = "team_owner" if user_role == "team_owner" else "team_member"
         all_teams.append({"team": team, "relationship": relationship, "member_count": team.get_member_count()})
 
     # Add public teams user can join - check for pending requests
@@ -3241,11 +3241,11 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         # Relationship badge - special handling for personal teams
         if team.is_personal:
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">PERSONAL</span>'
-        elif relationship == "owner":
+        elif relationship == "team_owner":
             badge_html = (
                 '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">OWNER</span>'
             )
-        elif relationship == "member":
+        elif relationship == "team_member":
             badge_html = (
                 '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">MEMBER</span>'
             )
@@ -3260,9 +3260,9 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         # Subtitle based on relationship - special handling for personal teams
         if team.is_personal:
             subtitle = "Your personal team • Private workspace"
-        elif relationship == "owner":
+        elif relationship == "team_owner":
             subtitle = "You own this team"
-        elif relationship == "member":
+        elif relationship == "team_member":
             subtitle = f"You are a member • Owner: {team.created_by}"
         else:  # join
             subtitle = f"Public team • Owner: {team.created_by}"
@@ -3281,7 +3281,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </span>
             </div>
             """
-        elif relationship == "owner":
+        elif relationship == "team_owner":
             delete_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="deleteTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete Team</button>'
             join_requests_button = (
                 f'<button data-team-id="{team.id}" onclick="viewJoinRequestsSafe(this)" class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">Join Requests</button>'
@@ -3300,7 +3300,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 {delete_button}
             </div>
             """
-        elif relationship == "member":
+        elif relationship == "team_member":
             leave_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="leaveTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">Leave Team</button>'
             actions_html = f"""
             <div class="flex flex-wrap gap-2 mt-3">
@@ -3596,11 +3596,11 @@ async def admin_view_team_members(
         members = await team_service.get_team_members(team_id)
 
         # Count owners to determine if this is the last owner
-        owner_count = sum(1 for _, membership in members if membership.role == "owner")
+        owner_count = sum(1 for _, membership in members if membership.role == "team_owner")
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        is_team_owner = current_user_role == "owner"
+        is_team_owner = current_user_role == "team_owner"
 
         # Build member table with inline role editing for team owners
         members_html = """
@@ -3612,8 +3612,8 @@ async def admin_view_team_members(
         """
 
         for member_user, membership in members:
-            role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
-            is_last_owner = membership.role == "owner" and owner_count == 1
+            role_display = membership.role.replace("_", " ").title() if membership.role else "team_member"
+            is_last_owner = membership.role == "team_owner" and owner_count == 1
             is_current_user = member_user.email == user_email
 
             # Role selection - only show for team owners and not for last owner
@@ -3627,13 +3627,13 @@ async def admin_view_team_members(
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
-                        <option value="member" {"selected" if membership.role == "member" else ""}>Member</option>
-                        <option value="owner" {"selected" if membership.role == "owner" else ""}>Owner</option>
+                        <option value="team_member" {"selected" if membership.role == "team_member" else ""}>Member</option>
+                        <option value="team_owner" {"selected" if membership.role == "team_owner" else ""}>Owner</option>
                     </select>
                 """
             else:
                 # Show static role badge
-                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
             # Remove button - hide for current user and last owner
@@ -3757,8 +3757,8 @@ async def admin_view_team_members(
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role</label>
                                     <select name="role" required
                                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                                        <option value="member">Member</option>
-                                        <option value="owner">Owner</option>
+                                        <option value="team_member">Member</option>
+                                        <option value="team_owner">Owner</option>
                                     </select>
                                 </div>
                             </div>
@@ -4046,14 +4046,14 @@ async def admin_add_team_member(
         user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
             user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-            if user_role != "owner":
+            if user_role != "team_owner":
                 return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
         email_val = form.get("user_email")
-        role_val = form.get("role", "member")
+        role_val = form.get("role", "team_member")
         user_email = email_val if isinstance(email_val, str) else None
-        role = role_val if isinstance(role_val, str) else "member"
+        role = role_val if isinstance(role_val, str) else "team_member"
 
         if not user_email:
             return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
@@ -4127,14 +4127,14 @@ async def admin_update_team_member_role(
         # Only team owners can modify member roles
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
 
         form = await request.form()
         ue_val = form.get("user_email")
-        nr_val = form.get("role", "member")
+        nr_val = form.get("role", "team_member")
         user_email = ue_val if isinstance(ue_val, str) else None
-        new_role = nr_val if isinstance(nr_val, str) else "member"
+        new_role = nr_val if isinstance(nr_val, str) else "team_member"
 
         if not user_email:
             return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
@@ -4212,7 +4212,7 @@ async def admin_remove_team_member(
         # Only team owners can remove members
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
@@ -4303,9 +4303,9 @@ async def admin_leave_team(
             return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
 
         # Check if user is the last owner
-        if user_role == "owner":
+        if user_role == "team_owner":
             members = await team_service.get_team_members(team_id)
-            owner_count = sum(1 for _, membership in members if membership.role == "owner")
+            owner_count = sum(1 for _, membership in members if membership.role == "team_owner")
             if owner_count <= 1:
                 return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
 
@@ -4506,7 +4506,7 @@ async def admin_list_join_requests(
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
 
         # Get join requests
@@ -4588,7 +4588,7 @@ async def admin_approve_join_request(
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
@@ -4647,7 +4647,7 @@ async def admin_reject_join_request(
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request

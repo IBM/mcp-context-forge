@@ -94,7 +94,7 @@ class TeamMemberGenerator(BaseGenerator):
                 id=member_id,
                 team_id=team_id,
                 user_email=team_owner,
-                role="owner",
+                role="team_owner",
                 joined_at=timestamps[member_idx] if member_idx < len(timestamps) else end_date,
                 is_active=True,
             )
@@ -125,7 +125,7 @@ class TeamMemberGenerator(BaseGenerator):
                     id=member_id,
                     team_id=team_id,
                     user_email=random_user_email,
-                    role=random.choice(["member", "admin"]),
+                    role=random.choice(["team_member", "admin"]),
                     joined_at=timestamps[member_idx],
                     is_active=True,
                 )

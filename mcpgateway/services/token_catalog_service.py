@@ -475,7 +475,7 @@ class TokenCatalogService:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         membership = self.db.execute(
-            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)))
+            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)))
         ).scalar_one_or_none()
 
         if not membership:
