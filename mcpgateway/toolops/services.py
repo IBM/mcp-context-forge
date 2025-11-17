@@ -21,9 +21,9 @@ provider = os.getenv("OPENAI_BASE_URL","")
 LLM_PLATFORM = "OpenAIProvider - "+provider
 
 # importing toolops modules from ALTK
-from altk.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
-from altk.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
-from altk.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
+from altk.post_request.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
+from altk.post_request.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
+from altk.post_request.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
 
 
 '''
@@ -49,10 +49,10 @@ def custom_mcp_cf_execute_prompt(prompt, client = None, gen_mode = None, paramet
 
 
 # overriding methods (replace ALTK llm inferencing methods with MCP CF methods)
-from altk.test_case_generation_toolkit.src.toolops.utils import llm_util
-from altk.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
-from altk.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
-from altk.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
+from altk.post_request.test_case_generation_toolkit.src.toolops.utils import llm_util
+from altk.post_request.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
+from altk.post_request.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
+from altk.post_request.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
 llm_util.execute_prompt = custom_mcp_cf_execute_prompt
 prompt_execution.execute_prompt = custom_mcp_cf_execute_prompt
 nlg_util.execute_prompt = custom_mcp_cf_execute_prompt
@@ -182,8 +182,9 @@ if __name__=='__main__':
     tool_id = "ccf65855a34e403f97c8d801bee1906f"
     tool_service = ToolService()
     db = SessionLocal()
-    asyncio.run(validation_generate_test_cases(tool_id,tool_service,db,number_of_test_cases=4,number_of_nl_variations=3,mode="generate"))
-    asyncio.run(enrich_tool(tool_id, tool_service, db))
+    asyncio.run(validation_generate_test_cases(tool_id,tool_service,db,number_of_test_cases=2,number_of_nl_variations=2,mode="generate"))
+    enrich_output = asyncio.run(enrich_tool(tool_id, tool_service, db))
+    print(enrich_output)
     tool_nl_test_cases = ['get all actions', 'get salesloft actions','I need salesloft all actions']
     tool_outputs=asyncio.run(execute_tool_nl_test_cases(tool_id,tool_nl_test_cases,tool_service, db))
     print("#"*30)

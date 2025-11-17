@@ -190,6 +190,7 @@ toolops = [
     "langchain-aws>=1.0.0",
     "aiofiles>=25.1.0",
     "tomli>=2.3.0",
+    "agent-lifecycle-toolkit @ git+ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git@main",
     ]
 
 # Fuzzing and property-based testing
@@ -250,6 +251,7 @@ all = [
 dev-all = [
     "mcp-contextforge-gateway[redis,dev]>=0.7.0",
 ]
+
 
 # --------------------------------------------------------------------
 #  Authors and URLs
