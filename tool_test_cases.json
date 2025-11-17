@@ -3,8 +3,8 @@
     "id": "TC_1",
     "mandatory_params": [],
     "nl_utterance": [
-      "This tool fetches a list of actions from Salesloft, enabling you to filter by various criteria such as action type, due date, user, person, cadence, and multitouch group, and customize the output with sorting and pagination options.",
-      "The tool returns a list of actions that match the specified filters, along with metadata such as total count and pagination information."
+      "Can you get all actions from Salesloft with no filters applied?",
+      "I need to retrieve a list of actions from Salesloft without any specific criteria."
     ],
     "input_parameters": {}
   }
