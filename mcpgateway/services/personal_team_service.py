@@ -121,12 +121,12 @@ class PersonalTeamService:
             self.db.flush()  # Get the team ID
 
             # Add the user as the owner of their personal team
-            membership = EmailTeamMember(team_id=team.id, user_email=user.email, role="owner", joined_at=utc_now(), is_active=True)
+            membership = EmailTeamMember(team_id=team.id, user_email=user.email, role="team_owner", joined_at=utc_now(), is_active=True)
 
             self.db.add(membership)
             self.db.flush()  # Get the membership ID
             # Insert history record
-            history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="owner", action="added", action_by=user.email, action_timestamp=utc_now())
+            history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="team_owner", action="added", action_by=user.email, action_timestamp=utc_now())
             self.db.add(history)
             self.db.commit()
 

@@ -245,7 +245,7 @@ async def update_team(team_id: str, request: TeamUpdateRequest, current_user: Em
 
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user.email, team_id)
-        if role != "owner":
+        if role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         team = await service.update_team(team_id=team_id, name=request.name, description=request.description, visibility=request.visibility, max_members=request.max_members)
@@ -299,7 +299,7 @@ async def delete_team(team_id: str, current_user: EmailUserResponse = Depends(ge
 
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user.email, team_id)
-        if role != "owner":
+        if role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can delete teams")
 
         success = await service.delete_team(team_id, current_user.email)
@@ -383,7 +383,7 @@ async def update_team_member(
 
         # Check if user is team owner
         role = await service.get_user_role_in_team(current_user.email, team_id)
-        if role != "owner":
+        if role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         member = await service.update_member_role(team_id, user_email, request.role)
@@ -424,7 +424,7 @@ async def remove_team_member(team_id: str, user_email: str, current_user: EmailU
 
         # Users can remove themselves, or owners can remove others
         current_user_role = await service.get_user_role_in_team(current_user.email, team_id)
-        if current_user.email != user_email and current_user_role != "owner":
+        if current_user.email != user_email and current_user_role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         success = await service.remove_member_from_team(team_id, user_email)
@@ -467,7 +467,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
 
         # Check if user is team owner
         role = await team_service.get_user_role_in_team(current_user.email, team_id)
-        if role != "owner":
+        if role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         invitation = await invitation_service.create_invitation(team_id=team_id, email=str(request.email), role=request.role, invited_by=current_user.email)
@@ -523,7 +523,7 @@ async def list_team_invitations(team_id: str, current_user: EmailUserResponse = 
 
         # Check if user is team owner
         role = await team_service.get_user_role_in_team(current_user.email, team_id)
-        if role != "owner":
+        if role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         invitations = await invitation_service.get_team_invitations(team_id)
@@ -623,7 +623,7 @@ async def cancel_team_invitation(invitation_id: str, current_user: EmailUserResp
 
         # Check if user is team owner or the inviter
         role = await team_service.get_user_role_in_team(current_user.email, invitation.team_id)
-        if role != "owner" and current_user.email != invitation.invited_by:
+        if role != "team_owner" and current_user.email != invitation.invited_by:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         success = await invitation_service.revoke_invitation(invitation_id, current_user.email)
@@ -830,7 +830,7 @@ async def list_team_join_requests(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can view join requests")
 
         # Get join requests
@@ -889,7 +889,7 @@ async def approve_join_request(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can approve join requests")
 
         # Approve join request
@@ -946,7 +946,7 @@ async def reject_join_request(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
 
         user_role = await team_service.get_user_role_in_team(current_user.email, team_id)
-        if user_role != "owner":
+        if user_role != "team_owner":
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only team owners can reject join requests")
 
         # Reject join request

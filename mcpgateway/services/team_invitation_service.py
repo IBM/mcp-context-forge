@@ -134,7 +134,7 @@ class TeamInvitationService:
         """
         try:
             # Validate role
-            valid_roles = ["owner", "member"]
+            valid_roles = ["team_owner", "team_member"]
             if role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
@@ -164,7 +164,7 @@ class TeamInvitationService:
                 raise ValueError("Only team members can send invitations")
 
             # Only owners can send invitations
-            if inviter_membership.role != "owner":
+            if inviter_membership.role != "team_owner":
                 logger.warning(f"User {invited_by} does not have permission to invite to team {team_id}")
                 raise ValueError("Only team owners can send invitations")
 
@@ -386,7 +386,7 @@ class TeamInvitationService:
                 self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == revoked_by, EmailTeamMember.is_active.is_(True)).first()
             )
 
-            if not revoker_membership or revoker_membership.role != "owner":
+            if not revoker_membership or revoker_membership.role != "team_owner":
                 logger.warning(f"User {revoked_by} does not have permission to revoke invitation {invitation_id}")
                 return False
 

@@ -65,7 +65,7 @@ class TestTeamInvitationService:
         membership = MagicMock(spec=EmailTeamMember)
         membership.team_id = "team123"
         membership.user_email = "admin@example.com"
-        membership.role = "owner"
+        membership.role = "team_owner"
         membership.is_active = True
         return membership
 
@@ -76,7 +76,7 @@ class TestTeamInvitationService:
         invitation.id = "invite123"
         invitation.team_id = "team123"
         invitation.email = "user@example.com"
-        invitation.role = "member"
+        invitation.role = "team_member"
         invitation.invited_by = "admin@example.com"
         invitation.token = "secure_token_123"
         invitation.is_active = True
@@ -145,10 +145,10 @@ class TestTeamInvitationService:
         mock_inviter.email = "admin@example.com"
 
         mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
+        mock_membership.role = "team_owner"
 
         # Simple query side effect that returns appropriate values
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
+        call_counts = {"team": 0, "user": 0, "team_member": 0, "invitation": 0}
 
         def simple_query_side_effect(model):
             mock_query = MagicMock()
@@ -159,11 +159,11 @@ class TestTeamInvitationService:
                 call_counts["user"] += 1
                 mock_query.filter.return_value.first.return_value = mock_inviter
             elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
+                call_counts["team_member"] += 1
+                if call_counts["team_member"] == 1:
                     # Inviter membership check
                     mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
+                elif call_counts["team_member"] == 2:
                     # Check if invitee is already a member
                     mock_query.filter.return_value.first.return_value = None
                 else:
@@ -190,7 +190,7 @@ class TestTeamInvitationService:
             mock_invitation_instance = MagicMock()
             MockInvitation.return_value = mock_invitation_instance
 
-            result = await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            result = await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
             assert result == mock_invitation_instance
             mock_db.add.assert_called_once_with(mock_invitation_instance)
@@ -209,7 +209,7 @@ class TestTeamInvitationService:
         mock_query.filter.return_value.first.return_value = None
         mock_db.query.return_value = mock_query
 
-        result = await service.create_invitation(team_id="nonexistent", email="user@example.com", role="member", invited_by="admin@example.com")
+        result = await service.create_invitation(team_id="nonexistent", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
         assert result is None
 
@@ -223,7 +223,7 @@ class TestTeamInvitationService:
         mock_db.query.return_value = mock_query
 
         with pytest.raises(ValueError, match="Cannot send invitations to personal teams"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_create_invitation_inviter_not_found(self, service, mock_team, mock_db):
@@ -239,7 +239,7 @@ class TestTeamInvitationService:
 
         mock_db.query.side_effect = query_side_effect
 
-        result = await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="nonexistent@example.com")
+        result = await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="nonexistent@example.com")
 
         assert result is None
 
@@ -260,12 +260,12 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with pytest.raises(ValueError, match="Only team members can send invitations"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_create_invitation_inviter_insufficient_permissions(self, service, mock_team, mock_inviter, mock_membership, mock_db):
         """Test creating invitation when inviter lacks permissions."""
-        mock_membership.role = "member"  # Not owner
+        mock_membership.role = "team_member"  # Not owner
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -280,7 +280,7 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with pytest.raises(ValueError, match="Only team owners can send invitations"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_create_invitation_user_already_member(self, service, mock_team, mock_inviter, mock_membership, mock_db):
@@ -308,7 +308,7 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with pytest.raises(ValueError, match="already a member of this team"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_create_invitation_active_invitation_exists(self, service, mock_team, mock_inviter, mock_membership, mock_invitation, mock_db):
@@ -336,7 +336,7 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with pytest.raises(ValueError, match="An active invitation already exists"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_create_invitation_max_members_exceeded(self, service, mock_team, mock_inviter, mock_membership, mock_db):
@@ -374,7 +374,7 @@ class TestTeamInvitationService:
         mock_db.query.side_effect = query_side_effect
 
         with pytest.raises(ValueError, match="maximum member limit"):
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
     # =========================================================================
     # Invitation Retrieval Tests
@@ -424,14 +424,14 @@ class TestTeamInvitationService:
         mock_invitation = MagicMock(spec=EmailTeamInvitation)
         mock_invitation.team_id = "team123"
         mock_invitation.email = "user@example.com"
-        mock_invitation.role = "member"
+        mock_invitation.role = "team_member"
         mock_invitation.is_valid.return_value = True
         mock_invitation.is_active = True
 
         mock_team = MagicMock(spec=EmailTeam)
         mock_team.max_members = 100
 
-        call_counts = {"team": 0, "member": 0}
+        call_counts = {"team": 0, "team_member": 0}
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -439,8 +439,8 @@ class TestTeamInvitationService:
                 call_counts["team"] += 1
                 mock_query.filter.return_value.first.return_value = mock_team
             elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
+                call_counts["team_member"] += 1
+                if call_counts["team_member"] == 1:
                     # Check if user is already a member
                     mock_query.filter.return_value.first.return_value = None
                 else:
@@ -637,7 +637,7 @@ class TestTeamInvitationService:
     async def test_revoke_invitation_insufficient_permissions(self, service, mock_db, mock_invitation):
         """Test revoking invitation without permissions."""
         mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "member"  # Not admin or owner
+        mock_membership.role = "team_member"  # Not admin or owner
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -763,7 +763,7 @@ class TestTeamInvitationService:
 
         with patch("mcpgateway.services.team_invitation_service.EmailTeamInvitation"):
             try:
-                await service.create_invitation("team", "email", "member", "inviter")
+                await service.create_invitation("team", "email", "team_member", "inviter")
             except Exception:
                 pass
 
@@ -784,13 +784,13 @@ class TestTeamInvitationService:
 
         mock_inviter = MagicMock(spec=EmailUser)
         mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
+        mock_membership.role = "team_owner"
 
         mock_invitation = MagicMock(spec=EmailTeamInvitation)
         mock_invitation.is_expired.return_value = True
         mock_invitation.is_active = True
 
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
+        call_counts = {"team": 0, "user": 0, "team_member": 0, "invitation": 0}
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -801,10 +801,10 @@ class TestTeamInvitationService:
                 call_counts["user"] += 1
                 mock_query.filter.return_value.first.return_value = mock_inviter
             elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
+                call_counts["team_member"] += 1
+                if call_counts["team_member"] == 1:
                     mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
+                elif call_counts["team_member"] == 2:
                     mock_query.filter.return_value.first.return_value = None
                 else:
                     mock_query.filter.return_value.count.return_value = 5
@@ -826,7 +826,7 @@ class TestTeamInvitationService:
             mock_new_invitation = MagicMock()
             MockInvitation.return_value = mock_new_invitation
 
-            result = await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            result = await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
             # Should deactivate existing invitation and create new one
             assert mock_invitation.is_active is False
@@ -834,7 +834,7 @@ class TestTeamInvitationService:
 
     def test_role_validation_values(self, service):
         """Test that role validation accepts all valid values."""
-        valid_roles = ["owner", "member"]
+        valid_roles = ["team_owner", "team_member"]
 
         for role in valid_roles:
             # Should not raise an exception during validation
@@ -852,9 +852,9 @@ class TestTeamInvitationService:
 
         mock_inviter = MagicMock(spec=EmailUser)
         mock_membership = MagicMock(spec=EmailTeamMember)
-        mock_membership.role = "owner"
+        mock_membership.role = "team_owner"
 
-        call_counts = {"team": 0, "user": 0, "member": 0, "invitation": 0}
+        call_counts = {"team": 0, "user": 0, "team_member": 0, "invitation": 0}
 
         def query_side_effect(model):
             mock_query = MagicMock()
@@ -865,10 +865,10 @@ class TestTeamInvitationService:
                 call_counts["user"] += 1
                 mock_query.filter.return_value.first.return_value = mock_inviter
             elif model == EmailTeamMember:
-                call_counts["member"] += 1
-                if call_counts["member"] == 1:
+                call_counts["team_member"] += 1
+                if call_counts["team_member"] == 1:
                     mock_query.filter.return_value.first.return_value = mock_membership
-                elif call_counts["member"] == 2:
+                elif call_counts["team_member"] == 2:
                     mock_query.filter.return_value.first.return_value = None
                 else:
                     mock_query.filter.return_value.count.return_value = 5
@@ -892,7 +892,7 @@ class TestTeamInvitationService:
             mock_invitation_instance = MagicMock()
             MockInvitation.return_value = mock_invitation_instance
 
-            await service.create_invitation(team_id="team123", email="user@example.com", role="member", invited_by="admin@example.com")
+            await service.create_invitation(team_id="team123", email="user@example.com", role="team_member", invited_by="admin@example.com")
 
             # Should use settings default for expiry
             MockInvitation.assert_called_once()

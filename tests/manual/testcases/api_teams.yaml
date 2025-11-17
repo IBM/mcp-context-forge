@@ -124,7 +124,7 @@ tests:
     method: "POST"
     description: "Add team member"
     curl_command: 'curl -X POST http://localhost:4444/teams/{TEAM_ID}/members -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
-    request_body: '{"user_email":"newmember@example.com","role":"member"}'
+    request_body: '{"user_email":"newmember@example.com","role":"team_member"}'
     expected_status: 201
     expected_response: "Member added to team successfully"
     test_steps:
@@ -156,7 +156,7 @@ tests:
     method: "POST"
     description: "Create team invitation"
     curl_command: 'curl -X POST http://localhost:4444/teams/{TEAM_ID}/invitations -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json"'
-    request_body: '{"email":"invitee@example.com","role":"member","message":"Join our testing team!"}'
+    request_body: '{"email":"invitee@example.com","role":"team_member","message":"Join our testing team!"}'
     expected_status: 201
     expected_response: "Invitation created and sent"
     test_steps:
