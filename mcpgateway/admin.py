@@ -5457,9 +5457,9 @@ async def admin_resources_partial_html(
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
             query = query.where(DbResource.gateway_id.in_(gateway_ids))
-            LOGGER.info(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
+            LOGGER.debug(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
     else:
-        LOGGER.info("[RESOURCES FILTER DEBUG] No gateway_id filter provided, showing all resources")
+        LOGGER.debug("[RESOURCES FILTER DEBUG] No gateway_id filter provided, showing all resources")
 
     # Apply active/inactive filter
     if not include_inactive:
@@ -5501,8 +5501,7 @@ async def admin_resources_partial_html(
             continue
 
     data = jsonable_encoder(resources_data)
-    LOGGER.info(f"[RESOURCES FILTER DEBUG] Converted {len(data)} resources to JSON")
-
+   
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
