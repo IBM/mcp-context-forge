@@ -1613,7 +1613,7 @@ async def create_server(
         token_team_id = getattr(request.state, "team_id", None)
 
         # Check for team ID mismatch
-        if gateway_team_id is not None and token_team_id is not None and team_id != token_team_id:
+        if team_id is not None and token_team_id is not None and team_id != token_team_id:
             return JSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -2080,15 +2080,17 @@ async def create_a2a_agent(
         # Get user email and handle team assignment
         user_email = get_user_email(user)
 
-        # If no team specified, get user's personal team
-        if not team_id:
-            # First-Party
-            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+        token_team_id = getattr(request.state, "team_id", None)
 
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email, include_personal=True)
-            personal_team = next((team for team in user_teams if team.is_personal), None)
-            team_id = personal_team.id if personal_team else None
+        # Check for team ID mismatch
+        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+            return JSONResponse(
+                content={"message": "Access issue: This API token does not have the required permissions for this team."},
+                status_code=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Determine final team ID
+        team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
