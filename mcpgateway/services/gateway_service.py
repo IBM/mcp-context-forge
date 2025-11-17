@@ -1246,9 +1246,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             access_conditions = []
             # Filter by specific team
+
+            # Team-owned gateways (team-scoped gateways)
             access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
 
             access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
+
+            # Also include global public gateways (no team_id) so public gateways are visible regardless of selected team
+            access_conditions.append(DbGateway.visibility == "public")
 
             query = query.where(or_(*access_conditions))
         else:
