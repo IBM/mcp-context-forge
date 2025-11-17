@@ -24,8 +24,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now, Role
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_service import RoleService
+from mcpgateway.config import settings
 
 # Initialize logging
 logging_service = LoggingService()
@@ -125,6 +127,20 @@ class PersonalTeamService:
 
             self.db.add(membership)
             self.db.flush()  # Get the membership ID
+
+            role_service = RoleService(self.db)
+            role_for_personal_team: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_admin, settings.default_user_scope)
+
+            if role_for_personal_team:
+                await role_service.assign_role_to_user(
+                    user_email=user.email,
+                    role_id=role_for_personal_team.id,
+                    scope="team",
+                    scope_id=team.id,
+                    granted_by=user.email,
+                    # expires_at=datetime.now(timezone.utc) + timedelta(days=settings.default_user_role_expiry_days)
+                )
+
             # Insert history record
             history = EmailTeamMemberHistory(team_member_id=membership.id, team_id=team.id, user_email=user.email, role="team_owner", action="added", action_by=user.email, action_timestamp=utc_now())
             self.db.add(history)
