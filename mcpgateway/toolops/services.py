@@ -182,12 +182,18 @@ if __name__=='__main__':
     tool_id = "ccf65855a34e403f97c8d801bee1906f"
     tool_service = ToolService()
     db = SessionLocal()
-    asyncio.run(validation_generate_test_cases(tool_id,tool_service,db,number_of_test_cases=2,number_of_nl_variations=2,mode="generate"))
+    tool_test_cases=asyncio.run(validation_generate_test_cases(tool_id,tool_service,db,number_of_test_cases=2,number_of_nl_variations=2,mode="generate"))
+    print("#"*30)
+    print("tool_test_cases")
+    print(tool_test_cases)
     enrich_output = asyncio.run(enrich_tool(tool_id, tool_service, db))
+    print("#"*30)
+    print("enrich_output")
     print(enrich_output)
     tool_nl_test_cases = ['get all actions', 'get salesloft actions','I need salesloft all actions']
     tool_outputs=asyncio.run(execute_tool_nl_test_cases(tool_id,tool_nl_test_cases,tool_service, db))
     print("#"*30)
-    print(tool_outputs)
     print("len - tool_outputs",len(tool_outputs))
+    print(tool_outputs)
+   
 
