@@ -1416,7 +1416,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # FIX for Issue #1025: Determine if URL actually changed before we update it
                 # We need this early because we update gateway.url below, and need to know
                 # if it actually changed to decide whether to re-fetch tools
-                url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
+                # tools/resoures/prompts are need to be re-fetched not only if URL changed , in case any update like authentication and visibility changed
+                # url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
 
                 # Update fields if provided
                 if gateway_update.name is not None:
