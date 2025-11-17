@@ -224,7 +224,7 @@ class PermissionAuditLogGenerator(BaseGenerator):
                     resource_id=f"res-{random.randint(1, 1000)}",
                     team_id=random.choice(team_ids) if team_ids and random.random() < 0.7 else None,
                     granted=granted,
-                    roles_checked=["viewer", "developer"] if granted else ["viewer"],
+                    roles_checked=["team_viewer", "team_member"] if granted else ["team_viewer"],
                     ip_address=f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}",
                     user_agent="Mozilla/5.0 (compatible)",
                 )
