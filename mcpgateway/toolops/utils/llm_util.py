@@ -13,7 +13,7 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-load_dotenv(".env.example")
+load_dotenv(".env")
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
 TOOLOPS_TEMPERATURE = 0.1
@@ -114,14 +114,14 @@ def get_llm_instance(model_type='completion'):
         llm_service = provider_class(llm_config)
         llm_instance = llm_service.get_llm(model_type=model_type)
         logger.info("Successfully configured LLM instance for ToolOps , and LLM provider - "+llm_provider)
-        return llm_instance
+        return llm_instance,llm_config
     except Exception as e:
         logger.info("Error in configuring LLM instance for ToolOps -"+str(e))
         
 
 
-completion_llm_instance = get_llm_instance(model_type='completion')
-chat_llm_instance = get_llm_instance(model_type='chat')
+completion_llm_instance,_ = get_llm_instance(model_type='completion')
+chat_llm_instance,_ = get_llm_instance(model_type='chat')
 
         
 def execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600, stop_sequences=["\n\n", "<|endoftext|>","###STOP###"]):
