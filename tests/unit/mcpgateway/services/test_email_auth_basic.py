@@ -1136,7 +1136,7 @@ class TestEmailAuthServiceUserDeletion:
         member = MagicMock(spec=EmailTeamMember)
         member.user_email = "other@example.com"
         member.team_id = 1
-        member.role = "owner"
+        member.role = "team_owner"
         return member
 
     @pytest.mark.asyncio
@@ -1199,7 +1199,7 @@ class TestEmailAuthServiceUserDeletion:
         single_member = MagicMock(spec=EmailTeamMember)
         single_member.user_email = "test@example.com"
         single_member.team_id = 1
-        single_member.role = "owner"
+        single_member.role = "team_owner"
 
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = mock_user
@@ -1238,7 +1238,7 @@ class TestEmailAuthServiceUserDeletion:
     async def test_delete_user_with_team_no_transfer_possible(self, service, mock_db, mock_user, mock_team):
         """Test deleting user who owns team with members but no other owners."""
         # Setup multiple members but no other owners
-        members = [MagicMock(user_email="test@example.com", role="owner"), MagicMock(user_email="member1@example.com", role="member"), MagicMock(user_email="member2@example.com", role="member")]
+        members = [MagicMock(user_email="test@example.com", role="team_owner"), MagicMock(user_email="member1@example.com", role="team_member"), MagicMock(user_email="member2@example.com", role="team_member")]
 
         mock_user_result = MagicMock()
         mock_user_result.scalar_one_or_none.return_value = mock_user

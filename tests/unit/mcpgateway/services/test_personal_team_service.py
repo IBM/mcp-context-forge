@@ -134,7 +134,7 @@ class TestPersonalTeamService:
             assert mock_db.flush.call_count == 2
 
             # Verify membership creation
-            MockMember.assert_called_once_with(team_id="new-team-id", user_email="testuser@example.com", role="owner", joined_at=mock_utc_now.return_value, is_active=True)
+            MockMember.assert_called_once_with(team_id="new-team-id", user_email="testuser@example.com", role="team_owner", joined_at=mock_utc_now.return_value, is_active=True)
 
             # Verify commit
             mock_db.commit.assert_called_once()
