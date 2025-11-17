@@ -33,10 +33,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailUser, Role
+from mcpgateway.db import EmailAuthEvent, EmailUser
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.role_service import RoleService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -338,19 +337,6 @@ class EmailAuthService:
 
                     personal_team_service = PersonalTeamService(self.db)
                     personal_team = await personal_team_service.create_personal_team(user)
-
-                    role_service = RoleService(self.db)
-                    role_for_personal_team: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_admin, settings.default_user_scope)
-
-                    if role_for_personal_team:
-                        await role_service.assign_role_to_user(
-                            user_email=email,
-                            role_id=role_for_personal_team.id,
-                            scope="team",
-                            scope_id=personal_team.id,
-                            granted_by=email,
-                            # expires_at=datetime.now(timezone.utc) + timedelta(days=settings.default_user_role_expiry_days)
-                        )
 
                     logger.info(f"Created personal team '{personal_team.name}' for user {email}")
                 except Exception as e:
