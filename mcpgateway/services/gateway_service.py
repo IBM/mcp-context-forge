@@ -1491,96 +1491,96 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.auth_value = decoded_auth
 
                 # Try to reinitialize connection if URL actually changed
-                if url_changed:
-                    # Initialize empty lists in case initialization fails
-                    tools_to_add = []
-                    resources_to_add = []
-                    prompts_to_add = []
+                #if url_changed:
+                # Initialize empty lists in case initialization fails
+                tools_to_add = []
+                resources_to_add = []
+                prompts_to_add = []
 
-                    try:
-                        ca_certificate = getattr(gateway, "ca_certificate", None)
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
-                        )
-                        new_tool_names = [tool.name for tool in tools]
-                        new_resource_uris = [resource.uri for resource in resources]
-                        new_prompt_names = [prompt.name for prompt in prompts]
+                try:
+                    ca_certificate = getattr(gateway, "ca_certificate", None)
+                    capabilities, tools, resources, prompts = await self._initialize_gateway(
+                        gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
+                    )
+                    new_tool_names = [tool.name for tool in tools]
+                    new_resource_uris = [resource.uri for resource in resources]
+                    new_prompt_names = [prompt.name for prompt in prompts]
 
-                        if gateway_update.one_time_auth:
-                            # For one-time auth, clear auth_type and auth_value after initialization
-                            gateway.auth_type = "one_time_auth"
-                            gateway.auth_value = None
-                            gateway.oauth_config = None
+                    if gateway_update.one_time_auth:
+                        # For one-time auth, clear auth_type and auth_value after initialization
+                        gateway.auth_type = "one_time_auth"
+                        gateway.auth_value = None
+                        gateway.oauth_config = None
 
-                        # Update tools using helper method
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
+                    # Update tools using helper method
+                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
 
-                        # Update resources using helper method
-                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
+                    # Update resources using helper method
+                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
 
-                        # Update prompts using helper method
-                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+                    # Update prompts using helper method
+                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
 
-                        # Log newly added items
-                        items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
-                        if items_added > 0:
-                            if tools_to_add:
-                                logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
-                            if resources_to_add:
-                                logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
-                            if prompts_to_add:
-                                logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
-                            logger.info(f"Total {items_added} new items added during gateway update")
-
-                        # Count items before cleanup for logging
-
-                        # Delete tools that are no longer available from the gateway
-                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                        for tool in stale_tools:
-                            db.delete(tool)
-
-                        # Delete resources that are no longer available from the gateway
-                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                        for resource in stale_resources:
-                            db.delete(resource)
-
-                        # Delete prompts that are no longer available from the gateway
-                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                        for prompt in stale_prompts:
-                            db.delete(prompt)
-
-                        gateway.capabilities = capabilities
-                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
-
-                        # Log cleanup results
-                        tools_removed = len(stale_tools)
-                        resources_removed = len(stale_resources)
-                        prompts_removed = len(stale_prompts)
-
-                        if tools_removed > 0:
-                            logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
-                        if resources_removed > 0:
-                            logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
-                        if prompts_removed > 0:
-                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
-
-                        gateway.last_seen = datetime.now(timezone.utc)
-
-                        # Add new items to database session
+                    # Log newly added items
+                    items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
+                    if items_added > 0:
                         if tools_to_add:
-                            db.add_all(tools_to_add)
+                            logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
                         if resources_to_add:
-                            db.add_all(resources_to_add)
+                            logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
                         if prompts_to_add:
-                            db.add_all(prompts_to_add)
+                            logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
+                        logger.info(f"Total {items_added} new items added during gateway update")
 
-                        # Update tracking with new URL
-                        self._active_gateways.discard(gateway.url)
-                        self._active_gateways.add(gateway.url)
-                    except Exception as e:
-                        logger.warning(f"Failed to initialize updated gateway: {e}")
+                    # Count items before cleanup for logging
+
+                    # Delete tools that are no longer available from the gateway
+                    stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
+                    for tool in stale_tools:
+                        db.delete(tool)
+
+                    # Delete resources that are no longer available from the gateway
+                    stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
+                    for resource in stale_resources:
+                        db.delete(resource)
+
+                    # Delete prompts that are no longer available from the gateway
+                    stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                    for prompt in stale_prompts:
+                        db.delete(prompt)
+
+                    gateway.capabilities = capabilities
+                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                    gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+
+                    # Log cleanup results
+                    tools_removed = len(stale_tools)
+                    resources_removed = len(stale_resources)
+                    prompts_removed = len(stale_prompts)
+
+                    if tools_removed > 0:
+                        logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
+                    if resources_removed > 0:
+                        logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
+                    if prompts_removed > 0:
+                        logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
+
+                    gateway.last_seen = datetime.now(timezone.utc)
+
+                    # Add new items to database session
+                    if tools_to_add:
+                        db.add_all(tools_to_add)
+                    if resources_to_add:
+                        db.add_all(resources_to_add)
+                    if prompts_to_add:
+                        db.add_all(prompts_to_add)
+
+                    # Update tracking with new URL
+                    self._active_gateways.discard(gateway.url)
+                    self._active_gateways.add(gateway.url)
+                except Exception as e:
+                    logger.warning(f"Failed to initialize updated gateway: {e}")
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
@@ -2998,7 +2998,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             try:
                 # Check if tool already exists for this gateway
                 existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway.id)).scalar_one_or_none()
-
                 if existing_tool:
                     # Update existing tool if there are changes
                     fields_to_update = False
@@ -3016,7 +3015,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
-
                     if fields_to_update:
                         existing_tool.url = gateway.url
                         existing_tool.description = tool.description
