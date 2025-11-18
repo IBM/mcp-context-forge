@@ -100,7 +100,7 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
         >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
         >>> asyncio.run(get_team_from_token(payload, mock_db))
         'team_456'
-        >>>
+        >>> del sys.modules["mcpgateway.services.team_management_service"]
     """
     team_id = payload.get("teams")[0] if payload.get("teams") else None
     user_email = payload.get("sub")
