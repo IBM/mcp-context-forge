@@ -1,3 +1,12 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_auth_middleware.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Mihai Criveti
+
+Unit tests for auth middleware.
+"""
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from starlette.requests import Request
