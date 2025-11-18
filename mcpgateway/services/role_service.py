@@ -20,8 +20,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Permissions, Role, UserRole, utc_now
 from mcpgateway.config import settings
+from mcpgateway.db import Permissions, Role, UserRole, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -634,9 +634,13 @@ class RoleService:
             role_id: ID of role to revoke
             scope: Scope of assignment
             scope_id: Team ID if team-scoped
+            revoked_by: Email of user revoking the role
 
         Returns:
             bool: True if role was revoked, False if not found
+
+        Raises:
+            ValueError: If trying to revoke from platform admin
 
         Examples:
             Coroutine check:
@@ -667,6 +671,8 @@ class RoleService:
             return False
 
         user_role.is_active = False
+        user_role.revoked_by = revoked_by
+        user_role.revoked_at = utc_now()
         self.db.commit()
 
         logger.info(f"Revoked role {role_id} from {user_email} (scope: {scope}, scope_id: {scope_id})")
@@ -761,6 +767,10 @@ class RoleService:
 
         Returns:
             int: Number of assignments revoked
+
+        Raises:
+            ValueError: If scope_id is required or not allowed
+
         Examples:
             Coroutine check:
             >>> import asyncio
@@ -794,8 +804,8 @@ class RoleService:
         self.db.commit()
 
         logger.info(f"Revoked {len(assignments)} role assignments in scope: {scope}, scope_id: {scope_id}")
-        return len(assignments) 
-    
+        return len(assignments)
+
     async def list_scope_role_assignments(self, scope: str, scope_id: Optional[str] = None, include_expired: bool = False, is_active: Optional[bool] = True) -> List[UserRole]:
         """List all user role assignments within a specific scope.
 
@@ -807,6 +817,9 @@ class RoleService:
 
         Returns:
             List[UserRole]: Role assignments in the specified scope
+
+        Raises:
+            ValueError: If scope_id is required or not allowed
 
         Examples:
             Coroutine check:
@@ -851,6 +864,7 @@ class RoleService:
             role_id: ID of role
             scope: Filter by scope
             include_expired: Whether to include expired assignments
+            user_email: Filter by user email
 
         Returns:
             List[UserRole]: Role assignments

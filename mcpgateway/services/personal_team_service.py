@@ -24,10 +24,10 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now, Role
+from mcpgateway.config import settings
+from mcpgateway.db import EmailTeam, EmailUser, Role
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
-from mcpgateway.config import settings
 
 # Initialize logging
 logging_service = LoggingService()
@@ -126,14 +126,7 @@ class PersonalTeamService:
             role_for_personal_team: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_owner, settings.default_user_scope)
 
             if role_for_personal_team:
-                await role_service.assign_role_to_user(
-                    user_email=user.email,
-                    role_id=role_for_personal_team.id,
-                    scope="team",
-                    scope_id=team.id,
-                    granted_by=user.email,
-                    expires_at=None
-                )
+                await role_service.assign_role_to_user(user_email=user.email, role_id=role_for_personal_team.id, scope="team", scope_id=team.id, granted_by=user.email, expires_at=None)
 
             logger.info(f"Created personal team '{team.name}' for user {user.email}")
             return team
