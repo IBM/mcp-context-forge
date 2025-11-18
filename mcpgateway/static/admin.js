@@ -7275,7 +7275,7 @@ async function validateTool(toolId) {
                     nlUtterancesmall.textContent = 'Modify or add new utterances to test using the agent.';
                 
                     const nlutextarea = document.createElement('textarea');
-                    nlutextarea.id = 'validation-passthrough-nlUtterances';
+                    nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
                     nlutextarea.name = 'passthrough_nlUtterances';
                     nlutextarea.rows = 3;
                     nlutextarea.value = test.nl_utterance.join('\n\n');
@@ -7296,17 +7296,20 @@ async function validateTool(toolId) {
                     const runBtn = document.createElement("button");
                     runBtn.textContent = "Run Test";
                     runBtn.className =
-                    "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+                        "mt-2 mr-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"; 
+                    // Added: mr-2 for spacing
                     runBtn.addEventListener("click", async () => {
                         await runToolValidation(index);
                     });
-                
+
+                    // Run Agent button
                     const runAgentBtn = document.createElement("button");
-                    runAgentBtn.textContent = "Run Agent Test";
+                    runAgentBtn.textContent = "Run With Agent";
                     runAgentBtn.className =
-                    "mt-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+                        "mt-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700";  
+                    // Changed color to blue
                     runAgentBtn.addEventListener("click", async () => {
-                        await runToolValidation(index);
+                        await runToolAgentValidation(index);
                     });
                 
                     // Loading spinner
@@ -7328,7 +7331,7 @@ async function validateTool(toolId) {
                     body.appendChild(headerSection)
                     body.appendChild(nlUtteranceSection)
                     body.appendChild(runBtn);
-                    // body.appendChild(runAgentBtn);
+                    body.appendChild(runAgentBtn);
                     body.appendChild(loadingDiv)
                     body.appendChild(resultDiv);
                 });
@@ -7614,6 +7617,168 @@ async function validateTool(toolId) {
                 credentials: "include",
             },
             window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
+        }
+    }
+}
+
+async function runToolAgentValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
+    
+    const loadingElement = safeGetElement("tool-validation-loading");
+    const runButton = document.querySelector('button[onclick="runToolAgentValidation()"]');
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const nl_test_cases = document.getElementById(`validation-passthrough-nlUtterances-${testIndex}`).value.split(/\r?\n\r?\n/);
+        const toolId = AppState.currentTestTool.id
+
+        console.log(nl_test_cases)
+        console.log('Running validation for the Tool: ', AppState.currentTestTool.name)
+        console.log('Running validation for the Tool Id: ', toolId)
+
+
+        const payload = { tool_id: toolId, tool_nl_test_cases: nl_test_cases };
+
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        const response = await fetchWithTimeout(`/toolops/validation/execute_tool_nl_testcases`, {
+            method: "POST",
+            headers: { "Cache-Control": "no-cache",
+                Pragma: "no-cache", "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        }, toolTestState.requestTimeout, // Use the increased timeout
         );
 
         const result = await response.json();
