@@ -24,6 +24,7 @@ ENABLE_RUST_BUILD ?= 0
 PROJECT_NAME      = mcpgateway
 DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
+PROJECT_DIR       = $(abspath $(dir $(abspath $(firstword MAKEFILE_LIST))))
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
 
@@ -59,8 +60,7 @@ CONTAINER_MEMORY = 2048m
 CONTAINER_CPUS   = 2
 
 # Virtual-environment variables
-VENVS_DIR ?= $(HOME)/.venv
-VENV_DIR  ?= $(VENVS_DIR)/$(PROJECT_NAME)
+VENV_DIR ?= $(PROJECT_DIR)/.venv
 
 # -----------------------------------------------------------------------------
 # OS Specific
@@ -125,14 +125,14 @@ uv:
 	fi
 
 .PHONY: venv
-venv:
+venv: uv
 	@rm -Rf "$(VENV_DIR)"
-	@test -d "$(VENVS_DIR)" || mkdir -p "$(VENVS_DIR)"
 	@python3 -m venv "$(VENV_DIR)"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade pip setuptools pdm"
 	# Eventually, we want to transition to using uv/uvx exclusively, at which point we will only need
 	# a virtual environment if the user has not installed uv into their account.
-	@/bin/bash -c "type uv || ( source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv )"
+	@/bin/bash -c "type uv && uv sync"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --upgrade uv && type uv "
 	@echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"
 
 .PHONY: activate
