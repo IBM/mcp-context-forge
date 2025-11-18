@@ -32,7 +32,7 @@ import pytest
 
 # First-Party
 from mcpgateway.main import app, require_auth
-from mcpgateway.models import InitializeResult, ResourceContent, ServerCapabilities
+from mcpgateway.common.models import InitializeResult, ResourceContent, ServerCapabilities
 from mcpgateway.schemas import ResourceRead, ServerRead, ToolMetrics, ToolRead
 
 # Local

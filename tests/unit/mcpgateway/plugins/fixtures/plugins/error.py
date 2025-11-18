@@ -9,8 +9,8 @@ Error plugin.
 """
 
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginContext,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,

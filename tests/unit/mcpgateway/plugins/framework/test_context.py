@@ -11,6 +11,7 @@ import pytest
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginManager,
+    ToolHookType,
     ToolPreInvokePayload,
     ToolPostInvokePayload,
 )
@@ -25,7 +26,7 @@ async def test_shared_context_across_pre_post_hooks():
     # Test tool pre-invoke with transformation - use correct tool name from config
     tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"})
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
 
     assert len(contexts) == 1
     context = next(iter(contexts.values()))
@@ -42,7 +43,7 @@ async def test_shared_context_across_pre_post_hooks():
 
     # Test tool post-invoke with transformation
     tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result was bad", "status": "wrong format"})
-    result, contexts = await manager.tool_post_invoke(tool_result_payload, global_context=global_context, local_contexts=contexts)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, tool_result_payload, global_context=global_context, local_contexts=contexts)
 
     assert len(contexts) == 1
     context = next(iter(contexts.values()))
@@ -71,7 +72,7 @@ async def test_shared_context_across_pre_post_hooks_multi_plugins():
     # Test tool pre-invoke with transformation - use correct tool name from config
     tool_payload = ToolPreInvokePayload(name="test_tool", args={"input": "This is bad data", "quality": "wrong"})
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.tool_pre_invoke(tool_payload, global_context=global_context)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, tool_payload, global_context=global_context)
 
     assert len(contexts) == 2
     ctxs = [contexts[key] for key in contexts.keys()]
@@ -100,7 +101,7 @@ async def test_shared_context_across_pre_post_hooks_multi_plugins():
     assert result.modified_payload is None
     # Test tool post-invoke with transformation
     tool_result_payload = ToolPostInvokePayload(name="test_tool", result={"output": "Result was bad", "status": "wrong format"})
-    result, contexts = await manager.tool_post_invoke(tool_result_payload, global_context=global_context, local_contexts=contexts)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, tool_result_payload, global_context=global_context, local_contexts=contexts)
 
     ctxs = [contexts[key] for key in contexts.keys()]
     assert len(ctxs) == 2

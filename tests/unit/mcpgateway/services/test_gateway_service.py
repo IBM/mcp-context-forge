@@ -37,7 +37,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
-    GatewayUrlConflictError,
+    GatewayDuplicateConflictError,
 )
 
 # ---------------------------------------------------------------------------
@@ -516,56 +516,44 @@ class TestGatewayService:
 
     @pytest.mark.asyncio
     async def test_register_gateway_with_existing_tools(self, gateway_service, test_db, monkeypatch):
-        """Test registering gateway with tools that already exist in database."""
-        # Mock existing tool in database
-        existing_tool = MagicMock()
-        existing_tool.original_name = "existing_tool"
-        existing_tool.id = 123
-        existing_tool.url = "http://example.com/gateway"
-        existing_tool.enabled = True
-        existing_tool.visibility = "public"
+        """Test registering gateway with URL/credentials that already exist (duplicate gateway)."""
+        # Mock existing GATEWAY in database (not tool)
+        existing_gateway = MagicMock()
+        existing_gateway.id = 123
+        existing_gateway.url = "http://example.com/gateway"
+        existing_gateway.enabled = True
+        existing_gateway.visibility = "public"
+        existing_gateway.name = "existing_gateway"
+        existing_gateway.team_id = None
+        existing_gateway.owner_email = "test@example.com"
 
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
-                _make_execute_result(scalar=existing_tool),  # existing tool found
+                # No second call needed - check_gateway_uniqueness uses query().all()
             ]
         )
+        
+        # Mock check_gateway_uniqueness to return the existing gateway
+        gateway_service._check_gateway_uniqueness = Mock(return_value=existing_gateway)
+        
         test_db.add = Mock()
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Mock tools returned from gateway
-        # First-Party
-        from mcpgateway.schemas import ToolCreate
-
-        mock_tools = [ToolCreate(name="existing_tool", description="An existing tool", integration_type="REST", request_type="POST", input_schema={"type": "object"})]  # This tool already exists
-
-        gateway_service._initialize_gateway = AsyncMock(return_value=({"tools": {"listChanged": True}}, mock_tools, [], []))
-        gateway_service._notify_gateway_added = AsyncMock()
-
-        mock_model = Mock()
-        mock_model.masked.return_value = mock_model
-        mock_model.name = "tool_gateway"
-
-        monkeypatch.setattr(
-            "mcpgateway.services.gateway_service.GatewayRead.model_validate",
-            lambda x: mock_model,
-        )
-
         gateway_create = GatewayCreate(
             name="tool_gateway",
-            url="http://example.com/gateway",
+            url="http://example.com/gateway",  # Same URL as existing
             description="Gateway with existing tools",
         )
 
-        with pytest.raises(GatewayUrlConflictError) as exc_info:
+        with pytest.raises(GatewayDuplicateConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
+        
+        # Verify the error details
+        assert exc_info.value.gateway_id == 123
+        assert exc_info.value.enabled is True
 
-        err = exc_info.value
-        assert "Public Gateway already exists with URL" in str(err)
-        assert err.gateway_id == existing_tool.id
-        assert err.enabled is True
 
     # ────────────────────────────────────────────────────────────────────
     # Validate Gateway URL - Parameterized Tests
@@ -585,14 +573,28 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_validate_gateway_url_responses(self, gateway_service, httpx_mock, status_code, headers, transport_type, expected):
         """Test various HTTP responses during gateway URL validation."""
-        httpx_mock.add_response(
-            method="GET",
-            url="http://example.com",
-            status_code=status_code,
-            headers=headers,
-        )
+        method = "POST" if transport_type == "STREAMABLEHTTP" else "GET"
+        
+        # For SSE with 200 status, mock streaming response
+        if transport_type == "SSE" and status_code == 200 and "text/event-stream" in headers.get("content-type", ""):
+            httpx_mock.add_response(
+                method=method,
+                url="http://example.com",
+                status_code=status_code,
+                headers=headers,
+                content=b"data: test\n\n",  # Add SSE data so aiter_lines() returns something
+            )
+        else:
+            httpx_mock.add_response(
+                method=method,
+                url="http://example.com",
+                status_code=status_code,
+                headers=headers,
+            )
 
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type=transport_type)
+        result = await gateway_service._validate_gateway_url(
+            url="http://example.com", headers={}, transport_type=transport_type
+        )
 
         assert result is expected
 
@@ -629,25 +631,19 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_streamablehttp_redirect(self, gateway_service, httpx_mock):
         """Test STREAMABLEHTTP transport with redirection and MCP session ID."""
-        # Mock first response with redirect
+        # When follow_redirects=True, httpx handles redirects internally
+        # Only mock the FINAL response, not intermediate redirects
         httpx_mock.add_response(
-            method="GET",
+            method="POST",
             url="http://example.com",
-            status_code=302,
-            headers={"location": "http://sampleredirected.com"},
-        )
-
-        # Mock redirected response with MCP session
-        httpx_mock.add_response(
-            method="GET",
-            url="http://sampleredirected.com",
             status_code=200,
-            headers={"mcp-session-id": "sample123", "content-type": "application/json"},
+            headers={"content-type": "application/json"},
         )
 
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
+        result = await gateway_service._validate_gateway_url(
+            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
+        )
 
-        # Should return True when redirect has mcp-session-id and application/json content-type
         assert result is True
 
     # ───────────────────────────────────────────────────────────────────────────
@@ -657,14 +653,15 @@ class TestGatewayService:
     async def test_bulk_concurrent_validation(self, gateway_service, httpx_mock):
         """Test bulk concurrent gateway URL validations."""
         urls = [f"http://gateway{i}.com" for i in range(20)]
-
-        # Add responses for all URLs
+        
+        # Add responses for all URLs with SSE content
         for url in urls:
             httpx_mock.add_response(
                 method="GET",
                 url=url,
                 status_code=200,
                 headers={"content-type": "text/event-stream"},
+                content=b"data: test\n\n",  # Add SSE data
             )
 
         # Run the validations concurrently
@@ -1334,47 +1331,34 @@ class TestGatewayService:
     @pytest.mark.asyncio
     async def test_validate_gateway_url_redirect_with_auth_failure(self, gateway_service, httpx_mock):
         """Test redirect handling with authentication failure at redirect location."""
-        # Mock first response (redirect with Location header)
+        # Only mock final response with auth failure
         httpx_mock.add_response(
-            method="GET",
+            method="POST",
             url="http://example.com",
-            status_code=302,
-            headers={"location": "http://redirected.com/api"},
-        )
-
-        # Mock redirected response with auth failure
-        httpx_mock.add_response(
-            method="GET",
-            url="http://redirected.com/api",
             status_code=401,
         )
 
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
+        result = await gateway_service._validate_gateway_url(
+            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
+        )
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_validate_gateway_url_redirect_with_mcp_session(self, gateway_service, httpx_mock):
         """Test redirect handling with MCP session ID in response."""
-        # Mock first response (redirect with Location header)
+        # STREAMABLEHTTP uses POST method, and only mock final response
         httpx_mock.add_response(
-            method="GET",
+            method="POST",  # Changed from GET to POST
             url="http://example.com",
-            status_code=302,
-            headers={"location": "http://redirected.com/api"},
-        )
-
-        # Mock redirected response with MCP session
-        httpx_mock.add_response(
-            method="GET",
-            url="http://redirected.com/api",
             status_code=200,
             headers={"mcp-session-id": "session123", "content-type": "application/json"},
         )
 
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="STREAMABLEHTTP")
+        result = await gateway_service._validate_gateway_url(
+            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
+        )
 
-        # Should return True when redirect has mcp-session-id and application/json content-type
         assert result is True
 
     # ────────────────────────────────────────────────────────────────────

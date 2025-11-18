@@ -1,0 +1,15 @@
+description: "Example plugin demonstrating custom HTTP authentication hooks for header transformation and user resolution."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["authentication", "security", "http", "middleware"]
+available_hooks:
+  - "http_pre_request"
+  - "http_auth_resolve_user"
+default_config:
+  api_key_header: "x-api-key"
+  api_key_mapping: {}
+  blocked_api_keys: []
+  ldap_enabled: false
+  mtls_enabled: false
+  transform_headers: true
+  strict_mode: false

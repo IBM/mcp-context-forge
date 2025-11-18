@@ -132,6 +132,45 @@
           "maximum": 65535,
           "default": 4444
         },
+        "metrics": {
+          "type": "object",
+          "description": "Metrics configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable metrics collection",
+              "default": true
+            },
+            "port": {
+              "type": "integer",
+              "description": "Metrics port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 8000
+            },
+            "serviceMonitor": {
+              "type": "object",
+              "description": "ServiceMonitor configuration for Prometheus Operator",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable ServiceMonitor creation",
+                  "default": true
+                }
+              },
+              "additionalProperties": false
+            },
+            "customLabels": {
+              "type": "object",
+              "description": "Custom labels for metrics",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false
+        },
         "probes": {
           "type": "object",
           "description": "Health probe configuration",
@@ -211,6 +250,22 @@
             }
           },
           "additionalProperties": false
+        },
+
+        "pluginConfig": {
+          "type": "object",
+          "description": "Plugin configuration via ConfigMap",
+          "properties": {
+            "enabled": {
+                "type": "boolean",
+                "description": "Enable plugin configuration loading via ConfigMap",
+                "default": false
+            },
+            "plugins": {
+              "type": "string",
+              "description": "Plugin configuration file contents (YAML)"
+            }
+          }
         },
         "env": {
           "type": "object",
@@ -687,6 +742,22 @@
               "description": "Auth encryption secret",
               "default": "my-test-salt"
             },
+            "ENABLE_ED25519_SIGNING": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Ed25519 signing for certificates",
+              "default": "false"
+            },
+            "ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Ed25519 private key for signing (PEM format)",
+              "default": ""
+            },
+            "PREV_ED25519_PRIVATE_KEY": {
+              "type": "string",
+              "description": "Previous Ed25519 private key for key rotation",
+              "default": ""
+            },
             "DATABASE_URL": {
               "type": "string",
               "description": "Database URL override"
@@ -947,6 +1018,28 @@
             "liveness": {
               "$ref": "#/$defs/probe",
               "description": "Liveness probe"
+            }
+          },
+          "additionalProperties": false
+        },
+        "upgrade": {
+          "type": "object",
+          "description": "PostgreSQL upgrade configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable PostgreSQL upgrade process",
+              "default": false
+            },
+            "targetVersion": {
+              "type": ["string", "number"],
+              "description": "Target PostgreSQL version for upgrade",
+              "default": "18"
+            },
+            "backupCompleted": {
+              "type": "boolean",
+              "description": "Flag to indicate if backup has been completed to prevent re-running",
+              "default": false
             }
           },
           "additionalProperties": false
@@ -1240,6 +1333,57 @@
       },
       "additionalProperties": false
     },
+    "minio": {
+      "type": "object",
+      "description": "Configuration for the MinIO S3-compatible object storage.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable to deploy MinIO."
+        },
+        "image": {
+          "type": "object",
+          "properties": {
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string" }
+          }
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Name of an existing secret for MinIO credentials."
+        },
+        "credentials": {
+          "type": "object",
+          "properties": {
+            "rootUser": { "type": "string" },
+            "rootPassword": { "type": "string" }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string" },
+            "apiPort": { "type": "integer" },
+            "consolePort": { "type": "integer" }
+          }
+        },
+        "persistence": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "storageClassName": { "type": "string" },
+            "accessModes": { "type": "array", "items": { "type": "string" } },
+            "size": { "type": "string" },
+            "reclaimPolicy": { "type": "string" }
+          }
+        },
+        "resources": {
+          "$ref": "#/$defs/resources",
+          "description": "CPU/Memory resource requests/limits."
+        }
+      }
+    },
     "mcpFastTimeServer": {
       "type": "object",
       "description": "MCP Fast Time Server configuration",
@@ -1268,7 +1412,7 @@
             "tag": {
               "type": "string",
               "description": "Image tag",
-              "default": "0.8.0"
+              "default": "0.9.0"
             },
             "pullPolicy": {
               "type": "string",

@@ -45,4 +45,3 @@ include_container:
   type: bool
   help: Include Dockerfile for a minimal runtime image
   default: true
-

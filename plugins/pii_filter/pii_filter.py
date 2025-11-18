@@ -43,7 +43,10 @@ _RUST_AVAILABLE = False
 _RustPIIDetector = None
 
 try:
-    from .pii_filter_rust import RustPIIDetector as _RustPIIDetector, RUST_AVAILABLE as _RUST_AVAILABLE
+    # Local
+    from .pii_filter_rust import RUST_AVAILABLE as _RUST_AVAILABLE
+    from .pii_filter_rust import RustPIIDetector as _RustPIIDetector
+
     if _RUST_AVAILABLE:
         logger.info("🦀 Rust PII filter available - using high-performance implementation (5-100x speedup)")
     else:
@@ -805,6 +808,9 @@ class PIIFilterPlugin(Plugin):
             data: The parsed JSON data structure
             base_path: The base path for this JSON data
             all_detections: Dictionary containing all PII detections
+
+        Returns:
+            None: Modifies data in place.
         """
         if isinstance(data, str):
             # Check if this path has detections

@@ -51,7 +51,7 @@ FROM rust-builder-base AS rust-builder
 FROM registry.access.redhat.com/ubi10-minimal:10.0-1758699349
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="0.8.0" \
+      version="0.9.0" \
       description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12

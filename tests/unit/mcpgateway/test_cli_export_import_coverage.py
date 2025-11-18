@@ -12,7 +12,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -179,8 +179,7 @@ def test_main_with_subcommands_export():
     from mcpgateway.cli_export_import import main_with_subcommands
 
     with patch.object(sys, "argv", ["mcpgateway", "export", "--help"]):
-        with patch("mcpgateway.cli_export_import.asyncio.run") as mock_run:
-            mock_run.side_effect = SystemExit(0)  # Simulate help exit
+        with patch("mcpgateway.cli_export_import.export_command", new_callable=AsyncMock, side_effect=SystemExit(0)):
             with pytest.raises(SystemExit):
                 main_with_subcommands()
 
@@ -194,8 +193,7 @@ def test_main_with_subcommands_import():
     from mcpgateway.cli_export_import import main_with_subcommands
 
     with patch.object(sys, "argv", ["mcpgateway", "import", "--help"]):
-        with patch("mcpgateway.cli_export_import.asyncio.run") as mock_run:
-            mock_run.side_effect = SystemExit(0)  # Simulate help exit
+        with patch("mcpgateway.cli_export_import.import_command", new_callable=AsyncMock, side_effect=SystemExit(0)):
             with pytest.raises(SystemExit):
                 main_with_subcommands()
 
@@ -665,19 +663,18 @@ def test_main_with_subcommands_keyboard_interrupt():
 
     mock_parser = MagicMock()
     mock_args = MagicMock()
-    mock_args.func = MagicMock()
+    mock_args.func = AsyncMock(side_effect=KeyboardInterrupt())
     mock_args.include_dependencies = True
     mock_parser.parse_args.return_value = mock_args
 
     with patch.object(sys, "argv", ["mcpgateway", "import", "test.json"]):
         with patch("mcpgateway.cli_export_import.create_parser", return_value=mock_parser):
-            with patch("mcpgateway.cli_export_import.asyncio.run", side_effect=KeyboardInterrupt()):
-                with patch("builtins.print") as mock_print:
-                    with pytest.raises(SystemExit) as exc_info:
-                        main_with_subcommands()
+            with patch("builtins.print") as mock_print:
+                with pytest.raises(SystemExit) as exc_info:
+                    main_with_subcommands()
 
-                    assert exc_info.value.code == 1
-                    mock_print.assert_called_with("\n❌ Operation cancelled by user", file=sys.stderr)
+                assert exc_info.value.code == 1
+                mock_print.assert_called_with("\n❌ Operation cancelled by user", file=sys.stderr)
 
 
 def test_main_with_subcommands_include_dependencies_handling():
@@ -690,15 +687,14 @@ def test_main_with_subcommands_include_dependencies_handling():
 
     mock_parser = MagicMock()
     mock_args = MagicMock()
-    mock_args.func = MagicMock()
+    mock_args.func = AsyncMock()
     mock_args.no_dependencies = True  # This should set include_dependencies to False
     mock_parser.parse_args.return_value = mock_args
 
     with patch.object(sys, "argv", ["mcpgateway", "export", "--no-dependencies"]):
         with patch("mcpgateway.cli_export_import.create_parser", return_value=mock_parser):
-            with patch("mcpgateway.cli_export_import.asyncio.run") as mock_run:
-                main_with_subcommands()
+            main_with_subcommands()
 
-                # Verify include_dependencies was set to False (opposite of no_dependencies)
-                assert mock_args.include_dependencies is False
-                mock_run.assert_called_once_with(mock_args.func(mock_args))
+            # Verify include_dependencies was set to False (opposite of no_dependencies)
+            assert mock_args.include_dependencies is False
+            mock_args.func.assert_called_once_with(mock_args)

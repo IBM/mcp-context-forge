@@ -649,7 +649,7 @@ class ImportService:
                     # This is a simplified approach - in practice you'd query the database
                     try:
                         # Try to get tools and find by name
-                        tools = await self.tool_service.list_tools(db, include_inactive=True)
+                        tools, _ = await self.tool_service.list_tools(db, include_inactive=True)
                         existing_tool = next((t for t in tools if t.original_name == tool_name), None)
                         if existing_tool:
                             update_data = self._convert_to_tool_update(tool_data)
@@ -1105,7 +1105,7 @@ class ImportService:
 
         if tool_references:
             # Get all tools to resolve references
-            all_tools = await self.tool_service.list_tools(db, include_inactive=True)
+            all_tools, _ = await self.tool_service.list_tools(db, include_inactive=True)
 
             for tool_ref in tool_references:
                 # Try to find tool by ID first, then by name
@@ -1145,7 +1145,7 @@ class ImportService:
         resolved_tool_ids = []
 
         if tool_references:
-            all_tools = await self.tool_service.list_tools(db, include_inactive=True)
+            all_tools, _ = await self.tool_service.list_tools(db, include_inactive=True)
 
             for tool_ref in tool_references:
                 found_tool = next((t for t in all_tools if t.id == tool_ref), None)
@@ -1349,7 +1349,7 @@ class ImportService:
         # Check if it conflicts with existing items
         try:
             if entity_type == "tools":
-                existing = await self.tool_service.list_tools(db)
+                existing, _ = await self.tool_service.list_tools(db)
                 item_info["conflicts_with"] = any(t.original_name == item_name for t in existing)
             elif entity_type == "gateways":
                 existing = await self.gateway_service.list_gateways(db)
@@ -1358,10 +1358,10 @@ class ImportService:
                 existing = await self.server_service.list_servers(db)
                 item_info["conflicts_with"] = any(s.name == item_name for s in existing)
             elif entity_type == "prompts":
-                existing = await self.prompt_service.list_prompts(db)
+                existing, _ = await self.prompt_service.list_prompts(db)
                 item_info["conflicts_with"] = any(p.name == item_name for p in existing)
             elif entity_type == "resources":
-                existing = await self.resource_service.list_resources(db)
+                existing, _ = await self.resource_service.list_resources(db)
                 item_info["conflicts_with"] = any(r.uri == item_name for r in existing)
             else:
                 item_info["conflicts_with"] = False
@@ -1452,7 +1452,7 @@ class ImportService:
         try:
             # Check tool conflicts
             if "tools" in entities:
-                existing_tools = await self.tool_service.list_tools(db)
+                existing_tools, _ = await self.tool_service.list_tools(db)
                 existing_names = {t.original_name for t in existing_tools}
 
                 tool_conflicts = []

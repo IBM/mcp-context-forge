@@ -652,7 +652,7 @@ For emergency password resets, you can update the database directly:
 python3 -c "
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.db import SessionLocal
-from mcpgateway.models import EmailUser
+from mcpgateway.common.models import EmailUser
 
 service = Argon2PasswordService()
 hashed = service.hash_password('new_password')

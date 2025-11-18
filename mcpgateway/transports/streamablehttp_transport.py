@@ -53,8 +53,10 @@ from starlette.status import HTTP_401_UNAUTHORIZED
 from starlette.types import Receive, Scope, Send
 
 # First-Party
+from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
@@ -65,10 +67,11 @@ from mcpgateway.utils.verify_credentials import verify_credentials
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-# Initialize ToolService, PromptService and MCP Server
+# Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
+completion_service: CompletionService = CompletionService()
 
 mcp_app: Server[Any] = Server("mcp-streamable-http")
 
@@ -356,12 +359,25 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     """
     Handles tool invocation via the MCP Server.
 
+    This function supports the MCP protocol's tool calling with structured content validation.
+    It can return either unstructured content only, or both unstructured and structured content
+    when the tool defines an outputSchema.
+
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
 
     Returns:
-        List of content (TextContent, ImageContent, or EmbeddedResource) from the tool response.
+        Union[List[ContentBlock], Tuple[List[ContentBlock], Dict[str, Any]]]:
+            - If structured content is not present: Returns a list of content blocks
+              (TextContent, ImageContent, or EmbeddedResource)
+            - If structured content is present: Returns a tuple of (unstructured_content, structured_content)
+              where structured_content is a dictionary that will be validated against the tool's outputSchema
+
+        The MCP SDK's call_tool decorator automatically handles both return types:
+        - List return → CallToolResult with content only
+        - Tuple return → CallToolResult with both content and structuredContent fields
+
         Logs and returns an empty list on failure.
 
     Examples:
@@ -386,7 +402,31 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
                 logger.warning(f"No content returned by tool: {name}")
                 return []
 
-            return [types.TextContent(type=content.type, text=content.text) for content in result.content]
+            # Normalize unstructured content to MCP SDK types
+            unstructured = [types.TextContent(type=content.type, text=content.text) for content in result.content]
+
+            # If the tool produced structured content (ToolResult.structured_content / structuredContent),
+            # return a combination (unstructured, structured) so the server can validate against outputSchema.
+            # The ToolService may populate structured_content (snake_case) or the model may expose
+            # an alias 'structuredContent' when dumped via model_dump(by_alias=True).
+            structured = None
+            try:
+                # Prefer attribute if present
+                structured = getattr(result, "structured_content", None)
+            except Exception:
+                structured = None
+
+            # Fallback to by-alias dump (in case the result is a pydantic model with alias fields)
+            if structured is None:
+                try:
+                    structured = result.model_dump(by_alias=True).get("structuredContent") if hasattr(result, "model_dump") else None
+                except Exception:
+                    structured = None
+
+            if structured:
+                return (unstructured, structured)
+
+            return unstructured
     except Exception as e:
         logger.exception(f"Error calling tool '{name}': {e}")
         return []
@@ -424,7 +464,7 @@ async def list_tools() -> List[types.Tool]:
     else:
         try:
             async with get_db() as db:
-                tools = await tool_service.list_tools(db, False, None, None, request_headers)
+                tools, _ = await tool_service.list_tools(db, False, None, None, request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
             logger.exception(f"Error listing tools:{e}")
@@ -462,7 +502,7 @@ async def list_prompts() -> List[types.Prompt]:
     else:
         try:
             async with get_db() as db:
-                prompts = await prompt_service.list_prompts(db, False, None, None)
+                prompts, _ = await prompt_service.list_prompts(db, False, None, None)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
             logger.exception(f"Error listing prompts:{e}")
@@ -502,7 +542,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
             if not result or not result.messages:
                 logger.warning(f"No content returned by prompt: {prompt_id}")
                 return []
-            message_dicts = [message.dict() for message in result.messages]
+            message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
     except Exception as e:
         logger.exception(f"Error getting prompt '{prompt_id}': {e}")
@@ -539,7 +579,7 @@ async def list_resources() -> List[types.Resource]:
     else:
         try:
             async with get_db() as db:
-                resources = await resource_service.list_resources(db, False)
+                resources, _ = await resource_service.list_resources(db, False)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
             logger.exception(f"Error listing resources:{e}")
@@ -555,8 +595,8 @@ async def read_resource(resource_id: str) -> Union[str, bytes]:
         resource_id (str): The ID of the resource to read.
 
     Returns:
-        Union[str, bytes]: The content of the resource, typically as text.
-        Returns an empty list on failure or if no content is found.
+        Union[str, bytes]: The content of the resource as text or binary data.
+        Returns empty string on failure or if no content is found.
 
     Logs exceptions if any errors occur during reading.
 
@@ -574,15 +614,128 @@ async def read_resource(resource_id: str) -> Union[str, bytes]:
                 result = await resource_service.read_resource(db=db, resource_id=resource_id)
             except Exception as e:
                 logger.exception(f"Error reading resource '{resource_id}': {e}")
-                return []
-            if not result or not result.text:
-                logger.warning(f"No content returned by resource: {resource_id}")
-                return []
+                return ""
 
-            return result.text
+            # Return blob content if available (binary resources)
+            if result and result.blob:
+                return result.blob
+
+            # Return text content if available (text resources)
+            if result and result.text:
+                return result.text
+
+            # No content found
+            logger.warning(f"No content returned by resource: {resource_id}")
+            return ""
     except Exception as e:
         logger.exception(f"Error reading resource '{resource_id}': {e}")
+        return ""
+
+
+@mcp_app.list_resource_templates()
+async def list_resource_templates() -> List[types.ResourceTemplate]:
+    """
+    Lists all resource templates available to the MCP Server.
+
+    Returns:
+        List[types.ResourceTemplate]: A list of resource templates with their URIs and metadata.
+
+    Examples:
+        >>> import inspect
+        >>> sig = inspect.signature(list_resource_templates)
+        >>> list(sig.parameters.keys())
+        []
+        >>> sig.return_annotation.__origin__.__name__
+        'list'
+    """
+    try:
+        async with get_db() as db:
+            try:
+                resource_templates = await resource_service.list_resource_templates(db)
+                return resource_templates
+            except Exception as e:
+                logger.exception(f"Error listing resource templates: {e}")
+                return []
+    except Exception as e:
+        logger.exception(f"Error listing resource templates: {e}")
         return []
+
+
+@mcp_app.set_logging_level()
+async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
+    """
+    Sets the logging level for the MCP Server.
+
+    Args:
+        level (types.LoggingLevel): The desired logging level (debug, info, notice, warning, error, critical, alert, emergency).
+
+    Returns:
+        types.EmptyResult: An empty result indicating success.
+
+    Examples:
+        >>> import inspect
+        >>> sig = inspect.signature(set_logging_level)
+        >>> list(sig.parameters.keys())
+        ['level']
+    """
+    try:
+        # Convert MCP logging level to our LogLevel enum
+        level_map = {
+            "debug": LogLevel.DEBUG,
+            "info": LogLevel.INFO,
+            "notice": LogLevel.INFO,
+            "warning": LogLevel.WARNING,
+            "error": LogLevel.ERROR,
+            "critical": LogLevel.CRITICAL,
+            "alert": LogLevel.CRITICAL,
+            "emergency": LogLevel.CRITICAL,
+        }
+        log_level = level_map.get(level.lower(), LogLevel.INFO)
+        await logging_service.set_level(log_level)
+        return types.EmptyResult()
+    except Exception as e:
+        logger.exception(f"Error setting logging level: {e}")
+        return types.EmptyResult()
+
+
+@mcp_app.completion()
+async def complete(ref: Union[types.PromptReference, types.ResourceReference], argument: types.CompleteRequest) -> types.CompleteResult:
+    """
+    Provides argument completion suggestions for prompts or resources.
+
+    Args:
+        ref (Union[types.PromptReference, types.ResourceReference]): Reference to the prompt or resource.
+        argument (types.CompleteRequest): The completion request with partial argument value.
+
+    Returns:
+        types.CompleteResult: Completion suggestions.
+
+    Examples:
+        >>> import inspect
+        >>> sig = inspect.signature(complete)
+        >>> list(sig.parameters.keys())
+        ['ref', 'argument']
+    """
+    try:
+        async with get_db() as db:
+            try:
+                # Convert types to dict for completion service
+                params = {
+                    "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
+                    "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
+                }
+                result = await completion_service.handle_completion(db, params)
+
+                # Convert result to CompleteResult
+                if isinstance(result, dict):
+                    return types.CompleteResult(**result)
+                return result
+            except Exception as e:
+                logger.exception(f"Error handling completion: {e}")
+                return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
+    except Exception as e:
+        logger.exception(f"Error handling completion: {e}")
+        return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
 
 class SessionManagerWrapper:

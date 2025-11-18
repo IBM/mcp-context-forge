@@ -70,8 +70,7 @@ class OPAPluginFilter(Plugin):
         """Entry init block for plugin.
 
         Args:
-          logger: logger that the skill can make use of
-          config: the skill configuration
+            config: the skill configuration
         """
         super().__init__(config)
         self.opa_config = OPAConfig.model_validate(self._config.config)
@@ -105,16 +104,25 @@ class OPAPluginFilter(Plugin):
         Args:
             url: The url to call opa server
             input: Contains the payload of input to be sent to opa server for policy evaluation.
+            policy_input_data_map: Mapping of policy input data keys.
 
         Returns:
-            True, json_response if the opa policy is allowed else false. The json response is the actual response returned by OPA server.
+            tuple[bool, Any]: True, json_response if the opa policy is allowed else false. The json response is the actual response returned by OPA server.
             If OPA server encountered any error, the return would be True (to gracefully exit) and None would be the json_response, marking
             an issue with the OPA server running.
 
         """
 
         def _key(k: str, m: str) -> str:
-            """Key implementation."""
+            """Key implementation.
+
+            Args:
+                k: The key string.
+                m: The mapping string.
+
+            Returns:
+                str: Combined key string.
+            """
 
             return f"{k}.{m}" if k.split(".")[0] == "context" else k
 
@@ -222,10 +230,6 @@ class OPAPluginFilter(Plugin):
             content: The content of post hook results.
             key: The key for which value needs to be extracted for.
             result: A list of all the values for a key.
-
-        Returns:
-            None
-
         """
         if isinstance(content, list):
             for element in content:

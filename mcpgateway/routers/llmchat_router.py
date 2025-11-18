@@ -47,6 +47,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     MCPServerConfig,
     OllamaConfig,
     OpenAIConfig,
+    WatsonxConfig,
 )
 
 # Load environment variables
@@ -287,7 +288,7 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
     cfg = llm.config if llm else {}
 
     # Validate provider
-    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama"]
+    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx"]
     if provider not in valid_providers:
         raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: {', '.join(valid_providers)}")
 
@@ -386,6 +387,32 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
             ),
         )
 
+    elif provider == "watsonx":
+        apikey = fallback(cfg.get("apikey"), "WATSONX_APIKEY")
+        project_id = fallback(cfg.get("projectid"), "WATSONX_PROJECT_ID")
+
+        if not apikey:
+            raise ValueError("IBM watsonx.ai API key is required but not provided")
+        if not project_id:
+            raise ValueError("IBM watsonx.ai project ID is required but not provided")
+
+        return LLMConfig(
+            provider="watsonx",
+            config=WatsonxConfig(
+                apikey=apikey,
+                url=fallback(cfg.get("url"), "WATSONX_URL", "https://us-south.ml.cloud.ibm.com"),
+                project_id=project_id,
+                model_id=fallback(cfg.get("model_id"), "WATSONX_MODEL_ID", "ibm/granite-13b-chat-v2"),
+                temperature=fallback(cfg.get("temperature"), "WATSONX_TEMPERATURE", 0.7),
+                max_new_tokens=cfg.get("max_tokens", 1024),
+                min_new_tokens=cfg.get("min_tokens", 1),
+                decoding_method=fallback(cfg.get("decoding_method"), "WATSONX_DECODING_METHOD", "sample"),
+                top_k=cfg.get("top_k", 50),
+                top_p=cfg.get("top_p", 1.0),
+                timeout=cfg.get("timeout"),
+            ),
+        )
+
 
 def build_config(input_data: ConnectInput) -> MCPClientConfig:
     """Build complete MCP client configuration from connection input.
@@ -433,13 +460,13 @@ def build_config(input_data: ConnectInput) -> MCPClientConfig:
 # ---------- SESSION STORAGE HELPERS ----------
 
 # Identify this worker uniquely (used for sticky session ownership)
-WORKER_ID = os.getenv("WORKER_ID") or os.getenv("HOSTNAME") or str(os.getpid())
+WORKER_ID = str(os.getpid())
 
 # Tunables (can set via environment)
-SESSION_TTL = int(os.getenv("SESSION_TTL", "300"))  # seconds for active_session key TTL
-LOCK_TTL = int(os.getenv("SESSION_LOCK_TTL", "30"))  # seconds for lock expiry
-LOCK_RETRIES = int(os.getenv("SESSION_LOCK_RETRIES", "10"))  # how many times to poll while waiting
-LOCK_WAIT = float(os.getenv("SESSION_LOCK_WAIT", "0.2"))  # seconds between polls
+SESSION_TTL = settings.llmchat_session_ttl  # seconds for active_session key TTL
+LOCK_TTL = settings.llmchat_session_lock_ttl  # seconds for lock expiry
+LOCK_RETRIES = settings.llmchat_session_lock_retries  # how many times to poll while waiting
+LOCK_WAIT = settings.llmchat_session_lock_wait  # seconds between polls
 
 
 # Redis key helpers

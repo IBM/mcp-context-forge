@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 import pytest
 
 # First-Party
-from mcpgateway.config import jsonpath_modifier
+from mcpgateway.main import jsonpath_modifier
 
 
 class TestJSONPathFuzzing:

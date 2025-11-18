@@ -535,7 +535,7 @@ curl -X PUT /tools/{tool_id} \
 
 ### If you have existing REST tools without passthrough fields:
 
-**Before (v0.8.0):**
+**Before (v0.9.0):**
 ```json
 {
   "name": "my-rest-tool",

@@ -11,6 +11,12 @@ global:
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################
 mcpContextForge:
+  # --- Specific plugin file ----#
+  pluginConfig:
+    enabled: false
+    plugins: |
+      # plugin file
+
   replicaCount: 2                           # horizontal scaling for the gateway
 
   # --- HORIZONTAL POD AUTOSCALER --------------------------------------
@@ -38,6 +44,14 @@ mcpContextForge:
     port: 80                    # external port → containerPort below
 
   containerPort: 4444           # port the app listens on inside the pod
+
+  # Metrics configuration
+  metrics:
+    enabled: true
+    port: 8000
+    serviceMonitor:
+      enabled: true
+    customLabels: {}
 
   # Health & readiness probes
   probes:
@@ -85,9 +99,9 @@ mcpContextForge:
     host: gateway.local         # CHANGE to your FQDN (e.g. api.example.com)
     path: /
     pathType: Prefix
-    annotations:
-      nginx.ingress.kubernetes.io/rewrite-target: /
-      # cert-manager.io/cluster-issuer: letsencrypt-prod  # Uncomment to enable automatic TLS cert generation
+    annotations: {}             # Custom ingress annotations (optional)
+      # nginx.ingress.kubernetes.io/rewrite-target: /
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
     tls:
       enabled: false            # Set to true to enable TLS
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
@@ -294,7 +308,7 @@ mcpContextForge:
     PLUGINS_MTLS_VERIFY: "true"              # verify remote plugin certificates
     PLUGINS_MTLS_CHECK_HOSTNAME: "true"      # enforce hostname verification when verifying certs
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
-    PLUGINS_CLI_MARKUP_MODE: ""      # set markup mode for plugins CLI
+    PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
 
     # ─ OpenTelemetry Observability ─
     OTEL_ENABLE_OBSERVABILITY: "true" # master switch for observability
@@ -305,6 +319,23 @@ mcpContextForge:
     OTEL_BSP_MAX_QUEUE_SIZE: "2048"   # max queue size for batch span processor
     OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512" # max export batch size
     OTEL_BSP_SCHEDULE_DELAY: "5000"   # schedule delay in milliseconds
+
+    # ─ Internal Observability & Tracing ─
+    OBSERVABILITY_ENABLED: "false"               # enable internal observability tracing and metrics
+    OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"    # automatically trace HTTP requests
+    OBSERVABILITY_TRACE_RETENTION_DAYS: "7"      # number of days to retain trace data
+    OBSERVABILITY_MAX_TRACES: "100000"           # maximum number of traces to retain
+    OBSERVABILITY_SAMPLE_RATE: "1.0"             # trace sampling rate (0.0-1.0, 1.0 = trace everything)
+    OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]' # paths to exclude from tracing
+    OBSERVABILITY_METRICS_ENABLED: "true"        # enable metrics collection
+    OBSERVABILITY_EVENTS_ENABLED: "true"         # enable event logging within spans
+
+    # ─ Prometheus Metrics ─
+    ENABLE_METRICS: "true"                       # enable Prometheus metrics instrumentation
+    METRICS_EXCLUDED_HANDLERS: ""                # regex patterns for paths to exclude from metrics (comma-separated)
+    METRICS_NAMESPACE: "default"                 # Prometheus metrics namespace (prefix for all metric names)
+    METRICS_SUBSYSTEM: ""                        # Prometheus metrics subsystem (secondary prefix)
+    METRICS_CUSTOM_LABELS: ""                    # static custom labels for app_info gauge (key=value,key2=value2)
 
     # ─ Header Passthrough (Security Warning) ─
     ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough (security implications)
@@ -484,6 +515,11 @@ mcpContextForge:
     INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
     REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
 
+    # ─ Ed25519 Certificate Signing ─
+    ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates
+    ED25519_PRIVATE_KEY: ""                # Ed25519 private key for signing (PEM format)
+    PREV_ED25519_PRIVATE_KEY: ""           # previous Ed25519 private key for key rotation
+
     # ─ OpenTelemetry Endpoints (Optional/Sensitive) ─
     OTEL_EXPORTER_OTLP_ENDPOINT: ""        # OTLP endpoint (e.g., http://localhost:4317)
     OTEL_EXPORTER_OTLP_HEADERS: ""         # OTLP headers (comma-separated key=value)
@@ -609,6 +645,12 @@ postgres:
       timeoutSeconds: 3
       successThreshold: 1
       failureThreshold: 5
+
+  # ─── PostgreSQL Upgrade Configuration ───
+  upgrade:
+    enabled: false              # Set to true to enable the upgrade process
+    targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
+    backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
 
 ########################################################################
 # REDIS CACHE
@@ -767,6 +809,46 @@ redisCommander:
       failureThreshold: 5
 
 ########################################################################
+# MINIO - S3 Compatible Object Storage
+########################################################################
+minio:
+  enabled: true # Set to true to deploy MinIO (required for PostgreSQL backups during upgrade)
+
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z-cpuv1" # Use a specific stable tag
+    pullPolicy: IfNotPresent
+
+  # Credentials for the MinIO root user
+  # It's recommended to use existingSecret in production
+  existingSecret: ""
+  credentials:
+    rootUser: minioadmin
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+
+  service:
+    type: ClusterIP
+    apiPort: 9000 # S3 API
+    consolePort: 9001 # Web UI
+
+  # PersistentVolumeClaim for data durability
+  persistence:
+    enabled: true
+    storageClassName: "" # Use default StorageClass
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+    reclaimPolicy: Retain
+
+  # Resource limits & requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+########################################################################
 # MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (go)
 # Provides a fast implementation including SSE and Streamable HTTP
 ########################################################################
@@ -775,7 +857,7 @@ mcpFastTimeServer:
   replicaCount: 2
   image:
     repository: ghcr.io/ibm/fast-time-server
-    tag: "0.8.0"
+    tag: "latest"
     pullPolicy: IfNotPresent
   port: 8080
 

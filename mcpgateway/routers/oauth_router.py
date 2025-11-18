@@ -113,9 +113,9 @@ async def initiate_oauth_flow(
                     decrypted_secret = None
                     if registered_client.client_secret_encrypted:
                         # First-Party
-                        from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+                        from mcpgateway.services.encryption_service import get_encryption_service
 
-                        encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                        encryption = get_encryption_service(settings.auth_encryption_secret)
                         decrypted_secret = encryption.decrypt_secret(registered_client.client_secret_encrypted)
 
                     # Update oauth_config with registered credentials

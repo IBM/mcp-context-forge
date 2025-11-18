@@ -2,6 +2,7 @@
 """Base generator class for all data generators."""
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, List, Optional
 
@@ -26,6 +27,7 @@ class BaseGenerator(ABC):
         faker: Faker,
         logger: logging.Logger,
         existing_data: Optional[Dict[str, Any]] = None,
+        progress_tracker: Optional[Any] = None,
     ):
         """Initialize the generator.
 
@@ -35,6 +37,7 @@ class BaseGenerator(ABC):
             faker: Faker instance for generating realistic data
             logger: Logger instance
             existing_data: Optional dict of existing data for incremental mode
+            progress_tracker: Optional MultiProgressTracker instance
         """
         self.db = db
         self.config = config
@@ -43,6 +46,8 @@ class BaseGenerator(ABC):
         self.existing_data = existing_data or {}
         self.batch_size = config.get("global", {}).get("batch_size", 1000)
         self.email_domain = config.get("global", {}).get("email_domain", "loadtest.example.com")
+        self.progress_tracker = progress_tracker
+        self.progress_update_frequency = config.get("global", {}).get("progress_update_frequency", 100)
 
         # Statistics
         self.generated_count = 0
@@ -131,14 +136,36 @@ class BaseGenerator(ABC):
         Returns:
             Statistics dictionary with counts
         """
-        self.logger.info(f"Starting {self.get_name()} generation...")
+        # Log through progress tracker if available, otherwise use regular logger
+        if self.progress_tracker:
+            self.progress_tracker.log(f"Starting [cyan]{self.get_name()}[/cyan] generation...", style="")
+        else:
+            self.logger.info(f"Starting {self.get_name()} generation...")
+
+        start_time = time.time()
+
+        # Start progress tracking if available
+        if self.progress_tracker:
+            self.progress_tracker.start_task(self.get_name())
+            self.progress_tracker.refresh()  # Force refresh to show task started
 
         batch = []
         commit_frequency = self.config.get("performance", {}).get("commit_frequency", 10000)
+        last_refresh_count = 0
+        refresh_frequency = self.progress_update_frequency * 10  # Refresh every 1000 records (10x update frequency)
 
         for record in self.generate():
             batch.append(record)
             self.generated_count += 1
+
+            # Update progress periodically
+            if self.progress_tracker and self.generated_count % self.progress_update_frequency == 0:
+                self.progress_tracker.update(self.get_name(), self.progress_update_frequency)
+
+                # Refresh display less frequently to avoid overhead
+                if self.generated_count - last_refresh_count >= refresh_frequency:
+                    self.progress_tracker.refresh()
+                    last_refresh_count = self.generated_count
 
             if len(batch) >= self.batch_size:
                 self.batch_insert(batch)
@@ -155,11 +182,34 @@ class BaseGenerator(ABC):
         # Final commit
         self.commit()
 
-        self.logger.info(f"Completed {self.get_name()} generation: {self.generated_count} records")
+        # Update progress to completion
+        if self.progress_tracker:
+            # Calculate how many updates we've already sent
+            updates_sent = (self.generated_count // self.progress_update_frequency) * self.progress_update_frequency
+            # Calculate remaining records that haven't been reported
+            remaining = self.generated_count - updates_sent
+            if remaining > 0:
+                self.progress_tracker.update(self.get_name(), remaining)
+            self.progress_tracker.complete_task(self.get_name())
+            self.progress_tracker.refresh()  # Force refresh to show completion
+
+        duration = time.time() - start_time
+
+        # Log completion
+        if self.progress_tracker:
+            self.progress_tracker.log(
+                f"[green]✓[/green] Completed [cyan]{self.get_name()}[/cyan]: "
+                f"[yellow]{self.generated_count:,}[/yellow] records in [magenta]{duration:.2f}s[/magenta]",
+                style=""
+            )
+            # Live display will auto-refresh the log
+        else:
+            self.logger.info(f"Completed {self.get_name()} generation: {self.generated_count} records in {duration:.2f}s")
 
         return {
             "generated": self.generated_count,
             "inserted": self.inserted_count,
+            "duration": duration,
         }
 
     def get_scale_config(self, key: str, default: Any = None) -> Any:

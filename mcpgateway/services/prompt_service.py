@@ -30,16 +30,18 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
-from mcpgateway.models import Message, PromptResult, Role, TextContent
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
 # Initialize logging service first
@@ -412,25 +414,26 @@ class PromptService:
             db.rollback()
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
-    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> List[PromptRead]:
+    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
         """
-        Retrieve a list of prompt templates from the database.
+        Retrieve a list of prompt templates from the database with pagination support.
 
         This method retrieves prompt templates from the database and converts them into a list
         of PromptRead objects. It supports filtering out inactive prompts based on the
-        include_inactive parameter. The cursor parameter is reserved for future pagination support
-        but is currently not implemented.
+        include_inactive parameter and cursor-based pagination.
 
         Args:
             db (Session): The SQLAlchemy database session.
             include_inactive (bool): If True, include inactive prompts in the result.
                 Defaults to False.
-            cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
-                this parameter is ignored. Defaults to None.
+            cursor (Optional[str], optional): An opaque cursor token for pagination.
+                Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter prompts by tags. If provided, only prompts with at least one matching tag will be returned.
 
         Returns:
-            List[PromptRead]: A list of prompt templates represented as PromptRead objects.
+            tuple[List[PromptRead], Optional[str]]: Tuple containing:
+                - List of prompts for current page
+                - Next cursor token if more results exist, None otherwise
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -443,11 +446,27 @@ class PromptService:
             >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
             >>> PromptRead.model_validate = MagicMock(return_value='prompt_read')
             >>> import asyncio
-            >>> result = asyncio.run(service.list_prompts(db))
-            >>> result == ['prompt_read']
+            >>> prompts, next_cursor = asyncio.run(service.list_prompts(db))
+            >>> prompts == ['prompt_read']
             True
         """
-        query = select(DbPrompt)
+        page_size = settings.pagination_default_page_size
+        query = select(DbPrompt).order_by(DbPrompt.id)  # Consistent ordering for cursor pagination
+
+        # Decode cursor to get last_id if provided
+        last_id = None
+        if cursor:
+            try:
+                cursor_data = decode_cursor(cursor)
+                last_id = cursor_data.get("id")
+                logger.debug(f"Decoded cursor: last_id={last_id}")
+            except ValueError as e:
+                logger.warning(f"Invalid cursor, ignoring: {e}")
+
+        # Apply cursor filter (WHERE id > last_id)
+        if last_id:
+            query = query.where(DbPrompt.id > last_id)
+
         if not include_inactive:
             query = query.where(DbPrompt.is_active)
 
@@ -455,15 +474,30 @@ class PromptService:
         if tags:
             query = query.where(json_contains_expr(db, DbPrompt.tags, tags, match_any=True))
 
-        # Cursor-based pagination logic can be implemented here in the future.
-        logger.debug(cursor)
+        # Fetch page_size + 1 to determine if there are more results
+        query = query.limit(page_size + 1)
         prompts = db.execute(query).scalars().all()
+
+        # Check if there are more results
+        has_more = len(prompts) > page_size
+        if has_more:
+            prompts = prompts[:page_size]  # Trim to page_size
+
+        # Convert to PromptRead objects
         result = []
         for t in prompts:
             team_name = self._get_team_name(db, getattr(t, "team_id", None))
             t.team = team_name
             result.append(PromptRead.model_validate(self._convert_db_prompt(t)))
-        return result
+
+        # Generate next_cursor if there are more results
+        next_cursor = None
+        if has_more and result:
+            last_prompt = prompts[-1]  # Get last DB object
+            next_cursor = encode_cursor({"id": last_prompt.id})
+            logger.debug(f"Generated next_cursor for id={last_prompt.id}")
+
+        return (result, next_cursor)
 
     async def list_prompts_for_user(
         self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
@@ -657,7 +691,33 @@ class PromptService:
         error_message = None
         prompt = None
 
-        # Create a trace span for prompt rendering
+        # Create database span for observability dashboard
+        trace_id = current_trace_id.get()
+        db_span_id = None
+        db_span_ended = False
+        observability_service = ObservabilityService() if trace_id else None
+
+        if trace_id and observability_service:
+            try:
+                db_span_id = observability_service.start_span(
+                    db=db,
+                    trace_id=trace_id,
+                    name="prompt.render",
+                    attributes={
+                        "prompt.id": str(prompt_id),
+                        "arguments_count": len(arguments) if arguments else 0,
+                        "user": user or "anonymous",
+                        "server_id": server_id,
+                        "tenant_id": tenant_id,
+                        "request_id": request_id or "none",
+                    },
+                )
+                logger.debug(f"✓ Created prompt.render span: {db_span_id} for prompt: {prompt_id}")
+            except Exception as e:
+                logger.warning(f"Failed to start observability span for prompt rendering: {e}")
+                db_span_id = None
+
+        # Create a trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "prompt.render",
             {
@@ -690,8 +750,12 @@ class PromptService:
                     if not request_id:
                         request_id = uuid.uuid4().hex
                     global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
-                    pre_result, context_table = await self._plugin_manager.prompt_pre_fetch(
-                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments), global_context=global_context, local_contexts=None, violations_as_exceptions=True
+                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                        PromptHookType.PROMPT_PRE_FETCH,
+                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments),
+                        global_context=global_context,
+                        local_contexts=None,
+                        violations_as_exceptions=True,
                     )
 
                     # Use modified payload if provided
@@ -755,8 +819,12 @@ class PromptService:
                         raise PromptError(f"Failed to process prompt: {str(e)}")
 
                 if self._plugin_manager:
-                    post_result, _ = await self._plugin_manager.prompt_post_fetch(
-                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result), global_context=global_context, local_contexts=context_table, violations_as_exceptions=True
+                    post_result, _ = await self._plugin_manager.invoke_hook(
+                        PromptHookType.PROMPT_POST_FETCH,
+                        payload=PromptPosthookPayload(prompt_id=str(prompt.id), result=result),
+                        global_context=global_context,
+                        local_contexts=context_table,
+                        violations_as_exceptions=True,
                     )
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result
@@ -782,6 +850,20 @@ class PromptService:
                         await self._record_prompt_metric(db, prompt, start_time, success, error_message)
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record prompt metric: {metrics_error}")
+
+                # End database span for observability dashboard
+                if db_span_id and observability_service and not db_span_ended:
+                    try:
+                        observability_service.end_span(
+                            db=db,
+                            span_id=db_span_id,
+                            status="ok" if success else "error",
+                            status_message=error_message if error_message else None,
+                        )
+                        db_span_ended = True
+                        logger.debug(f"✓ Ended prompt.render span: {db_span_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to end observability span for prompt rendering: {e}")
 
     async def update_prompt(
         self,
@@ -1028,7 +1110,6 @@ class PromptService:
             >>> result == prompt_dict
             True
         """
-        logger.info(f"prompt_id:::{prompt_id}")
         prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 import pytest
 
 # First-Party
@@ -36,14 +37,14 @@ def test_require_api_key_scenarios():
     with patch("mcpgateway.main.settings") as mock_settings:
         mock_settings.auth_required = True
         mock_settings.basic_auth_user = "admin"
-        mock_settings.basic_auth_password = "secret"
+        mock_settings.basic_auth_password = SecretStr("secret")
         require_api_key("admin:secret")  # Should not raise
 
     # Test with auth enabled and incorrect key
     with patch("mcpgateway.main.settings") as mock_settings:
         mock_settings.auth_required = True
         mock_settings.basic_auth_user = "admin"
-        mock_settings.basic_auth_password = "secret"
+        mock_settings.basic_auth_password = SecretStr("secret")
 
         with pytest.raises(HTTPException):
             require_api_key("wrong:key")

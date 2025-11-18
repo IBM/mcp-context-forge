@@ -144,6 +144,9 @@ class TestGatewayServiceExtended:
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
+            # Mock _validate_gateway_url to return True (same as SSE test)
+            service._validate_gateway_url = AsyncMock(return_value=True)
+
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
 

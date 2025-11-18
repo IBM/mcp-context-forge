@@ -53,8 +53,9 @@ from .generators import (
     TokenRevocationGenerator,
     OAuthTokenGenerator,
 )
-from .utils.progress import ProgressTracker
+from .utils.progress import MultiProgressTracker, SimpleProgressTracker
 from .utils.validation import DataValidator
+from rich.console import Console
 
 
 # Logger setup
@@ -167,8 +168,15 @@ def generate_data(config: Dict[str, Any], dry_run: bool = False) -> Dict[str, An
     Returns:
         Generation statistics
     """
+    # Initialize console and progress tracking
+    console = Console()
+    simple_progress = SimpleProgressTracker(console)
+
+    profile_name = config.get('profile', {}).get('name', 'unknown')
+    simple_progress.print_step(f"Starting load data generation (Profile: {profile_name})")
+
     logger.info("Starting load data generation...")
-    logger.info(f"Profile: {config.get('profile', {}).get('name', 'unknown')}")
+    logger.info(f"Profile: {profile_name}")
 
     start_time = time.time()
     stats = {}
@@ -184,28 +192,66 @@ def generate_data(config: Dict[str, Any], dry_run: bool = False) -> Dict[str, An
     # Determine generation order (respects dependencies)
     generation_order = config.get("generation_order", list(GENERATORS.keys()))
 
-    try:
+    # Initialize multi-progress tracker if not dry run
+    progress_tracker = None
+    use_progress = config.get("global", {}).get("progress_bar", True) and not dry_run
+
+    if use_progress:
+        progress_tracker = MultiProgressTracker(console)
+
+        # Pre-calculate all generator counts and add tasks
+        simple_progress.print_step("Calculating record counts...")
         for generator_name in generation_order:
-            if generator_name not in GENERATORS:
-                logger.warning(f"Unknown generator: {generator_name}")
-                continue
+            if generator_name in GENERATORS:
+                generator_class = GENERATORS[generator_name]
+                temp_generator = generator_class(db, config, faker, logger)
+                count = temp_generator.get_count()
+                progress_tracker.add_task(
+                    generator_name,
+                    count,
+                    f"{generator_name:30}"
+                )
 
-            generator_class = GENERATORS[generator_name]
-            logger.info(f"Generating {generator_name}...")
+        simple_progress.print_success(f"Planning to generate {progress_tracker.total_records:,} total records")
 
-            generator = generator_class(db, config, faker, logger)
-            count = generator.get_count()
+    try:
+        if use_progress and progress_tracker:
+            # Use rich live display for progress
+            with progress_tracker.live_display():
+                for generator_name in generation_order:
+                    if generator_name not in GENERATORS:
+                        logger.warning(f"Unknown generator: {generator_name}")
+                        continue
 
-            if dry_run:
-                logger.info(f"[DRY RUN] Would generate {count} {generator_name}")
-                stats[generator_name] = {"generated": count, "inserted": 0, "dry_run": True}
-                continue
+                    generator_class = GENERATORS[generator_name]
+                    generator = generator_class(db, config, faker, logger, progress_tracker=progress_tracker)
 
-            # Run generator (it handles its own batching, commits, and tracking)
-            gen_stats = generator.run()
-            stats[generator_name] = gen_stats
+                    # Run generator with progress tracking
+                    gen_stats = generator.run()
+                    stats[generator_name] = gen_stats
 
-            logger.info(f"Completed {generator_name}: {gen_stats['generated']} records")
+                    # Explicitly refresh display after each generator completes
+                    progress_tracker.refresh()
+        else:
+            # Dry run or no progress bar - simple output
+            for generator_name in generation_order:
+                if generator_name not in GENERATORS:
+                    logger.warning(f"Unknown generator: {generator_name}")
+                    continue
+
+                generator_class = GENERATORS[generator_name]
+                generator = generator_class(db, config, faker, logger)
+                count = generator.get_count()
+
+                if dry_run:
+                    simple_progress.print_info(f"[DRY RUN] Would generate {count:,} {generator_name}")
+                    stats[generator_name] = {"generated": count, "inserted": 0, "dry_run": True, "duration": 0}
+                    continue
+
+                simple_progress.print_step(f"Generating {generator_name}...")
+                gen_stats = generator.run()
+                stats[generator_name] = gen_stats
+                simple_progress.print_success(f"Completed {generator_name}: {gen_stats['generated']:,} records")
 
         # Calculate totals
         total_generated = sum(s.get("generated", 0) for s in stats.values())
@@ -224,26 +270,28 @@ def generate_data(config: Dict[str, Any], dry_run: bool = False) -> Dict[str, An
             "dry_run": dry_run,
         }
 
-        logger.info(f"Generation complete in {elapsed_time:.2f}s")
-        logger.info(f"Total records: {total_generated}")
-        logger.info(f"Rate: {summary['records_per_second']:.2f} records/second")
+        # Print summary
+        console.print()
+        simple_progress.print_summary(total_generated, elapsed_time, profile_name)
 
         # Validate if enabled
         if config.get("validation", {}).get("enabled", True) and not dry_run:
-            logger.info("Running validation checks...")
+            console.print()
+            simple_progress.print_step("Running validation checks...")
             validator = DataValidator(db, logger)
             validation_results = validator.validate_all()
             summary["validation"] = validation_results
 
             if validation_results.get("all_passed", False):
-                logger.info("All validation checks passed!")
+                simple_progress.print_success("All validation checks passed!")
             else:
-                logger.warning("Some validation checks failed")
+                simple_progress.print_warning("Some validation checks failed")
 
         return summary
 
     except Exception as e:
         logger.error(f"Generation failed: {e}", exc_info=True)
+        simple_progress.print_error(f"Generation failed: {e}")
         db.rollback()
         raise
     finally:
@@ -359,16 +407,6 @@ def main():
                 json.dump(summary, f, indent=2, default=str)
 
             logger.info(f"Report saved to: {output_file}")
-
-        # Print summary
-        print("\n" + "="*80)
-        print(f"Generation Summary")
-        print("="*80)
-        print(f"Profile: {summary['profile']}")
-        print(f"Duration: {summary['duration_seconds']:.2f} seconds")
-        print(f"Total Records: {summary['total_generated']:,}")
-        print(f"Rate: {summary['records_per_second']:.2f} records/second")
-        print("="*80)
 
         sys.exit(0)
 

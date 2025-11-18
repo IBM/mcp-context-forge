@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 '''Location: ./mcpgateway/translate.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -123,7 +124,7 @@ import os
 import shlex
 import signal
 import sys
-from typing import Any, AsyncIterator, cast, Dict, List, Optional, Sequence, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
 import uuid
 
@@ -146,6 +147,7 @@ from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.routing import Route
+from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -380,6 +382,10 @@ class StdIOEndpoint:
             >>> asyncio.run(test_start()) # doctest: +SKIP
             True
         """
+        # Stop existing subprocess before starting a new one
+        if self._proc is not None:
+            await self.stop()
+
         LOGGER.info(f"Starting stdio subprocess: {self._cmd}")
 
         # Build environment from base + configured + additional
@@ -388,12 +394,18 @@ class StdIOEndpoint:
         if additional_env_vars:
             env.update(additional_env_vars)
 
+        # System-critical environment variables that must never be cleared
+        system_critical_vars = {"PATH", "HOME", "TMPDIR", "TEMP", "TMP", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "LC_CTYPE", "PYTHONHOME", "PYTHONPATH"}
+
         # Clear any mapped env vars that weren't provided in headers to avoid inheritance
         if self._header_mappings:
             for env_var_name in self._header_mappings.values():
-                if env_var_name not in (additional_env_vars or {}):
-                    env[env_var_name] = ""
+                if env_var_name not in (additional_env_vars or {}) and env_var_name not in system_critical_vars:
+                    # Delete the variable instead of setting to empty string to avoid
+                    # breaking subprocess initialization
+                    env.pop(env_var_name, None)
 
+        LOGGER.debug(f"Subprocess environment variables: {list(env.keys())}")
         self._proc = await asyncio.create_subprocess_exec(
             *shlex.split(self._cmd),
             stdin=asyncio.subprocess.PIPE,
@@ -405,6 +417,8 @@ class StdIOEndpoint:
         # Explicit error checking
         if not self._proc.stdin or not self._proc.stdout:
             raise RuntimeError(f"Failed to create subprocess with stdin/stdout pipes for command: {self._cmd}")
+
+        LOGGER.debug("Subprocess started successfully")
 
         self._stdin = self._proc.stdin
         self._pump_task = asyncio.create_task(self._pump_stdout())
@@ -528,6 +542,9 @@ class StdIOEndpoint:
                 text = line.decode(errors="replace")
                 LOGGER.debug(f"← stdio: {text.strip()}")
                 await self._pubsub.publish(text)
+        except ConnectionResetError:  # pragma: no cover --subprocess terminated
+            # Subprocess terminated abruptly - this is expected behavior
+            LOGGER.debug("stdout pump: subprocess connection closed")
         except Exception:  # pragma: no cover --best-effort logging
             LOGGER.exception("stdout pump crashed - terminating bridge")
             raise
@@ -677,7 +694,7 @@ def _build_fastapi(
     # Add CORS middleware if origins specified
     if cors_origins:
         app.add_middleware(
-            cast("type", CORSMiddleware),
+            CORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=True,
             allow_methods=["*"],
@@ -1073,7 +1090,7 @@ async def _run_stdio_to_sse(
         log_level=log_level,
         lifespan="off",
     )
-    server = uvicorn.Server(config)
+    uvicorn_server = uvicorn.Server(config)
 
     shutting_down = asyncio.Event()  # 🔄 make shutdown idempotent
 
@@ -1103,24 +1120,15 @@ async def _run_stdio_to_sse(
         await stdio.stop()
         # Graceful shutdown by setting the shutdown event
         # Use getattr to safely access should_exit attribute
-        setattr(server, "should_exit", getattr(server, "should_exit", False) or True)
+        setattr(uvicorn_server, "should_exit", getattr(uvicorn_server, "should_exit", False) or True)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
-
-            def shutdown_handler(*args):  # pylint: disable=unused-argument
-                """Handle shutdown signal by creating shutdown task.
-
-                Args:
-                    *args: Signal handler arguments (unused).
-                """
-                asyncio.create_task(_shutdown())
-
-            loop.add_signal_handler(sig, shutdown_handler)
+            loop.add_signal_handler(sig, lambda *_: asyncio.create_task(_shutdown()))
 
     LOGGER.info(f"Bridge ready → http://{host}:{port}{sse_path}")
-    await server.serve()
+    await uvicorn_server.serve()
     await _shutdown()  # final cleanup
 
 
@@ -1377,7 +1385,7 @@ async def _run_stdio_to_streamable_http(
     LOGGER.info(f"Starting stdio to streamable HTTP bridge for command: {cmd}")
 
     # Create a simple MCP server that will proxy to stdio subprocess
-    server = MCPServer(name="stdio-proxy")
+    mcp_server = MCPServer(name="stdio-proxy")
 
     # Create subprocess for stdio communication
     process = await asyncio.create_subprocess_exec(
@@ -1392,13 +1400,13 @@ async def _run_stdio_to_streamable_http(
 
     # Set up the streamable HTTP session manager with the server
     session_manager = StreamableHTTPSessionManager(
-        app=server,
+        app=mcp_server,
         stateless=stateless,
         json_response=json_response,
     )
 
     # Create Starlette app to host the streamable HTTP endpoint
-    async def handle_mcp(request) -> None:
+    async def handle_mcp(request: Request) -> None:
         """Handle MCP requests via streamable HTTP.
 
         Args:
@@ -1418,8 +1426,8 @@ async def _run_stdio_to_streamable_http(
             >>> asyncio.run(test_handle())
             True
         """
-        # The session manager handles all the protocol details
-        await session_manager.handle_request(request.scope, request.receive, request.send)
+        # The session manager handles all the protocol details - Note: I don't like accessing _send directly -JPS
+        await session_manager.handle_request(request.scope, request.receive, request._send)  # pylint: disable=W0212
 
     routes = [
         Route("/mcp", handle_mcp, methods=["GET", "POST"]),
@@ -1430,12 +1438,8 @@ async def _run_stdio_to_streamable_http(
 
     # Add CORS middleware if specified
     if cors:
-        # Import here to avoid unnecessary dependency when CORS not used
-        # Third-Party
-        from starlette.middleware.cors import CORSMiddleware as StarletteCORS  # pylint: disable=import-outside-toplevel
-
         app.add_middleware(
-            cast("type", StarletteCORS),
+            CORSMiddleware,
             allow_origins=cors,
             allow_credentials=True,
             allow_methods=["*"],
@@ -1450,7 +1454,7 @@ async def _run_stdio_to_streamable_http(
         log_level=log_level,
         lifespan="off",
     )
-    server = uvicorn.Server(config)
+    uvicorn_server = uvicorn.Server(config)
 
     shutting_down = asyncio.Event()
 
@@ -1466,21 +1470,12 @@ async def _run_stdio_to_streamable_http(
                 await asyncio.wait_for(process.wait(), 5)
         # Graceful shutdown by setting the shutdown event
         # Use getattr to safely access should_exit attribute
-        setattr(server, "should_exit", getattr(server, "should_exit", False) or True)
+        setattr(uvicorn_server, "should_exit", getattr(uvicorn_server, "should_exit", False) or True)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):  # Windows lacks add_signal_handler
-
-            def shutdown_handler(*args):  # pylint: disable=unused-argument
-                """Handle shutdown signal by creating shutdown task.
-
-                Args:
-                    *args: Signal handler arguments (unused).
-                """
-                asyncio.create_task(_shutdown())
-
-            loop.add_signal_handler(sig, shutdown_handler)
+            loop.add_signal_handler(sig, lambda *_: asyncio.create_task(_shutdown()))
 
     # Pump messages between stdio and HTTP
     async def pump_stdio_to_http() -> None:
@@ -1537,7 +1532,7 @@ async def _run_stdio_to_streamable_http(
 
     try:
         LOGGER.info(f"Streamable HTTP bridge ready → http://{host}:{port}/mcp")
-        await server.serve()
+        await uvicorn_server.serve()
     finally:
         pump_task.cancel()
         await _shutdown()
@@ -1816,7 +1811,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     # Add CORS middleware if specified
     if cors:
         app.add_middleware(
-            cast("type", CORSMiddleware),
+            CORSMiddleware,
             allow_origins=cors,
             allow_credentials=True,
             allow_methods=["*"],
@@ -2060,7 +2055,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             return PlainTextResponse("accepted", status_code=status.HTTP_202_ACCEPTED)
 
         # ASGI wrapper to route GET/other /mcp scopes to streamable_manager.handle_request
-        async def mcp_asgi_wrapper(scope, receive, send):
+        async def mcp_asgi_wrapper(scope: Scope, receive: Receive, send: Send) -> None:
             """
             ASGI middleware that intercepts HTTP requests to the `/mcp` endpoint.
 
@@ -2069,9 +2064,9 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
             passed to the original FastAPI application.
 
             Args:
-                scope (dict): The ASGI scope dictionary containing request metadata.
-                receive (Callable): An awaitable that yields incoming ASGI events.
-                send (Callable): An awaitable used to send ASGI events.
+                scope (Scope): The ASGI scope dictionary containing request metadata.
+                receive (Receive): An awaitable that yields incoming ASGI events.
+                send (Send): An awaitable used to send ASGI events.
             """
             if scope.get("type") == "http" and scope.get("path") == "/mcp" and streamable_manager:
                 # Let StreamableHTTPSessionManager handle session-oriented streaming
@@ -2082,7 +2077,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 await original_app(scope, receive, send)
 
         # Replace the app used by uvicorn with the ASGI wrapper
-        app = mcp_asgi_wrapper
+        app = mcp_asgi_wrapper  # type: ignore[assignment]
 
     # ---------------------- Server lifecycle ----------------------
     config = uvicorn.Config(
@@ -2112,16 +2107,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         with suppress(NotImplementedError):
-
-            def shutdown_handler(*args):  # pylint: disable=unused-argument
-                """Handle shutdown signal by creating shutdown task.
-
-                Args:
-                    *args: Signal handler arguments (unused).
-                """
-                asyncio.create_task(_shutdown())
-
-            loop.add_signal_handler(sig, shutdown_handler)
+            loop.add_signal_handler(sig, lambda *_: asyncio.create_task(_shutdown()))
 
     # If we have a streamable manager, start its context so it can accept ASGI /mcp
     if streamable_manager:

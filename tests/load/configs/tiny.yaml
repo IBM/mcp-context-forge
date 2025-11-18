@@ -1,0 +1,198 @@
+# Tiny load profile - Quick testing
+# Target: 10 users, minimal data
+# Generation time: <5 seconds
+
+profile:
+  name: tiny
+  description: "Minimal test for development (10 users)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  batch_size: 10
+  progress_bar: true
+  progress_update_frequency: 5
+  parallel: false
+  workers: 1
+  email_domain: "loadtest.example.com"
+  output_report: "reports/tiny_load_report.json"
+  log_level: INFO
+
+database:
+  pool_size: 5
+  max_overflow: 10
+  pool_timeout: 30
+  echo: false
+
+scale:
+  # Users
+  users: 10
+  users_active_percent: 80
+  users_admin_percent: 10
+
+  # Teams
+  personal_teams_per_user: 1
+  additional_teams_per_user: 2
+  teams_private_percent: 60
+  teams_public_percent: 40
+
+  # Team membership
+  members_per_team_min: 1
+  members_per_team_max: 5
+  members_per_team_distribution: "power_law"
+
+  # API Tokens
+  tokens_per_user_min: 1
+  tokens_per_user_max: 2
+  tokens_per_user_avg: 1
+  tokens_active_percent: 90
+
+  # Gateways
+  gateways: 3
+  tools_per_gateway_min: 5
+  tools_per_gateway_max: 10
+  tools_per_gateway_avg: 7
+  tools_enabled_percent: 95
+
+  # Resources
+  resources_per_user_min: 5
+  resources_per_user_max: 15
+  resources_per_user_avg: 10
+
+  # Prompts
+  prompts_per_user_min: 5
+  prompts_per_user_max: 15
+  prompts_per_user_avg: 10
+
+  # Virtual Servers
+  servers_per_user_min: 1
+  servers_per_user_max: 3
+  servers_per_user_avg: 2
+
+  # A2A Agents
+  a2a_agents_per_user_min: 0
+  a2a_agents_per_user_max: 2
+  a2a_agents_per_user_avg: 1
+
+  # Server Associations
+  tools_per_server_min: 1
+  tools_per_server_max: 5
+  tools_per_server_avg: 2
+  resources_per_server_min: 1
+  resources_per_server_max: 10
+  resources_per_server_avg: 3
+  prompts_per_server_min: 1
+  prompts_per_server_max: 8
+  prompts_per_server_avg: 2
+  a2a_agents_per_server_min: 0
+  a2a_agents_per_server_max: 1
+  a2a_agents_per_server_avg: 0
+
+  # Metrics
+  metrics_per_tool_min: 2
+  metrics_per_tool_max: 10
+  metrics_per_tool_avg: 5
+  metrics_per_resource_min: 1
+  metrics_per_resource_max: 5
+  metrics_per_resource_avg: 3
+  metrics_per_prompt_min: 1
+  metrics_per_prompt_max: 5
+  metrics_per_prompt_avg: 2
+  metrics_per_server_min: 3
+  metrics_per_server_max: 20
+  metrics_per_server_avg: 10
+  metrics_per_a2a_agent_min: 2
+  metrics_per_a2a_agent_max: 15
+  metrics_per_a2a_agent_avg: 7
+
+  # Activity Logs
+  logs_per_token_min: 5
+  logs_per_token_max: 20
+  logs_per_token_avg: 10
+  auth_events_per_user_min: 1
+  auth_events_per_user_max: 5
+  auth_events_per_user_avg: 3
+  permission_audits_per_user_min: 2
+  permission_audits_per_user_max: 10
+  permission_audits_per_user_avg: 5
+
+  # MCP Sessions
+  mcp_sessions_per_server_min: 1
+  mcp_sessions_per_server_max: 3
+  mcp_sessions_per_server_avg: 2
+  mcp_messages_per_session_min: 2
+  mcp_messages_per_session_max: 8
+  mcp_messages_per_session_avg: 4
+  resource_subscription_rate: 0.05
+
+  # Workflow State
+  invitation_generation_rate: 0.2
+  join_request_generation_rate: 0.1
+  token_revocation_rate: 0.1
+  oauth_token_rate: 0.1
+
+distributions:
+  team_size: "power_law"
+  resource_access: "zipf"
+  prompt_access: "zipf"
+  tool_invocation: "zipf"
+  temporal: "exponential_decay"
+
+temporal:
+  start_date: "2025-01-01"
+  end_date: "2025-10-22"
+  recent_data_percent: 80
+  historical_data_percent: 20
+
+realism:
+  use_faker: true
+  faker_locale: "en_US"
+  name_length_min: 5
+  name_length_max: 30
+  description_length_min: 20
+  description_length_max: 100
+
+performance:
+  batch_size: 10
+  commit_frequency: 100
+  disable_indexes: false
+  analyze_after_load: false
+
+generation_order:
+  - users
+  - teams
+  - team_members
+  - tokens
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+  - a2a_agents
+  - server_tool_associations
+  - server_resource_associations
+  - server_prompt_associations
+  - server_a2a_associations
+  - tool_metrics
+  - resource_metrics
+  - prompt_metrics
+  - server_metrics
+  - a2a_agent_metrics
+  - token_usage_logs
+  - email_auth_events
+  - permission_audit_logs
+  - mcp_sessions
+  - mcp_messages
+  - resource_subscriptions
+  - team_invitations
+  - team_join_requests
+  - token_revocations
+  - oauth_tokens
+
+validation:
+  enabled: false
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/tiny_load_report.json"

@@ -1,0 +1,19 @@
+<!-- htmlhint doctype-first:false -->
+<div class="stats-grid">
+    <div class="stat-card success">
+        <div class="stat-label">Total Requests</div>
+        <div class="stat-value">{{ stats.total_traces }}<span class="stat-unit"></span></div>
+    </div>
+    <div class="stat-card success">
+        <div class="stat-label">Success Rate</div>
+        <div class="stat-value">{{ "%.1f"|format(stats.success_count / stats.total_traces * 100 if stats.total_traces > 0 else 0) }}<span class="stat-unit">%</span></div>
+    </div>
+    <div class="stat-card error">
+        <div class="stat-label">Error Count</div>
+        <div class="stat-value">{{ stats.error_count }}<span class="stat-unit"></span></div>
+    </div>
+    <div class="stat-card warning">
+        <div class="stat-label">Avg Response Time</div>
+        <div class="stat-value">{{ "%.0f"|format(stats.avg_duration_ms) }}<span class="stat-unit">ms</span></div>
+    </div>
+</div>

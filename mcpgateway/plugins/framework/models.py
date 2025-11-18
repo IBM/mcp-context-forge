@@ -13,48 +13,31 @@ the base plugin layer including configurations, and contexts.
 from enum import Enum
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeVar
+from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar
 
 # Third-Party
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, RootModel, ValidationInfo
+from pydantic import (
+    BaseModel,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+    PrivateAttr,
+    ValidationInfo,
+)
 
 # First-Party
-from mcpgateway.models import PromptResult
-from mcpgateway.plugins.framework.constants import AFTER, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, URL
-from mcpgateway.schemas import TransportType
-from mcpgateway.validators import SecurityValidator
+from mcpgateway.common.models import TransportType
+from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.plugins.framework.constants import (
+    EXTERNAL_PLUGIN_TYPE,
+    IGNORE_CONFIG_EXTERNAL,
+    PYTHON_SUFFIX,
+    SCRIPT,
+    URL,
+)
 
 T = TypeVar("T")
-
-
-class HookType(str, Enum):
-    """MCP Forge Gateway hook points.
-
-    Attributes:
-        prompt_pre_fetch: The prompt pre hook.
-        prompt_post_fetch: The prompt post hook.
-        tool_pre_invoke: The tool pre invoke hook.
-        tool_post_invoke: The tool post invoke hook.
-        resource_pre_fetch: The resource pre fetch hook.
-        resource_post_fetch: The resource post fetch hook.
-
-    Examples:
-        >>> HookType.PROMPT_PRE_FETCH
-        <HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>
-        >>> HookType.PROMPT_PRE_FETCH.value
-        'prompt_pre_fetch'
-        >>> HookType('prompt_post_fetch')
-        <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>
-        >>> list(HookType)  # doctest: +ELLIPSIS
-        [<HookType.PROMPT_PRE_FETCH: 'prompt_pre_fetch'>, <HookType.PROMPT_POST_FETCH: 'prompt_post_fetch'>, <HookType.TOOL_PRE_INVOKE: 'tool_pre_invoke'>, <HookType.TOOL_POST_INVOKE: 'tool_post_invoke'>, ...]
-    """
-
-    PROMPT_PRE_FETCH = "prompt_pre_fetch"
-    PROMPT_POST_FETCH = "prompt_post_fetch"
-    TOOL_PRE_INVOKE = "tool_pre_invoke"
-    TOOL_POST_INVOKE = "tool_post_invoke"
-    RESOURCE_PRE_FETCH = "resource_pre_fetch"
-    RESOURCE_POST_FETCH = "resource_post_fetch"
 
 
 class PluginMode(str, Enum):
@@ -190,6 +173,7 @@ class PluginCondition(BaseModel):
         tools (Optional[set[str]]): set of tool names.
         prompts (Optional[set[str]]): set of prompt names.
         resources (Optional[set[str]]): set of resource URIs.
+        agents (Optional[set[str]]): set of agent IDs.
         user_pattern (Optional[list[str]]): list of user patterns.
         content_types (Optional[list[str]]): list of content types.
 
@@ -210,10 +194,11 @@ class PluginCondition(BaseModel):
     tools: Optional[set[str]] = None
     prompts: Optional[set[str]] = None
     resources: Optional[set[str]] = None
+    agents: Optional[set[str]] = None
     user_patterns: Optional[list[str]] = None
     content_types: Optional[list[str]] = None
 
-    @field_serializer("server_ids", "tenant_ids", "tools", "prompts")
+    @field_serializer("server_ids", "tenant_ids", "tools", "prompts", "resources", "agents")
     def serialize_set(self, value: set[str] | None) -> list[str] | None:
         """Serialize set objects in PluginCondition for MCP.
 
@@ -262,7 +247,7 @@ class MCPTransportTLSConfigBase(BaseModel):
     ca_bundle: Optional[str] = Field(default=None, description="Path to CA bundle for verification")
     keyfile_password: Optional[str] = Field(default=None, description="Password for encrypted private key")
 
-    @field_validator("ca_bundle", "certfile", "keyfile", mode=AFTER)
+    @field_validator("ca_bundle", "certfile", "keyfile", mode="after")
     @classmethod
     def validate_path(cls, value: Optional[str]) -> Optional[str]:
         """Expand and validate file paths supplied in TLS configuration.
@@ -284,7 +269,7 @@ class MCPTransportTLSConfigBase(BaseModel):
             raise ValueError(f"TLS file path does not exist: {value}")
         return str(expanded)
 
-    @model_validator(mode=AFTER)
+    @model_validator(mode="after")
     def validate_cert_key(self) -> Self:  # pylint: disable=bad-classmethod-argument
         """Ensure certificate and key options are consistent.
 
@@ -421,7 +406,7 @@ class MCPServerConfig(BaseModel):
         tls (Optional[MCPServerTLSConfig]): Server-side TLS configuration.
     """
 
-    host: str = Field(default="0.0.0.0", description="Server host to bind to")  # nosec B104
+    host: str = Field(default="127.0.0.1", description="Server host to bind to")
     port: int = Field(default=8000, description="Server port to bind to")
     tls: Optional[MCPServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
 
@@ -499,7 +484,7 @@ class MCPClientConfig(BaseModel):
     script: Optional[str] = None
     tls: Optional[MCPClientTLSConfig] = None
 
-    @field_validator(URL, mode=AFTER)
+    @field_validator(URL, mode="after")
     @classmethod
     def validate_url(cls, url: str | None) -> str | None:
         """Validate a MCP url for streamable HTTP connections.
@@ -518,7 +503,7 @@ class MCPClientConfig(BaseModel):
             return result
         return url
 
-    @field_validator(SCRIPT, mode=AFTER)
+    @field_validator(SCRIPT, mode="after")
     @classmethod
     def validate_script(cls, script: str | None) -> str | None:
         """Validate an MCP stdio script.
@@ -542,7 +527,7 @@ class MCPClientConfig(BaseModel):
                 raise ValueError(f"MCP server script {script} must have a .py or .sh suffix.")
         return script
 
-    @model_validator(mode=AFTER)
+    @model_validator(mode="after")
     def validate_tls_usage(self) -> Self:  # pylint: disable=bad-classmethod-argument
         """Ensure TLS configuration is only used with HTTP-based transports.
 
@@ -568,10 +553,10 @@ class PluginConfig(BaseModel):
         kind (str): The kind or type of plugin. Usually a fully qualified object type.
         namespace (str): The namespace where the plugin resides.
         version (str): version of the plugin.
-        hooks (list[str]): a list of the hook points where the plugin will be called.
+        hooks (list[str]): a list of the hook points where the plugin will be called. Default: [].
         tags (list[str]): a list of tags for making the plugin searchable.
         mode (bool): whether the plugin is active.
-        priority (int): indicates the order in which the plugin is run. Lower = higher priority.
+        priority (int): indicates the order in which the plugin is run. Lower = higher priority. Default: 100.
         conditions (Optional[list[PluginCondition]]): the conditions on which the plugin is run.
         applied_to (Optional[list[AppliedTo]]): the tools, fields, that the plugin is applied to.
         config (dict[str, Any]): the plugin specific configurations.
@@ -584,16 +569,16 @@ class PluginConfig(BaseModel):
     kind: str
     namespace: Optional[str] = None
     version: Optional[str] = None
-    hooks: Optional[list[HookType]] = None
-    tags: Optional[list[str]] = None
+    hooks: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
     mode: PluginMode = PluginMode.ENFORCE
-    priority: Optional[int] = None  # Lower = higher priority
-    conditions: Optional[list[PluginCondition]] = None  # When to apply
+    priority: int = 100  # Lower = higher priority
+    conditions: list[PluginCondition] = Field(default_factory=list)  # When to apply
     applied_to: Optional[AppliedTo] = None  # Fields to apply to.
     config: Optional[dict[str, Any]] = None
     mcp: Optional[MCPClientConfig] = None
 
-    @model_validator(mode=AFTER)
+    @model_validator(mode="after")
     def check_url_or_script_filled(self) -> Self:  # pylint: disable=bad-classmethod-argument
         """Checks to see that at least one of url or script are set depending on MCP server configuration.
 
@@ -613,7 +598,7 @@ class PluginConfig(BaseModel):
             raise ValueError(f"Plugin {self.name} must set transport type to either SSE or STREAMABLEHTTP or STDIO")
         return self
 
-    @model_validator(mode=AFTER)
+    @model_validator(mode="after")
     def check_config_and_external(self, info: ValidationInfo) -> Self:  # pylint: disable=bad-classmethod-argument
         """Checks to see that a plugin's 'config' section is not defined if the kind is 'external'. This is because developers cannot override items in the plugin config section for external plugins.
 
@@ -667,12 +652,14 @@ class PluginErrorModel(BaseModel):
         code (str): an error code.
         details: (dict[str, Any]): additional error details.
         plugin_name (str): the plugin name.
+        mcp_error_code ([int]): The MCP error code passed back to the client. Defaults to Internal Error.
     """
 
     message: str
+    plugin_name: str
     code: Optional[str] = ""
     details: Optional[dict[str, Any]] = Field(default_factory=dict)
-    plugin_name: str
+    mcp_error_code: int = -32603
 
 
 class PluginViolation(BaseModel):
@@ -684,6 +671,7 @@ class PluginViolation(BaseModel):
         code (str): a violation code.
         details: (dict[str, Any]): additional violation details.
         _plugin_name (str): the plugin name, private attribute set by the plugin manager.
+        mcp_error_code(Optional[int]): A valid mcp error code which will be sent back to the client if plugin enabled.
 
     Examples:
         >>> violation = PluginViolation(
@@ -704,8 +692,9 @@ class PluginViolation(BaseModel):
     reason: str
     description: str
     code: str
-    details: dict[str, Any]
+    details: Optional[dict[str, Any]] = Field(default_factory=dict)
     _plugin_name: str = PrivateAttr(default="")
+    mcp_error_code: Optional[int] = None
 
     @property
     def plugin_name(self) -> str:
@@ -765,61 +754,6 @@ class Config(BaseModel):
     server_settings: Optional[MCPServerConfig] = None
 
 
-class PromptPrehookPayload(BaseModel):
-    """A prompt payload for a prompt prehook.
-
-    Attributes:
-        prompt_id (str): The ID of the prompt template.
-        args (dic[str,str]): The prompt template arguments.
-
-    Examples:
-        >>> payload = PromptPrehookPayload(prompt_id="123", args={"user": "alice"})
-        >>> payload.prompt_id
-        '123'
-        >>> payload.args
-        {'user': 'alice'}
-        >>> payload2 = PromptPrehookPayload(prompt_id="empty")
-        >>> payload2.args
-        {}
-        >>> p = PromptPrehookPayload(prompt_id="123", args={"name": "Bob", "time": "morning"})
-        >>> p.prompt_id
-        '123'
-        >>> p.args["name"]
-        'Bob'
-    """
-
-    prompt_id: str
-    args: Optional[dict[str, str]] = Field(default_factory=dict)
-
-
-class PromptPosthookPayload(BaseModel):
-    """A prompt payload for a prompt posthook.
-
-    Attributes:
-        prompt_id (str): The prompt ID.
-        result (PromptResult): The prompt after its template is rendered.
-
-     Examples:
-        >>> from mcpgateway.models import PromptResult, Message, TextContent
-        >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
-        >>> result = PromptResult(messages=[msg])
-        >>> payload = PromptPosthookPayload(prompt_id="123", result=result)
-        >>> payload.prompt_id
-        '123'
-        >>> payload.result.messages[0].content.text
-        'Hello World'
-        >>> from mcpgateway.models import PromptResult, Message, TextContent
-        >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
-        >>> r = PromptResult(messages=[msg])
-        >>> p = PromptPosthookPayload(prompt_id="123", result=r)
-        >>> p.prompt_id
-        '123'
-    """
-
-    prompt_id: str
-    result: PromptResult
-
-
 class PluginResult(BaseModel, Generic[T]):
     """A result of the plugin hook processing. The actual type is dependent on the hook.
 
@@ -856,111 +790,6 @@ class PluginResult(BaseModel, Generic[T]):
     modified_payload: Optional[T] = None
     violation: Optional[PluginViolation] = None
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
-
-
-PromptPrehookResult = PluginResult[PromptPrehookPayload]
-PromptPosthookResult = PluginResult[PromptPosthookPayload]
-
-
-class HttpHeaderPayload(RootModel[dict[str, str]]):
-    """An HTTP dictionary of headers used in the pre/post HTTP forwarding hooks."""
-
-    def __iter__(self):
-        """Custom iterator function to override root attribute.
-
-        Returns:
-            A custom iterator for header dictionary.
-        """
-        return iter(self.root)
-
-    def __getitem__(self, item: str) -> str:
-        """Custom getitem function to override root attribute.
-
-        Args:
-            item: The http header key.
-
-        Returns:
-            A custom accesser for the header dictionary.
-        """
-        return self.root[item]
-
-    def __setitem__(self, key: str, value: str) -> None:
-        """Custom setitem function to override root attribute.
-
-        Args:
-            key: The http header key.
-            value: The http header value to be set.
-        """
-        self.root[key] = value
-
-    def __len__(self):
-        """Custom len function to override root attribute.
-
-        Returns:
-            The len of the header dictionary.
-        """
-        return len(self.root)
-
-
-HttpHeaderPayloadResult = PluginResult[HttpHeaderPayload]
-
-
-class ToolPreInvokePayload(BaseModel):
-    """A tool payload for a tool pre-invoke hook.
-
-    Args:
-        name: The tool name.
-        args: The tool arguments for invocation.
-        headers: The http pass through headers.
-
-    Examples:
-        >>> payload = ToolPreInvokePayload(name="test_tool", args={"input": "data"})
-        >>> payload.name
-        'test_tool'
-        >>> payload.args
-        {'input': 'data'}
-        >>> payload2 = ToolPreInvokePayload(name="empty")
-        >>> payload2.args
-        {}
-        >>> p = ToolPreInvokePayload(name="calculator", args={"operation": "add", "a": 5, "b": 3})
-        >>> p.name
-        'calculator'
-        >>> p.args["operation"]
-        'add'
-
-    """
-
-    name: str
-    args: Optional[dict[str, Any]] = Field(default_factory=dict)
-    headers: Optional[HttpHeaderPayload] = None
-
-
-class ToolPostInvokePayload(BaseModel):
-    """A tool payload for a tool post-invoke hook.
-
-    Args:
-        name: The tool name.
-        result: The tool invocation result.
-
-    Examples:
-        >>> payload = ToolPostInvokePayload(name="calculator", result={"result": 8, "status": "success"})
-        >>> payload.name
-        'calculator'
-        >>> payload.result
-        {'result': 8, 'status': 'success'}
-        >>> p = ToolPostInvokePayload(name="analyzer", result={"confidence": 0.95, "sentiment": "positive"})
-        >>> p.name
-        'analyzer'
-        >>> p.result["confidence"]
-        0.95
-    """
-
-    name: str
-    result: Any
-
-
-ToolPreInvokeResult = PluginResult[ToolPreInvokePayload]
-ToolPostInvokeResult = PluginResult[ToolPostInvokePayload]
 
 
 class GlobalContext(BaseModel):
@@ -1061,58 +890,4 @@ class PluginContext(BaseModel):
 
 PluginContextTable = dict[str, PluginContext]
 
-
-class ResourcePreFetchPayload(BaseModel):
-    """A resource payload for a resource pre-fetch hook.
-
-    Attributes:
-            uri: The resource URI.
-            metadata: Optional metadata for the resource request.
-
-    Examples:
-        >>> payload = ResourcePreFetchPayload(uri="file:///data.txt")
-        >>> payload.uri
-        'file:///data.txt'
-        >>> payload2 = ResourcePreFetchPayload(uri="http://api/data", metadata={"Accept": "application/json"})
-        >>> payload2.metadata
-        {'Accept': 'application/json'}
-        >>> p = ResourcePreFetchPayload(uri="file:///docs/readme.md", metadata={"version": "1.0"})
-        >>> p.uri
-        'file:///docs/readme.md'
-        >>> p.metadata["version"]
-        '1.0'
-    """
-
-    uri: str
-    metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
-
-
-class ResourcePostFetchPayload(BaseModel):
-    """A resource payload for a resource post-fetch hook.
-
-    Attributes:
-        uri: The resource URI.
-        content: The fetched resource content.
-
-    Examples:
-        >>> from mcpgateway.models import ResourceContent
-        >>> content = ResourceContent(type="resource", id="res-1", uri="file:///data.txt",
-        ...     text="Hello World")
-        >>> payload = ResourcePostFetchPayload(uri="file:///data.txt", content=content)
-        >>> payload.uri
-        'file:///data.txt'
-        >>> payload.content.text
-        'Hello World'
-        >>> from mcpgateway.models import ResourceContent
-    >>> resource_content = ResourceContent(type="resource", id="res-2", uri="test://resource", text="Test data")
-        >>> p = ResourcePostFetchPayload(uri="test://resource", content=resource_content)
-        >>> p.uri
-        'test://resource'
-    """
-
-    uri: str
-    content: Any
-
-
-ResourcePreFetchResult = PluginResult[ResourcePreFetchPayload]
-ResourcePostFetchResult = PluginResult[ResourcePostFetchPayload]
+PluginPayload: TypeAlias = BaseModel
