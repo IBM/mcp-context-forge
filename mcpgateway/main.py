@@ -1512,6 +1512,7 @@ async def handle_sampling(request: Request, db: Session = Depends(get_db), user=
 @server_router.get("/", response_model=List[ServerRead])
 @require_permission("servers.read")
 async def list_servers(
+    request: Request,
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = None,
@@ -1523,6 +1524,7 @@ async def list_servers(
     Lists servers accessible to the user, with team filtering support.
 
     Args:
+        request (Request): The incoming request object for team_id retrieval.
         include_inactive (bool): Whether to include inactive servers in the response.
         tags (Optional[str]): Comma-separated list of tags to filter by.
         team_id (Optional[str]): Filter by specific team ID.
@@ -1539,6 +1541,20 @@ async def list_servers(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
     # Get user email for team filtering
     user_email = get_user_email(user)
+
+    # Check team ID from token
+    token_team_id = getattr(request.state, "team_id", None)
+
+    # Check for team ID mismatch
+    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        return JSONResponse(
+            content={"message": "Access issue: This API token does not have the required permissions for this team."},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Determine final team ID
+    team_id = team_id or token_team_id
+
     # Use team-filtered server listing
     if team_id or visibility:
         data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
