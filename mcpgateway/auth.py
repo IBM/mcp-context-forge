@@ -268,6 +268,11 @@ async def get_current_user(
                 # Log the error but don't fail authentication for admin tokens
                 logger.warning(f"Token revocation check failed for JTI {jti}: {revoke_check_error}")
 
+        # Check team level token, if applicable. If public token, then will be defaulted to personal team.
+        team_id = await get_team_from_token(payload, db)
+        if request and hasattr(request, "state"):
+            request.state.team_id = team_id
+
     except HTTPException:
         # Re-raise HTTPException from verify_jwt_token (handles expired/invalid tokens)
         raise
@@ -378,10 +383,5 @@ async def get_current_user(
             detail="Account disabled",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # Check team level token, if applicable. If public token, then will be defaulted to personal team.
-    team_id = await get_team_from_token(payload, db)
-    if request and hasattr(request, "state"):
-        request.state.team_id = team_id
 
     return user
