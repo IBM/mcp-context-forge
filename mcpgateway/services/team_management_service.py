@@ -18,6 +18,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import timedelta
 from typing import List, Optional, Tuple
 
@@ -27,8 +28,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, UserRole, utc_now, Role
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_service import RoleService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -75,28 +77,6 @@ class TeamManagementService:
             'TeamManagementService'
         """
         self.db = db
-
-    def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
-        """
-        Log a team member action to EmailTeamMemberHistory.
-
-        Args:
-            team_member_id: ID of the EmailTeamMember
-            team_id: Team ID
-            user_email: Email of the affected user
-            role: Role at the time of action
-            action: Action type ("added", "removed", "reactivated", "role_changed")
-            action_by: Email of the user who performed the action
-
-        Examples:
-            >>> from mcpgateway.services.team_management_service import TeamManagementService
-            >>> from unittest.mock import Mock
-            >>> service = TeamManagementService(Mock())
-            >>> service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "admin@example.com")
-        """
-        history = EmailTeamMemberHistory(team_member_id=team_member_id, team_id=team_id, user_email=user_email, role=role, action=action, action_by=action_by, action_timestamp=utc_now())
-        self.db.add(history)
-        self.db.commit()
 
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
@@ -179,6 +159,13 @@ class TeamManagementService:
             potential_slug = slugify(name)
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
 
+            role_service = RoleService(self.db)
+            role_for_team_owner: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_admin, "team")
+            if role_for_team_owner:
+                role_id = role_for_team_owner.id
+            else:
+                role_id = ""
+
             if existing_inactive_team:
                 # Reactivate the existing team with new details
                 existing_inactive_team.name = name
@@ -190,19 +177,10 @@ class TeamManagementService:
                 existing_inactive_team.updated_at = utc_now()
                 team = existing_inactive_team
 
-                # Check if the creator already has an inactive membership
-                existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email == created_by).first()
+                user_role: Optional[UserRole] = await role_service.get_user_role_assignment(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id)
 
-                if existing_membership:
-                    # Reactivate existing membership as owner
-                    existing_membership.role = "team_owner"
-                    existing_membership.joined_at = utc_now()
-                    existing_membership.is_active = True
-                    membership = existing_membership
-                else:
-                    # Create new membership
-                    membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="team_owner", joined_at=utc_now(), is_active=True)
-                    self.db.add(membership)
+                if user_role and not user_role.is_active:
+                    await role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
 
                 logger.info(f"Reactivated existing team with slug {potential_slug}")
             else:
@@ -213,8 +191,7 @@ class TeamManagementService:
                 self.db.flush()  # Get the team ID
 
                 # Add the creator as owner
-                membership = EmailTeamMember(team_id=team.id, user_email=created_by, role="team_owner", joined_at=utc_now(), is_active=True)
-                self.db.add(membership)
+                await role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
 
             self.db.commit()
 
@@ -376,17 +353,12 @@ class TeamManagementService:
             team.is_active = False
             team.updated_at = utc_now()
 
-            # Get all active memberships before deactivating (for history logging)
-            memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+            role_service = RoleService(self.db)
+            scope_role_assignments: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
 
-            # Log history for each membership (before bulk update)
-            for membership in memberships:
-                self._log_team_member_action(membership.id, team_id, membership.user_email, membership.role, "team-deleted", deleted_by)
+            if scope_role_assignments:
+                await role_service.revoke_scope_role_assignments(scope="team", scope_id=team.id, revoked_by=deleted_by)
 
-            # Bulk update: deactivate all memberships in single query instead of looping
-            self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).update({EmailTeamMember.is_active: False}, synchronize_session=False)
-
-            self.db.commit()
 
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
@@ -422,7 +394,7 @@ class TeamManagementService:
         """
         try:
             # Validate role
-            valid_roles = ["team_owner", "team_member"]
+            valid_roles = ["team_admin", "team_member", "team_viewer"]
             if role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
@@ -438,34 +410,28 @@ class TeamManagementService:
                 logger.warning(f"User {user_email} not found")
                 return False
 
-            # Check if user is already a member
-            existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+            role_service = RoleService(self.db)
+            
+            role_obj: Optional[Role] = await role_service.get_role_by_name(role, "team")
+            if role_obj is None:
+                raise ValueError(f"Role '{role}' does not exist")
+            
+            user_role: Optional[UserRole] = await role_service.get_user_role_assignment(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team_id)
 
-            if existing_membership and existing_membership.is_active:
+            if user_role and user_role.is_active:
                 logger.warning(f"User {user_email} is already a member of team {team_id}")
                 return False
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
+                scope_role_assignments: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
+                current_member_count = len(scope_role_assignments)
 
                 if current_member_count >= team.max_members:
                     logger.warning(f"Team {team_id} has reached maximum member limit")
                     raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
 
-            # Add or reactivate membership
-            if existing_membership:
-                existing_membership.is_active = True
-                existing_membership.role = role
-                existing_membership.joined_at = utc_now()
-                existing_membership.invited_by = invited_by
-                self.db.commit()
-                self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
-            else:
-                membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
-                self.db.add(membership)
-                self.db.commit()
-                self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
+            await role_service.assign_role_to_user(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team.id, granted_by=invited_by if invited_by else "")
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
@@ -505,29 +471,29 @@ class TeamManagementService:
                 return False
 
             # Find the membership
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            role_service = RoleService(self.db)
+            list_role_assignments: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
-            if not membership:
+            if not list_role_assignments:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
                 return False
 
-            # Prevent removing the last owner
-            if membership.role == "team_owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)).count()
-
-                if owner_count <= 1:
-                    logger.warning(f"Cannot remove the last owner from team {team_id}")
-                    raise ValueError("Cannot remove the last owner from a team")
-
-            # Remove membership (soft delete)
-            membership.is_active = False
-            self.db.commit()
-            self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
+            await asyncio.gather(
+                *[
+                    role_service.revoke_role_from_user(
+                        user_email=user_email,
+                        role_id=role_assignment.role_id,
+                        scope="team",
+                        scope_id=team_id,
+                        revoked_by=removed_by if removed_by else "",
+                    )
+                    for role_assignment in list_role_assignments
+                ]
+            )
             logger.info(f"Removed {user_email} from team {team_id} by {removed_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
             logger.error(f"Failed to remove {user_email} from team {team_id}: {e}")
             return False
 
@@ -552,7 +518,7 @@ class TeamManagementService:
         """
         try:
             # Validate role
-            valid_roles = ["team_owner", "team_member"]
+            valid_roles = ["team_owner", "team_member", "team_viewer"]
             if new_role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 
@@ -566,31 +532,26 @@ class TeamManagementService:
                 logger.warning(f"Cannot update roles in personal team {team_id}")
                 return False
 
-            # Find the membership
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            role_service = RoleService(self.db)
+            list_role_assignments: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
-            if not membership:
+            if not list_role_assignments:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
                 return False
 
-            # Prevent changing the role of the last owner to non-owner
-            if membership.role == "team_owner" and new_role != "team_owner":
-                owner_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)).count()
+            role: Optional[Role] = await role_service.get_role_by_name(new_role, "team")
 
-                if owner_count <= 1:
-                    logger.warning(f"Cannot remove owner role from the last owner of team {team_id}")
-                    raise ValueError("Cannot remove owner role from the last owner of a team")
+            if role is None:
+                raise ValueError(f"Role '{new_role}' does not exist")
 
-            # Update the role
-            membership.role = new_role
-            self.db.commit()
-            self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
+            role_id: str = role.id
+
+            await role_service.assign_role_to_user(user_email=user_email, role_id=role_id, scope="team", scope_id=team.id, granted_by=updated_by if updated_by else "")
 
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 
         except Exception as e:
-            self.db.rollback()
             logger.error(f"Failed to update role of {user_email} in team {team_id}: {e}")
             return False
 
@@ -608,7 +569,14 @@ class TeamManagementService:
             User dashboard showing team memberships.
         """
         try:
-            query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
+            role_service = RoleService(self.db)
+            team_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
+            team_ids: List[str] = [list(set([tr.scope_id for tr in team_roles]))]
+
+            query = self.db.query(EmailTeam)
+
+            if team_ids:
+                query = query.filter(EmailTeam.id.in_(team_ids))
 
             if not include_personal:
                 query = query.filter(EmailTeam.is_personal.is_(False))

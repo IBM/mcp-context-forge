@@ -225,6 +225,7 @@ mcpContextForge:
     DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
 
     # ── Default roles for users ──
+    DEFAULT_ROLE_NAME_OWNER: "team_owner"   # default role assigned to owner users
     DEFAULT_ROLE_NAME_ADMIN: "team_admin"   # default role assigned to admin users
     DEFAULT_ROLE_NAME_USER: "team_member"     # default role assigned to regular users
     DEFAULT_USER_SCOPE: "team"              # default user scope (e.g. team, org)

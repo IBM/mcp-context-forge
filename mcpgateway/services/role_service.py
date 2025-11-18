@@ -626,7 +626,7 @@ class RoleService:
         logger.info(f"Assigned role {role.name} to {user_email} (scope: {scope}, scope_id: {scope_id})")
         return user_role
 
-    async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str]) -> bool:
+    async def revoke_role_from_user(self, user_email: str, role_id: str, scope: str, scope_id: Optional[str], revoked_by: Optional[str] = None) -> bool:
         """Revoke a role from a user.
 
         Args:
@@ -702,13 +702,15 @@ class RoleService:
         result = self.db.execute(select(UserRole).where(and_(*conditions)))
         return result.scalar_one_or_none()
 
-    async def list_user_roles(self, user_email: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
+    async def list_user_roles(self, user_email: str, scope: Optional[str] = None, scope_id: Optional[str] = None, include_expired: bool = False, is_active: Optional[bool] = True) -> List[UserRole]:
         """List all role assignments for a user.
 
         Args:
             user_email: Email of user
             scope: Filter by scope
+            scope_id: Filter by scope ID
             include_expired: Whether to include expired roles
+            is_active: Filter by active status
 
         Returns:
             List[UserRole]: User's role assignments
@@ -732,10 +734,13 @@ class RoleService:
             >>> isinstance(result, list) and len(result) == 2
             True
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(is_active), Role.is_active.is_(True)))
 
         if scope:
             query = query.where(UserRole.scope == scope)
+
+        if scope_id:
+            query = query.where(UserRole.scope_id == scope_id)
 
         if not include_expired:
             now = utc_now()
@@ -746,7 +751,100 @@ class RoleService:
         result = self.db.execute(query)
         return result.scalars().all()
 
-    async def list_role_assignments(self, role_id: str, scope: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
+    async def revoke_scope_role_assignments(self, scope: str, scope_id: Optional[str] = None, revoked_by: Optional[str] = None) -> int:
+        """Revoke all user role assignments within a specific scope.
+
+        Args:
+            scope: Scope of assignments ('global', 'team', 'personal')
+            scope_id: Team ID if team-scoped
+            revoked_by: Email of the user who revoked the assignments
+
+        Returns:
+            int: Number of assignments revoked
+        Examples:
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.revoke_scope_role_assignments)
+            True
+            >>> # Simulate execute returning rowcount
+            >>> class _Res:
+            ...     rowcount = 5
+            >>> service.db.execute = lambda *_a, **_k: _Res()
+            >>> asyncio.run(service.revoke_scope_role_assignments('team', 't1'))
+            5
+        """
+        query = select(UserRole).where(and_(UserRole.scope == scope, UserRole.is_active.is_(True)))
+
+        if scope == "team" and scope_id:
+            query = query.where(UserRole.scope_id == scope_id)
+        elif scope == "team" and not scope_id:
+            raise ValueError("scope_id required for team-scoped assignments")
+        elif scope in ["global", "personal"] and scope_id:
+            raise ValueError(f"scope_id not allowed for {scope} assignments")
+
+        result = self.db.execute(query)
+        assignments = result.scalars().all()
+
+        for assignment in assignments:
+            assignment.is_active = False
+            assignment.revoked_by = revoked_by
+            assignment.revoked_at = utc_now()
+        self.db.commit()
+
+        logger.info(f"Revoked {len(assignments)} role assignments in scope: {scope}, scope_id: {scope_id}")
+        return len(assignments) 
+    
+    async def list_scope_role_assignments(self, scope: str, scope_id: Optional[str] = None, include_expired: bool = False, is_active: Optional[bool] = True) -> List[UserRole]:
+        """List all user role assignments within a specific scope.
+
+        Args:
+            scope: Scope of assignments ('global', 'team', 'personal')
+            scope_id: Team ID if team-scoped
+            include_expired: Whether to include expired assignments
+            is_active: Filter by active status
+
+        Returns:
+            List[UserRole]: Role assignments in the specified scope
+
+        Examples:
+            Coroutine check:
+            >>> import asyncio
+            >>> from unittest.mock import Mock
+            >>> service = RoleService(Mock())
+            >>> asyncio.iscoroutinefunction(service.list_scope_role_assignments)
+            True
+            >>> # Simulate scalar results aggregation
+            >>> class _Res:
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self):
+            ...                 return []
+            ...         return _S()
+            >>> service.db.execute = lambda *_a, **_k: _Res()
+            >>> asyncio.run(service.list_scope_role_assignments('team', 't1'))
+            []
+        """
+        query = select(UserRole).where(and_(UserRole.scope == scope, UserRole.is_active.is_(is_active)))
+
+        if scope == "team" and scope_id:
+            query = query.where(UserRole.scope_id == scope_id)
+        elif scope == "team" and not scope_id:
+            raise ValueError("scope_id required for team-scoped assignments")
+        elif scope in ["global", "personal"] and scope_id:
+            raise ValueError(f"scope_id not allowed for {scope} assignments")
+
+        if not include_expired:
+            now = utc_now()
+            query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
+
+        query = query.order_by(UserRole.user_email)
+
+        result = self.db.execute(query)
+        return result.scalars().all()
+
+    async def list_role_assignments(self, role_id: str, scope: Optional[str] = None, include_expired: bool = False, user_email: Optional[str] = None) -> List[UserRole]:
         """List all user assignments for a role.
 
         Args:
@@ -783,6 +881,9 @@ class RoleService:
         if not include_expired:
             now = utc_now()
             query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
+
+        if user_email:
+            query = query.where(UserRole.user_email == user_email)
 
         query = query.order_by(UserRole.user_email)
 

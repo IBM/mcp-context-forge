@@ -1767,6 +1767,7 @@ MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
 
 | Setting | Description | Default | Options |
 | ------- | ----------- | -------:| ------- |
+| `DEFAULT_ROLE_NAME_OWNER` | Default role name for owner users | `team_owner` | string |
 | `DEFAULT_ROLE_NAME_ADMIN` | Default role name for admin users | `team_admin` | string |
 | `DEFAULT_ROLE_NAME_USER` | Default role name for regular users | `developer` | string |
 | `DEFAULT_USER_SCOPE` | Default scope for users | `team` | string |

@@ -1603,6 +1603,7 @@ Disallow: /
         return self
     
     # Default roles for users
+    default_role_name_owner: str = Field(default="team_owner", description="Default role name for owner users")
     default_role_name_admin: str = Field(default="team_admin", description="Default role name for admin users")
     default_role_name_user: str = Field(default="team_member", description="Default role name for regular users")
     default_user_scope: str = Field(default="team", description="Default scope for users")

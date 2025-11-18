@@ -718,6 +718,12 @@
               "default": "false"
             }
             ,
+            "DEFAULT_ROLE_NAME_OWNER": {
+              "type": "string",
+              "description": "Default role name for owner users",
+              "default": "team_owner"
+            }
+            ,
             "DEFAULT_ROLE_NAME_ADMIN": {
               "type": "string",
               "description": "Default role name for admin users",
