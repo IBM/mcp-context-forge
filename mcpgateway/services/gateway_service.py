@@ -468,6 +468,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Small helper
         def _auth_or_not_found(status: int) -> bool:
+            """
+            Return True if the given HTTP status code represents an authentication-
+            related or not-found response.
+
+            Args:
+                status (int): The HTTP status code to evaluate.
+
+            Returns:
+                bool: True if the status is 401, 403, or 404; otherwise False.
+            """
             return status in (401, 403, 404)
 
         try:
