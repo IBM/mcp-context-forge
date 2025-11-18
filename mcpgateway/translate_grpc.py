@@ -278,7 +278,7 @@ class GrpcEndpoint:
         )
 
         # Convert protobuf response to JSON
-        response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+        response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
 
         logger.debug(f"Successfully invoked {service}.{method}")
         return response_dict
@@ -350,7 +350,7 @@ class GrpcEndpoint:
         # Yield responses as they arrive
         try:
             for response_msg in stream_call:
-                response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+                response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
                 yield response_dict
         except grpc.RpcError as e:
             logger.error(f"Streaming RPC error: {e}")

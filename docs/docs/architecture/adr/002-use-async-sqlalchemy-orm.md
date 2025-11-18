@@ -23,8 +23,17 @@ We will use:
 - **AsyncSession** and `async with` scoped transactions.
 - **Alembic** for migrations, with autogeneration and CLI support.
 - **SQLite** for development; **PostgreSQL or MySQL** for production via `DATABASE_URL`.
+- **Configurable connection pooling** with auto-scaling based on worker count and deployment size.
 
 This provides consistent, well-understood relational behavior and integrates cleanly with FastAPI.
+
+Connection pooling is configured via environment variables:
+- `DB_POOL_SIZE`: Persistent connections per worker (default: 50)
+- `DB_MAX_OVERFLOW`: Additional connections allowed (default: 10)
+- `DB_POOL_TIMEOUT`: Wait time before timeout (default: 60s)
+- `DB_POOL_RECYCLE`: Connection recycle interval (default: 3600s)
+
+For multi-pod deployments, total connections = `(pods × workers × pool_size × 1.2) + buffer`.
 
 ## Consequences
 
@@ -32,6 +41,7 @@ This provides consistent, well-understood relational behavior and integrates cle
 - 🔄 Fully async I/O stack without thread-pools or blocking.
 - 🔧 Migrations handled declaratively using Alembic.
 - 📄 Pydantic models can be derived from or synchronized with SQLAlchemy models if needed.
+- ⚙️ Connection pooling auto-scales with deployment size (vertical and horizontal scaling).
 
 ## Alternatives Considered
 

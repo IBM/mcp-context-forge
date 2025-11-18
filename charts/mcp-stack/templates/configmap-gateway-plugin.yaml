@@ -1,0 +1,12 @@
+{{- if .Values.mcpContextForge.pluginConfig.enabled}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+data:
+  config.yaml: |
+    {{- .Values.mcpContextForge.pluginConfig.plugins | nindent 4 }}
+{{- end }}

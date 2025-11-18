@@ -50,19 +50,19 @@ class TestPerformanceImpact:
 
         # Time without security
         client_no_security = TestClient(app_no_security)
-        start_time = time.time()
+        start_time = time.perf_counter()
         for i in range(iterations):
             response = client_no_security.get("/test")
             assert response.status_code == 200
-        time_without_security = time.time() - start_time
+        time_without_security = time.perf_counter() - start_time
 
         # Time with security
         client_with_security = TestClient(app_with_security)
-        start_time = time.time()
+        start_time = time.perf_counter()
         for i in range(iterations):
             response = client_with_security.get("/test")
             assert response.status_code == 200
-        time_with_security = time.time() - start_time
+        time_with_security = time.perf_counter() - start_time
 
         # Security overhead should be reasonable (< 3x increase)
         overhead_ratio = time_with_security / time_without_security

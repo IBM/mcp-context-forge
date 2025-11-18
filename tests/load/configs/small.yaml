@@ -11,6 +11,7 @@ global:
   random_seed: 42
   batch_size: 100
   progress_bar: true
+  progress_update_frequency: 50
   parallel: false
   workers: 1
   email_domain: "loadtest.example.com"

@@ -9,11 +9,11 @@ Tests for URLReputationPlugin.
 
 import pytest
 
-from mcpgateway.plugins.framework.models import (
+from mcpgateway.plugins.framework import (
     GlobalContext,
-    HookType,
     PluginConfig,
     PluginContext,
+    ResourceHookType,
     ResourcePreFetchPayload,
 )
 from plugins.url_reputation.url_reputation import URLReputationPlugin
@@ -25,7 +25,7 @@ async def test_blocks_blocklisted_domain():
         PluginConfig(
             name="urlrep",
             kind="plugins.url_reputation.url_reputation.URLReputationPlugin",
-            hooks=[HookType.RESOURCE_PRE_FETCH],
+            hooks=[ResourceHookType.RESOURCE_PRE_FETCH],
             config={"blocked_domains": ["bad.example"]},
         )
     )

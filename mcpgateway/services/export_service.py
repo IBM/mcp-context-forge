@@ -277,7 +277,7 @@ class ExportService:
         Returns:
             List of exported tool dictionaries
         """
-        tools = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive)
+        tools, _ = await self.tool_service.list_tools(db, tags=tags, include_inactive=include_inactive)
         exported_tools = []
 
         for tool in tools:
@@ -418,7 +418,7 @@ class ExportService:
         Returns:
             List of exported prompt dictionaries
         """
-        prompts = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive)
+        prompts, _ = await self.prompt_service.list_prompts(db, tags=tags, include_inactive=include_inactive)
         exported_prompts = []
 
         for prompt in prompts:
@@ -458,7 +458,7 @@ class ExportService:
         Returns:
             List of exported resource dictionaries
         """
-        resources = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive)
+        resources, _ = await self.resource_service.list_resources(db, tags=tags, include_inactive=include_inactive)
         exported_resources = []
 
         for resource in resources:
@@ -541,7 +541,7 @@ class ExportService:
 
         logger.debug("Export data validation passed")
 
-    async def export_selective(self, db: Session, entity_selections: Dict[str, List[str]], include_dependencies: bool = True, exported_by: str = "system") -> Dict[str, Any]:
+    async def export_selective(self, db: Session, entity_selections: Dict[str, List[str]], include_dependencies: bool = True, exported_by: str = "system", root_path: str = "") -> Dict[str, Any]:
         """Export specific entities by their IDs/names.
 
         Args:
@@ -549,6 +549,7 @@ class ExportService:
             entity_selections: Dict mapping entity types to lists of IDs/names to export
             include_dependencies: Whether to include dependent entities
             exported_by: Username of the person performing the export
+            root_path: Root path for constructing API endpoints
 
         Returns:
             Dict containing the selective export data
@@ -610,7 +611,7 @@ class ExportService:
             elif entity_type == "gateways":
                 export_data["entities"]["gateways"] = await self._export_selected_gateways(db, selected_ids)
             elif entity_type == "servers":
-                export_data["entities"]["servers"] = await self._export_selected_servers(db, selected_ids)
+                export_data["entities"]["servers"] = await self._export_selected_servers(db, selected_ids, root_path)
             elif entity_type == "prompts":
                 export_data["entities"]["prompts"] = await self._export_selected_prompts(db, selected_ids)
             elif entity_type == "resources":
@@ -672,12 +673,13 @@ class ExportService:
                 logger.warning(f"Could not export gateway {gateway_id}: {str(e)}")
         return gateways
 
-    async def _export_selected_servers(self, db: Session, server_ids: List[str]) -> List[Dict[str, Any]]:
+    async def _export_selected_servers(self, db: Session, server_ids: List[str], root_path: str = "") -> List[Dict[str, Any]]:
         """Export specific servers by their IDs.
 
         Args:
             db: Database session
             server_ids: List of server IDs to export
+            root_path: Root path for constructing API endpoints
 
         Returns:
             List of exported server dictionaries
@@ -686,7 +688,7 @@ class ExportService:
         for server_id in server_ids:
             try:
                 server = await self.server_service.get_server(db, server_id)
-                server_data = await self._export_servers(db, None, True, root_path="")
+                server_data = await self._export_servers(db, None, True, root_path)
                 servers.extend([s for s in server_data if s["name"] == server.name])
             except Exception as e:
                 logger.warning(f"Could not export server {server_id}: {str(e)}")

@@ -33,60 +33,18 @@ from urllib.parse import urlparse
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, EmailStr, Field, field_serializer, field_validator, model_validator, ValidationInfo
 
 # First-Party
+from mcpgateway.common.models import Annotations, ImageContent
+from mcpgateway.common.models import Prompt as MCPPrompt
+from mcpgateway.common.models import Resource as MCPResource
+from mcpgateway.common.models import ResourceContent, TextContent
+from mcpgateway.common.models import Tool as MCPTool
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.models import ImageContent
-from mcpgateway.models import Prompt as MCPPrompt
-from mcpgateway.models import Resource as MCPResource
-from mcpgateway.models import ResourceContent, TextContent
-from mcpgateway.models import Tool as MCPTool
+from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
-from mcpgateway.validators import SecurityValidator
 
 logger = logging.getLogger(__name__)
-
-
-def to_camel_case(s: str) -> str:
-    """
-    Convert a string from snake_case to camelCase.
-
-    Args:
-        s (str): The string to be converted, which is assumed to be in snake_case.
-
-    Returns:
-        str: The string converted to camelCase.
-
-    Examples:
-        >>> to_camel_case("hello_world_example")
-        'helloWorldExample'
-        >>> to_camel_case("alreadyCamel")
-        'alreadyCamel'
-        >>> to_camel_case("")
-        ''
-        >>> to_camel_case("single")
-        'single'
-        >>> to_camel_case("_leading_underscore")
-        'LeadingUnderscore'
-        >>> to_camel_case("trailing_underscore_")
-        'trailingUnderscore'
-        >>> to_camel_case("multiple_words_here")
-        'multipleWordsHere'
-        >>> to_camel_case("api_key_value")
-        'apiKeyValue'
-        >>> to_camel_case("user_id")
-        'userId'
-        >>> to_camel_case("created_at")
-        'createdAt'
-        >>> to_camel_case("team_member_role")
-        'teamMemberRole'
-        >>> to_camel_case("oauth_client_id")
-        'oauthClientId'
-        >>> to_camel_case("jwt_token")
-        'jwtToken'
-        >>> to_camel_case("a2a_agent_name")
-        'a2aAgentName'
-    """
-    return "".join(word.capitalize() if i else word for i, word in enumerate(s.split("_")))
 
 
 def encode_datetime(v: datetime) -> str:
@@ -117,72 +75,6 @@ def encode_datetime(v: datetime) -> str:
         '2023-07-20T16:45:30.123456'
     """
     return v.isoformat()
-
-
-# --- Base Model ---
-class BaseModelWithConfigDict(BaseModel):
-    """Base model with common configuration.
-
-    Provides:
-    - ORM mode for SQLAlchemy integration
-    - JSON encoders for datetime handling
-    - Automatic conversion from snake_case to camelCase for output
-    """
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        alias_generator=to_camel_case,
-        populate_by_name=True,
-        use_enum_values=True,
-        extra="ignore",
-        json_schema_extra={"nullable": True},
-    )
-
-    def to_dict(self, use_alias: bool = False) -> Dict[str, Any]:
-        """
-        Converts the model instance into a dictionary representation.
-
-        Args:
-            use_alias (bool): Whether to use aliases for field names (default is False). If True,
-                               field names will be converted using the alias generator function.
-
-        Returns:
-            Dict[str, Any]: A dictionary where keys are field names and values are corresponding field values,
-                             with any nested models recursively converted to dictionaries.
-
-        Examples:
-            >>> class ExampleModel(BaseModelWithConfigDict):
-            ...     foo: int
-            ...     bar: str
-            >>> m = ExampleModel(foo=1, bar='baz')
-            >>> m.to_dict()
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with alias
-            >>> m.to_dict(use_alias=True)
-            {'foo': 1, 'bar': 'baz'}
-
-            >>> # Test with nested model
-            >>> class NestedModel(BaseModelWithConfigDict):
-            ...     nested_field: int
-            >>> class ParentModel(BaseModelWithConfigDict):
-            ...     parent_field: str
-            ...     child: NestedModel
-            >>> nested = NestedModel(nested_field=42)
-            >>> parent = ParentModel(parent_field="test", child=nested)
-            >>> result = parent.to_dict()
-            >>> result['child']
-            {'nested_field': 42}
-        """
-        output: Dict[str, Any] = {}
-        for key, value in self.model_dump(by_alias=use_alias).items():
-            if isinstance(value, BaseModelWithConfigDict):
-                output[key] = value.to_dict(use_alias)
-            elif isinstance(value, BaseModel):
-                output[key] = value.model_dump(by_alias=use_alias)
-            else:
-                output[key] = value
-        return output
 
 
 # --- Metrics Schemas ---
@@ -720,7 +612,7 @@ class ToolCreate(BaseModel):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -1140,7 +1032,7 @@ class ToolUpdate(BaseModelWithConfigDict):
         )
 
         auth_type = values.get("auth_type")
-        if auth_type:
+        if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
                 creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
@@ -1426,6 +1318,9 @@ class ToolRead(BaseModelWithConfigDict):
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
 
+    # MCP protocol extension field
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
 
 class ToolInvocation(BaseModelWithConfigDict):
     """Schema for tool invocation requests.
@@ -1581,6 +1476,7 @@ class ToolResult(BaseModelWithConfigDict):
     """
 
     content: List[Union[TextContent, ImageContent]]
+    structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
 
@@ -1599,12 +1495,12 @@ class ResourceCreate(BaseModel):
         content (Union[str, bytes]): Content of the resource, which can be text or binary.
     """
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(str_strip_whitespace=True, populate_by_name=True)
 
     uri: str = Field(..., description="Unique URI for the resource")
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
-    mime_type: Optional[str] = Field(None, description="Resource MIME type")
+    mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
     template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
@@ -1907,6 +1803,11 @@ class ResourceRead(BaseModelWithConfigDict):
     team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the resource")
+    annotations: Optional[Annotations] = Field(None, description="Optional annotations for client rendering hints")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
 
 
 class ResourceSubscription(BaseModelWithConfigDict):
@@ -2410,6 +2311,10 @@ class PromptRead(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
 
+    # MCP protocol fields
+    title: Optional[str] = Field(None, description="Human-readable title for the prompt")
+    meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")
+
 
 class PromptInvocation(BaseModelWithConfigDict):
     """Schema for prompt invocation requests.
@@ -2508,12 +2413,21 @@ class GatewayCreate(BaseModel):
 
     # Adding `auth_value` as an alias for better access post-validation
     auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # One time auth - do not store the auth in gateway flag
+    one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
+
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
     owner_email: Optional[str] = Field(None, description="Email of the gateway owner")
     visibility: Optional[str] = Field(default="public", description="Gateway visibility: private, team, or public")
+
+    # CA certificate
+    ca_certificate: Optional[str] = Field(None, description="Custom CA certificate for TLS verification")
+    ca_certificate_sig: Optional[str] = Field(None, description="Signature of the custom CA certificate for integrity verification")
+    signing_algorithm: Optional[str] = Field("ed25519", description="Algorithm used for signing the CA certificate")
 
     @field_validator("tags")
     @classmethod
@@ -2736,6 +2650,9 @@ class GatewayCreate(BaseModel):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -2766,6 +2683,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # One time auth - do not store the auth in gateway flag
+    one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the gateway")
 
@@ -2969,6 +2889,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
             return encode_auth({header_key: header_value})
 
+        if auth_type == "one_time_auth":
+            return None  # No auth_value needed for one-time auth
+
         raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
 
 
@@ -3011,6 +2934,8 @@ class GatewayRead(BaseModelWithConfigDict):
     # Authorizations
     auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
     auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(default=None, description="List of custom headers for authentication")
+    auth_headers_unmasked: Optional[List[Dict[str, str]]] = Field(default=None, description="Unmasked custom headers for administrative views")
 
     # OAuth 2.0 configuration
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -3022,6 +2947,10 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+
+    auth_password_unmasked: Optional[str] = Field(default=None, description="Unmasked password for basic authentication")
+    auth_token_unmasked: Optional[str] = Field(default=None, description="Unmasked bearer token for authentication")
+    auth_header_value_unmasked: Optional[str] = Field(default=None, description="Unmasked single custom header value")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -3121,6 +3050,10 @@ class GatewayRead(BaseModelWithConfigDict):
             # They use oauth_config instead
             return self
 
+        if auth_type == "one_time_auth":
+            # One-time auth gateways don't store auth_value
+            return self
+
         # If no encoded value is present, nothing to populate
         if not auth_value_encoded:
             return self
@@ -3135,19 +3068,24 @@ class GatewayRead(BaseModelWithConfigDict):
             if not u or not p:
                 raise ValueError("basic auth requires both username and password")
             self.auth_username, self.auth_password = u, p
+            self.auth_password_unmasked = p
 
         elif auth_type == "bearer":
             auth = auth_value.get("Authorization")
             if not (isinstance(auth, str) and auth.startswith("Bearer ")):
                 raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
             self.auth_token = auth.removeprefix("Bearer ")
+            self.auth_token_unmasked = self.auth_token
 
         elif auth_type == "authheaders":
             # For backward compatibility, populate first header in key/value fields
-            if len(auth_value) == 0:
+            if not isinstance(auth_value, dict) or len(auth_value) == 0:
                 raise ValueError("authheaders requires at least one key/value pair")
+            self.auth_headers = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
+            self.auth_headers_unmasked = [{"key": str(key), "value": "" if value is None else str(value)} for key, value in auth_value.items()]
             k, v = next(iter(auth_value.items()))
             self.auth_header_key, self.auth_header_value = k, v
+            self.auth_header_value_unmasked = v
 
         return self
 
@@ -3182,7 +3120,19 @@ class GatewayRead(BaseModelWithConfigDict):
         masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
         masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
         masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+        if masked_data.get("auth_headers"):
+            masked_data["auth_headers"] = [
+                {
+                    "key": header.get("key"),
+                    "value": settings.masked_auth_value if header.get("value") else header.get("value"),
+                }
+                for header in masked_data["auth_headers"]
+            ]
 
+        masked_data["auth_password_unmasked"] = self.auth_password_unmasked
+        masked_data["auth_token_unmasked"] = self.auth_token_unmasked
+        masked_data["auth_header_value_unmasked"] = self.auth_header_value_unmasked
+        masked_data["auth_headers_unmasked"] = [header.copy() for header in self.auth_headers_unmasked] if self.auth_headers_unmasked else None
         return GatewayRead.model_validate(masked_data)
 
 
@@ -3828,7 +3778,7 @@ class ServerRead(BaseModelWithConfigDict):
 class GatewayTestRequest(BaseModelWithConfigDict):
     """Schema for testing gateway connectivity.
 
-    Includes the HTTP method, base URL, path, optional headers, and body.
+    Includes the HTTP method, base URL, path, optional headers, body, and content type.
     """
 
     method: str = Field(..., description="HTTP method to test (GET, POST, etc.)")
@@ -3836,6 +3786,7 @@ class GatewayTestRequest(BaseModelWithConfigDict):
     path: str = Field(..., description="Path to append to the base URL")
     headers: Optional[Dict[str, str]] = Field(None, description="Optional headers for the request")
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Optional body for the request, can be a string or JSON object")
+    content_type: Optional[str] = Field("application/json", description="Content type for the request body")
 
 
 class GatewayTestResponse(BaseModelWithConfigDict):
@@ -3920,7 +3871,13 @@ class A2AAgentCreate(BaseModel):
         capabilities (Dict[str, Any]): Agent capabilities and features.
         config (Dict[str, Any]): Agent-specific configuration parameters.
         auth_type (Optional[str]): Type of authentication ("api_key", "oauth", "bearer", etc.).
-        auth_value (Optional[str]): Authentication credentials (will be encrypted).
+        auth_username (Optional[str]): Username for basic authentication.
+        auth_password (Optional[str]): Password for basic authentication.
+        auth_token (Optional[str]): Token for bearer authentication.
+        auth_header_key (Optional[str]): Key for custom headers authentication.
+        auth_header_value (Optional[str]): Value for custom headers authentication.
+        auth_headers (Optional[List[Dict[str, str]]]): List of custom headers for authentication.
+        auth_value (Optional[str]): Alias for authentication value, used for better access post-validation.
         tags (List[str]): Tags for categorizing the agent.
         team_id (Optional[str]): Team ID for resource organization.
         visibility (str): Visibility level ("private", "team", "public").
@@ -3936,8 +3893,22 @@ class A2AAgentCreate(BaseModel):
     protocol_version: str = Field(default="1.0", description="A2A protocol version supported")
     capabilities: Dict[str, Any] = Field(default_factory=dict, description="Agent capabilities and features")
     config: Dict[str, Any] = Field(default_factory=dict, description="Agent-specific configuration parameters")
-    auth_type: Optional[str] = Field(None, description="Type of authentication")
-    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    # Authorizations
+    auth_type: Optional[str] = Field(None, description="Type of authentication: basic, bearer, headers, oauth, or none")
+    # Fields for various types of authentication
+    auth_username: Optional[str] = Field(None, description="Username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="Password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="Token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="Key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="Value for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # Adding `auth_value` as an alias for better access post-validation
+    auth_value: Optional[str] = Field(None, validate_default=True)
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4066,6 +4037,133 @@ class A2AAgentCreate(BaseModel):
             return SecurityValidator.validate_uuid(v, "team_id")
         return v
 
+    @field_validator("auth_value", mode="before")
+    @classmethod
+    def create_auth_value(cls, v, info):
+        """
+        This validator will run before the model is fully instantiated (mode="before")
+        It will process the auth fields based on auth_type and generate auth_value.
+
+        Args:
+            v: Input url
+            info: ValidationInfo containing auth_type
+
+        Returns:
+            str: Auth value
+        """
+        data = info.data
+        auth_type = data.get("auth_type")
+
+        if (auth_type is None) or (auth_type == ""):
+            return v  # If no auth_type is provided, no need to create auth_value
+
+        # Process the auth fields and generate auth_value based on auth_type
+        auth_value = cls._process_auth_fields(info)
+        return auth_value
+
+    @staticmethod
+    def _process_auth_fields(info: ValidationInfo) -> Optional[str]:
+        """
+        Processes the input authentication fields and returns the correct auth_value.
+        This method is called based on the selected auth_type.
+
+        Args:
+            info: ValidationInfo containing auth fields
+
+        Returns:
+            Encoded auth string or None
+
+        Raises:
+            ValueError: If auth_type is invalid
+        """
+        data = info.data
+        auth_type = data.get("auth_type")
+
+        if auth_type == "basic":
+            # For basic authentication, both username and password must be present
+            username = data.get("auth_username")
+            password = data.get("auth_password")
+
+            if not username or not password:
+                raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
+
+            creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+            return encode_auth({"Authorization": f"Basic {creds}"})
+
+        if auth_type == "bearer":
+            # For bearer authentication, only token is required
+            token = data.get("auth_token")
+
+            if not token:
+                raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
+
+            return encode_auth({"Authorization": f"Bearer {token}"})
+
+        if auth_type == "oauth":
+            # For OAuth authentication, we don't encode anything here
+            # The OAuth configuration is handled separately in the oauth_config field
+            # This method is only called for traditional auth types
+            return None
+
+        if auth_type == "authheaders":
+            # Support both new multi-headers format and legacy single header format
+            auth_headers = data.get("auth_headers")
+            if auth_headers and isinstance(auth_headers, list):
+                # New multi-headers format with enhanced validation
+                header_dict = {}
+                duplicate_keys = set()
+
+                for header in auth_headers:
+                    if not isinstance(header, dict):
+                        continue
+
+                    key = header.get("key")
+                    value = header.get("value", "")
+
+                    # Skip headers without keys
+                    if not key:
+                        continue
+
+                    # Track duplicate keys (last value wins)
+                    if key in header_dict:
+                        duplicate_keys.add(key)
+
+                    # Validate header key format (basic HTTP header validation)
+                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
+                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
+
+                    # Store header (empty values are allowed)
+                    header_dict[key] = value
+
+                # Ensure at least one valid header
+                if not header_dict:
+                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+
+                # Warn about duplicate keys (optional - could log this instead)
+                if duplicate_keys:
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+
+                # Check for excessive headers (prevent abuse)
+                if len(header_dict) > 100:
+                    raise ValueError("Maximum of 100 headers allowed per gateway.")
+
+                return encode_auth(header_dict)
+
+            # Legacy single header format (backward compatibility)
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
+
+            if not header_key or not header_value:
+                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+
+            return encode_auth({header_key: header_value})
+
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+
 
 class A2AAgentUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing A2A agent.
@@ -4080,8 +4178,21 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
     protocol_version: Optional[str] = Field(None, description="A2A protocol version supported")
     capabilities: Optional[Dict[str, Any]] = Field(None, description="Agent capabilities and features")
     config: Optional[Dict[str, Any]] = Field(None, description="Agent-specific configuration parameters")
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     auth_type: Optional[str] = Field(None, description="Type of authentication")
-    auth_value: Optional[str] = Field(None, description="Authentication credentials")
+    auth_username: Optional[str] = Field(None, description="username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="value for custom headers authentication")
+    auth_headers: Optional[List[Dict[str, str]]] = Field(None, description="List of custom headers for authentication")
+
+    # Adding `auth_value` as an alias for better access post-validation
+    auth_value: Optional[str] = Field(None, validate_default=True)
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the agent")
 
     # Team scoping fields
@@ -4214,6 +4325,133 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             return SecurityValidator.validate_uuid(v, "team_id")
         return v
 
+    @field_validator("auth_value", mode="before")
+    @classmethod
+    def create_auth_value(cls, v, info):
+        """
+        This validator will run before the model is fully instantiated (mode="before")
+        It will process the auth fields based on auth_type and generate auth_value.
+
+        Args:
+            v: Input URL
+            info: ValidationInfo containing auth_type
+
+        Returns:
+            str: Auth value or URL
+        """
+        data = info.data
+        auth_type = data.get("auth_type")
+
+        if (auth_type is None) or (auth_type == ""):
+            return v  # If no auth_type is provided, no need to create auth_value
+
+        # Process the auth fields and generate auth_value based on auth_type
+        auth_value = cls._process_auth_fields(info)
+        return auth_value
+
+    @staticmethod
+    def _process_auth_fields(info: ValidationInfo) -> Optional[str]:
+        """
+        Processes the input authentication fields and returns the correct auth_value.
+        This method is called based on the selected auth_type.
+
+        Args:
+            info: ValidationInfo containing auth fields
+
+        Returns:
+            Encoded auth string or None
+
+        Raises:
+            ValueError: If auth type is invalid
+        """
+
+        data = info.data
+        auth_type = data.get("auth_type")
+
+        if auth_type == "basic":
+            # For basic authentication, both username and password must be present
+            username = data.get("auth_username")
+            password = data.get("auth_password")
+            if not username or not password:
+                raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
+
+            creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
+            return encode_auth({"Authorization": f"Basic {creds}"})
+
+        if auth_type == "bearer":
+            # For bearer authentication, only token is required
+            token = data.get("auth_token")
+
+            if not token:
+                raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
+
+            return encode_auth({"Authorization": f"Bearer {token}"})
+
+        if auth_type == "oauth":
+            # For OAuth authentication, we don't encode anything here
+            # The OAuth configuration is handled separately in the oauth_config field
+            # This method is only called for traditional auth types
+            return None
+
+        if auth_type == "authheaders":
+            # Support both new multi-headers format and legacy single header format
+            auth_headers = data.get("auth_headers")
+            if auth_headers and isinstance(auth_headers, list):
+                # New multi-headers format with enhanced validation
+                header_dict = {}
+                duplicate_keys = set()
+
+                for header in auth_headers:
+                    if not isinstance(header, dict):
+                        continue
+
+                    key = header.get("key")
+                    value = header.get("value", "")
+
+                    # Skip headers without keys
+                    if not key:
+                        continue
+
+                    # Track duplicate keys (last value wins)
+                    if key in header_dict:
+                        duplicate_keys.add(key)
+
+                    # Validate header key format (basic HTTP header validation)
+                    if not all(c.isalnum() or c in "-_" for c in key.replace(" ", "")):
+                        raise ValueError(f"Invalid header key format: '{key}'. Header keys should contain only alphanumeric characters, hyphens, and underscores.")
+
+                    # Store header (empty values are allowed)
+                    header_dict[key] = value
+
+                # Ensure at least one valid header
+                if not header_dict:
+                    raise ValueError("For 'headers' auth, at least one valid header with a key must be provided.")
+
+                # Warn about duplicate keys (optional - could log this instead)
+                if duplicate_keys:
+                    logging.warning(f"Duplicate header keys detected (last value used): {', '.join(duplicate_keys)}")
+
+                # Check for excessive headers (prevent abuse)
+                if len(header_dict) > 100:
+                    raise ValueError("Maximum of 100 headers allowed per gateway.")
+
+                return encode_auth(header_dict)
+
+            # Legacy single header format (backward compatibility)
+            header_key = data.get("auth_header_key")
+            header_value = data.get("auth_header_value")
+
+            if not header_key or not header_value:
+                raise ValueError("For 'headers' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
+
+            return encode_auth({header_key: header_value})
+
+        if auth_type == "one_time_auth":
+            # One-time auth does not require encoding here
+            return None
+
+        raise ValueError("Invalid 'auth_type'. Must be one of: basic, bearer, oauth, or headers.")
+
 
 class A2AAgentRead(BaseModelWithConfigDict):
     """Schema for reading A2A agent information.
@@ -4224,19 +4462,27 @@ class A2AAgentRead(BaseModelWithConfigDict):
     - Creation/update timestamps
     - Enabled/reachable status
     - Metrics
-    - Audit metadata
+    - Authentication type: basic, bearer, headers, oauth
+    - Authentication value: username/password or token or custom headers
+    - OAuth configuration for OAuth 2.0 authentication
+
+    Auto Populated fields:
+    - Authentication username: for basic auth
+    - Authentication password: for basic auth
+    - Authentication token: for bearer auth
+    - Authentication header key: for headers auth
+    - Authentication header value: for headers auth
     """
 
-    id: str
-    name: str
-    slug: str
-    description: Optional[str]
-    endpoint_url: str
+    id: Optional[str] = Field(None, description="Unique ID of the a2a agent")
+    name: str = Field(..., description="Unique name for the a2a agent")
+    slug: Optional[str] = Field(None, description="Slug for a2a agent endpoint URL")
+    description: Optional[str] = Field(None, description="a2a agent description")
+    endpoint_url: str = Field(..., description="a2a agent endpoint URL")
     agent_type: str
     protocol_version: str
     capabilities: Dict[str, Any]
     config: Dict[str, Any]
-    auth_type: Optional[str]
     enabled: bool
     reachable: bool
     created_at: datetime
@@ -4244,6 +4490,20 @@ class A2AAgentRead(BaseModelWithConfigDict):
     last_interaction: Optional[datetime]
     tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: A2AAgentMetrics
+    passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
+    # Authorizations
+    auth_type: Optional[str] = Field(None, description="auth_type: basic, bearer, headers, oauth, or None")
+    auth_value: Optional[str] = Field(None, description="auth value: username/password or token or custom headers")
+
+    # OAuth 2.0 configuration
+    oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
+
+    # auth_value will populate the following fields
+    auth_username: Optional[str] = Field(None, description="username for basic authentication")
+    auth_password: Optional[str] = Field(None, description="password for basic authentication")
+    auth_token: Optional[str] = Field(None, description="token for bearer authentication")
+    auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
+    auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -4262,8 +4522,149 @@ class A2AAgentRead(BaseModelWithConfigDict):
 
     # Team scoping fields
     team_id: Optional[str] = Field(None, description="ID of the team that owns this resource")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[str] = Field(default="public", description="Visibility level: private, team, or public")
+
+    # This will be the main method to automatically populate fields
+    @model_validator(mode="after")
+    def _populate_auth(self) -> Self:
+        """Populate authentication fields based on auth_type and encoded auth_value.
+
+        This post-validation method decodes the stored authentication value and
+        populates the appropriate authentication fields (username/password, token,
+        or custom headers) based on the authentication type. It ensures the
+        authentication data is properly formatted and accessible through individual
+        fields for display purposes.
+
+        The method handles three authentication types:
+        - basic: Extracts username and password from Authorization header
+        - bearer: Extracts token from Bearer Authorization header
+        - authheaders: Extracts custom header key/value pair
+
+        Returns:
+            Self: The instance with populated authentication fields:
+                - For basic: auth_username and auth_password
+                - For bearer: auth_token
+                - For authheaders: auth_header_key and auth_header_value
+
+        Raises:
+            ValueError: If the authentication data is malformed:
+                    - Basic auth missing username or password
+                    - Bearer auth missing or improperly formatted Authorization header
+                    - Custom headers not exactly one key/value pair
+
+        Examples:
+            >>> # Basic auth example
+            >>> string_bytes = "admin:secret".encode("utf-8")
+            >>> encoded_auth = base64.urlsafe_b64encode(string_bytes).decode("utf-8")
+            >>> values = GatewayRead.model_construct(
+            ...     auth_type="basic",
+            ...     auth_value=encode_auth({"Authorization": f"Basic {encoded_auth}"})
+            ... )
+            >>> values = A2AAgentRead._populate_auth(values)
+            >>> values.auth_username
+            'admin'
+            >>> values.auth_password
+            'secret'
+
+            >>> # Bearer auth example
+            >>> values = A2AAgentRead.model_construct(
+            ...     auth_type="bearer",
+            ...     auth_value=encode_auth({"Authorization": "Bearer mytoken123"})
+            ... )
+            >>> values = A2AAgentRead._populate_auth(values)
+            >>> values.auth_token
+            'mytoken123'
+
+            >>> # Custom headers example
+            >>> values = A2AAgentRead.model_construct(
+            ...     auth_type='authheaders',
+            ...     auth_value=encode_auth({"X-API-Key": "abc123"})
+            ... )
+            >>> values = A2AAgentRead._populate_auth(values)
+            >>> values.auth_header_key
+            'X-API-Key'
+            >>> values.auth_header_value
+            'abc123'
+        """
+        auth_type = self.auth_type
+        auth_value_encoded = self.auth_value
+        # Skip validation logic if masked value
+        if auth_value_encoded == settings.masked_auth_value:
+            return self
+
+        # Handle OAuth authentication (no auth_value to decode)
+        if auth_type == "oauth":
+            # OAuth gateways don't have traditional auth_value to decode
+            # They use oauth_config instead
+            return self
+
+        if auth_type == "one_time_auth":
+            return self
+
+        # If no encoded value is present, nothing to populate
+        if not auth_value_encoded:
+            return self
+
+        auth_value = decode_auth(auth_value_encoded)
+        if auth_type == "basic":
+            auth = auth_value.get("Authorization")
+            if not (isinstance(auth, str) and auth.startswith("Basic ")):
+                raise ValueError("basic auth requires an Authorization header of the form 'Basic <base64>'")
+            auth = auth.removeprefix("Basic ")
+            u, p = base64.urlsafe_b64decode(auth).decode("utf-8").split(":")
+            if not u or not p:
+                raise ValueError("basic auth requires both username and password")
+            self.auth_username, self.auth_password = u, p
+
+        elif auth_type == "bearer":
+            auth = auth_value.get("Authorization")
+            if not (isinstance(auth, str) and auth.startswith("Bearer ")):
+                raise ValueError("bearer auth requires an Authorization header of the form 'Bearer <token>'")
+            self.auth_token = auth.removeprefix("Bearer ")
+
+        elif auth_type == "authheaders":
+            # For backward compatibility, populate first header in key/value fields
+            if len(auth_value) == 0:
+                raise ValueError("authheaders requires at least one key/value pair")
+            k, v = next(iter(auth_value.items()))
+            self.auth_header_key, self.auth_header_value = k, v
+        return self
+
+    def masked(self) -> "A2AAgentRead":
+        """
+        Return a masked version of the model instance with sensitive authentication fields hidden.
+
+        This method creates a dictionary representation of the model data and replaces sensitive fields
+        such as `auth_value`, `auth_password`, `auth_token`, and `auth_header_value` with a masked
+        placeholder value defined in `settings.masked_auth_value`. Masking is only applied if the fields
+        are present and not already masked.
+
+        Args:
+            None
+
+        Returns:
+            A2AAgentRead: A new instance of the A2AAgentRead model with sensitive authentication-related fields
+            masked to prevent exposure of sensitive information.
+
+        Notes:
+            - The `auth_value` field is only masked if it exists and its value is different from the masking
+            placeholder.
+            - Other sensitive fields (`auth_password`, `auth_token`, `auth_header_value`) are masked if present.
+            - Fields not related to authentication remain unmodified.
+        """
+        masked_data = self.model_dump()
+
+        # Only mask if auth_value is present and not already masked
+        if masked_data.get("auth_value") and masked_data["auth_value"] != settings.masked_auth_value:
+            masked_data["auth_value"] = settings.masked_auth_value
+
+        masked_data["auth_password"] = settings.masked_auth_value if masked_data.get("auth_password") else None
+        masked_data["auth_token"] = settings.masked_auth_value if masked_data.get("auth_token") else None
+        masked_data["auth_header_value"] = settings.masked_auth_value if masked_data.get("auth_header_value") else None
+
+        return A2AAgentRead.model_validate(masked_data)
 
 
 class A2AAgentInvocation(BaseModelWithConfigDict):
@@ -6129,3 +6530,177 @@ class PaginationParams(BaseModel):
     cursor: Optional[str] = Field(None, description="Cursor for cursor-based pagination")
     sort_by: Optional[str] = Field("created_at", description="Sort field")
     sort_order: Optional[str] = Field("desc", pattern="^(asc|desc)$", description="Sort order")
+
+
+# ============================================================================
+# Observability Schemas (OpenTelemetry-style traces, spans, events, metrics)
+# ============================================================================
+
+
+class ObservabilityTraceBase(BaseModel):
+    """Base schema for observability traces."""
+
+    name: str = Field(..., description="Trace name (e.g., 'POST /tools/invoke')")
+    start_time: datetime = Field(..., description="Trace start timestamp")
+    end_time: Optional[datetime] = Field(None, description="Trace end timestamp")
+    duration_ms: Optional[float] = Field(None, description="Total duration in milliseconds")
+    status: str = Field("unset", description="Trace status (unset, ok, error)")
+    status_message: Optional[str] = Field(None, description="Status message or error description")
+    http_method: Optional[str] = Field(None, description="HTTP method")
+    http_url: Optional[str] = Field(None, description="HTTP URL")
+    http_status_code: Optional[int] = Field(None, description="HTTP status code")
+    user_email: Optional[str] = Field(None, description="User email")
+    user_agent: Optional[str] = Field(None, description="User agent string")
+    ip_address: Optional[str] = Field(None, description="Client IP address")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Additional trace attributes")
+    resource_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Resource attributes")
+
+
+class ObservabilityTraceCreate(ObservabilityTraceBase):
+    """Schema for creating an observability trace."""
+
+    trace_id: Optional[str] = Field(None, description="Trace ID (generated if not provided)")
+
+
+class ObservabilityTraceUpdate(BaseModel):
+    """Schema for updating an observability trace."""
+
+    end_time: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    status: Optional[str] = None
+    status_message: Optional[str] = None
+    http_status_code: Optional[int] = None
+    attributes: Optional[Dict[str, Any]] = None
+
+
+class ObservabilityTraceRead(ObservabilityTraceBase):
+    """Schema for reading an observability trace."""
+
+    trace_id: str = Field(..., description="Trace ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilitySpanBase(BaseModel):
+    """Base schema for observability spans."""
+
+    trace_id: str = Field(..., description="Parent trace ID")
+    parent_span_id: Optional[str] = Field(None, description="Parent span ID (for nested spans)")
+    name: str = Field(..., description="Span name (e.g., 'database_query', 'tool_invocation')")
+    kind: str = Field("internal", description="Span kind (internal, server, client, producer, consumer)")
+    start_time: datetime = Field(..., description="Span start timestamp")
+    end_time: Optional[datetime] = Field(None, description="Span end timestamp")
+    duration_ms: Optional[float] = Field(None, description="Span duration in milliseconds")
+    status: str = Field("unset", description="Span status (unset, ok, error)")
+    status_message: Optional[str] = Field(None, description="Status message")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Span attributes")
+    resource_name: Optional[str] = Field(None, description="Resource name")
+    resource_type: Optional[str] = Field(None, description="Resource type (tool, resource, prompt, gateway, a2a_agent)")
+    resource_id: Optional[str] = Field(None, description="Resource ID")
+
+
+class ObservabilitySpanCreate(ObservabilitySpanBase):
+    """Schema for creating an observability span."""
+
+    span_id: Optional[str] = Field(None, description="Span ID (generated if not provided)")
+
+
+class ObservabilitySpanUpdate(BaseModel):
+    """Schema for updating an observability span."""
+
+    end_time: Optional[datetime] = None
+    duration_ms: Optional[float] = None
+    status: Optional[str] = None
+    status_message: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
+
+
+class ObservabilitySpanRead(ObservabilitySpanBase):
+    """Schema for reading an observability span."""
+
+    span_id: str = Field(..., description="Span ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityEventBase(BaseModel):
+    """Base schema for observability events."""
+
+    span_id: str = Field(..., description="Parent span ID")
+    name: str = Field(..., description="Event name (e.g., 'exception', 'log', 'checkpoint')")
+    timestamp: datetime = Field(..., description="Event timestamp")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Event attributes")
+    severity: Optional[str] = Field(None, description="Log severity (debug, info, warning, error, critical)")
+    message: Optional[str] = Field(None, description="Event message")
+    exception_type: Optional[str] = Field(None, description="Exception class name")
+    exception_message: Optional[str] = Field(None, description="Exception message")
+    exception_stacktrace: Optional[str] = Field(None, description="Exception stacktrace")
+
+
+class ObservabilityEventCreate(ObservabilityEventBase):
+    """Schema for creating an observability event."""
+
+
+class ObservabilityEventRead(ObservabilityEventBase):
+    """Schema for reading an observability event."""
+
+    id: int = Field(..., description="Event ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityMetricBase(BaseModel):
+    """Base schema for observability metrics."""
+
+    name: str = Field(..., description="Metric name (e.g., 'http.request.duration', 'tool.invocation.count')")
+    metric_type: str = Field(..., description="Metric type (counter, gauge, histogram)")
+    value: float = Field(..., description="Metric value")
+    timestamp: datetime = Field(..., description="Metric timestamp")
+    unit: Optional[str] = Field(None, description="Metric unit (ms, count, bytes, etc.)")
+    attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Metric attributes/labels")
+    resource_type: Optional[str] = Field(None, description="Resource type")
+    resource_id: Optional[str] = Field(None, description="Resource ID")
+    trace_id: Optional[str] = Field(None, description="Associated trace ID")
+
+
+class ObservabilityMetricCreate(ObservabilityMetricBase):
+    """Schema for creating an observability metric."""
+
+
+class ObservabilityMetricRead(ObservabilityMetricBase):
+    """Schema for reading an observability metric."""
+
+    id: int = Field(..., description="Metric ID")
+    created_at: datetime = Field(..., description="Creation timestamp")
+
+    model_config = {"from_attributes": True}
+
+
+class ObservabilityTraceWithSpans(ObservabilityTraceRead):
+    """Schema for reading a trace with its spans."""
+
+    spans: List[ObservabilitySpanRead] = Field(default_factory=list, description="List of spans in this trace")
+
+
+class ObservabilitySpanWithEvents(ObservabilitySpanRead):
+    """Schema for reading a span with its events."""
+
+    events: List[ObservabilityEventRead] = Field(default_factory=list, description="List of events in this span")
+
+
+class ObservabilityQueryParams(BaseModel):
+    """Query parameters for filtering observability data."""
+
+    start_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics after this time")
+    end_time: Optional[datetime] = Field(None, description="Filter traces/spans/metrics before this time")
+    status: Optional[str] = Field(None, description="Filter by status (ok, error, unset)")
+    http_status_code: Optional[int] = Field(None, description="Filter by HTTP status code")
+    user_email: Optional[str] = Field(None, description="Filter by user email")
+    resource_type: Optional[str] = Field(None, description="Filter by resource type")
+    resource_name: Optional[str] = Field(None, description="Filter by resource name")
+    trace_id: Optional[str] = Field(None, description="Filter by trace ID")
+    limit: int = Field(default=100, ge=1, le=1000, description="Maximum number of results")
+    offset: int = Field(default=0, ge=0, description="Result offset for pagination")

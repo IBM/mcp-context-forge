@@ -45,6 +45,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from jsonpath_ng.ext import parse
+from jsonpath_ng.jsonpath import JSONPath
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -61,15 +63,19 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
-from mcpgateway.config import jsonpath_modifier, settings
+from mcpgateway.common.models import InitializeResult
+from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
+from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
+from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
-from mcpgateway.models import InitializeResult, ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
@@ -87,6 +93,7 @@ from mcpgateway.schemas import (
     PromptUpdate,
     ResourceCreate,
     ResourceRead,
+    ResourceSubscription,
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
@@ -101,11 +108,12 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService, GatewayUrlConflictError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -264,6 +272,75 @@ def get_user_email(user):
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
 
+def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict[str, str]] = None) -> Union[List, Dict]:
+    """
+    Applies the given JSONPath expression and mappings to the data.
+    Only return data that is required by the user dynamically.
+
+    Args:
+        data: The JSON data to query.
+        jsonpath: The JSONPath expression to apply.
+        mappings: Optional dictionary of mappings where keys are new field names
+                  and values are JSONPath expressions.
+
+    Returns:
+        Union[List, Dict]: A list (or mapped list) or a Dict of extracted data.
+
+    Raises:
+        HTTPException: If there's an error parsing or executing the JSONPath expressions.
+
+    Examples:
+        >>> jsonpath_modifier({'a': 1, 'b': 2}, '$.a')
+        [1]
+        >>> jsonpath_modifier([{'a': 1}, {'a': 2}], '$[*].a')
+        [1, 2]
+        >>> jsonpath_modifier({'a': {'b': 2}}, '$.a.b')
+        [2]
+        >>> jsonpath_modifier({'a': 1}, '$.b')
+        []
+    """
+    if not jsonpath:
+        jsonpath = "$[*]"
+
+    try:
+        main_expr: JSONPath = parse(jsonpath)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid main JSONPath expression: {e}")
+
+    try:
+        main_matches = main_expr.find(data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Error executing main JSONPath: {e}")
+
+    results = [match.value for match in main_matches]
+
+    if mappings:
+        mapped_results = []
+        for item in results:
+            mapped_item = {}
+            for new_key, mapping_expr_str in mappings.items():
+                try:
+                    mapping_expr = parse(mapping_expr_str)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+                try:
+                    mapping_matches = mapping_expr.find(item)
+                except Exception as e:
+                    raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+                if not mapping_matches:
+                    mapped_item[new_key] = None
+                elif len(mapping_matches) == 1:
+                    mapped_item[new_key] = mapping_matches[0].value
+                else:
+                    mapped_item[new_key] = [m.value for m in mapping_matches]
+            mapped_results.append(mapped_item)
+        results = mapped_results
+
+    if len(results) == 1 and isinstance(results[0], dict):
+        return results[0]
+    return results
+
+
 ####################
 # Startup/Shutdown #
 ####################
@@ -331,6 +408,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+
+        # Initialize elicitation service
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            await elicitation_service.start()
+            logger.info("Elicitation service initialized")
+
         refresh_slugs_on_startup()
 
         # Bootstrap SSO providers from environment configuration
@@ -390,6 +477,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
 
+        # Add elicitation service if enabled
+        if settings.mcpgateway_elicitation_enabled:
+            # First-Party
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            elicitation_service = get_elicitation_service()
+            services_to_shutdown.insert(5, elicitation_service)
+
         for service in services_to_shutdown:
             try:
                 await service.shutdown()
@@ -407,6 +502,9 @@ app = FastAPI(
     lifespan=lifespan,
     default_response_class=ORJSONResponse,  # Use orjson for high-performance JSON serialization
 )
+
+# Setup metrics instrumentation
+setup_metrics(app)
 
 
 async def validate_security_configuration():
@@ -432,7 +530,7 @@ async def validate_security_configuration():
     if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
         critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
 
-    if settings.basic_auth_password == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
+    if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
         critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
 
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
@@ -469,7 +567,7 @@ async def validate_security_configuration():
             logger.info("  • Generate a strong JWT secret:")
             logger.info("    python3 -c 'import secrets; print(secrets.token_urlsafe(32))'")
 
-        if settings.basic_auth_password == "changeme":  # nosec B105 - checking for default value
+        if settings.basic_auth_password.get_secret_value() == "changeme":  # nosec B105 - checking for default value
             logger.info("  • Set a strong admin password in BASIC_AUTH_PASSWORD")
 
         if not settings.auth_required:
@@ -607,15 +705,16 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
              violation details.
 
     Returns:
-        JSONResponse: A 403 response with access forbidden.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginViolationError
         >>> from mcpgateway.plugins.framework.models import PluginViolation
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin violation error
         >>> mock_error = PluginViolationError(message="plugin violation",violation = PluginViolation(
         ...     reason="Invalid input",
         ...     description="The input contains prohibited content",
@@ -624,11 +723,31 @@ async def plugin_violation_exception_handler(_request: Request, exc: PluginViola
         ... ))
         >>> result = asyncio.run(plugin_violation_exception_handler(None, mock_error))
         >>> result.status_code
-        403
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32602
+        >>> "Plugin Violation:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'PROHIBITED_CONTENT'
     """
     policy_violation = exc.violation.model_dump() if exc.violation else {}
+    message = exc.violation.description if exc.violation else "A plugin violation occurred."
     policy_violation["message"] = exc.message
-    return JSONResponse(status_code=403, content=policy_violation)
+    status_code = exc.violation.mcp_error_code if exc.violation and exc.violation.mcp_error_code else -32602
+    violation_details: dict[str, Any] = {}
+    if exc.violation:
+        if exc.violation.description:
+            violation_details["description"] = exc.violation.description
+        if exc.violation.details:
+            violation_details["details"] = exc.violation.details
+        if exc.violation.code:
+            violation_details["plugin_error_code"] = exc.violation.code
+        if exc.violation.plugin_name:
+            violation_details["plugin_name"] = exc.violation.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Violation: " + message, data=violation_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 @app.exception_handler(PluginError)
@@ -645,15 +764,16 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
              violation details.
 
     Returns:
-        JSONResponse: A 500 response with internal server error.
+        JSONResponse: A 200 response with error details in JSON-RPC format.
 
     Examples:
-        >>> from mcpgateway.plugins.framework import PluginViolationError
+        >>> from mcpgateway.plugins.framework import PluginError
         >>> from mcpgateway.plugins.framework.models import PluginErrorModel
         >>> from fastapi import Request
         >>> import asyncio
+        >>> import json
         >>>
-        >>> # Create a mock integrity error
+        >>> # Create a plugin error
         >>> mock_error = PluginError(error = PluginErrorModel(
         ...     message="plugin error",
         ...     code="timeout",
@@ -662,10 +782,29 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
         ... ))
         >>> result = asyncio.run(plugin_exception_handler(None, mock_error))
         >>> result.status_code
-        500
+        200
+        >>> content = json.loads(result.body.decode())
+        >>> content["error"]["code"]
+        -32603
+        >>> "Plugin Error:" in content["error"]["message"]
+        True
+        >>> content["error"]["data"]["plugin_error_code"]
+        'timeout'
+        >>> content["error"]["data"]["plugin_name"]
+        'abc'
     """
-    error_obj = exc.error.model_dump() if exc.error else {}
-    return JSONResponse(status_code=500, content=error_obj)
+    message = exc.error.message if exc.error else "A plugin error occurred."
+    status_code = exc.error.mcp_error_code if exc.error else -32603
+    error_details: dict[str, Any] = {}
+    if exc.error:
+        if exc.error.details:
+            error_details["details"] = exc.error.details
+        if exc.error.code:
+            error_details["plugin_error_code"] = exc.error.code
+        if exc.error.plugin_name:
+            error_details["plugin_name"] = exc.error.plugin_name
+    json_rpc_error = PydanticJSONRPCError(code=status_code, message="Plugin Error: " + message, data=error_details)
+    return JSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
 class DocsAuthMiddleware(BaseHTTPMiddleware):
@@ -911,6 +1050,9 @@ else:
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
 
+# Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
+app.add_middleware(MCPProtocolVersionMiddleware)
+
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
     app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
@@ -919,6 +1061,10 @@ if settings.email_auth_enabled:
 else:
     # Add streamable HTTP middleware for /mcp routes
     app.add_middleware(MCPPathRewriteMiddleware)
+
+# Add HTTP authentication hook middleware for plugins (before auth dependencies)
+if plugin_manager:
+    app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -929,6 +1075,26 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 # Add request logging middleware if enabled
 if settings.log_requests:
     app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
+
+# Add observability middleware if enabled
+# Note: Middleware runs in REVERSE order (last added runs first)
+# We add ObservabilityMiddleware first so it wraps AuthContextMiddleware
+# Execution order will be: AuthContext -> Observability -> Request Handler
+if settings.observability_enabled:
+    # First-Party
+    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+
+    app.add_middleware(ObservabilityMiddleware, enabled=True)
+    logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
+
+    # Add authentication context middleware (runs BEFORE observability in execution)
+    # First-Party
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+
+    app.add_middleware(AuthContextMiddleware)
+    logger.info("🔐 Authentication context middleware enabled - extracting user info for observability")
+else:
+    logger.info("🔍 Observability middleware disabled")
 
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
@@ -1012,9 +1178,10 @@ def require_api_key(api_key: str) -> None:
 
     Examples:
         >>> from mcpgateway.config import settings
+        >>> from pydantic import SecretStr
         >>> settings.auth_required = True
         >>> settings.basic_auth_user = "admin"
-        >>> settings.basic_auth_password = "secret"
+        >>> settings.basic_auth_password = SecretStr("secret")
         >>>
         >>> # Valid API key
         >>> require_api_key("admin:secret")  # Should not raise
@@ -1027,7 +1194,7 @@ def require_api_key(api_key: str) -> None:
         401
     """
     if settings.auth_required:
-        expected = f"{settings.basic_auth_user}:{settings.basic_auth_password}"
+        expected = f"{settings.basic_auth_user}:{settings.basic_auth_password.get_secret_value()}"
         if api_key != expected:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
@@ -1785,10 +1952,34 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 
         message = await request.json()
 
-        await session_registry.broadcast(
-            session_id=session_id,
-            message=message,
-        )
+        # Check if this is an elicitation response (JSON-RPC response with result containing action)
+        is_elicitation_response = False
+        if "result" in message and isinstance(message.get("result"), dict):
+            result_data = message["result"]
+            if "action" in result_data and result_data.get("action") in ["accept", "decline", "cancel"]:
+                # This looks like an elicitation response
+                request_id = message.get("id")
+                if request_id:
+                    # Try to complete the elicitation
+                    # First-Party
+                    from mcpgateway.common.models import ElicitResult  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+                    elicitation_service = get_elicitation_service()
+                    try:
+                        elicit_result = ElicitResult(**result_data)
+                        if elicitation_service.complete_elicitation(request_id, elicit_result):
+                            logger.info(f"Completed elicitation {request_id} from session {session_id}")
+                            is_elicitation_response = True
+                    except Exception as e:
+                        logger.warning(f"Failed to process elicitation response: {e}")
+
+        # If not an elicitation response, broadcast normally
+        if not is_elicitation_response:
+            await session_registry.broadcast(
+                session_id=session_id,
+                message=message,
+            )
 
         return JSONResponse(content={"status": "success"}, status_code=202)
     except ValueError as e:
@@ -2221,6 +2412,7 @@ async def list_tools(
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
     visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID"),
     db: Session = Depends(get_db),
     apijsonpath: JsonPathModifier = Body(None),
     user=Depends(get_current_user_with_permissions),
@@ -2233,6 +2425,7 @@ async def list_tools(
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
         team_id: Optional team ID to filter tools by specific team
         visibility: Optional visibility filter (private, team, public)
+        gateway_id: Optional gateway ID to filter tools by specific gateway
         db: Database session
         apijsonpath: JSON path modifier to filter or transform the response
         user: Authenticated user with permissions
@@ -2258,7 +2451,11 @@ async def list_tools(
             data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+
+    # Apply gateway_id filtering if provided
+    if gateway_id:
+        data = [tool for tool in data if str(tool.gateway_id) == gateway_id]
 
     if apijsonpath is None:
         return data
@@ -2624,7 +2821,7 @@ async def list_resources(
         logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
         if cached := resource_cache.get("resource_list"):
             return cached
-        data = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
         resource_cache.set("resource_list", data)
     return data
 
@@ -2740,8 +2937,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.models import ResourceContent  # pylint: disable=import-outside-toplevel
-        from mcpgateway.models import TextContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.common.models import ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
@@ -2954,7 +3150,7 @@ async def list_prompts(
     else:
         # Use existing method for backward compatibility when no team filtering
         logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
     return data
 
 
@@ -3342,8 +3538,8 @@ async def register_gateway(
             return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
-        if isinstance(ex, GatewayUrlConflictError):
-            return JSONResponse(content={"message": "Gateway URL already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayDuplicateConflictError):
+            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
@@ -3420,8 +3616,8 @@ async def update_gateway(
             return JSONResponse(content={"message": "Unable to process input"}, status_code=status.HTTP_400_BAD_REQUEST)
         if isinstance(ex, GatewayNameConflictError):
             return JSONResponse(content={"message": "Gateway name already exists"}, status_code=status.HTTP_409_CONFLICT)
-        if isinstance(ex, GatewayUrlConflictError):
-            return JSONResponse(content={"message": "Gateway URL already exists"}, status_code=status.HTTP_409_CONFLICT)
+        if isinstance(ex, GatewayDuplicateConflictError):
+            return JSONResponse(content={"message": "Gateway already exists"}, status_code=status.HTTP_409_CONFLICT)
         if isinstance(ex, RuntimeError):
             return JSONResponse(content={"message": "Error during execution"}, status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         if isinstance(ex, ValidationError):
@@ -3592,21 +3788,29 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "initialize":
-            result = await session_registry.handle_initialize_logic(body.get("params", {}))
+            # Extract session_id from params or query string (for capability tracking)
+            init_session_id = params.get("session_id") or params.get("sessionId") or request.query_params.get("session_id")
+            result = await session_registry.handle_initialize_logic(body.get("params", {}), session_id=init_session_id)
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "tools/list":
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_tools":  # Legacy endpoint
             if server_id:
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools = await tool_service.list_tools(db, cursor=cursor)
-            result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "list_gateways":
             gateways = await gateway_service.list_gateways(db, include_inactive=False)
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
@@ -3616,9 +3820,12 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         elif method == "resources/list":
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources = await resource_service.list_resources(db)
-            result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "resources/read":
             uri = params.get("uri")
             request_id = params.get("requestId", None)
@@ -3637,12 +3844,35 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 result = await gateway_service.forward_request(db, method, params, app_user_email=user_email)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
+        elif method == "resources/subscribe":
+            # MCP spec-compliant resource subscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.subscribe_resource(db, subscription)
+            result = {}
+        elif method == "resources/unsubscribe":
+            # MCP spec-compliant resource unsubscription endpoint
+            uri = params.get("uri")
+            if not uri:
+                raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
+            # Get user email for subscriber ID
+            user_email = get_user_email(user)
+            subscription = ResourceSubscription(uri=uri, subscriber_id=user_email)
+            await resource_service.unsubscribe_resource(db, subscription)
+            result = {}
         elif method == "prompts/list":
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts = await prompt_service.list_prompts(db, cursor=cursor)
-            result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
+                if next_cursor:
+                    result["nextCursor"] = next_cursor
         elif method == "prompts/get":
             name = params.get("name")
             arguments = params.get("arguments", {})
@@ -3673,18 +3903,141 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
         # TODO: Implement methods  # pylint: disable=fixme
         elif method == "resources/templates/list":
-            result = {}
+            # MCP spec-compliant resource templates list endpoint
+            resource_templates = await resource_service.list_resource_templates(db)
+            result = {"resourceTemplates": [rt.model_dump(by_alias=True, exclude_none=True) for rt in resource_templates]}
+        elif method == "roots/list":
+            # MCP spec-compliant method name
+            roots = await root_service.list_roots()
+            result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method.startswith("roots/"):
+            # Catch-all for other roots/* methods (currently unsupported)
+            result = {}
+        elif method == "notifications/initialized":
+            # MCP spec-compliant notification: client initialized
+            logger.info("Client initialized")
+            await logging_service.notify("Client initialized", LogLevel.INFO)
+            result = {}
+        elif method == "notifications/cancelled":
+            # MCP spec-compliant notification: request cancelled
+            request_id = params.get("requestId")
+            logger.info(f"Request cancelled: {request_id}")
+            await logging_service.notify(f"Request cancelled: {request_id}", LogLevel.INFO)
+            result = {}
+        elif method == "notifications/message":
+            # MCP spec-compliant notification: log message
+            await logging_service.notify(
+                params.get("data"),
+                LogLevel(params.get("level", "info")),
+                params.get("logger"),
+            )
             result = {}
         elif method.startswith("notifications/"):
+            # Catch-all for other notifications/* methods (currently unsupported)
             result = {}
+        elif method == "sampling/createMessage":
+            # MCP spec-compliant sampling endpoint
+            result = await sampling_handler.create_message(db, params)
         elif method.startswith("sampling/"):
+            # Catch-all for other sampling/* methods (currently unsupported)
             result = {}
+        elif method == "elicitation/create":
+            # MCP spec 2025-06-18: Elicitation support (server-to-client requests)
+            # Elicitation allows servers to request structured user input through clients
+
+            # Check if elicitation is enabled
+            if not settings.mcpgateway_elicitation_enabled:
+                raise JSONRPCError(-32601, "Elicitation feature is disabled", {"feature": "elicitation", "config": "MCPGATEWAY_ELICITATION_ENABLED=false"})
+
+            # Validate params
+            # First-Party
+            from mcpgateway.common.models import ElicitRequestParams  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+
+            try:
+                elicit_params = ElicitRequestParams(**params)
+            except Exception as e:
+                raise JSONRPCError(-32602, f"Invalid elicitation params: {e}", params)
+
+            # Get target session (from params or find elicitation-capable session)
+            target_session_id = params.get("session_id") or params.get("sessionId")
+            if not target_session_id:
+                # Find an elicitation-capable session
+                capable_sessions = await session_registry.get_elicitation_capable_sessions()
+                if not capable_sessions:
+                    raise JSONRPCError(-32000, "No elicitation-capable clients available", {"message": elicit_params.message})
+                target_session_id = capable_sessions[0]
+                logger.debug(f"Selected session {target_session_id} for elicitation")
+
+            # Verify session has elicitation capability
+            if not await session_registry.has_elicitation_capability(target_session_id):
+                raise JSONRPCError(-32000, f"Session {target_session_id} does not support elicitation", {"session_id": target_session_id})
+
+            # Get elicitation service and create request
+            elicitation_service = get_elicitation_service()
+
+            # Extract timeout from params or use default
+            timeout = params.get("timeout", settings.mcpgateway_elicitation_timeout)
+
+            try:
+                # Create elicitation request - this stores it and waits for response
+                # For now, use dummy upstream_session_id - in full bidirectional proxy,
+                # this would be the session that initiated the request
+                upstream_session_id = "gateway"
+
+                # Start the elicitation (creates pending request and future)
+                elicitation_task = asyncio.create_task(
+                    elicitation_service.create_elicitation(
+                        upstream_session_id=upstream_session_id, downstream_session_id=target_session_id, message=elicit_params.message, requested_schema=elicit_params.requestedSchema, timeout=timeout
+                    )
+                )
+
+                # Get the pending elicitation to extract request_id
+                # Wait a moment for it to be created
+                await asyncio.sleep(0.01)
+                pending_elicitations = [e for e in elicitation_service._pending.values() if e.downstream_session_id == target_session_id]  # pylint: disable=protected-access
+                if not pending_elicitations:
+                    raise JSONRPCError(-32000, "Failed to create elicitation request", {})
+
+                pending = pending_elicitations[-1]  # Get most recent
+
+                # Send elicitation request to client via broadcast
+                elicitation_request = {
+                    "jsonrpc": "2.0",
+                    "id": pending.request_id,
+                    "method": "elicitation/create",
+                    "params": {"message": elicit_params.message, "requestedSchema": elicit_params.requestedSchema},
+                }
+
+                await session_registry.broadcast(target_session_id, elicitation_request)
+                logger.debug(f"Sent elicitation request {pending.request_id} to session {target_session_id}")
+
+                # Wait for response
+                elicit_result = await elicitation_task
+
+                # Return result
+                result = elicit_result.model_dump(by_alias=True, exclude_none=True)
+
+            except asyncio.TimeoutError:
+                raise JSONRPCError(-32000, f"Elicitation timed out after {timeout}s", {"message": elicit_params.message, "timeout": timeout})
+            except ValueError as e:
+                raise JSONRPCError(-32000, str(e), {"message": elicit_params.message})
         elif method.startswith("elicitation/"):
+            # Catch-all for other elicitation/* methods
             result = {}
+        elif method == "completion/complete":
+            # MCP spec-compliant completion endpoint
+            result = await completion_service.handle_completion(db, params)
         elif method.startswith("completion/"):
+            # Catch-all for other completion/* methods (currently unsupported)
+            result = {}
+        elif method == "logging/setLevel":
+            # MCP spec-compliant logging endpoint
+            level = LogLevel(params.get("level"))
+            await logging_service.set_level(level)
             result = {}
         elif method.startswith("logging/"):
+            # Catch-all for other logging/* methods (currently unsupported)
             result = {}
         else:
             # Backward compatibility: Try to invoke as a tool directly
@@ -4185,7 +4538,7 @@ async def get_entities_by_tag(
 @export_import_router.get("/export", response_model=Dict[str, Any])
 @require_permission("admin.export")
 async def export_configuration(
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     export_format: str = "json",  # pylint: disable=unused-argument
     types: Optional[str] = None,
     exclude_types: Optional[str] = None,
@@ -4239,8 +4592,8 @@ async def export_configuration(
         else:
             username = None
 
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
 
         # Perform export
         export_data = await export_service.export_configuration(
@@ -4301,7 +4654,12 @@ async def export_selective_configuration(
         elif isinstance(user, dict):
             username = user.get("email")
 
-        export_data = await export_service.export_selective(db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown")
+        # Get root path for URL construction - prefer configured APP_ROOT_PATH
+        root_path = settings.app_root_path
+
+        export_data = await export_service.export_selective(
+            db=db, entity_selections=entity_selections, include_dependencies=include_dependencies, exported_by=username or "unknown", root_path=root_path
+        )
 
         return export_data
 
@@ -4459,6 +4817,16 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+
+# Conditionally include observability router if enabled
+if settings.observability_enabled:
+    # First-Party
+    from mcpgateway.routers.observability import router as observability_router
+
+    app.include_router(observability_router)
+    logger.info("Observability router included - observability API endpoints enabled")
+else:
+    logger.info("Observability router not included - observability disabled")
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:

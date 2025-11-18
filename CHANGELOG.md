@@ -4,11 +4,11 @@
 
 ---
 
-## [0.9.0] - 2025-11-04 [WIP] - REST Passthrough, Multi-Tenancy Fixes & Platform Enhancements
+## [0.9.0] - 2025-11-09 - REST Passthrough, Ed25519 Certificate Signing, Multi-Tenancy Fixes & Platform Enhancements
 
 ### Overview
 
-This release delivers **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
+This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Capabilities**, **API & UI Pagination**, **Multi-Tenancy Bug Fixes**, and **Platform Enhancements** with **60+ issues resolved** and **50+ PRs merged**, bringing significant improvements across security, observability, and developer experience:
 
 - **📄 REST API & UI Pagination** - Comprehensive pagination support for all admin endpoints with HTMX-based UI and performance testing up to 10K records
 - **🔌 REST Passthrough API Fields** - Comprehensive REST tool configuration with query/header mapping, timeouts, and plugin chains
@@ -19,6 +19,93 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - **🧪 Quality & Testing** - Complete build pipeline verification, enhanced linting, mutation testing, and fuzzing
 - **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
+- **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
+
+### ⚠️ BREAKING CHANGES
+
+#### **🗄️ PostgreSQL 17 → 18 Upgrade Required**
+
+**Docker Compose users must run the upgrade utility before starting the stack.**
+
+The default PostgreSQL image has been upgraded from version 17 to 18. This is a **major version upgrade** that requires a one-time data migration using `pg_upgrade`.
+
+**Migration Steps:**
+
+1. **Stop your existing stack:**
+   ```bash
+   docker compose down
+   ```
+
+2. **Run the automated upgrade utility:**
+   ```bash
+   make compose-upgrade-pg18
+   ```
+
+   This will:
+   - Prompt for confirmation (⚠️ **backup recommended**)
+   - Run `pg_upgrade` to migrate data from Postgres 17 → 18
+   - Automatically copy `pg_hba.conf` to preserve network access settings
+   - Create a new `pgdata18` volume with upgraded data
+
+3. **Start the upgraded stack:**
+   ```bash
+   make compose-up
+   ```
+
+4. **(Optional) Run maintenance commands** to update statistics:
+   ```bash
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-in-stages --missing-stats-only -U postgres
+   docker compose exec postgres /usr/lib/postgresql/18/bin/vacuumdb --all --analyze-only -U postgres
+   ```
+
+5. **Verify the upgrade:**
+   ```bash
+   docker compose exec postgres psql -U postgres -c 'SELECT version();'
+   # Should show: PostgreSQL 18.x
+   ```
+
+6. **(Optional) Clean up old volume** after confirming everything works:
+   ```bash
+   docker volume rm mcp-context-forge_pgdata
+   ```
+
+**Manual Upgrade (without Make):**
+
+If you prefer not to use the Makefile:
+
+```bash
+# Stop stack
+docker compose down
+
+# Run upgrade
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade
+
+# Copy pg_hba.conf
+docker compose -f docker-compose.yml -f compose.upgrade.yml run --rm pg-upgrade \
+  sh -c "cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf"
+
+# Start upgraded stack
+docker compose up -d
+```
+
+**Why This Change:**
+
+- Postgres 18 introduces a new directory structure (`/var/lib/postgresql/18/docker`) for better compatibility with `pg_ctlcluster`
+- Enables future upgrades using `pg_upgrade --link` without mount point boundary issues
+- Aligns with official PostgreSQL Docker image best practices (see [postgres#1259](https://github.com/docker-library/postgres/pull/1259))
+
+**What Changed:**
+
+- `docker-compose.yml`: Updated from `postgres:17` → `postgres:18`
+- Volume mount: Changed from `pgdata:/var/lib/postgresql/data` → `pgdata18:/var/lib/postgresql`
+- Added `compose.upgrade.yml` for automated upgrade process
+- Added `make compose-upgrade-pg18` target for one-command upgrades
+
+**Troubleshooting:**
+
+- **Error: "data checksums mismatch"** - Fixed automatically in upgrade script (disables checksums to match old cluster)
+- **Error: "no pg_hba.conf entry"** - Fixed automatically by copying old `pg_hba.conf` during upgrade
+- **Error: "Invalid cross-device link"** - Upgrade uses copy mode (not `--link`) to work across different Docker volumes
 
 ### Added
 
@@ -100,7 +187,32 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Keycloak Integration** (#1217, #1216, #1109) - Full Keycloak support with application/x-www-form-urlencoded
 * **OAuth Timeout Configuration** (#1201) - Configurable `OAUTH_DEFAULT_TIMEOUT` for OAuth providers
 
-#### **🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
+#### **� Ed25519 Certificate Signing** - Enhanced certificate validation and integrity verification
+* **Digital Certificate Signing** - Sign and verify certificates using Ed25519 cryptographic signatures
+  - Ensures certificate authenticity and prevents tampering
+  - Built on proven Ed25519 algorithm (RFC 8032) for high security and performance
+  - Zero-dependency Python implementation using `cryptography` library
+* **Key Generation Utility** - Built-in key generation tool at `mcpgateway/utils/generate_keys.py`
+  - Generates secure Ed25519 private keys in base64 format
+  - Simple command-line interface for development and production use
+* **Key Rotation Support** - Graceful key rotation with zero downtime
+  - Configure both current (`ED25519_PRIVATE_KEY`) and previous (`PREV_ED25519_PRIVATE_KEY`) keys
+  - Automatic fallback to previous key for verification during rotation period
+  - Supports rolling updates in distributed deployments
+* **Environment Variable Configuration** - Three new environment variables for certificate signing
+  - `ENABLE_ED25519_SIGNING` - Enable/disable signing (default: "false")
+  - `ED25519_PRIVATE_KEY` - Current signing key (base64-encoded)
+  - `PREV_ED25519_PRIVATE_KEY` - Previous key for rotation support (base64-encoded)
+* **Kubernetes & Helm Support** - Full integration with Helm chart deployment
+  - Secret management via `values.yaml` configuration
+  - JSON Schema validation in `values.schema.json`
+  - External Secrets Operator integration examples
+* **Production Ready** - Comprehensive documentation and security best practices
+  - Complete documentation in main README.md
+  - Helm chart documentation with Kubernetes examples
+  - Security guidelines for key storage and rotation
+
+#### **�🔌 Plugin Framework Enhancements** (#1196, #1198, #1137, #1240, #1289)
 * **🦀 Rust Plugin Framework** (#1289, #1249) - Optional Rust-accelerated plugins with automatic Python fallback
   - Complete PyO3-based framework for building high-performance plugins
   - **PII Filter (Rust)**: 5-100x faster than Python implementation with identical functionality
@@ -167,6 +279,10 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
   - **Implementation**: `mcpgateway/utils/orjson_response.py` configured as default FastAPI response class
   - **Test Coverage**: 29 comprehensive unit tests with 100% code coverage
 
+#### **💻 Admin UI enhancements** (#1336)
+* **Inspectable auth passwords, tokens and headers** (#1336) - Admins can now view and verify passwords, tokens and custom headers they set when creating or editing MCP servers.
+
+
 ### Fixed
 
 #### **🐛 Critical Multi-Tenancy & RBAC Bugs**
@@ -228,6 +344,9 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 * **Gateway Registration on MacOS** (#625) - Fixed gateway registration and tool invocation on MacOS
 * **Non-root Container Users** (#1231) - Added non-root user to scratch Go containers
 * **Container Runtime Detection** - Improved Docker/Podman detection in Makefile
+
+#### **💻 Admin UI Fixes** (#1370)
+* **Saved custom headers not visible** (#1370) - Fixed custom headers not visible to Admins when editing a MCP server using custom headers for auth.
 
 ### Changed
 
@@ -312,9 +431,12 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 
 **Multi-Tenancy & RBAC:**
 - Closes #969 - Backend Multi-Tenancy Issues - Critical bugs and missing features
+- Closes #967 - UI Gaps in Multi-Tenancy Support - Visibility fields missing for most resource types
 - Closes #959 - Unable to Re-add Team Member Due to Unique Constraint
 - Closes #958 - Incomplete Visibility Implementation
+- Closes #946 - Alembic migrations fails in docker compose setup
 - Closes #945 - Scoped uniqueness for prompts, resources, and A2A agents
+- Closes #926 - Bootstrap fails to assign platform_admin role due to foreign key constraint violation
 - Closes #1180 - Prompt editing to include team_id in form data
 - Closes #1184 - Prompt and resource endpoints to use unique IDs instead of name/URI
 - Closes #1222 - Already addressed as part of #945
@@ -325,6 +447,9 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #1254 - JWT jti mismatch between token and database record
 - Closes #1262 - JWT token follows default variable payload expiry instead of UI
 - Closes #1261 - API Token Expiry Issue: UI Configuration overridden by default env Variable
+- Closes #1111 - Support application/x-www-form-urlencoded Requests in MCP Gateway UI for OAuth2 / Keycloak Integration
+- Closes #1094 - Creating an MCP OAUTH2 server fails if using API
+- Closes #1092 - After issue 1078 change, how to add X-Upstream-Authorization header when clicking Authorize in admin UI
 - Closes #1048 - Login issue - Serving over HTTP requires SECURE_COOKIES=false
 - Closes #1101 - Login issue with v0.7.0
 - Closes #1117 - Login not working with 0.7.0 version
@@ -341,6 +466,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 **Developer Tools & Operations:**
 - Closes #1197 - Support Bundle Generation - Automated Diagnostics Collection
 - Closes #1200 - In built MCP client - LLM Chat service for virtual servers
+- Closes #1239 - LLMChat Multi-Worker: Add Documentation and Integration Tests
 - Closes #1202 - LLM Chat Interface with MCP Enabled Tool Orchestration
 - Closes #1228 - Show system statistics in metrics page
 - Closes #1225 - Production-Scale Load Data Generator for Multi-Tenant Testing
@@ -351,21 +477,27 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #1271 - Consolidated linting configuration in pyproject.toml
 
 **Plugin Framework:**
+- Closes #1249 - Rust-Powered PII Filter Plugin - 5-10x Performance Improvement
 - Closes #1196 - Plugin client server mTLS support
 - Closes #1137 - Add missing hooks to OPA plugin
 - Closes #1198 - Complete OPA plugin hook implementation
 
 **Platform & Protocol:**
+- Closes #1381 - Resource view error - mime type handling for resource added via mcp server
+- Closes #1348 - Add support for IBM Watsonx.ai LLM provider
 - Closes #1258 - MCP Tool outputSchema Field is Stripped During Discovery
 - Closes #1188 - Allow multiple StreamableHTTP content
 - Closes #1138 - Support for container builds for s390x
 
 **Performance Optimizations:**
 - Closes #1294 - orjson JSON Serialization for 5-6x faster JSON encoding/decoding
+- Closes #1292 - Brotli/Zstd/GZip Response Compression reducing bandwidth by 30-70%
 
 **Bug Fixes:**
+- Closes #1336 - Add toggles to password/sensitive textboxes to mask/unmask the input value
 - Closes #1098 - Unable to see request payload being sent
 - Closes #1024 - plugin tool_prefetch hook cannot access PASSTHROUGH_HEADERS, tags
+- Closes #1020 - Edit Button Functionality - A2A
 - Closes #861 - Passthrough header parameters not persisted to database
 - Closes #1178 - Header overlaps with modals in UI
 - Closes #922 - IFraming the admin UI is not working
@@ -373,6 +505,7 @@ This release delivers **REST API Passthrough Capabilities**, **API & UI Paginati
 - Closes #1230 - pyproject.toml conflicting dependencies with uv
 - Closes #448 - MCP server with custom base path "/api" not working
 - Closes #835 - Adding Custom annotation for tools
+- Closes #409 - Add configurable limits for data cleaning / XSS prevention in .env.example and helm
 
 **Documentation:**
 - Closes #1159 - Several minor quirks in main README.md

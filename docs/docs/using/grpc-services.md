@@ -19,7 +19,7 @@ pip install mcp-contextforge-gateway[grpc]
 uv pip install mcp-contextforge-gateway[grpc]
 
 # In requirements.txt
-mcp-contextforge-gateway[grpc]>=0.8.0
+mcp-contextforge-gateway[grpc]>=0.9.0
 ```
 
 This installs the following packages:

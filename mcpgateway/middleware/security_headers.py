@@ -255,8 +255,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if settings.x_content_type_options_enabled:
             response.headers["X-Content-Type-Options"] = "nosniff"
 
-        if settings.x_frame_options:
-            response.headers["X-Frame-Options"] = settings.x_frame_options
+        # Handle X-Frame-Options: None = don't set header, empty string = allow all, other values = set header
+        if settings.x_frame_options is not None:
+            if settings.x_frame_options:  # Non-empty string
+                response.headers["X-Frame-Options"] = settings.x_frame_options
+            # Empty string means user wants to disable the header (allow all frames)
+            # Don't set the header in this case
 
         if settings.x_xss_protection_enabled:
             response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
@@ -268,7 +272,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # Content Security Policy
         # This CSP is designed to work with the Admin UI while providing security
-        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting
+        # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
         x_frame = str(settings.x_frame_options)
         x_frame_upper = x_frame.upper()
 
@@ -282,7 +286,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         elif not x_frame:  # Empty string means allow all
             frame_ancestors = "*"
         else:
-            # Default to none for unknown values
+            # Default to none for unknown values (matches DENY default)
             frame_ancestors = "'none'"
 
         csp_directives = [

@@ -165,6 +165,10 @@ async def test_call_tool_success(monkeypatch):
     mock_content.type = "text"
     mock_content.text = "hello"
     mock_result.content = [mock_content]
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", AsyncMock(return_value=AsyncMock(__aenter__=AsyncMock(return_value=mock_db), __aexit__=AsyncMock())))
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
@@ -192,6 +196,11 @@ async def test_call_tool_success(monkeypatch):
     async def fake_get_db():
         yield mock_db
 
+    # Ensure no accidental 'structured_content' MagicMock attribute is present
+    mock_result.structured_content = None
+    # Prevent model_dump from returning a MagicMock with a 'structuredContent' key
+    mock_result.model_dump = lambda by_alias=True: {}
+
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
     monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
 
@@ -200,6 +209,54 @@ async def test_call_tool_success(monkeypatch):
     assert isinstance(result[0], types.TextContent)
     assert result[0].type == "text"
     assert result[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_with_structured_content(monkeypatch):
+    """Test call_tool returns tuple with both unstructured and structured content."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = '{"result": "success"}'
+    mock_result.content = [mock_content]
+
+    # Simulate structured content being present
+    mock_structured = {"status": "ok", "data": {"value": 42}}
+    mock_result.structured_content = mock_structured
+    mock_result.model_dump = lambda by_alias=True: {
+        "content": [{"type": "text", "text": '{"result": "success"}'}],
+        "structuredContent": mock_structured
+    }
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("mytool", {"foo": "bar"})
+
+    # When structured content is present, result should be a tuple
+    assert isinstance(result, tuple)
+    assert len(result) == 2
+
+    # First element should be the unstructured content list
+    unstructured, structured = result
+    assert isinstance(unstructured, list)
+    assert len(unstructured) == 1
+    assert isinstance(unstructured[0], types.TextContent)
+    assert unstructured[0].text == '{"result": "success"}'
+
+    # Second element should be the structured content dict
+    assert isinstance(structured, dict)
+    assert structured == mock_structured
+    assert structured["status"] == "ok"
+    assert structured["data"]["value"] == 42
 
 
 @pytest.mark.asyncio
@@ -294,7 +351,7 @@ async def test_list_tools_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=[mock_tool]))
+    monkeypatch.setattr(tool_service, "list_tools", AsyncMock(return_value=([mock_tool], None)))
 
     # Ensure server_id is None
     token = server_id_var.set(None)
@@ -407,7 +464,7 @@ async def test_list_prompts_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(return_value=[mock_prompt]))
+    monkeypatch.setattr(prompt_service, "list_prompts", AsyncMock(return_value=([mock_prompt], None)))
 
     token = server_id_var.set(None)
     result = await list_prompts()
@@ -642,7 +699,7 @@ async def test_list_resources_no_server_id(monkeypatch):
         yield mock_db
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
-    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(return_value=[mock_resource]))
+    monkeypatch.setattr(resource_service, "list_resources", AsyncMock(return_value=([mock_resource], None)))
 
     token = server_id_var.set(None)
     result = await list_resources()
@@ -717,6 +774,7 @@ async def test_read_resource_success(monkeypatch):
     mock_db = MagicMock()
     mock_result = MagicMock()
     mock_result.text = "resource content here"
+    mock_result.blob = None  # Explicitly set to None so text is returned
 
     @asynccontextmanager
     async def fake_get_db():
@@ -733,7 +791,7 @@ async def test_read_resource_success(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_read_resource_no_content(monkeypatch, caplog):
-    """Test read_resource returns [] and logs warning if no content."""
+    """Test read_resource returns empty string and logs warning if no content."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -743,6 +801,7 @@ async def test_read_resource_no_content(monkeypatch, caplog):
     mock_db = MagicMock()
     mock_result = MagicMock()
     mock_result.text = ""
+    mock_result.blob = None
 
     @asynccontextmanager
     async def fake_get_db():
@@ -754,13 +813,13 @@ async def test_read_resource_no_content(monkeypatch, caplog):
     test_uri = AnyUrl("file:///empty.txt")
     with caplog.at_level("WARNING"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "No content returned by resource: file:///empty.txt" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_no_result(monkeypatch, caplog):
-    """Test read_resource returns [] and logs warning if no result."""
+    """Test read_resource returns empty string and logs warning if no result."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -779,13 +838,13 @@ async def test_read_resource_no_result(monkeypatch, caplog):
     test_uri = AnyUrl("file:///missing.txt")
     with caplog.at_level("WARNING"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "No content returned by resource: file:///missing.txt" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_service_exception(monkeypatch, caplog):
-    """Test read_resource returns [] and logs exception from service."""
+    """Test read_resource returns empty string and logs exception from service."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -804,13 +863,13 @@ async def test_read_resource_service_exception(monkeypatch, caplog):
     test_uri = AnyUrl("file:///error.txt")
     with caplog.at_level("ERROR"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "Error reading resource 'file:///error.txt': service error!" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_read_resource_outer_exception(monkeypatch, caplog):
-    """Test read_resource returns [] and logs exception from outer try-catch."""
+    """Test read_resource returns empty string and logs exception from outer try-catch."""
     # Standard
     from contextlib import asynccontextmanager
 
@@ -831,7 +890,7 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
     test_uri = AnyUrl("file:///db_error.txt")
     with caplog.at_level("ERROR"):
         result = await read_resource(test_uri)
-        assert result == []
+        assert result == ""
         assert "Error reading resource 'file:///db_error.txt': db error!" in caplog.text
 
 

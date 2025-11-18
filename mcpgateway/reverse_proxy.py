@@ -258,7 +258,7 @@ class ReverseProxyClient:
         token: Optional[str] = None,
         reconnect_delay: float = DEFAULT_RECONNECT_DELAY,
         max_retries: int = DEFAULT_MAX_RETRIES,
-        keepalive_interval: int = DEFAULT_KEEPALIVE_INTERVAL,
+        keepalive_interval: float = DEFAULT_KEEPALIVE_INTERVAL,
     ):
         """Initialize reverse proxy client.
 

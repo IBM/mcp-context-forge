@@ -55,14 +55,6 @@ import pytest
 # ---------------------------------------------------------------------------#
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Provide a fresh event-loop for pytest-asyncio."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
 @pytest.fixture()
 def translate():
     """Reload mcpgateway.translate for a pristine state each test."""
@@ -958,58 +950,31 @@ def test_module_entrypoint(monkeypatch, translate):
     assert executed == ["main_called"]
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_stdio(monkeypatch, translate):
     """Test main() function with --stdio argument."""
-    executed: list[str] = []
-
-    async def _fake_stdio_runner(*args):
-        executed.append("stdio")
-
-    def _fake_asyncio_run(coro):
-        # Properly close the coroutine to prevent "never awaited" warning
-        executed.append("asyncio_run")
-        try:
-            coro.close()
-        except GeneratorExit:
-            pass
-        return None
-
-    monkeypatch.setattr(translate, "_run_stdio_to_sse", _fake_stdio_runner)
-    monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
+    mock_multi_protocol = AsyncMock()
+    monkeypatch.setattr(translate, "_run_multi_protocol_server", mock_multi_protocol)
 
     # Test that main() calls the right function
     translate.main(["--stdio", "echo test"])
-    assert "asyncio_run" in executed
+    mock_multi_protocol.assert_called_once()
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_sse(monkeypatch, translate):
-    """Test main() function with --sse argument."""
-    executed: list[str] = []
-
-    async def _fake_sse_runner(*args):
-        executed.append("sse")
-
-    def _fake_asyncio_run(coro):
-        executed.append("asyncio_run")
-        try:
-            coro.close()
-        except GeneratorExit:
-            pass
-        return None
-
-    monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
+    mock_sse_runner = AsyncMock()
+    monkeypatch.setattr(translate, "_run_sse_to_stdio", mock_sse_runner)
 
     translate.main(["--connect-sse", "http://example.com/sse"])
-    assert "asyncio_run" in executed
+    mock_sse_runner.assert_called_once()
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_keyboard_interrupt(monkeypatch, translate, capsys):
     """Test main() function handles KeyboardInterrupt gracefully."""
-
-    def _raise_keyboard_interrupt(*args):
-        raise KeyboardInterrupt()
-
-    monkeypatch.setattr(translate.asyncio, "run", _raise_keyboard_interrupt)
+    mock_multi_protocol = AsyncMock(side_effect=KeyboardInterrupt())
+    monkeypatch.setattr(translate, "_run_multi_protocol_server", mock_multi_protocol)
 
     with pytest.raises(SystemExit) as exc_info:
         translate.main(["--stdio", "echo test"])
@@ -1019,19 +984,11 @@ def test_main_function_keyboard_interrupt(monkeypatch, translate, capsys):
     assert captured.out == "\n"  # Should print newline to restore shell prompt
 
 
+@pytest.mark.filterwarnings("ignore::RuntimeWarning")
 def test_main_function_not_implemented_error(monkeypatch, translate, capsys):
     """Test main() function handles NotImplementedError."""
-
-    # def _raise_not_implemented(coro, *a, **kw):
-    #     # close the coroutine if the autouse fixture didn't remove it
-    #     if hasattr(coro, "close"):
-    #         coro.close()
-    #     raise NotImplementedError("Test error message")
-
-    def _raise_not_implemented(*args):
-        raise NotImplementedError("Test error message")
-
-    monkeypatch.setattr(translate.asyncio, "run", _raise_not_implemented)
+    mock_multi_protocol = AsyncMock(side_effect=NotImplementedError("Test error message"))
+    monkeypatch.setattr(translate, "_run_multi_protocol_server", mock_multi_protocol)
 
     with pytest.raises(SystemExit) as exc_info:
         translate.main(["--stdio", "echo test"])
@@ -1260,24 +1217,20 @@ def test_sse_event_parse_sse_line_strip_whitespace(translate):
 
 def test_start_stdio(monkeypatch, translate):
     """Test start_stdio entry point."""
-    mock_run = Mock()
-    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+    mock_run_stdio = AsyncMock()
+    monkeypatch.setattr(translate, "_run_stdio_to_sse", mock_run_stdio)
 
     translate.start_stdio("cmd", 8000, "INFO", None, "127.0.0.1")
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args.__name__ == "_run_stdio_to_sse"
+    mock_run_stdio.assert_called_once()
 
 
 def test_start_sse(monkeypatch, translate):
     """Test start_sse entry point."""
-    mock_run = Mock()
-    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+    mock_run_sse = AsyncMock()
+    monkeypatch.setattr(translate, "_run_sse_to_stdio", mock_run_sse)
 
     translate.start_sse("http://example.com/sse", "bearer_token")
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args.__name__ == "_run_sse_to_stdio"
+    mock_run_sse.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -1405,28 +1358,8 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
         def add_middleware(self, middleware_class, **kwargs):
             calls.append(f"add_middleware_{middleware_class.__name__}")
 
-    # Mock Starlette CORS middleware import
-    class MockCORSMiddleware:
-        def __init__(self, **kwargs):
-            pass
-
-    # Mock the import path for CORS middleware
-    # Standard
-    import types
-
-    cors_module = types.ModuleType("cors")
-    cors_module.CORSMiddleware = MockCORSMiddleware
-    middleware_module = types.ModuleType("middleware")
-    middleware_module.cors = cors_module
-    starlette_module = types.ModuleType("starlette")
-    starlette_module.middleware = middleware_module
-
     # Standard
     import sys
-
-    sys.modules["starlette"] = starlette_module
-    sys.modules["starlette.middleware"] = middleware_module
-    sys.modules["starlette.middleware.cors"] = cors_module
 
     class MockTask:
         def cancel(self):
@@ -1470,7 +1403,7 @@ async def test_run_stdio_to_streamable_http_with_cors(monkeypatch, translate):
         await translate._run_stdio_to_streamable_http("echo test", 8000, "info", cors=["http://example.com"])
 
         # Verify CORS middleware was added (using our Mock class name)
-        assert "add_middleware_MockCORSMiddleware" in calls
+        assert "add_middleware_CORSMiddleware" in calls
     finally:
         # Clean up sys.modules to avoid affecting other tests
         sys.modules.pop("starlette", None)
@@ -1982,45 +1915,29 @@ async def test_read_stdout_message_endpoint_error(monkeypatch, translate):
 
 def test_main_function_streamable_http_connect(monkeypatch, translate, capsys):
     """Test main() function with --connect-streamable-http argument."""
-    executed: list[str] = []
-
-    async def _fake_streamable_http_runner(*args):
-        executed.append("streamable_http")
-
-    def _fake_asyncio_run(coro):
-        executed.append("asyncio_run")
-        try:
-            coro.close()
-        except GeneratorExit:
-            pass
-        return None
-
-    monkeypatch.setattr(translate.asyncio, "run", _fake_asyncio_run)
+    mock_streamable_runner = AsyncMock()
+    monkeypatch.setattr(translate, "_run_streamable_http_to_stdio", mock_streamable_runner)
 
     translate.main(["--connect-streamable-http", "http://example.com/mcp"])
-    assert "asyncio_run" in executed
+    mock_streamable_runner.assert_called_once()
 
 
 def test_start_streamable_http_stdio_function(monkeypatch, translate):
     """Test start_streamable_http_stdio entry point."""
-    mock_run = Mock()
-    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+    mock_run_stdio_streamable = AsyncMock()
+    monkeypatch.setattr(translate, "_run_stdio_to_streamable_http", mock_run_stdio_streamable)
 
     translate.start_streamable_http_stdio("cmd", 8000, "INFO", None, "127.0.0.1", False, False)
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args.__name__ == "_run_stdio_to_streamable_http"
+    mock_run_stdio_streamable.assert_called_once()
 
 
 def test_start_streamable_http_client_function(monkeypatch, translate):
     """Test start_streamable_http_client entry point."""
-    mock_run = Mock()
-    monkeypatch.setattr(translate.asyncio, "run", mock_run)
+    mock_run_streamable_client = AsyncMock()
+    monkeypatch.setattr(translate, "_run_streamable_http_to_stdio", mock_run_streamable_client)
 
     translate.start_streamable_http_client("http://example.com/mcp", "bearer_token", 30.0, "stdio_cmd")
-    mock_run.assert_called_once()
-    args = mock_run.call_args[0][0]
-    assert args.__name__ == "_run_streamable_http_to_stdio"
+    mock_run_streamable_client.assert_called_once()
 
 
 @pytest.mark.asyncio

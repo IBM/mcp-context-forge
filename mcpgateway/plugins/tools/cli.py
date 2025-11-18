@@ -73,7 +73,7 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def command_exists(command_name):
+def command_exists(command_name: str) -> bool:
     """Check if a given command-line utility exists and is executable.
 
     Args:
@@ -132,7 +132,7 @@ def bootstrap(
     answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
     defaults: Annotated[bool, typer.Option("--defaults", help="Bootstrap with defaults.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry_run", help="Run but do not make any changes.")] = False,
-):
+) -> None:
     """Boostrap a new plugin project from a template.
 
     Args:
@@ -161,7 +161,7 @@ def bootstrap(
 
 
 @app.callback()
-def callback():  # pragma: no cover
+def callback() -> None:  # pragma: no cover
     """This function exists to force 'bootstrap' to be a subcommand."""
 
 

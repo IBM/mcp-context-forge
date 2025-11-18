@@ -33,7 +33,7 @@ import logging
 import re
 import sys
 from typing import Any, Dict, List
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -141,17 +141,6 @@ class MockPubSub:
 
     def close(self):
         pass
-
-
-# --------------------------------------------------------------------------- #
-# Event-loop fixture (pytest default loop is function-scoped)                 #
-# --------------------------------------------------------------------------- #
-@pytest.fixture(name="event_loop")
-def _event_loop_fixture():
-    """Provide a fresh asyncio loop for these async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -284,7 +273,7 @@ async def test_broadcast_database_input(monkeypatch, registry: SessionRegistry, 
     monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
     registry._backend = "database"
 
-    mock_db = AsyncMock()
+    mock_db = MagicMock()  # Use MagicMock for sync SQLAlchemy session methods
     monkeypatch.setattr("mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE", True)
     monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]), raising=True)
 

@@ -28,7 +28,7 @@ from requests_oauthlib import OAuth2Session
 
 # First-Party
 from mcpgateway.config import get_settings
-from mcpgateway.utils.oauth_encryption import get_oauth_encryption
+from mcpgateway.services.encryption_service import get_encryption_service
 
 logger = logging.getLogger(__name__)
 
@@ -222,7 +222,7 @@ class OAuthManager:
         if len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
-                encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                encryption = get_encryption_service(settings.auth_encryption_secret)
                 decrypted_secret = encryption.decrypt_secret(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
@@ -313,7 +313,7 @@ class OAuthManager:
         if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
-                encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                encryption = get_encryption_service(settings.auth_encryption_secret)
                 decrypted_secret = encryption.decrypt_secret(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
@@ -430,7 +430,7 @@ class OAuthManager:
         if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
-                encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                encryption = get_encryption_service(settings.auth_encryption_secret)
                 decrypted_secret = encryption.decrypt_secret(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret
@@ -1007,7 +1007,7 @@ class OAuthManager:
         if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
             try:
                 settings = get_settings()
-                encryption = get_oauth_encryption(settings.auth_encryption_secret)
+                encryption = get_encryption_service(settings.auth_encryption_secret)
                 decrypted_secret = encryption.decrypt_secret(client_secret)
                 if decrypted_secret:
                     client_secret = decrypted_secret

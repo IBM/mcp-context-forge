@@ -50,7 +50,10 @@ class LLMGuardPlugin(Plugin):
         """Entry init block for plugin. Validates the configuration of plugin and initializes an instance of LLMGuardBase with the config
 
         Args:
-          config: the skill configuration
+            config: the skill configuration
+
+        Raises:
+            PluginError: If the configuration is invalid for plugin initialization.
         """
         super().__init__(config)
         self.lgconfig = LLMGuardConfig.model_validate(self._config.config)
@@ -62,14 +65,28 @@ class LLMGuardPlugin(Plugin):
             raise PluginError(error=PluginErrorModel(message="Invalid configuration for plugin initilialization", plugin_name=self.name))
 
     def __verify_lgconfig(self):
-        """Checks if the configuration provided for plugin is valid or not. It should either have input or output key atleast"""
+        """Checks if the configuration provided for plugin is valid or not. It should either have input or output key atleast
+
+        Returns:
+            bool: True if configuration is valid (has input or output), False otherwise.
+        """
         return self.lgconfig.input or self.lgconfig.output
 
     def __update_context(self, context, key, value) -> dict:
-        """Update Context implementation."""
+        """Update Context implementation.
+
+        Args:
+            context: The plugin context to update.
+            key: The key to set in context.
+            value: The value to set for the key.
+        """
 
         def update_context(context):
-            """Update Context implementation."""
+            """Update Context implementation.
+
+            Args:
+                context: The plugin context to update.
+            """
 
             plugin_name = self.__class__.__name__
             if plugin_name not in context.state[self.guardrails_context_key]:

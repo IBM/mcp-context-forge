@@ -145,7 +145,15 @@ class EffectiveCfg:
 
 
 def _merge_overrides(base: ArgumentNormalizerConfig, path: str) -> EffectiveCfg:
-    """Compute an effective configuration for a given field path."""
+    """Compute an effective configuration for a given field path.
+
+    Args:
+        base: Base configuration to start from.
+        path: Field path to compute configuration for.
+
+    Returns:
+        Effective configuration for the given field path.
+    """
     cfg = base
     # Start with base values
     eff = EffectiveCfg(
@@ -443,6 +451,13 @@ def _normalize_numbers(text: str, eff: EffectiveCfg) -> str:
 
 def _normalize_text(text: str, eff: EffectiveCfg) -> str:
     """Normalize a text value using an effective configuration.
+
+    Args:
+        text: Text value to normalize.
+        eff: Effective configuration to use for normalization.
+
+    Returns:
+        Normalized text value.
 
     Examples:
         Normalize unicode and whitespace:

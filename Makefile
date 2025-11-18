@@ -103,12 +103,27 @@ endef
 # 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # =============================================================================
 # help: 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
+# help: uv                   - Ensure uv is installed or install it if needed
 # help: venv                 - Create a fresh virtual environment with uv & friends
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
+.PHONY: uv
+uv:
+	@if ! type uv >/dev/null 2>&1; then \
+		echo "🔧 'uv' not found - installing..."; \
+		if type brew >/dev/null 2>&1; then \
+			echo "🍺 Installing 'uv' via Homebrew..."; \
+			brew install uv; \
+		else \
+			echo "🐍 Installing 'uv' via local install script..."; \
+			curl -LsSf https://astral.sh/uv/install.sh | sh ; \
+			echo "💡  Make sure to add 'uv' to your PATH if not done automatically."; \
+		fi; \
+	fi
+
 .PHONY: venv
 venv:
 	@rm -Rf "$(VENV_DIR)"
@@ -428,7 +443,7 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv run pytest -n auto --maxfail=0 --disable-warnings -v --ignore=tests/fuzz"
+		uv run pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
 	@echo "🧪 Running tests with profiling (showing slowest tests)..."
@@ -1010,8 +1025,9 @@ isort-check:
 flake8:                             ## 🐍  flake8 checks
 	@echo "🐍 flake8 $(TARGET)..." && $(VENV_DIR)/bin/flake8 $(TARGET)
 
-pylint:                             ## 🐛  pylint checks
-	@echo "🐛 pylint $(TARGET) (parallel)..." && $(VENV_DIR)/bin/pylint -j 8 $(TARGET)
+pylint: uv                             ## 🐛  pylint checks
+	@echo "🐛 pylint $(TARGET) (parallel)..."
+	uv run pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -1055,14 +1071,9 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-pre-commit:                         ## 🪄  Run pre-commit hooks
+pre-commit: uv                      ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv install install-dev
-	@if [ ! -f "$(VENV_DIR)/bin/pre-commit" ]; then \
-		echo "📦  Installing pre-commit..."; \
-		/bin/bash -c "source $(VENV_DIR)/bin/activate && python3 -m pip install --quiet pre-commit"; \
-	fi
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && pre-commit run --all-files --show-diff-on-failure"
+	uv run pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
@@ -2647,7 +2658,7 @@ docker-dev:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
 
 docker:
-	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile
+	@$(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
@@ -2745,8 +2756,13 @@ endif
 # Alternative: Always default to docker compose unless explicitly overridden
 # COMPOSE_CMD ?= docker compose
 
+# Profile detection (for platform-specific services)
+ifeq ($(PLATFORM),linux/amd64)
+    PROFILE = --profile with-fast-time
+endif
+
 define COMPOSE
-$(COMPOSE_CMD) -f $(COMPOSE_FILE)
+$(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
 .PHONY: compose-up compose-restart compose-build compose-pull \
@@ -2763,6 +2779,21 @@ compose-validate:
 	fi
 	$(COMPOSE) config --quiet
 	@echo "✅ Compose file is valid"
+
+compose-upgrade-pg18: compose-validate
+	@echo "⚠️  This will upgrade Postgres 17 -> 18"
+	@echo "⚠️  Make sure you have a backup!"
+	@read -p "Continue? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	@echo "🔄 Running Postgres upgrade..."
+	$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade
+	@echo "🔧 Copying pg_hba.conf from old cluster..."
+	@$(COMPOSE) -f $(COMPOSE_FILE) -f compose.upgrade.yml run --rm pg-upgrade sh -c \
+		"cp /var/lib/postgresql/OLD/pg_hba.conf /var/lib/postgresql/18/docker/pg_hba.conf && \
+		 echo '✅ pg_hba.conf copied successfully'"
+	@echo "✅ Upgrade complete!"
+	@echo "📝 Next steps:"
+	@echo "   1. Update docker-compose.yml to use postgres:18"
+	@echo "   2. Run: make compose-up"
 
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
@@ -3042,7 +3073,7 @@ MINIKUBE_ADDONS  ?= ingress ingress-dns metrics-server dashboard registry regist
 # OCI image tag to preload into the cluster.
 # - By default we point to the *local* image built via `make docker-prod`, e.g.
 #   mcpgateway/mcpgateway:latest.  Override with IMAGE=<repo:tag> to use a
-#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.8.0).
+#   remote registry (e.g. ghcr.io/ibm/mcp-context-forge:v0.9.0).
 TAG              ?= latest         # override with TAG=<ver>
 IMAGE            ?= $(IMG):$(TAG)  # or IMAGE=ghcr.io/ibm/mcp-context-forge:$(TAG)
 
@@ -3677,7 +3708,7 @@ devpi-unconfigure-pip:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 📦  Version helper (defaults to the version in pyproject.toml)
-#      override on the CLI:  make VER=0.8.0 devpi-delete
+#      override on the CLI:  make VER=0.9.0 devpi-delete
 # ─────────────────────────────────────────────────────────────────────────────
 VER ?= $(shell python3 -c "import tomllib, pathlib; \
 print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])" \
@@ -4874,7 +4905,7 @@ MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
 
 # Get supported versions from version config (n-2 policy)
-MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 latest")
+MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
         migration-setup migration-cleanup migration-debug migration-status

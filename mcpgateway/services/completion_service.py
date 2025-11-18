@@ -25,9 +25,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.models import CompleteResult
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.models import CompleteResult
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first

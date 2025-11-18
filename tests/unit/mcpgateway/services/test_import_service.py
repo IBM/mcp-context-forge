@@ -177,7 +177,7 @@ async def test_import_configuration_conflict_update(import_service, mock_db, val
     mock_tool = MagicMock()
     mock_tool.original_name = "test_tool"
     mock_tool.id = "tool1"
-    import_service.tool_service.list_tools.return_value = [mock_tool]
+    import_service.tool_service.list_tools.return_value = ([mock_tool], None)
 
     mock_gateway = MagicMock()
     mock_gateway.name = "test_gateway"
@@ -339,6 +339,7 @@ async def test_process_server_entities(import_service, mock_db):
 
     # Setup mocks
     import_service.server_service.register_server.return_value = MagicMock()
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     # Execute import
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, imported_by="test_user")
@@ -756,7 +757,7 @@ async def test_conversion_methods_comprehensive(import_service, mock_db):
     server_data = {"name": "test_server", "description": "Test server", "tool_ids": ["tool1", "tool2"], "tags": ["server"]}
 
     # Mock the list_tools method to return empty list (no tools to resolve)
-    import_service.tool_service.list_tools.return_value = []
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     server_create = await import_service._convert_to_server_create(mock_db, server_data)
     assert server_create.name == "test_server"
@@ -817,7 +818,7 @@ async def test_tool_conflict_update_not_found(import_service, mock_db):
 
     # Setup conflict and empty list from service
     import_service.tool_service.register_tool.side_effect = ToolNameConflictError("missing_tool")
-    import_service.tool_service.list_tools.return_value = []  # Empty list - no existing tool found
+    import_service.tool_service.list_tools.return_value = ([], None)  # Empty list - no existing tool found
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
 
@@ -838,7 +839,7 @@ async def test_tool_conflict_update_exception(import_service, mock_db):
     mock_tool = MagicMock()
     mock_tool.original_name = "error_tool"
     mock_tool.id = "tool_id"
-    import_service.tool_service.list_tools.return_value = [mock_tool]
+    import_service.tool_service.list_tools.return_value = ([mock_tool], None)
     import_service.tool_service.update_tool.side_effect = Exception("Update failed")
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
@@ -954,6 +955,7 @@ async def test_server_conflict_skip_strategy(import_service, mock_db):
 
     # Setup conflict
     import_service.server_service.register_server.side_effect = ServerNameConflictError("existing_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.SKIP, imported_by="test_user")
 
@@ -971,6 +973,7 @@ async def test_server_conflict_update_success(import_service, mock_db):
 
     # Setup conflict and existing server
     import_service.server_service.register_server.side_effect = ServerNameConflictError("update_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "update_server"
     mock_server.id = "server_id"
@@ -993,6 +996,7 @@ async def test_server_conflict_update_not_found(import_service, mock_db):
 
     # Setup conflict and empty list from service
     import_service.server_service.register_server.side_effect = ServerNameConflictError("missing_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
     import_service.server_service.list_servers.return_value = []  # Empty list
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.UPDATE, imported_by="test_user")
@@ -1011,6 +1015,7 @@ async def test_server_conflict_update_exception(import_service, mock_db):
 
     # Setup conflict, existing server, but update fails
     import_service.server_service.register_server.side_effect = ServerNameConflictError("error_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
     mock_server = MagicMock()
     mock_server.name = "error_server"
     mock_server.id = "server_id"
@@ -1036,6 +1041,7 @@ async def test_server_conflict_rename_strategy(import_service, mock_db):
         ServerNameConflictError("conflict_server"),  # First call conflicts
         MagicMock(),  # Second call (with renamed server) succeeds
     ]
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.RENAME, imported_by="test_user")
 
@@ -1054,6 +1060,7 @@ async def test_server_conflict_fail_strategy(import_service, mock_db):
 
     # Setup conflict
     import_service.server_service.register_server.side_effect = ServerNameConflictError("fail_server")
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     status = await import_service.import_configuration(db=mock_db, import_data=import_data, conflict_strategy=ConflictStrategy.FAIL, imported_by="test_user")
 
@@ -1481,7 +1488,7 @@ async def test_server_update_conversion(import_service, mock_db):
     server_data = {"name": "update_server", "description": "Updated server description", "tool_ids": ["tool1", "tool2", "tool3"], "tags": ["server", "update"]}
 
     # Mock the list_tools method to return empty list (no tools to resolve)
-    import_service.tool_service.list_tools.return_value = []
+    import_service.tool_service.list_tools.return_value = ([], None)
 
     server_update = await import_service._convert_to_server_update(mock_db, server_data)
     assert server_update.name == "update_server"

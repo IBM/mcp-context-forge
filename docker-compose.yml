@@ -9,6 +9,7 @@ networks:
 
 volumes:                # Named volumes survive podman-compose down/up
   pgdata:
+  # pgdata18:  # Enable for postgres 18+
   mariadbdata:
   mysqldata:
   mongodata:
@@ -51,11 +52,11 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
-    #image: ghcr.io/ibm/mcp-context-forge:0.8.0 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:0.9.0 # Use the release MCP Context Forge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
-      dockerfile: Containerfile     # Same one the Makefile builds
+      dockerfile: Containerfile.lite     # Same one the Makefile builds
     restart: unless-stopped
     ports:
       - "4444:4444"                 # HTTP (or HTTPS if SSL=true is set)
@@ -147,14 +148,15 @@ services:
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
 ###############################################################################
 
-  postgres:              # Official image - easy defaults
-    image: postgres:18
+  postgres:
+    image: postgres:17
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=mysecretpassword
       - POSTGRES_DB=mcp
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # - pgdata18:/var/lib/postgresql  # Enable for postgres 18+
     networks: [mcpnet]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER"]
@@ -208,7 +210,7 @@ services:
   #     dockerfile: Containerfile
   #   environment:
   #     - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-  #   command: alembic upgrade head
+  #   command: alembic -c mcpgateway/alembic.ini upgrade head
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
@@ -378,6 +380,9 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
+  # Note: This is an amd64-only image. On ARM platforms (Apple Silicon),
+  # emulation may not work properly. Use profiles to disable:
+  # docker compose --profile with-fast-time up -d
   ###############################################################################
   fast_time_server:
     image: ghcr.io/ibm/fast-time-server:latest
@@ -386,6 +391,7 @@ services:
     ports:
       - "8888:8080"    # Map host port 8888 to container port 8080
     command: ["-transport=sse", "-listen=0.0.0.0", "-port=8080", "-log-level=info"]
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -402,6 +408,7 @@ services:
       - JWT_SECRET_KEY=my-test-key
     # This is a one-shot container that exits after registration
     restart: "no"
+    profiles: ["with-fast-time"]  # Optional: enable with --profile with-fast-time
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
