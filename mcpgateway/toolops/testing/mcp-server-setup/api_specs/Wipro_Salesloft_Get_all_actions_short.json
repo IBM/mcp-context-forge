@@ -575,7 +575,7 @@
                             "content": {
                             "text/plain": {
                                 "schema": {
-                                "type": "string",
+                                "type": "object",
                                 "example": "success"
                                 }
                             }
