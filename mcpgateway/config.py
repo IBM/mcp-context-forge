@@ -1601,7 +1601,7 @@ Disallow: /
                 # You can choose to raise an error here if a failure should halt model creation
 
         return self
-    
+
     # Default roles for users
     default_role_name_owner: str = Field(default="team_owner", description="Default role name for owner users")
     default_role_name_admin: str = Field(default="team_admin", description="Default role name for admin users")

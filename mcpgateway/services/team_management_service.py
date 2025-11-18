@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, UserRole, utc_now, Role
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser, Role, UserRole, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
 
@@ -359,7 +359,6 @@ class TeamManagementService:
             if scope_role_assignments:
                 await role_service.revoke_scope_role_assignments(scope="team", scope_id=team.id, revoked_by=deleted_by)
 
-
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
 
@@ -411,11 +410,11 @@ class TeamManagementService:
                 return False
 
             role_service = RoleService(self.db)
-            
+
             role_obj: Optional[Role] = await role_service.get_role_by_name(role, "team")
             if role_obj is None:
                 raise ValueError(f"Role '{role}' does not exist")
-            
+
             user_role: Optional[UserRole] = await role_service.get_user_role_assignment(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team_id)
 
             if user_role and user_role.is_active:
@@ -571,7 +570,7 @@ class TeamManagementService:
         try:
             role_service = RoleService(self.db)
             team_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
-            team_ids: List[str] = [list(set([tr.scope_id for tr in team_roles]))]
+            team_ids: List[str] = list(set([tr.scope_id for tr in team_roles]))
 
             query = self.db.query(EmailTeam)
 
@@ -615,12 +614,11 @@ class TeamManagementService:
             Verifies user team if team_id provided otherwise finds its personal id.
         """
         try:
-            # Get all teams the user belongs to in a single query
-            try:
-                query = self.db.query(EmailTeam).join(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True), EmailTeam.is_active.is_(True))
-                user_teams = query.all()
-            except Exception as e:
-                logger.error(f"Failed to get teams for user {user_email}: {e}")
+            # First-Party
+            user_teams = await self.get_user_teams(user_email, include_personal=True)
+
+            if not user_teams:
+                logger.error(f"Failed to get teams for user {user_email}")
                 return []
 
             if not team_id:
@@ -639,27 +637,23 @@ class TeamManagementService:
 
         return team_id
 
-    async def get_team_members(self, team_id: str) -> List[Tuple[EmailUser, EmailTeamMember]]:
-        """Get all members of a team.
+    async def get_team_roles(self, team_id: str) -> List[UserRole]:
+        """Get all roles of a team.
 
         Args:
             team_id: ID of the team
 
         Returns:
-            List[Tuple[EmailUser, EmailTeamMember]]: List of (user, membership) tuples
+            List[UserRole]: List of user roles
 
         Examples:
             Team member management and role display.
         """
         try:
-            members = (
-                self.db.query(EmailUser, EmailTeamMember)
-                .join(EmailTeamMember, EmailUser.email == EmailTeamMember.user_email)
-                .filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True))
-                .all()
-            )
+            role_service = RoleService(self.db)
+            team_roles: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team_id)
 
-            return members
+            return team_roles
 
         except Exception as e:
             logger.error(f"Failed to get members for team {team_id}: {e}")
@@ -679,9 +673,10 @@ class TeamManagementService:
             Access control and permission checking.
         """
         try:
-            membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).first()
+            role_service = RoleService(self.db)
+            user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
-            return membership.role if membership else None
+            return user_roles[0].role.name if user_roles else None
 
         except Exception as e:
             logger.error(f"Failed to get role for {user_email} in team {team_id}: {e}")
@@ -731,8 +726,9 @@ class TeamManagementService:
             Exception: If discovery fails
         """
         try:
-            # Optimized: Use subquery instead of loading all IDs into memory (2 queries → 1)
-            user_team_subquery = select(EmailTeamMember.team_id).where(EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).scalar_subquery()
+            # Get teams where user is not already a member
+            user_teams = await self.get_user_teams(user_email, include_personal=True)
+            user_team_ids = [team.id for team in user_teams]
 
             query = self.db.query(EmailTeam).filter(EmailTeam.visibility == "public", EmailTeam.is_active.is_(True), EmailTeam.is_personal.is_(False), ~EmailTeam.id.in_(user_team_subquery))
 
@@ -766,9 +762,10 @@ class TeamManagementService:
                 raise ValueError("Can only request to join public teams")
 
             # Check if user is already a member
-            existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)).first()
+            role_service = RoleService(self.db)
+            user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
-            if existing_member:
+            if user_roles:
                 raise ValueError("User is already a member of this team")
 
             # Check for existing requests (any status)
@@ -847,8 +844,9 @@ class TeamManagementService:
                 raise ValueError("Join request has expired")
 
             # Add user to team
-            member = EmailTeamMember(team_id=join_request.team_id, user_email=join_request.user_email, role="team_member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
-
+            member = EmailTeamMember(
+                team_id=join_request.team_id, user_email=join_request.user_email, role="team_member", invited_by=approved_by, joined_at=utc_now()
+            )  # New joiners are always members
             self.db.add(member)
             # Update join request status
             join_request.status = "approved"
@@ -856,8 +854,6 @@ class TeamManagementService:
             join_request.reviewed_by = approved_by
 
             self.db.flush()
-            self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
-
             self.db.refresh(member)
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
