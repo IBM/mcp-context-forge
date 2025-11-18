@@ -3414,6 +3414,8 @@ async def toggle_gateway_status(
 async def list_gateways(
     request: Request,
     include_inactive: bool = False,
+    team_id: Optional[str] = Query(None, description="Filter by team ID"),
+    visibility: Optional[str] = Query(None, description="Filter by visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[GatewayRead]:
@@ -3423,6 +3425,8 @@ async def list_gateways(
     Args:
         request (Request): The FastAPI request object for team_id retrieval
         include_inactive: Include inactive gateways.
+        team_id (Optional): Filter by specific team ID.
+        visibility (Optional): Filter by visibility (private, team, public).
         db: Database session.
         user: Authenticated user.
 
@@ -3432,9 +3436,22 @@ async def list_gateways(
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
 
     user_email = get_user_email(user)
-    team_id = getattr(request.state, "team_id", None)
-    if team_id:
-        return await gateway_service.list_gateways_for_user(db, user_email, team_id, include_inactive=include_inactive)
+
+    # Check team_id from token
+    token_team_id = getattr(request.state, "team_id", None)
+
+    # Check for team ID mismatch
+    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        return JSONResponse(
+            content={"message": "Access issue: This API token does not have the required permissions for this team."},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Determine final team ID
+    team_id = team_id or token_team_id
+    
+    if team_id or visibility:
+        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
 
     return await gateway_service.list_gateways(db, include_inactive=include_inactive)
 
