@@ -80,6 +80,27 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
         Optional[str]:
             The resolved team ID. Returns `None` if no team can be determined
             either from the payload or from the database.
+
+    Examples:
+        >>> import sys, asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>>
+        >>> # --- Mock setup for both tests ---
+        >>> mock_db = MagicMock()
+        >>>
+        >>> # Patch TeamManagementService import path dynamically
+        >>> mock_team_service = AsyncMock()
+        >>> mock_team = MagicMock(id="personal_team_123", is_personal=True)
+        >>> mock_team_service.get_user_teams.return_value = [mock_team]
+        >>>
+        >>> sys.modules['mcpgateway.services.team_management_service'] = type(sys)("dummy")
+        >>> sys.modules['mcpgateway.services.team_management_service'].TeamManagementService = lambda db: mock_team_service
+        >>>
+        >>> # --- Case 1: Token has team ---
+        >>> payload = {"sub": "user@example.com", "teams": ["team_456"]}
+        >>> asyncio.run(get_team_from_token(payload, mock_db))
+        'team_456'
+        >>>
     """
     team_id = payload.get("teams")[0] if payload.get("teams") else None
     user_email = payload.get("sub")
