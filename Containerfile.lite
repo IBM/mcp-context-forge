@@ -29,7 +29,7 @@ ARG ENABLE_RUST=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014_x86_64:2025.10.19-2 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2025.10.19-2 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety

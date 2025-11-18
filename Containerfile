@@ -5,7 +5,7 @@
 ###############################################################################
 ARG ENABLE_RUST=false
 
-FROM quay.io/pypa/manylinux2014_x86_64:2025.10.19-2 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2025.10.19-2 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
