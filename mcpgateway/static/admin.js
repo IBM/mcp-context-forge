@@ -1931,6 +1931,7 @@ function createTopPerformersTable(entityType, data, isActive) {
             (page, perPage) => {
                 updateTableRows(tbody, entityType, data, page, perPage);
             },
+            },
         );
         panel.appendChild(pagination);
     }
@@ -1994,7 +1995,6 @@ function showTopPerformerTab(activeType) {
  * Creates standard Alpine.js-based pagination controls matching the pattern
  * used in Tools/Resources/Prompts sections for visual consistency
  */
-// eslint-disable-next-line no-unused-vars
 function createStandardPaginationControls(
     idPrefix,
     totalItems,
@@ -2171,6 +2171,7 @@ function createStandardPaginationControls(
             </button>
         </div>
     `;
+
     return wrapper;
 }
 
