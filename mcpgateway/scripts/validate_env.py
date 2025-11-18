@@ -22,7 +22,6 @@ import re
 import string
 import sys
 from typing import Optional
-from unittest.mock import Mock
 
 # Third-Party
 from pydantic import SecretStr, ValidationError
