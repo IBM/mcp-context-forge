@@ -14,86 +14,160 @@
       "id": "TC_2",
       "scenario_type": "positive",
       "mandatory_params": [],
-      "input": "ids((string)) := 767763892 \nstep_id((string)) := 1234 \ntype((string)) := email \ndue_on[gt]((string)) := 2020-01-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 345696969 \nupdated_at[gt]((string)) := 2018-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 2 \ninclude_paging_counts((boolean)) := True \nlimit_paging_counts((boolean)) := False \n",
+      "input": "ids((string)) := 767763892 \nstep_id((string)) := An-ID \ntype((string)) := email \ndue_on[gt]((string)) := 2024-09-16T10:43:58Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 767088963 \nupdated_at[gt]((string)) := 2019-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := created_at \nsort_direction((string)) := DESC \nper_page((integer)) := 25 \npage((integer)) := 2 \ninclude_paging_counts((boolean)) := true \nlimit_paging_counts((boolean)) := false \n",
       "nl_utterance": [
         ""
       ],
       "input_parameters": {
+        "updated_at[lt]": [
+          "2017-01-01T00:00:00.123Z"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "type": [
+          "email"
+        ],
+        "multitouch_group_id": [
+          "767088963"
+        ],
+        "step_id": [
+          "An-ID"
+        ],
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.456Z"
+        ],
+        "per_page": [
+          "25"
+        ],
+        "due_on[lte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "updated_at[gt]": [
+          "2019-01-01T00:00:00Z"
+        ],
+        "cadence_id": [
+          "1030231"
+        ],
+        "page": [
+          "2"
+        ],
+        "user_guid": [
+          "12345678-1234-1234-1234-123456789012"
+        ],
+        "due_on[gt]": [
+          "2024-09-16T10:43:58Z"
+        ],
+        "person_id": [
+          "319104110"
+        ],
+        "sort_by": [
+          "created_at"
+        ],
+        "sort_direction": [
+          "DESC"
+        ],
+        "limit_paging_counts": [
+          "false"
+        ],
+        "due_on[lt]": [
+          "2018-01-02T00:00:00Z"
+        ],
         "updated_at[gte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "ids": [
+          "767763892"
+        ],
+        "include_paging_counts": [
+          "true"
+        ]
+      }
+    },
+    {
+      "id": "TC_3",
+      "scenario_type": "positive",
+      "mandatory_params": [],
+      "input": "ids((string)) := 345687678 \nstep_id((string)) := An-ID \ntype((string)) := email \ndue_on[gt]((string)) := 2022-01-01T00:00:00Z \ndue_on[gte]((string)) := 2018-02-01T00:00:00Z \ndue_on[lt]((string)) := 2018-01-02T00:00:00Z \ndue_on[lte]((string)) := 2018-01-01T00:00:00Z \nuser_guid((string)) := 12345678-1234-1234-1234-123456789012 \nperson_id((string)) := 319104110 \ncadence_id((string)) := 1030231 \nmultitouch_group_id((string)) := 345696969 \nupdated_at[gt]((string)) := 2018-01-01T00:00:00Z \nupdated_at[gte]((string)) := 2018-01-01T00:00:00Z \nupdated_at[lt]((string)) := 2017-01-01T00:00:00.123Z \nupdated_at[lte]((string)) := 2017-01-01T00:00:00.456Z \nsort_by((string)) := updated_at \nsort_direction((string)) := ASC \nper_page((integer)) := 25 \npage((integer)) := 1 \ninclude_paging_counts((boolean)) := true \nlimit_paging_counts((boolean)) := true \n",
+      "nl_utterance": [
+        ""
+      ],
+      "input_parameters": {
+        "updated_at[lt]": [
+          "2017-01-01T00:00:00.123Z"
+        ],
+        "due_on[gte]": [
+          "2018-02-01T00:00:00Z"
+        ],
+        "type": [
+          "email"
+        ],
+        "multitouch_group_id": [
+          "345696969"
+        ],
+        "step_id": [
+          "An-ID"
+        ],
+        "updated_at[lte]": [
+          "2017-01-01T00:00:00.456Z"
+        ],
+        "per_page": [
+          "25"
+        ],
+        "due_on[lte]": [
           "2018-01-01T00:00:00Z"
         ],
         "updated_at[gt]": [
           "2018-01-01T00:00:00Z"
         ],
-        "sort_direction": [
-          "DESC"
-        ],
-        "multitouch_group_id": [
-          "345696969"
-        ],
-        "limit_paging_counts": [
-          false
+        "cadence_id": [
+          "1030231"
         ],
         "page": [
-          2
+          "1"
         ],
         "user_guid": [
           "12345678-1234-1234-1234-123456789012"
         ],
-        "due_on[lte]": [
-          "2018-01-01T00:00:00Z"
-        ],
-        "due_on[lt]": [
-          "2018-01-02T00:00:00Z"
-        ],
         "due_on[gt]": [
-          "2020-01-01T00:00:00Z"
-        ],
-        "updated_at[lt]": [
-          "2017-01-01T00:00:00.123Z"
-        ],
-        "include_paging_counts": [
-          true
-        ],
-        "ids": [
-          "767763892"
-        ],
-        "updated_at[lte]": [
-          "2017-01-01T00:00:00.456Z"
-        ],
-        "due_on[gte]": [
-          "2018-02-01T00:00:00Z"
-        ],
-        "per_page": [
-          25
-        ],
-        "cadence_id": [
-          "1030231"
-        ],
-        "sort_by": [
-          "created_at"
+          "2022-01-01T00:00:00Z"
         ],
         "person_id": [
           "319104110"
         ],
-        "type": [
-          "email"
+        "sort_by": [
+          "updated_at"
         ],
-        "step_id": [
-          "1234"
+        "sort_direction": [
+          "ASC"
+        ],
+        "limit_paging_counts": [
+          "true"
+        ],
+        "due_on[lt]": [
+          "2018-01-02T00:00:00Z"
+        ],
+        "updated_at[gte]": [
+          "2018-01-01T00:00:00Z"
+        ],
+        "ids": [
+          "345687678"
+        ],
+        "include_paging_counts": [
+          "true"
         ]
       }
     }
   ],
   "Number_of_mandatory_parameters_covered": 0,
   "Number_of_optional_parameters_covered": 21,
-  "Number_of_positive_test_scenarios": 2,
+  "Number_of_positive_test_scenarios": 3,
   "llm_model_details": {
     "tcg-model-id": "meta-llama/llama-3-3-70b-instruct",
     "nlg-model-id": null
   },
   "llm_platform_details": {
-    "tcg-platform": "OpenAIProvider - https://inference-3scale-apicast-production.apps.rits.fmaas.res.ibm.com/llama-3-3-70b-instruct/v1",
+    "tcg-platform": "OpenAIProvider",
     "nlg-platform": null
   },
   "agent_details": {},
