@@ -5003,12 +5003,23 @@ async def admin_tools_partial_html(
     # Build query
     query = select(DbTool)
 
-    # Apply gateway filter if provided
+    # Apply gateway filter if provided. Support special sentinel 'null' to
+    # request tools with NULL gateway_id (e.g., RestTool/no gateway).
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            query = query.where(DbTool.gateway_id.in_(gateway_ids))
-            LOGGER.debug(f"Filtering tools by gateway IDs: {gateway_ids}")
+            # Treat literal 'null' (case-insensitive) as a request for NULL gateway_id
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tools by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tools by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Apply active/inactive filter
     if not include_inactive:
@@ -5034,7 +5045,14 @@ async def admin_tools_partial_html(
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            count_query = count_query.where(DbTool.gateway_id.in_(gateway_ids))
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                count_query = count_query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+            elif null_requested:
+                count_query = count_query.where(DbTool.gateway_id.is_(None))
+            else:
+                count_query = count_query.where(DbTool.gateway_id.in_(non_null_ids))
     if not include_inactive:
         count_query = count_query.where(DbTool.enabled.is_(True))
 
@@ -5304,8 +5322,17 @@ async def admin_prompts_partial_html(
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            query = query.where(DbPrompt.gateway_id.in_(gateway_ids))
-            LOGGER.debug(f"Filtering prompts by gateway IDs: {gateway_ids}")
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompts by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbPrompt.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompts by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
@@ -5323,7 +5350,14 @@ async def admin_prompts_partial_html(
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            count_query = count_query.where(DbPrompt.gateway_id.in_(gateway_ids))
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                count_query = count_query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
+            elif null_requested:
+                count_query = count_query.where(DbPrompt.gateway_id.is_(None))
+            else:
+                count_query = count_query.where(DbPrompt.gateway_id.in_(non_null_ids))
     if not include_inactive:
         count_query = count_query.where(DbPrompt.is_active.is_(True))
 
@@ -5461,8 +5495,17 @@ async def admin_resources_partial_html(
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            query = query.where(DbResource.gateway_id.in_(gateway_ids))
-            LOGGER.debug(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {gateway_ids}")
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
+                LOGGER.debug(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbResource.gateway_id.is_(None))
+                LOGGER.debug("[RESOURCES FILTER DEBUG] Filtering resources by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbResource.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"[RESOURCES FILTER DEBUG] Filtering resources by gateway IDs: {non_null_ids}")
     else:
         LOGGER.debug("[RESOURCES FILTER DEBUG] No gateway_id filter provided, showing all resources")
 
@@ -5483,7 +5526,14 @@ async def admin_resources_partial_html(
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
-            count_query = count_query.where(DbResource.gateway_id.in_(gateway_ids))
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                count_query = count_query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
+            elif null_requested:
+                count_query = count_query.where(DbResource.gateway_id.is_(None))
+            else:
+                count_query = count_query.where(DbResource.gateway_id.in_(non_null_ids))
     if not include_inactive:
         count_query = count_query.where(DbResource.is_active.is_(True))
 

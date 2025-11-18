@@ -7600,6 +7600,10 @@ function initGatewaySelect(
                     }
                 }
 
+                // No exclusivity: allow the special 'null' gateway (RestTool) to be
+                // selected together with real gateways. Server-side filtering already
+                // supports mixed lists like `gateway_id=abc,null`.
+
                 update();
 
                 // Trigger reload of associated tools, resources, and prompts with selected gateway filter
@@ -7653,14 +7657,25 @@ function getSelectedGatewayIds() {
         }
     }
 
-    // Otherwise, get all checked checkboxes
+    // Otherwise, get all checked checkboxes. If the special 'null' gateway
+    // checkbox is selected, include the sentinel 'null' alongside any real
+    // gateway ids. This allows requests like `gateway_id=abc,null` which the
+    // server interprets as (gateway_id = abc) OR (gateway_id IS NULL).
     const checkboxes = container.querySelectorAll(
         "input[type='checkbox']:checked",
     );
-    const selectedIds = Array.from(checkboxes).map((cb) => cb.value);
+
+    const selectedIds = Array.from(checkboxes)
+        .map((cb) => {
+            // Convert the special null-gateway checkbox to the literal 'null'
+            if (cb.dataset?.gatewayNull === "true") return "null";
+            return cb.value;
+        })
+        // Filter out any empty values to avoid sending empty CSV entries
+        .filter((id) => id !== "" && id !== null && id !== undefined);
 
     console.log(
-        `[Gateway Selection DEBUG] Found ${checkboxes.length} checked gateway checkboxes`,
+        `[Gateway Selection DEBUG] Found ${selectedIds.length} checked gateway checkboxes`,
     );
     console.log("[Gateway Selection DEBUG] Selected gateway IDs:", selectedIds);
 
@@ -7672,8 +7687,12 @@ function getSelectedGatewayIds() {
  */
 function reloadAssociatedItems() {
     const selectedGatewayIds = getSelectedGatewayIds();
-    const gatewayIdParam =
-        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    // Join all selected IDs (including the special 'null' sentinel if present)
+    // so the server receives a combined filter like `gateway_id=abc,null`.
+    let gatewayIdParam = "";
+    if (selectedGatewayIds.length > 0) {
+        gatewayIdParam = selectedGatewayIds.join(",");
+    }
 
     console.log(
         `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
