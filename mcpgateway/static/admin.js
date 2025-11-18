@@ -6685,25 +6685,36 @@ function initToolSelect(
             newSelectBtn.textContent = "Selecting all tools...";
 
             try {
-                // Fetch all tool IDs from the server
-                const response = await fetch(
-                    `${window.ROOT_PATH}/admin/tools/ids`,
-                );
-                if (!response.ok) {
-                    throw new Error("Failed to fetch tool IDs");
-                }
-
-                const data = await response.json();
-                const allToolIds = data.tool_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer using currently visible (filtered) checkboxes when available
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                let allToolIds = [];
+
+                if (visibleCheckboxes.length > 0) {
+                    // Use IDs from visible (filtered) items
+                    allToolIds = visibleCheckboxes.map((cb) => cb.value);
+                    // Check the visible ones
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Fallback to fetching all tool IDs from the server
+                    const response = await fetch(
+                        `${window.ROOT_PATH}/admin/tools/ids`,
+                    );
+                    if (!response.ok) {
+                        throw new Error("Failed to fetch tool IDs");
+                    }
+                    const data = await response.json();
+                    allToolIds = data.tool_ids || [];
+                    // If nothing is visible (e.g. paginated), check all loaded checkboxes
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add a hidden input to indicate "select all" mode
-                // Remove any existing one first
                 let selectAllInput = container.querySelector(
                     'input[name="selectAllTools"]',
                 );
@@ -6966,20 +6977,33 @@ function initResourceSelect(
             newSelectBtn.textContent = "Selecting all resources...";
 
             try {
-                const resp = await fetch(
-                    `${window.ROOT_PATH}/admin/resources/ids`,
-                );
-                if (!resp.ok) {
-                    throw new Error("Failed to fetch resource IDs");
-                }
-                const data = await resp.json();
-                const allIds = data.resource_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer using currently visible (filtered) checkboxes when available
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                let allIds = [];
+
+                if (visibleCheckboxes.length > 0) {
+                    // Use IDs from visible (filtered) items
+                    allIds = visibleCheckboxes.map((cb) => cb.value);
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Fallback to fetching all resource IDs from the server
+                    const resp = await fetch(
+                        `${window.ROOT_PATH}/admin/resources/ids`,
+                    );
+                    if (!resp.ok) {
+                        throw new Error("Failed to fetch resource IDs");
+                    }
+                    const data = await resp.json();
+                    allIds = data.resource_ids || [];
+                    // If nothing visible (paginated), check loaded checkboxes
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add hidden select-all flag
                 let selectAllInput = container.querySelector(
@@ -7190,20 +7214,33 @@ function initPromptSelect(
             newSelectBtn.textContent = "Selecting all prompts...";
 
             try {
-                const resp = await fetch(
-                    `${window.ROOT_PATH}/admin/prompts/ids`,
-                );
-                if (!resp.ok) {
-                    throw new Error("Failed to fetch prompt IDs");
-                }
-                const data = await resp.json();
-                const allIds = data.prompt_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer using currently visible (filtered) checkboxes when available
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                let allIds = [];
+
+                if (visibleCheckboxes.length > 0) {
+                    // Use IDs from visible (filtered) items
+                    allIds = visibleCheckboxes.map((cb) => cb.value);
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Fallback to fetching all prompt IDs from the server
+                    const resp = await fetch(
+                        `${window.ROOT_PATH}/admin/prompts/ids`,
+                    );
+                    if (!resp.ok) {
+                        throw new Error("Failed to fetch prompt IDs");
+                    }
+                    const data = await resp.json();
+                    allIds = data.prompt_ids || [];
+                    // If nothing visible (paginated), check loaded checkboxes
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add hidden select-all flag
                 let selectAllInput = container.querySelector(
@@ -7600,7 +7637,7 @@ function initGatewaySelect(
                     }
                 }
 
-                // No exclusivity: allow the special 'null' gateway (RestTool) to be
+                // No exclusivity: allow the special 'null' gateway (RestTool/Prompts/Resources) to be
                 // selected together with real gateways. Server-side filtering already
                 // supports mixed lists like `gateway_id=abc,null`.
 
