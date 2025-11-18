@@ -3449,7 +3449,7 @@ async def list_gateways(
 
     # Determine final team ID
     team_id = team_id or token_team_id
-    
+
     if team_id or visibility:
         return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
 
