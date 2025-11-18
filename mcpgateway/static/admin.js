@@ -6685,7 +6685,7 @@ function initToolSelect(
             newSelectBtn.textContent = "Selecting all tools...";
 
             try {
-                // Prefer using currently visible (filtered) checkboxes when available
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
@@ -6693,24 +6693,30 @@ function initToolSelect(
                     (cb) => cb.offsetParent !== null,
                 );
 
+                // Detect pagination/infinite-scroll controls for tools
+                const hasPaginationControls = !!document.getElementById("tools-pagination-controls");
+                const hasScrollTrigger = !!document.querySelector("[id^='tools-scroll-trigger']");
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
                 let allToolIds = [];
 
-                if (visibleCheckboxes.length > 0) {
-                    // Use IDs from visible (filtered) items
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
                     allToolIds = visibleCheckboxes.map((cb) => cb.value);
-                    // Check the visible ones
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
-                    // Fallback to fetching all tool IDs from the server
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
                     const response = await fetch(
-                        `${window.ROOT_PATH}/admin/tools/ids`,
+                        `${window.ROOT_PATH}/admin/tools/ids${gatewayParam}`,
                     );
                     if (!response.ok) {
                         throw new Error("Failed to fetch tool IDs");
                     }
                     const data = await response.json();
                     allToolIds = data.tool_ids || [];
-                    // If nothing is visible (e.g. paginated), check all loaded checkboxes
+                    // Check loaded checkboxes so UI shows selection where possible
                     loadedCheckboxes.forEach((cb) => (cb.checked = true));
                 }
 
@@ -6977,7 +6983,7 @@ function initResourceSelect(
             newSelectBtn.textContent = "Selecting all resources...";
 
             try {
-                // Prefer using currently visible (filtered) checkboxes when available
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
@@ -6985,16 +6991,23 @@ function initResourceSelect(
                     (cb) => cb.offsetParent !== null,
                 );
 
+                // Detect pagination/infinite-scroll controls for resources
+                const hasPaginationControls = !!document.getElementById("resources-pagination-controls");
+                const hasScrollTrigger = !!document.querySelector("[id^='resources-scroll-trigger']");
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
                 let allIds = [];
 
-                if (visibleCheckboxes.length > 0) {
-                    // Use IDs from visible (filtered) items
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
                     allIds = visibleCheckboxes.map((cb) => cb.value);
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
-                    // Fallback to fetching all resource IDs from the server
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/resources/ids`,
+                        `${window.ROOT_PATH}/admin/resources/ids${gatewayParam}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch resource IDs");
@@ -7214,7 +7227,7 @@ function initPromptSelect(
             newSelectBtn.textContent = "Selecting all prompts...";
 
             try {
-                // Prefer using currently visible (filtered) checkboxes when available
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
@@ -7222,16 +7235,23 @@ function initPromptSelect(
                     (cb) => cb.offsetParent !== null,
                 );
 
+                // Detect pagination/infinite-scroll controls for prompts
+                const hasPaginationControls = !!document.getElementById("prompts-pagination-controls");
+                const hasScrollTrigger = !!document.querySelector("[id^='prompts-scroll-trigger']");
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
                 let allIds = [];
 
-                if (visibleCheckboxes.length > 0) {
-                    // Use IDs from visible (filtered) items
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
                     allIds = visibleCheckboxes.map((cb) => cb.value);
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
-                    // Fallback to fetching all prompt IDs from the server
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
                     const resp = await fetch(
-                        `${window.ROOT_PATH}/admin/prompts/ids`,
+                        `${window.ROOT_PATH}/admin/prompts/ids${gatewayParam}`,
                     );
                     if (!resp.ok) {
                         throw new Error("Failed to fetch prompt IDs");
