@@ -193,6 +193,10 @@ toolops = [
     "agent-lifecycle-toolkit @ git+ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git@main",
     ]
 
+altk = [
+    "agent-lifecycle-toolkit @ git+ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git@main",
+    ]
+
 # Fuzzing and property-based testing
 fuzz = [
     "hypothesis>=6.142.1",
