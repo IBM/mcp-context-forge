@@ -2171,7 +2171,6 @@ function createStandardPaginationControls(
             </button>
         </div>
     `;
-
     return wrapper;
 }
 
