@@ -1,15 +1,36 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/toolops/utils/llm_util.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Jay Bandlamudi
+
+MCP Gateway - Main module for using and supporting MCP-CF LLM providers in toolops modules.
+
+This module defines the utility funtions to use MCP-CF supported LLM providers.
+"""
+# Standard
 import json
-import re
 import os
-from typing import Any
-import aiofiles as aiof
+
+
+# Third-Party
 from dotenv import load_dotenv
-from langchain_openai import OpenAI
-from langchain_core.utils.json import parse_json_markdown
-from mcpgateway.services.mcp_client_chat_service import OpenAIProvider,AzureOpenAIProvider,\
-        AnthropicProvider,AWSBedrockProvider,OllamaProvider,OpenAIConfig,AzureOpenAIConfig,\
-        AnthropicConfig,AWSBedrockConfig,OllamaConfig
+
+# First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.mcp_client_chat_service import (
+    AnthropicConfig,
+    AnthropicProvider,
+    AWSBedrockConfig,
+    AWSBedrockProvider,
+    AzureOpenAIConfig,
+    AzureOpenAIProvider,
+    OllamaConfig,
+    OllamaProvider,
+    OpenAIConfig,
+    OpenAIProvider,
+)
+
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
@@ -18,17 +39,24 @@ load_dotenv(".env")
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
 TOOLOPS_TEMPERATURE = 0.1
 
-def get_llm_instance(model_type='completion'):
-    llm_provider = os.getenv("LLM_PROVIDER","")
-    logger.info("Configuring LLM instance for ToolOps , and LLM provider - "+llm_provider)
+
+def get_llm_instance(model_type="completion"):
+    '''
+    method to get LLM instance based on model type
+    args:
+        model_type : accepeted values 'completion', 'chat'
+    '''
+    llm_provider = os.getenv("LLM_PROVIDER", "")
+    llm_instance, llm_config = None , None
+    logger.info("Configuring LLM instance for ToolOps , and LLM provider - " + llm_provider)
     try:
         provider_map = {
-                "azure_openai": AzureOpenAIProvider,
-                "openai": OpenAIProvider,
-                "anthropic": AnthropicProvider,
-                "aws_bedrock": AWSBedrockProvider,
-                "ollama": OllamaProvider,
-            }
+            "azure_openai": AzureOpenAIProvider,
+            "openai": OpenAIProvider,
+            "anthropic": AnthropicProvider,
+            "aws_bedrock": AWSBedrockProvider,
+            "ollama": OllamaProvider,
+        }
         provider_class = provider_map.get(llm_provider)
 
         # getting LLM configs from environment variables
@@ -37,107 +65,109 @@ def get_llm_instance(model_type='completion'):
             oai_api_key = os.getenv("OPENAI_API_KEY", "")
             oai_base_url = os.getenv("OPENAI_BASE_URL", "")
             oai_model = os.getenv("OPENAI_MODEL", "")
-            #oai_temperature= float(os.getenv("OPENAI_TEMPERATURE","0.7"))
-            oai_temperature= TOOLOPS_TEMPERATURE
-            oai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES","2"))
-            oai_max_tokens= int(os.getenv("OPENAI_MAX_TOEKNS","600"))
+            # oai_temperature= float(os.getenv("OPENAI_TEMPERATURE","0.7"))
+            oai_temperature = TOOLOPS_TEMPERATURE
+            oai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
+            oai_max_tokens = int(os.getenv("OPENAI_MAX_TOEKNS", "600"))
             # adding default headers for RITS LLM platform as required
-            if type(oai_base_url) == str and 'rits.fmaas.res.ibm.com' in oai_base_url:
-                default_headers = {'RITS_API_KEY': oai_api_key}
+            if isinstance(oai_base_url,str) and "rits.fmaas.res.ibm.com" in oai_base_url:
+                default_headers = {"RITS_API_KEY": oai_api_key}
             else:
                 default_headers = None
-            llm_config = OpenAIConfig(api_key=oai_api_key, base_url = oai_base_url, temperature = oai_temperature, 
-                        model=oai_model, max_tokens=oai_max_tokens, max_retries = oai_max_retries , 
-                        default_headers=default_headers, timeout=None)
+            llm_config = OpenAIConfig(
+                api_key=oai_api_key,
+                base_url=oai_base_url,
+                temperature=oai_temperature,
+                model=oai_model,
+                max_tokens=oai_max_tokens,
+                max_retries=oai_max_retries,
+                default_headers=default_headers,
+                timeout=None,
+            )
         elif llm_provider == "azure_openai":
-            az_api_key=os.getenv("AZURE_OPENAI_API_KEY","")
-            az_url= os.getenv("AZURE_OPENAI_ENDPOINT","")
-            az_api_version= os.getenv("AZURE_OPENAI_API_VERSION","")
-            az_deployment= os.getenv("AZURE_OPENAI_DEPLOYMENT","")
-            az_model= os.getenv("AZURE_OPENAI_MODEL","")
-            #az_temperature= float(os.getenv("AZURE_OPENAI_TEMPERATURE",0.7))
-            az_temperature= TOOLOPS_TEMPERATURE
-            az_max_retries= int(os.getenv("AZURE_OPENAI_MAX_RETRIES",2))
-            az_max_tokens= int(os.getenv("AZURE_OPENAI_MAX_TOEKNS","600"))
-            llm_config = AzureOpenAIConfig(api_key= az_api_key,
-                                            azure_endpoint= az_url,
-                                            api_version= az_api_version,
-                                            azure_deployment= az_deployment,
-                                            model= az_model,
-                                            temperature= az_temperature,
-                                            max_retries=az_max_retries,
-                                            max_tokens=az_max_tokens,
-                                            timeout=None)
+            az_api_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+            az_url = os.getenv("AZURE_OPENAI_ENDPOINT", "")
+            az_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "")
+            az_deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT", "")
+            az_model = os.getenv("AZURE_OPENAI_MODEL", "")
+            # az_temperature= float(os.getenv("AZURE_OPENAI_TEMPERATURE",0.7))
+            az_temperature = TOOLOPS_TEMPERATURE
+            az_max_retries = int(os.getenv("AZURE_OPENAI_MAX_RETRIES", "2"))
+            az_max_tokens = int(os.getenv("AZURE_OPENAI_MAX_TOEKNS", "600"))
+            llm_config = AzureOpenAIConfig(
+                api_key=az_api_key,
+                azure_endpoint=az_url,
+                api_version=az_api_version,
+                azure_deployment=az_deployment,
+                model=az_model,
+                temperature=az_temperature,
+                max_retries=az_max_retries,
+                max_tokens=az_max_tokens,
+                timeout=None,
+            )
         elif llm_provider == "anthropic":
-            ant_api_key=os.getenv("ANTHROPIC_API_KEY","")
-            ant_model=os.getenv("ANTHROPIC_MODEL","")
-            #ant_temperature= float(os.getenv("ANTHROPIC_TEMPERATURE",0.7))
-            ant_temperature= TOOLOPS_TEMPERATURE
-            ant_max_tokens= int(os.getenv("ANTHROPIC_MAX_TOKENS",4096))
-            ant_max_retries= int(os.getenv("ANTHROPIC_MAX_RETRIES",2))
-            llm_config = AnthropicConfig(api_key = ant_api_key,
-                                        model = ant_model,
-                                        temperature = ant_temperature,
-                                        max_tokens = ant_max_tokens,
-                                        max_retries=ant_max_retries,
-                                        timeout=None
-                                        )
-        
+            ant_api_key = os.getenv("ANTHROPIC_API_KEY", "")
+            ant_model = os.getenv("ANTHROPIC_MODEL", "")
+            # ant_temperature= float(os.getenv("ANTHROPIC_TEMPERATURE",0.7))
+            ant_temperature = TOOLOPS_TEMPERATURE
+            ant_max_tokens = int(os.getenv("ANTHROPIC_MAX_TOKENS", "4096"))
+            ant_max_retries = int(os.getenv("ANTHROPIC_MAX_RETRIES", "2"))
+            llm_config = AnthropicConfig(api_key=ant_api_key, model=ant_model, temperature=ant_temperature, max_tokens=ant_max_tokens, max_retries=ant_max_retries, timeout=None)
+
         elif llm_provider == "aws_bedrock":
-            aws_model=os.getenv("AWS_BEDROCK_MODEL_ID","")
-            aws_region=os.getenv("AWS_BEDROCK_REGION","")
-            #aws_temperatute=float(os.getenv("AWS_BEDROCK_TEMPERATURE",0.7))
-            aws_temperatute=TOOLOPS_TEMPERATURE
-            aws_max_tokens=int(os.getenv("AWS_BEDROCK_MAX_TOKENS",4096))
-            aws_key_id=os.getenv("AWS_ACCESS_KEY_ID","")
-            aws_secret=os.getenv("AWS_SECRET_ACCESS_KEY","")
-            aws_session_token=os.getenv("AWS_SESSION_TOKEN","")
-            llm_config = AWSBedrockConfig(model_id=aws_model,
-                                            region_name=aws_region,
-                                            temperature=aws_temperatute,
-                                            max_tokens=aws_max_tokens,
-                                            aws_access_key_id=aws_key_id,
-                                            aws_secret_access_key=aws_secret,
-                                            aws_session_token=aws_session_token,
-                                            )
+            aws_model = os.getenv("AWS_BEDROCK_MODEL_ID", "")
+            aws_region = os.getenv("AWS_BEDROCK_REGION", "")
+            # aws_temperatute=float(os.getenv("AWS_BEDROCK_TEMPERATURE",0.7))
+            aws_temperatute = TOOLOPS_TEMPERATURE
+            aws_max_tokens = int(os.getenv("AWS_BEDROCK_MAX_TOKENS", "4096"))
+            aws_key_id = os.getenv("AWS_ACCESS_KEY_ID", "")
+            aws_secret = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+            aws_session_token = os.getenv("AWS_SESSION_TOKEN", "")
+            llm_config = AWSBedrockConfig(
+                model_id=aws_model,
+                region_name=aws_region,
+                temperature=aws_temperatute,
+                max_tokens=aws_max_tokens,
+                aws_access_key_id=aws_key_id,
+                aws_secret_access_key=aws_secret,
+                aws_session_token=aws_session_token,
+            )
         elif llm_provider == "ollama":
-            ollama_model=os.getenv("OLLAMA_MODEL","")
-            ollama_url=os.getenv("OLLAMA_BASE_URL","")
-            #ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
-            ollama_temeperature=TOOLOPS_TEMPERATURE
-            llm_config = OllamaConfig(base_url=ollama_url,
-                                    model=ollama_model,
-                                    temperature=ollama_temeperature,
-                                    timeout=None,num_ctx=None
-                                    )
+            ollama_model = os.getenv("OLLAMA_MODEL", "")
+            ollama_url = os.getenv("OLLAMA_BASE_URL", "")
+            # ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
+            ollama_temeperature = TOOLOPS_TEMPERATURE
+            llm_config = OllamaConfig(base_url=ollama_url, model=ollama_model, temperature=ollama_temeperature, timeout=None, num_ctx=None)
 
         llm_service = provider_class(llm_config)
         llm_instance = llm_service.get_llm(model_type=model_type)
-        logger.info("Successfully configured LLM instance for ToolOps , and LLM provider - "+llm_provider)
-        return llm_instance,llm_config
+        logger.info("Successfully configured LLM instance for ToolOps , and LLM provider - " + llm_provider)
     except Exception as e:
-        logger.info("Error in configuring LLM instance for ToolOps -"+str(e))
-        
+        logger.info("Error in configuring LLM instance for ToolOps -" + str(e))
+    return llm_instance, llm_config
 
 
-completion_llm_instance,_ = get_llm_instance(model_type='completion')
-chat_llm_instance,_ = get_llm_instance(model_type='chat')
+completion_llm_instance, _ = get_llm_instance(model_type="completion")
+chat_llm_instance, _ = get_llm_instance(model_type="chat")
 
-        
-def execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600, stop_sequences=["\n\n", "<|endoftext|>","###STOP###"]):
+
+def execute_prompt(prompt):
+    """
+    Method for LLM inferencing using a prompt/user input
+    """
     try:
-        logger.info("#"*30)
+        logger.info("#" * 30)
         logger.info("Using original execute prompt")
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
-        llm_response = completion_llm_instance.invoke(prompt, stop=stop_sequences)
+        llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()
-        #logger.info("Successful - Inferencing OpenAI provider LLM")
+        # logger.info("Successful - Inferencing OpenAI provider LLM")
         return response
     except Exception as e:
-        logger.error('Error in configuring LLM using OpenAI service provider - '+json.dumps({'Error': str(e)}))
+        logger.error("Error in configuring LLM using OpenAI service provider - " + json.dumps({"Error": str(e)}))
         return ""
 
 
-if __name__=='__main__':
+if __name__ == "__main__":
     print(execute_prompt("what is India capital city"))
     print(chat_llm_instance.invoke("what is India capital city"))

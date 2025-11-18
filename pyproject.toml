@@ -235,9 +235,9 @@ asyncpg = [
 ]
 
 # Agent Lifecycle Toolkit(optional)
-altk = [
-    "agent-lifecycle-toolkit>=0.4.1",
-]
+#altk = [
+#    "agent-lifecycle-toolkit>=0.4.1",
+#]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
 # Install with: pip install mcp-contextforge-gateway[grpc]
