@@ -5146,6 +5146,7 @@ async def admin_tools_partial_html(
 @admin_router.get("/tools/ids", response_class=JSONResponse)
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5173,6 +5174,23 @@ async def admin_get_all_tool_ids(
 
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
+
+    # Apply optional gateway/server scoping (comma-separated ids). Accepts the
+    # literal value 'null' to indicate NULL gateway_id (local tools).
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tools by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tools by NULL gateway_id (local tools)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
 
     # Build access conditions
     access_conditions = [DbTool.owner_email == user_email, DbTool.visibility == "public"]
@@ -5618,6 +5636,7 @@ async def admin_resources_partial_html(
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5642,6 +5661,23 @@ async def admin_get_all_prompt_ids(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbPrompt.id)
+
+    # Apply optional gateway/server scoping
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompts by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbPrompt.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompts by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
 
@@ -5657,6 +5693,7 @@ async def admin_get_all_prompt_ids(
 @admin_router.get("/resources/ids", response_class=JSONResponse)
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5681,6 +5718,23 @@ async def admin_get_all_resource_ids(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbResource.id)
+
+    # Apply optional gateway/server scoping
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering resources by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbResource.gateway_id.is_(None))
+                LOGGER.debug("Filtering resources by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbResource.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering resources by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbResource.is_active.is_(True))
 
