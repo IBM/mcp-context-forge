@@ -7314,7 +7314,7 @@ async function validateTool(toolId) {
                 
                     // Loading spinner
                     const loadingDiv = document.createElement('div');
-                    loadingDiv.id = 'tool-validation-loading';
+                    loadingDiv.id = `tool-validation-loading-${index}`;
                     loadingDiv.style.display = 'none';
                 
                     const spinner = document.createElement('div');
@@ -7401,7 +7401,7 @@ async function validateTool(toolId) {
     const form = document.querySelector(`#tool-validation-form-${testIndex}`);
     const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
     
-    const loadingElement = safeGetElement("tool-validation-loading");
+    const loadingElement = safeGetElement(`tool-validation-loading-${testIndex}`);
     const runButton = document.querySelector('button[onclick="runToolValidation()"]');
 
     if (!form || !AppState.currentTestTool) {
@@ -7678,7 +7678,7 @@ async function runToolAgentValidation(testIndex) {
     const form = document.querySelector(`#tool-validation-form-${testIndex}`);
     const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
     
-    const loadingElement = safeGetElement("tool-validation-loading");
+    const loadingElement = safeGetElement(`tool-validation-loading-${testIndex}`);
     const runButton = document.querySelector('button[onclick="runToolAgentValidation()"]');
 
     if (!form || !AppState.currentTestTool) {
