@@ -37,7 +37,7 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect, Form
+from fastapi import APIRouter, Body, Depends, FastAPI,  HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -47,7 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jsonpath_ng.ext import parse
 from jsonpath_ng.jsonpath import JSONPath
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -120,6 +120,7 @@ from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.toolops.services import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
@@ -165,6 +166,18 @@ else:
     _PLUGINS_ENABLED = settings.plugins_enabled
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
+
+
+class ToolNLTestInput(BaseModel):
+    """
+    Toolops test input format to run NL test cases of a tool using agent
+    args:
+        tool_id : Tool ID
+        tool_nl_test_cases: List of natural language test cases for testing MCP tool with the agent
+    """
+    tool_id: str | None = Field(default=None, title="Tool ID", max_length=300)
+    tool_nl_test_cases: list | None = Field(default=None, title="List of natural language test cases for testing MCP tool with the agent")
+
 
 # Initialize services
 tool_service = ToolService()
@@ -1372,14 +1385,16 @@ def update_url_protocol(request: Request) -> str:
     return str(urlunparse(new_parsed)).rstrip("/")
 
 
+# First-Party
 # Toolops APIs - Generating test cases , Tool enrichment #
-from mcpgateway.toolops.services import validation_generate_test_cases
 @toolops_router.post("/validation/generate_testcases")
-async def generate_testcases_for_tool(tool_id: str = Query(None, description="Tool ID"),\
-                                      number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),\
-                                      number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),\
-                                      mode:str = Query("generate", description= "Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),\
-                                      db: Session = Depends(get_db)) -> List[Dict]:
+async def generate_testcases_for_tool(
+    tool_id: str = Query(None, description="Tool ID"),
+    number_of_test_cases: int = Query(2, description="Maximum number of tool test cases"),
+    number_of_nl_variations: int = Query(1, description="Number of NL utterance variations per test case"),
+    mode: str = Query("generate", description="Three modes: 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status"),
+    db: Session = Depends(get_db),
+) -> List[Dict]:
     """
     Generate test cases for a tool
 
@@ -1400,8 +1415,8 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
-        test_cases = await validation_generate_test_cases(tool_id, tool_service, db , number_of_test_cases , number_of_nl_variations,mode)
+        # logger.debug(f"Authenticated user {user} is initializing the protocol.")
+        test_cases = await validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases, number_of_nl_variations, mode)
         return test_cases
 
     except json.JSONDecodeError:
@@ -1411,16 +1426,8 @@ async def generate_testcases_for_tool(tool_id: str = Query(None, description="To
         )
 
 
-from pydantic import BaseModel, Field
-class ToolNLTestInput(BaseModel):
-    tool_id: str | None = Field(
-        default=None, title="Tool ID", max_length=300)
-    tool_nl_test_cases: list | None = Field(
-        default=None, title="List of natural language test cases for testing MCP tool with the agent")
-
-from mcpgateway.toolops.services import execute_tool_nl_test_cases
 @toolops_router.post("/validation/execute_tool_nl_testcases")
-async def execute_tool_nl_testcases(tool_nl_test_input:ToolNLTestInput,db: Session = Depends(get_db)) -> List:
+async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Session = Depends(get_db)) -> List:
     """
     Execute test cases for a tool
 
@@ -1440,10 +1447,10 @@ async def execute_tool_nl_testcases(tool_nl_test_input:ToolNLTestInput,db: Sessi
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
     """
     try:
-        #logger.debug(f"Authenticated user {user} is initializing the protocol.")
+        # logger.debug(f"Authenticated user {user} is initializing the protocol.")
         tool_id = tool_nl_test_input.tool_id
         tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
-        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db )
+        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
         return tool_nl_test_cases_output
 
     except json.JSONDecodeError:
@@ -1453,7 +1460,6 @@ async def execute_tool_nl_testcases(tool_nl_test_input:ToolNLTestInput,db: Sessi
         )
 
 
-from mcpgateway.toolops.services import enrich_tool
 @toolops_router.post("/enrichment/enrich_tool")
 async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: Session = Depends(get_db)) -> dict[str, Any]:
     """
@@ -1477,7 +1483,7 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
         result["tool_name"] = tool_schema.name
         result["original_desc"] = tool_schema.description
         result["enriched_desc"] = enriched_tool_description
-        #logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
+        # logger.info ("result: "+  json.dumps(result, indent=4, sort_keys=False))
         return result
 
     except Exception as e:
@@ -5019,5 +5025,3 @@ else:
 # Expose some endpoints at the root level as well
 app.post("/initialize")(initialize)
 app.post("/notifications")(handle_notification)
-
-

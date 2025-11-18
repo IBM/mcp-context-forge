@@ -14,7 +14,7 @@ from datetime import datetime
 
 import mcpgateway.services.mcp_client_chat_service as svc
 
-# Patch LoggingService globally so logging doesn’t pollute test outputs
+# Patch LoggingService globally so logging doesn't pollute test outputs
 @pytest.fixture(autouse=True)
 def patch_logger(monkeypatch):
     mock = MagicMock()

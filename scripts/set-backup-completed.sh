@@ -12,7 +12,7 @@ echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Update the my-values.yaml file to set backupCompleted to true
     sed -i 's/backupCompleted: false/backupCompleted: true/' my-values.yaml
-    
+
     echo "Updated postgres.upgrade.backupCompleted to true in my-values.yaml"
     echo "You can now safely upgrade/redeploy without running the backup job again."
 else

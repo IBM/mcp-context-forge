@@ -533,10 +533,10 @@ class TestGatewayService:
                 # No second call needed - check_gateway_uniqueness uses query().all()
             ]
         )
-        
+
         # Mock check_gateway_uniqueness to return the existing gateway
         gateway_service._check_gateway_uniqueness = Mock(return_value=existing_gateway)
-        
+
         test_db.add = Mock()
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -549,7 +549,7 @@ class TestGatewayService:
 
         with pytest.raises(GatewayDuplicateConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
-        
+
         # Verify the error details
         assert exc_info.value.gateway_id == 123
         assert exc_info.value.enabled is True
@@ -574,7 +574,7 @@ class TestGatewayService:
     async def test_validate_gateway_url_responses(self, gateway_service, httpx_mock, status_code, headers, transport_type, expected):
         """Test various HTTP responses during gateway URL validation."""
         method = "POST" if transport_type == "STREAMABLEHTTP" else "GET"
-        
+
         # For SSE with 200 status, mock streaming response
         if transport_type == "SSE" and status_code == 200 and "text/event-stream" in headers.get("content-type", ""):
             httpx_mock.add_response(
@@ -653,7 +653,7 @@ class TestGatewayService:
     async def test_bulk_concurrent_validation(self, gateway_service, httpx_mock):
         """Test bulk concurrent gateway URL validations."""
         urls = [f"http://gateway{i}.com" for i in range(20)]
-        
+
         # Add responses for all URLs with SSE content
         for url in urls:
             httpx_mock.add_response(

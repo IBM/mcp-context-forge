@@ -30,8 +30,8 @@ try:
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
-    from langchain_ollama import ChatOllama , OllamaLLM
-    from langchain_openai import AzureChatOpenAI, ChatOpenAI , AzureOpenAI , OpenAI
+    from langchain_ollama import ChatOllama, OllamaLLM
+    from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI
     from langgraph.prebuilt import create_react_agent
 
     _LLMCHAT_AVAILABLE = True
@@ -52,7 +52,7 @@ except ImportError:
 # Try to import Anthropic and Bedrock providers (they may not be installed)
 try:
     # Third-Party
-    from langchain_anthropic import ChatAnthropic, AnthropicLLM
+    from langchain_anthropic import AnthropicLLM, ChatAnthropic
 
     _ANTHROPIC_AVAILABLE = True
 except ImportError:
@@ -61,7 +61,7 @@ except ImportError:
 
 try:
     # Third-Party
-    from langchain_aws import ChatBedrock, BedrockLLM
+    from langchain_aws import BedrockLLM, ChatBedrock
 
     _BEDROCK_AVAILABLE = True
 except ImportError:
@@ -714,7 +714,7 @@ class AzureOpenAIProvider:
         self._llm = None
         logger.info(f"Initializing Azure OpenAI provider with deployment: {config.azure_deployment}")
 
-    def get_llm(self,model_type:str="chat") -> Union[AzureChatOpenAI,AzureOpenAI]:
+    def get_llm(self, model_type: str = "chat") -> Union[AzureChatOpenAI, AzureOpenAI]:
         """
         Get Azure OpenAI LLM instance with lazy initialization.
 
@@ -828,7 +828,7 @@ class OllamaProvider:
         self._llm = None
         logger.info(f"Initializing Ollama provider with model: {config.model}")
 
-    def get_llm(self,model_type:str="chat") -> Union[ChatOllama,OllamaLLM]:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatOllama, OllamaLLM]:
         """
         Get Ollama LLM instance with lazy initialization.
 
@@ -853,9 +853,9 @@ class OllamaProvider:
                 if self.config.num_ctx is not None:
                     model_kwargs["num_ctx"] = self.config.num_ctx
 
-                if model_type == 'chat':
+                if model_type == "chat":
                     self._llm = ChatOllama(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
-                elif model_type == 'completion':
+                elif model_type == "completion":
                     self._llm = OllamaLLM(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
                 logger.info("Ollama LLM instance created successfully")
             except Exception as e:
@@ -914,7 +914,7 @@ class OpenAIProvider:
         self._llm = None
         logger.info(f"Initializing OpenAI provider with model: {config.model}")
 
-    def get_llm(self,model_type='chat') -> Union[ChatOpenAI,OpenAI]:
+    def get_llm(self, model_type="chat") -> Union[ChatOpenAI, OpenAI]:
         """
         Get OpenAI LLM instance with lazy initialization.
 
@@ -948,14 +948,14 @@ class OpenAIProvider:
 
                 if self.config.base_url:
                     kwargs["base_url"] = self.config.base_url
-                
-                # add default headers if present 
+
+                # add default headers if present
                 if self.config.default_headers is not None:
                     kwargs["default_headers"] = self.config.default_headers
 
-                if model_type == 'chat':
+                if model_type == "chat":
                     self._llm = ChatOpenAI(**kwargs)
-                elif model_type == 'completion':
+                elif model_type == "completion":
                     self._llm = OpenAI(**kwargs)
 
                 logger.info("OpenAI LLM instance created successfully")
@@ -1030,7 +1030,7 @@ class AnthropicProvider:
         self._llm = None
         logger.info(f"Initializing Anthropic provider with model: {config.model}")
 
-    def get_llm(self,model_type:str='chat') -> Union[ChatAnthropic,AnthropicLLM]:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatAnthropic, AnthropicLLM]:
         """
         Get Anthropic LLM instance with lazy initialization.
 
@@ -1053,7 +1053,7 @@ class AnthropicProvider:
         """
         if self._llm is None:
             try:
-                if model_type == 'chat':
+                if model_type == "chat":
                     self._llm = ChatAnthropic(
                         api_key=self.config.api_key,
                         model=self.config.model,
@@ -1062,7 +1062,7 @@ class AnthropicProvider:
                         timeout=self.config.timeout,
                         max_retries=self.config.max_retries,
                     )
-                elif model_type == 'completion':
+                elif model_type == "completion":
                     self._llm = AnthropicLLM(
                         api_key=self.config.api_key,
                         model=self.config.model,
@@ -1144,7 +1144,7 @@ class AWSBedrockProvider:
         self._llm = None
         logger.info(f"Initializing AWS Bedrock provider with model: {config.model_id}")
 
-    def get_llm(self,model_type:str = 'chat') -> Union[ChatBedrock,BedrockLLM]:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatBedrock, BedrockLLM]:
         """
         Get AWS Bedrock LLM instance with lazy initialization.
 
@@ -1176,7 +1176,7 @@ class AWSBedrockProvider:
                 if self.config.aws_session_token:
                     credentials_kwargs["aws_session_token"] = self.config.aws_session_token
 
-                if model_type == 'chat':
+                if model_type == "chat":
                     self._llm = ChatBedrock(
                         model_id=self.config.model_id,
                         region_name=self.config.region_name,
@@ -1186,7 +1186,7 @@ class AWSBedrockProvider:
                         },
                         **credentials_kwargs,
                     )
-                elif model_type == 'completion':
+                elif model_type == "completion":
                     self._llm = BedrockLLM(
                         model_id=self.config.model_id,
                         region_name=self.config.region_name,
