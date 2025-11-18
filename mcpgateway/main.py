@@ -2294,6 +2294,7 @@ async def invoke_a2a_agent(
 @tool_router.get("/", response_model=Union[List[ToolRead], List[Dict], Dict, List])
 @require_permission("tools.read")
 async def list_tools(
+    request: Request,
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -2328,6 +2329,19 @@ async def list_tools(
 
     # Get user email for team filtering
     user_email = get_user_email(user)
+
+    # Check team_id from token as well
+    token_team_id = getattr(request.state, "team_id", None)
+
+    # Check for team ID mismatch
+    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        return JSONResponse(
+            content={"message": "Access issue: This API token does not have the required permissions for this team."},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Determine final team ID
+    team_id = team_id or token_team_id
 
     # Use team-filtered tool listing
     if team_id or visibility:
@@ -2669,6 +2683,7 @@ async def toggle_resource_status(
 @resource_router.get("/", response_model=List[ResourceRead])
 @require_permission("resources.read")
 async def list_resources(
+    request: Request,
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -2699,6 +2714,19 @@ async def list_resources(
     # Get user email for team filtering
     user_email = get_user_email(user)
 
+    # Check team_id from token as well
+    token_team_id = getattr(request.state, "team_id", None)
+
+    # Check for team ID mismatch
+    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        return JSONResponse(
+            content={"message": "Access issue: This API token does not have the required permissions for this team."},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Determine final team ID
+    team_id = team_id or token_team_id
+		
     # Use team-filtered resource listing
     if team_id or visibility:
         data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
@@ -3002,6 +3030,7 @@ async def toggle_prompt_status(
 @prompt_router.get("/", response_model=List[PromptRead])
 @require_permission("prompts.read")
 async def list_prompts(
+    request: Request,
     cursor: Optional[str] = None,
     include_inactive: bool = False,
     tags: Optional[str] = None,
@@ -3032,6 +3061,19 @@ async def list_prompts(
     # Get user email for team filtering
     user_email = get_user_email(user)
 
+    # Check team_id from token as well
+    token_team_id = getattr(request.state, "team_id", None)
+
+    # Check for team ID mismatch
+    if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        return JSONResponse(
+            content={"message": "Access issue: This API token does not have the required permissions for this team."},
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+
+    # Determine final team ID
+    team_id = team_id or token_team_id
+		
     # Use team-filtered prompt listing
     if team_id or visibility:
         data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
@@ -3351,6 +3393,7 @@ async def toggle_gateway_status(
 @gateway_router.get("/", response_model=List[GatewayRead])
 @require_permission("gateways.read")
 async def list_gateways(
+    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3367,7 +3410,13 @@ async def list_gateways(
         List of gateway records.
     """
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
-    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    
+    user_email = get_user_email(user)
+    team_id = getattr(request.state, "team_id", None)
+    if team_id:
+        return await gateway_service.list_gateways_for_user(db, user_email, team_id, include_inactive=include_inactive)
+    else:
+        return await gateway_service.list_gateways(db, include_inactive=include_inactive)  
 
 
 @gateway_router.post("", response_model=GatewayRead)
