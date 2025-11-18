@@ -7573,6 +7573,22 @@ function initGatewaySelect(
                 selectAllInput.value = "true";
 
                 // Also store the IDs as a JSON array for the backend
+                // Ensure the special 'null' sentinel is included when selecting all
+                try {
+                    const nullCheckbox = container.querySelector(
+                        'input[data-gateway-null="true"]',
+                    );
+                    if (nullCheckbox) {
+                        // Include the literal string "null" so server-side
+                        // `any(gid.lower() == 'null' ...)` evaluates to true.
+                        if (!allGatewayIds.includes("null")) {
+                            allGatewayIds.push("null");
+                        }
+                    }
+                } catch (err) {
+                    console.error("Error ensuring null sentinel in gateway IDs:", err);
+                }
+
                 let allIdsInput = container.querySelector(
                     'input[name="allGatewayIds"]',
                 );
