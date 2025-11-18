@@ -2308,6 +2308,7 @@ async def list_tools(
     """List all registered tools with team-based filtering and pagination support.
 
     Args:
+        request (Request): The FastAPI request object for team_id retrieval
         cursor: Pagination cursor for fetching the next set of results
         include_inactive: Whether to include inactive tools in the results
         tags: Comma-separated list of tags to filter by (e.g., "api,data")
@@ -2696,6 +2697,7 @@ async def list_resources(
     Retrieve a list of resources accessible to the user, with team filtering support.
 
     Args:
+        request (Request): The FastAPI request object for team_id retrieval
         cursor (Optional[str]): Optional cursor for pagination.
         include_inactive (bool): Whether to include inactive resources.
         tags (Optional[str]): Comma-separated list of tags to filter by.
@@ -2726,7 +2728,7 @@ async def list_resources(
 
     # Determine final team ID
     team_id = team_id or token_team_id
-		
+
     # Use team-filtered resource listing
     if team_id or visibility:
         data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
@@ -3043,6 +3045,7 @@ async def list_prompts(
     List prompts accessible to the user, with team filtering support.
 
     Args:
+        request (Request): The FastAPI request object for team_id retrieval
         cursor: Cursor for pagination.
         include_inactive: Include inactive prompts.
         tags: Comma-separated list of tags to filter by.
@@ -3073,7 +3076,7 @@ async def list_prompts(
 
     # Determine final team ID
     team_id = team_id or token_team_id
-		
+
     # Use team-filtered prompt listing
     if team_id or visibility:
         data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
@@ -3135,7 +3138,7 @@ async def create_prompt(
 
         # Determine final team ID
         team_id = team_id or token_team_id
-        
+
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
         return await prompt_service.register_prompt(
             db,
@@ -3402,6 +3405,7 @@ async def list_gateways(
     List all gateways.
 
     Args:
+        request (Request): The FastAPI request object for team_id retrieval
         include_inactive: Include inactive gateways.
         db: Database session.
         user: Authenticated user.
@@ -3410,13 +3414,13 @@ async def list_gateways(
         List of gateway records.
     """
     logger.debug(f"User '{user}' requested list of gateways with include_inactive={include_inactive}")
-    
+
     user_email = get_user_email(user)
     team_id = getattr(request.state, "team_id", None)
     if team_id:
         return await gateway_service.list_gateways_for_user(db, user_email, team_id, include_inactive=include_inactive)
-    else:
-        return await gateway_service.list_gateways(db, include_inactive=include_inactive)  
+
+    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
 
 
 @gateway_router.post("", response_model=GatewayRead)
