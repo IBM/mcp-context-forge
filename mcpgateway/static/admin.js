@@ -1827,7 +1827,7 @@ function createTopPerformersTable(entityType, data, isActive) {
             5,
             (page, perPage) => {
                 updateTableRows(tbody, entityType, data, page, perPage);
-            }
+            },
         );
         panel.appendChild(pagination);
     }
@@ -1887,14 +1887,21 @@ function showTopPerformerTab(activeType) {
  * Creates standard Alpine.js-based pagination controls matching the pattern
  * used in Tools/Resources/Prompts sections for visual consistency
  */
-function createStandardPaginationControls(idPrefix, totalItems, initialPerPage, onPageChange) {
+function createStandardPaginationControls(
+    idPrefix,
+    totalItems,
+    initialPerPage,
+    onPageChange,
+) {
     const wrapper = document.createElement("div");
-    
+
     // Store callback in a global namespace for Alpine.js to access
     const callbackId = `pagination_${idPrefix}_${Date.now()}`;
     window[callbackId] = onPageChange;
-    
-    wrapper.setAttribute("x-data", `{
+
+    wrapper.setAttribute(
+        "x-data",
+        `{
         currentPage: 1,
         perPage: ${initialPerPage},
         totalItems: ${totalItems},
@@ -1922,9 +1929,11 @@ function createStandardPaginationControls(idPrefix, totalItems, initialPerPage, 
             this.currentPage = 1;
             window[this.callbackId](this.currentPage, this.perPage);
         }
-    }`);
-    wrapper.className = "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
-    
+    }`,
+    );
+    wrapper.className =
+        "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
+
     wrapper.innerHTML = `
         <!-- Page Size Selector -->
         <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -2054,7 +2063,7 @@ function createStandardPaginationControls(idPrefix, totalItems, initialPerPage, 
             </button>
         </div>
     `;
-    
+
     return wrapper;
 }
 
