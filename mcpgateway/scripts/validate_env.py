@@ -47,6 +47,7 @@ def get_security_warnings(settings: Settings) -> list[str]:
         list[str]: List of warning messages. Empty if no warnings are found.
 
     Examples:
+        >>> from unittest.mock import Mock
         >>> mock_settings = Mock(spec=Settings)
         >>> mock_settings.port = 80
         >>> mock_settings.password_min_length = 8
