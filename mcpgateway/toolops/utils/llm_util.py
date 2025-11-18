@@ -126,6 +126,8 @@ chat_llm_instance,_ = get_llm_instance(model_type='chat')
         
 def execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600, stop_sequences=["\n\n", "<|endoftext|>","###STOP###"]):
     try:
+        logger.info("#"*30)
+        logger.info("Using original execute prompt")
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
         llm_response = completion_llm_instance.invoke(prompt, stop=stop_sequences)
         response = llm_response.replace("<|eom_id|>", "").strip()
@@ -134,7 +136,6 @@ def execute_prompt(prompt, model_id = None, parameters=None, max_new_tokens=600,
     except Exception as e:
         logger.error('Error in configuring LLM using OpenAI service provider - '+json.dumps({'Error': str(e)}))
         return ""
-
 
 
 if __name__=='__main__':
