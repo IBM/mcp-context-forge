@@ -1028,7 +1028,8 @@ function displayMetrics(data, retryCount = 0) {
         );
         aggregatedContent = document.createElement("div");
         aggregatedContent.id = "aggregated-metrics-content";
-        aggregatedContent.className = "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
+        aggregatedContent.className =
+            "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
 
         // Insert before chart if present, otherwise append to section
         const chartElement = aggregatedSection.querySelector("#metricsChart");
@@ -1085,7 +1086,9 @@ function displayMetrics(data, retryCount = 0) {
         );
 
         // Individual metrics grid - render inside Top Performers section
-        const individualMetricsGrid = document.getElementById("individual-metrics-grid");
+        const individualMetricsGrid = document.getElementById(
+            "individual-metrics-grid",
+        );
         if (individualMetricsGrid) {
             const metricsContainer = document.createElement("div");
             metricsContainer.className =
@@ -1114,7 +1117,10 @@ function displayMetrics(data, retryCount = 0) {
 
             // Gateways metrics
             if (data.gateways) {
-                const gatewaysCard = createMetricsCard("Gateways", data.gateways);
+                const gatewaysCard = createMetricsCard(
+                    "Gateways",
+                    data.gateways,
+                );
                 metricsContainer.appendChild(gatewaysCard);
             }
 
@@ -1211,6 +1217,7 @@ function switchTopPerformersTab(entityType) {
 /**
  * SECURITY: Create system summary card with safe HTML generation
  */
+// eslint-disable-next-line no-unused-vars
 function createSystemSummaryCard(systemData) {
     try {
         const card = document.createElement("div");
