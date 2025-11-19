@@ -8777,6 +8777,9 @@ async def admin_metrics_partial_html(
 
     Returns:
         HTMLResponse with paginated table and OOB pagination controls
+
+    Raises:
+        HTTPException: If entity_type is not one of the valid types
     """
     LOGGER.debug(
         f"User {get_user_email(user)} requested metrics partial "
