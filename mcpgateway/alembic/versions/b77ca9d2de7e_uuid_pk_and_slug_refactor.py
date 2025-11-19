@@ -18,6 +18,7 @@ import uuid
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -53,6 +54,11 @@ def _use_batch() -> bool:
         False
     """
     return op.get_bind().dialect.name == "sqlite"
+
+
+def column_exists(table, column, conn):
+    insp = inspect(conn)
+    return column in [col["name"] for col in insp.get_columns(table)]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -108,7 +114,8 @@ def upgrade() -> None:
     print("Existing installation detected. Starting data and schema migration...")
 
     # ── STAGE 1: ADD NEW NULLABLE COLUMNS AS PLACEHOLDERS ─────────────────
-    op.add_column("gateways", sa.Column("slug", sa.String(255), nullable=True))
+    if not column_exists("gateways", "slug", bind):
+        op.add_column("gateways", sa.Column("slug", sa.String(255), nullable=True))
     op.add_column("gateways", sa.Column("id_new", sa.String(36), nullable=True))
 
     op.add_column("tools", sa.Column("id_new", sa.String(36), nullable=True))
