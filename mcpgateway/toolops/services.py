@@ -27,13 +27,15 @@ from typing import Any
 # Third-Party
 from sqlalchemy.orm import Session
 # importing toolops modules from ALTK
-from altk.post_request.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
-from altk.post_request.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
-from altk.post_request.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
-from altk.post_request.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
-from altk.post_request.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
-from altk.post_request.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
-from altk.post_request.test_case_generation_toolkit.src.toolops.utils import llm_util
+
+
+from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
+from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
+from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
 
 
 # First-Party
@@ -42,14 +44,14 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.utils.db_util import populate_testcases_table, query_testcases_table
 from mcpgateway.toolops.utils.llm_util import completion_llm_instance
-from mcpgateway.toolops.utils.tool_format_conversion import convert_to_wxo_tool_spec, post_process_nl_test_cases
+from mcpgateway.toolops.utils.format_conversion import convert_to_toolops_spec, post_process_nl_test_cases
 from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatService, MCPClientConfig, MCPServerConfig
 from mcpgateway.toolops.utils.llm_util import get_llm_instance
 
 
 
 toolops_llm_provider = os.getenv("LLM_PROVIDER")
-_, toolops_llm_provider_config = get_llm_instance()
+toolops_llm, toolops_llm_provider_config = get_llm_instance()
 toolops_llm_config = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
 
 logging_service = LoggingService()
@@ -67,19 +69,29 @@ IMPORTANT NOTE:
 ALTK (agent life cycle toolkit) does not support all LLM providers that are supported in MCP context forge.
 To use all MCP CF supported LLM providers we need to override the ALTK modules related to LLM inferencing.
 i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
-that uses MCP context forge LLM infercing modules.
+that uses MCP context forge LLM inferencing modules.
 """
 
 
 # custom execute prompt to support MCP-CF LLM providers
-#def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=None, max_new_tokens=600, stop_sequences=None): # type: ignore
-def custom_mcp_cf_execute_prompt(prompt, stop_sequences=None):
+def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=None, max_new_tokens=600, stop_sequences=None): # type: ignore
     '''
-    Toolops modules uses `execute_prompt` method for LLM inferencing , 
-    since we need to use MCP-CF LLM provider modules for inferencing, this custom method is used for overriding
+    Custom execute prompt method to support MCP-CF LLM providers and this method is used to override several Toolops modules 'execute_prompt' method for LLM inferencing. \
+        Since we are overriding the method few dummy inputs such as 'client,gen_mode,parameters,max_new_tokens' are retained and assigned with None value
+    Args:
+        prompt: User provided prompt/input for LLM inferencing
+        stop_sequences: List of stop sequences to be used in LLM inferencing
+        parameters : ALTK specific LLM inferencing parameters , default is None
+        client: ALTK specific LLM client, default is None
+        gen_mode: ALTK specific LLM client generation mode , default is None
+        max_new_tokens: ALTK specific LLM parameter , default is None
+    
+    Returns:
+        response: LLM output for the given prompt
     '''
     try:
         logger.info("LLM Inference call using MCP-CF LLM provider")
+        altk_dummy_params = {'client':client,'gen_mode':gen_mode,'parameters':parameters,'max_new_tokens':max_new_tokens}
         if stop_sequences is None:
             stop_sequences = ["\n\n", "<|endoftext|>"]
         llm_response = completion_llm_instance.invoke(prompt, stop=stop_sequences)
@@ -100,7 +112,20 @@ prompt_utils.execute_prompt = custom_mcp_cf_execute_prompt
 # Test case generation service method
 async def validation_generate_test_cases(tool_id, tool_service: ToolService, db: Session, number_of_test_cases=2, number_of_nl_variations=1, mode="generate"):
     '''
-    service to generate tool test cases using toolops modules
+    Method for the service to generate tool test cases using toolops modules
+    Args:
+        tool_id: Unique tool id in MCP-CF
+        tool_service: Tool service to obtain the tool from database
+        db: DB session to connect with database
+        number_of_test_cases: Maximum of number of tool test cases to be generated , default is 2
+        number_of_nl_variations: Number of natural language variations(paraphrases) to be generated for each test case , default is 1
+        mode: Refers to service execution mode , supported values - 'generation' , 'query' , 'status' \
+               - in 'generation' mode test case generation is triggered, test cases are generated afresh and stored in database \
+               - in 'query' mode test cases related to the tool in the database are retreived after test case generation is completed \
+               - in 'status' mode provides test case generation status ie; 'in-progress','failed','completed'
+
+    Returns:
+        test_cases: list of tool test cases 
     '''
     test_cases = []
     try:
@@ -110,7 +135,7 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
             logger.info("Generating test cases for tool - " + str(tool_id) + "," + json.dumps({"number_of_test_cases": number_of_test_cases, "number_of_nl_variations": number_of_nl_variations}))
             mcp_cf_tool = tool_schema.to_dict(use_alias=True)
             if mcp_cf_tool is not None:
-                wxo_tool_spec = convert_to_wxo_tool_spec(mcp_cf_tool)
+                wxo_tool_spec = convert_to_toolops_spec(mcp_cf_tool)
                 populate_testcases_table(tool_id, test_cases, "in-progress", db)
                 tc_generator = TestcaseGeneration(client=None, gen_mode=None, max_number_testcases_to_generate=number_of_test_cases)
                 ip_test_cases, _ = tc_generator.testcase_generation_full_pipeline(wxo_tool_spec)
@@ -146,7 +171,15 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
 
 async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: ToolService, db: Session):
     '''
-    service to execute tool nl test cases with MCP server using agent
+    Method for the service to execute tool nl test cases with MCP server using agent.
+    Args:
+        tool_id: Unique tool id in MCP-CF
+        tool_nl_test_cases: List of tool invoking utternaces for testing the tool with Agent
+        tool_service: Tool service to obtain the tool from database
+        db: DB session to connect with database
+        
+    Returns:
+        tool_test_case_outputs: list of tool outputs after tool test cases execution with agent.
     '''
     tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     mcp_cf_tool = tool_schema.to_dict(use_alias=True)
@@ -173,7 +206,15 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
 
 async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> tuple[str, ToolRead]:
     '''
-    service to enrich tool meta data such as tool description
+    Method for the service to enrich tool meta data such as tool description
+    Args:
+        tool_id: Unique tool id in MCP-CF
+        tool_service: Tool service to obtain the tool from database
+        db: DB session to connect with database
+        
+    Returns:
+        enriched_description: Enriched tool description 
+        tool_schema: Updated tool schema in MCP-CF ToolRead format
     '''
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
@@ -210,7 +251,7 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
 #     from mcpgateway.db import SessionLocal
 #     from mcpgateway.services.tool_service import ToolService
 
-#     tool_id = "ccf65855a34e403f97c8d801bee1906f"
+#     tool_id = "ccf65855a34e403f97c8d801bee1906f" 
 #     tool_service = ToolService()
 #     db = SessionLocal()
 #     tool_test_cases = asyncio.run(validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))

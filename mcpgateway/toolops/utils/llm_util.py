@@ -6,7 +6,7 @@ Authors: Jay Bandlamudi
 
 MCP Gateway - Main module for using and supporting MCP-CF LLM providers in toolops modules.
 
-This module defines the utility funtions to use MCP-CF supported LLM providers.
+This module defines the utility funtions to use MCP-CF supported LLM providers in toolops.
 """
 # Standard
 import json
@@ -42,9 +42,13 @@ TOOLOPS_TEMPERATURE = 0.1
 
 def get_llm_instance(model_type="completion"):
     '''
-    method to get LLM instance based on model type
-    args:
-        model_type : accepeted values 'completion', 'chat'
+    Method to get MCP-CF provider type llm instance based on model type
+    Args:
+        model_type : LLM instance type such as chat model or token completion model, accepeted values :'completion','chat'
+    
+    Returns:
+        llm_instance : LLM model instance used for inferencing the prompts/user inputs
+        llm_config: LLM provider configuration provided in the environment variables
     '''
     llm_provider = os.getenv("LLM_PROVIDER", "")
     llm_instance, llm_config = None , None
@@ -154,10 +158,13 @@ chat_llm_instance, _ = get_llm_instance(model_type="chat")
 def execute_prompt(prompt):
     """
     Method for LLM inferencing using a prompt/user input
+    Args:
+        prompt: used specified prompt or inputs for LLM inferecning
+    
+    Returns:
+        response: LLM output response for the given prompt
     """
     try:
-        logger.info("#" * 30)
-        logger.info("Using original execute prompt")
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
         llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()
@@ -168,6 +175,6 @@ def execute_prompt(prompt):
         return ""
 
 
-if __name__ == "__main__":
-    print(execute_prompt("what is India capital city"))
-    print(chat_llm_instance.invoke("what is India capital city"))
+# if __name__ == "__main__":
+#     print(execute_prompt("what is India capital city"))
+#     print(chat_llm_instance.invoke("what is India capital city"))

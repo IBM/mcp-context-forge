@@ -171,9 +171,12 @@ plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_E
 class ToolNLTestInput(BaseModel):
     """
     Toolops test input format to run NL test cases of a tool using agent
-    args:
-        tool_id : Tool ID
+    Args:
+        tool_id : Unique Tool ID
         tool_nl_test_cases: List of natural language test cases for testing MCP tool with the agent
+    
+    Returns:
+        This class defines tool NL test input format and returns nothing.
     """
     tool_id: str | None = Field(default=None, title="Tool ID", max_length=300)
     tool_nl_test_cases: list | None = Field(default=None, title="List of natural language test cases for testing MCP tool with the agent")
@@ -1406,10 +1409,11 @@ async def generate_testcases_for_tool(
         tool_id: Tool ID in context forge.
         number_of_test_cases: Number of test cases to generate for the given tools (optional)
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
+        mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
         user (str): The authenticated user (from `require_auth` dependency).
 
     Returns:
-        List: A list of test cases generated for the tool
+        List: A list of test cases generated for the tool , each test case is dictionary object
 
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
@@ -1436,12 +1440,13 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
     the user is authenticated before proceeding.
 
     Args:
-        tool_id: Tool ID in context forge.
-        tool_nl_test_cases: List of natural language test cases for testing MCP tool with the agent
+        tool_nl_test_input: NL test case format input to run test cases with agent , it contains\
+            - tool_id: Tool ID in context forge\
+            - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
         user (str): The authenticated user (from `require_auth` dependency).
 
     Returns:
-        List: A list of tool outputs for the provided tool nl test cases
+        List: A list of tool outputs after agent execution for the provided tool nl test cases
 
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
@@ -1466,11 +1471,11 @@ async def enrich_a_tool(tool_id: str = Query(None, description="Tool ID"), db: S
     Enriches an input tool
 
     Args:
-        tool_id: Tool ID in context forge.
-        db (Session): The database session used to interact with the data store.
+        tool_id: Unique Tool ID MCP-CF.
+        db: The database session used to interact with the data store.
 
     Returns:
-        Dict: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values
+        result: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values
 
     Raises:
         HTTPException: If the request body contains invalid JSON, a 400 Bad Request error is raised.
