@@ -7882,6 +7882,25 @@ function reloadAssociatedItems() {
                     html.length,
                 );
                 resourcesContainer.innerHTML = html;
+                // If HTMX is available, process the newly-inserted HTML so hx-*
+                // triggers (like the infinite-scroll 'intersect' trigger) are
+                // initialized. We previously used fetch() to avoid HTMX race
+                // conditions but forgot to run htmx.process on the new nodes,
+                // which left the "Loading more resources" trigger inert.
+                if (window.htmx && typeof window.htmx.process === "function") {
+                    try {
+                        window.htmx.process(resourcesContainer);
+                        console.log(
+                            "[Filter Update DEBUG] htmx.process called on resources container",
+                        );
+                    } catch (e) {
+                        console.warn(
+                            "[Filter Update DEBUG] htmx.process failed:",
+                            e,
+                        );
+                    }
+                }
+
                 // Re-initialize the resource select after content is loaded
                 initResourceSelect(
                     "associatedResources",
