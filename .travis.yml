@@ -45,7 +45,7 @@ addons:
 before_install:
   - echo "🔧 Python version -> $(python3 --version)"  # should be 3.12.x
   - make venv install install-dev                    # installs deps
-  - source ~/.venv/mcpgateway/bin/activate
+  - source .venv/bin/activate
 
 # ────────────────────────────────────────────────────────────────
 # Job matrix (two explicit stages)
