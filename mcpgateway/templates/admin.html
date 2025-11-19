@@ -18,14 +18,23 @@
       sizes="32x32"
       href="{{ root_path }}/static/favicon.ico"
     />
+    <!-- Tailwind CSS -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
+    {% else %}
     <script src="https://cdn.tailwindcss.com"></script>
+    {% endif %}
     <script>
       tailwind.config = {
         darkMode: "class",
       };
     </script>
     <!-- HTMX for dynamic interactions -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
+    {% else %}
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    {% endif %}
     <script>
       // Configure HTMX to include credentials and JWT tokens
       document.addEventListener("htmx:configRequest", function (evt) {
@@ -46,16 +55,46 @@
         if (parts.length == 2) return parts.pop().split(";").shift();
       }
     </script>
+    <!-- CodeMirror -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/codemirror/mode/javascript/javascript.min.js"></script>
+    {% else %}
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
+    {% endif %}
+    <!-- Alpine.js -->
+    {% if ui_airgapped %}
+    <script
+      src="{{ root_path }}/static/vendor/alpinejs/alpine.min.js"
+      defer
+    ></script>
+    {% else %}
     <script
       src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
       defer
     ></script>
+    {% endif %}
+    <!-- Chart.js -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
+    {% else %}
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
+    <!-- CodeMirror CSS -->
+    {% if ui_airgapped %}
+    <link
+      href="{{ root_path }}/static/vendor/codemirror/codemirror.min.css"
+      rel="stylesheet"
+    />
+    <link
+      href="{{ root_path }}/static/vendor/codemirror/theme/monokai.min.css"
+      rel="stylesheet"
+    />
+    {% else %}
     <link
       href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
       rel="stylesheet"
@@ -64,6 +103,7 @@
       href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css"
       rel="stylesheet"
     />
+    {% endif %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/flame-graph.css" rel="stylesheet" />
@@ -4732,7 +4772,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   ⚠️ NOTE: Authentication won't be stored in the gateway. Configure Passthrough headers for reuse. Health checks will be disabled.
                 </p>
               </div>
-              
+
               <div>
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"

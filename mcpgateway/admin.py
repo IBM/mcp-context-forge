@@ -2556,6 +2556,7 @@ async def admin_ui(
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
         },
     )
 
@@ -2650,7 +2651,9 @@ async def admin_login_page(request: Request) -> Response:
         secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
 
     # Use external template file
-    return request.app.state.templates.TemplateResponse("login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning})
+    return request.app.state.templates.TemplateResponse(
+        "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+    )
 
 
 @admin_router.post("/login")
