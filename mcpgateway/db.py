@@ -29,7 +29,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint, MetaData
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -221,6 +221,15 @@ def refresh_slugs_on_startup():
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
+    # MariaDB-compatible naming convention for foreign keys
+    metadata = MetaData(naming_convention={
+        "fk": "fk_%(table_name)s_%(column_0_name)s",
+        "pk": "pk_%(table_name)s",
+        "ix": "ix_%(table_name)s_%(column_0_name)s",
+        "uq": "uq_%(table_name)s_%(column_0_name)s",
+        "ck": "ck_%(table_name)s_%(constraint_name)s"
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -3685,6 +3694,25 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
+def patch_string_columns_for_mariadb(base, engine) -> None:
+    """
+    MariaDB requires VARCHAR to have an explicit length.
+    Auto-assign VARCHAR(255) to any String() columns without a length.
+
+    Args:
+        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
+        engine (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
+    """
+    if engine.dialect.name != "mariadb":
+        return
+
+    for table in base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, String) and column.type.length is None:
+                # Replace with VARCHAR(255)
+                column.type = VARCHAR(255)
+
+
 # Create all tables
 def init_db():
     """
@@ -3694,6 +3722,9 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Apply MariaDB compatibility fix
+        patch_string_columns_for_mariadb(Base, engine)
+
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:

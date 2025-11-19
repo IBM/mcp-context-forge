@@ -924,6 +924,7 @@ class Settings(BaseSettings):
     default_roots: List[str] = []
 
     # Database
+    db_driver: str = "mariadb+mariadbconnector"
     db_pool_size: int = 200
     db_max_overflow: int = 10
     db_pool_timeout: int = 30
