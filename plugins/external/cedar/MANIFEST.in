@@ -1,0 +1,67 @@
+# ──────────────────────────────────────────────────────────────
+# MANIFEST.in - source-distribution contents for cedarpolicyplugin
+# ──────────────────────────────────────────────────────────────
+
+# 1️⃣  Core project files that SDists/Wheels should always carry
+include LICENSE
+include README.md
+include pyproject.toml
+include Containerfile
+
+# 2️⃣  Top-level config, examples and helper scripts
+include *.py
+include *.md
+include *.example
+include *.lock
+include *.properties
+include *.toml
+include *.yaml
+include *.yml
+include *.json
+include *.sh
+include *.txt
+recursive-include tests/async *.py
+recursive-include tests/async *.yaml
+
+# 3️⃣  Tooling/lint configuration dot-files (explicit so they're not lost)
+include .env.make
+include .interrogaterc
+include .jshintrc
+include whitesource.config
+include .darglint
+include .dockerignore
+include .flake8
+include .htmlhintrc
+include .pycodestyle
+include .pylintrc
+include .whitesource
+include .coveragerc
+# include .gitignore            # purely optional but many projects ship it
+include .bumpversion.cfg
+include .yamllint
+include .editorconfig
+include .snyk
+
+# 4️⃣  Runtime data that lives *inside* the package at import time
+recursive-include resources/plugins *.yaml
+recursive-include cedarpolicyplugin *.yaml
+
+# 5️⃣  (Optional) include MKDocs-based docs in the sdist
+# graft docs
+
+# 6️⃣  Never publish caches, compiled or build outputs, deployment, agent_runtimes, etc.
+global-exclude __pycache__ *.py[cod] *.so *.dylib
+prune build
+prune dist
+prune .eggs
+prune *.egg-info
+prune charts
+prune k8s
+prune .devcontainer
+exclude CLAUDE.*
+exclude llms-full.txt
+
+# Exclude deployment, mcp-servers and agent_runtimes
+prune deployment
+prune mcp-servers
+prune agent_runtimes
