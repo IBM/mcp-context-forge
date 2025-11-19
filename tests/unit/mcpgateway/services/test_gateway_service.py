@@ -533,10 +533,10 @@ class TestGatewayService:
                 # No second call needed - check_gateway_uniqueness uses query().all()
             ]
         )
-        
+
         # Mock check_gateway_uniqueness to return the existing gateway
         gateway_service._check_gateway_uniqueness = Mock(return_value=existing_gateway)
-        
+
         test_db.add = Mock()
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -549,7 +549,7 @@ class TestGatewayService:
 
         with pytest.raises(GatewayDuplicateConflictError) as exc_info:
             await gateway_service.register_gateway(test_db, gateway_create)
-        
+
         # Verify the error details
         assert exc_info.value.gateway_id == 123
         assert exc_info.value.enabled is True
