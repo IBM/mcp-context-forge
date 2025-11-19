@@ -979,6 +979,9 @@ class EmailTeam(Base):
 
     # Relationships
     members: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", back_populates="team", cascade="all, delete-orphan")
+    user_roles: Mapped[List["UserRole"]] = relationship(
+        "UserRole", primaryjoin="and_(EmailTeam.id==foreign(UserRole.scope_id), UserRole.scope=='team', UserRole.is_active==True)", viewonly=True, cascade="all, delete-orphan"
+    )
     invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", back_populates="team", cascade="all, delete-orphan")
     api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="team", cascade="all, delete-orphan")
     creator: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[created_by])
@@ -1002,7 +1005,7 @@ class EmailTeam(Base):
             >>> team.get_member_count()
             0
         """
-        return len([m for m in self.members if m.is_active])
+        return len(self.user_roles)
 
     def is_member(self, user_email: str) -> bool:
         """Check if a user is a member of this team.
@@ -1018,7 +1021,7 @@ class EmailTeam(Base):
             >>> team.is_member("admin@example.com")
             False
         """
-        return any(m.user_email == user_email and m.is_active for m in self.members)
+        return any(role.user_email == user_email and role.is_active for role in self.user_roles)
 
     def get_member_role(self, user_email: str) -> Optional[str]:
         """Get the role of a user in this team.
@@ -1033,9 +1036,9 @@ class EmailTeam(Base):
             >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
             >>> team.get_member_role("admin@example.com")
         """
-        for member in self.members:
-            if member.user_email == user_email and member.is_active:
-                return member.role
+        for role in self.user_roles:
+            if role.user_email == user_email and role.is_active:
+                return role.role.name
         return None
 
 

@@ -160,7 +160,7 @@ class TeamManagementService:
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
 
             role_service = RoleService(self.db)
-            role_for_team_owner: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_admin, "team")
+            role_for_team_owner: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_owner, "team")
             if role_for_team_owner:
                 role_id = role_for_team_owner.id
             else:
@@ -585,7 +585,7 @@ class TeamManagementService:
         try:
             role_service = RoleService(self.db)
             team_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
-            team_ids: List[str] = list(set([tr.scope_id for tr in team_roles]))
+            team_ids: List[str] = list({tr.scope_id for tr in team_roles if tr.scope_id})
 
             query = self.db.query(EmailTeam)
 

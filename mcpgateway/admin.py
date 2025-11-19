@@ -3299,8 +3299,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     # Add user's teams (owned and member)
     for team in user_teams:
         user_role = await team_service.get_user_role_in_team(current_user.email, team.id)
-        relationship = "team_owner" if user_role == "team_owner" else "team_member"
-        all_teams.append({"team": team, "relationship": relationship, "member_count": team.get_member_count()})
+        all_teams.append({"team": team, "relationship": user_role, "member_count": team.get_member_count()})
 
     # Add public teams user can join - check for pending requests
     for team in public_teams:
@@ -3326,9 +3325,17 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
             badge_html = (
                 '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">OWNER</span>'
             )
+        elif relationship == "team_admin":
+            badge_html = (
+                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">ADMIN</span>'
+            )
         elif relationship == "team_member":
             badge_html = (
                 '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">MEMBER</span>'
+            )
+        elif relationship == "team_viewer":
+            badge_html = (
+                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">VIEWER</span>'
             )
         else:  # join
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">CAN JOIN</span>'
@@ -3343,8 +3350,12 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
             subtitle = "Your personal team • Private workspace"
         elif relationship == "team_owner":
             subtitle = "You own this team"
+        elif relationship == "team_admin":
+            subtitle = f"You are an admin • Owner: {team.created_by}"
         elif relationship == "team_member":
             subtitle = f"You are a member • Owner: {team.created_by}"
+        elif relationship == "team_viewer":
+            subtitle = f"You are a viewer • Owner: {team.created_by}"
         else:  # join
             subtitle = f"Public team • Owner: {team.created_by}"
 
@@ -3362,7 +3373,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </span>
             </div>
             """
-        elif relationship == "team_owner":
+        elif relationship in ["team_owner", "team_admin"]:
             delete_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="deleteTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete Team</button>'
             join_requests_button = (
                 f'<button data-team-id="{team.id}" onclick="viewJoinRequestsSafe(this)" class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">Join Requests</button>'
@@ -3484,10 +3495,11 @@ async def admin_list_teams(
             return await _generate_unified_teams_view(team_service, current_user, root_path)
 
         # Generate traditional admin view
-        if current_user.is_admin:
-            teams, _ = await team_service.list_teams()
-        else:
-            teams = await team_service.get_user_teams(current_user.email)
+        # if current_user.is_admin:
+        #     teams, _ = await team_service.list_teams()
+        # else:
+        #     teams = await team_service.get_user_teams(current_user.email)
+        teams = await team_service.get_user_teams(current_user.email)
 
         # Generate HTML for teams (traditional view)
         teams_html = ""
@@ -3709,6 +3721,7 @@ async def admin_view_team_members(
                         hx-swap="innerHTML"
                         hx-trigger="change">
                         <option value="team_member" {"selected" if team_role.role.name == "team_member" else ""}>Member</option>
+                        <option value="team_admin" {"selected" if team_role.role.name == "team_admin" else ""}>Admin</option>
                         <option value="team_owner" {"selected" if team_role.role.name == "team_owner" else ""}>Owner</option>
                     </select>
                 """
@@ -3841,6 +3854,7 @@ async def admin_view_team_members(
                                     <select name="role" required
                                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                                         <option value="team_member">Member</option>
+                                        <option value="team_admin">Admin</option>
                                         <option value="team_owner">Owner</option>
                                     </select>
                                 </div>
