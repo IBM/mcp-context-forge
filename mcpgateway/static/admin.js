@@ -7891,18 +7891,14 @@ function reloadAssociatedItems() {
                 if (window.htmx && typeof window.htmx.process === "function") {
                     try {
                         // Backup and remove attributes that could auto-fire
-                        const hadHxGet = resourcesContainer.hasAttribute(
-                            "hx-get",
-                        );
-                        const hadHxTrigger = resourcesContainer.hasAttribute(
-                            "hx-trigger",
-                        );
-                        const oldHxGet = resourcesContainer.getAttribute(
-                            "hx-get",
-                        );
-                        const oldHxTrigger = resourcesContainer.getAttribute(
-                            "hx-trigger",
-                        );
+                        const hadHxGet =
+                            resourcesContainer.hasAttribute("hx-get");
+                        const hadHxTrigger =
+                            resourcesContainer.hasAttribute("hx-trigger");
+                        const oldHxGet =
+                            resourcesContainer.getAttribute("hx-get");
+                        const oldHxTrigger =
+                            resourcesContainer.getAttribute("hx-trigger");
 
                         if (hadHxGet) {
                             resourcesContainer.removeAttribute("hx-get");
@@ -7919,10 +7915,7 @@ function reloadAssociatedItems() {
                         // declarative behavior for future operations, but don't
                         // re-process (we already processed child nodes).
                         if (hadHxGet && oldHxGet !== null) {
-                            resourcesContainer.setAttribute(
-                                "hx-get",
-                                oldHxGet,
-                            );
+                            resourcesContainer.setAttribute("hx-get", oldHxGet);
                         }
                         if (hadHxTrigger && oldHxTrigger !== null) {
                             resourcesContainer.setAttribute(
