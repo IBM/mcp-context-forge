@@ -8764,9 +8764,9 @@ async def admin_metrics_partial_html(
 ):
     """
     Return HTML partial for paginated top performers (HTMX endpoint).
-    
+
     Matches the /admin/tools/partial pattern for consistent pagination UX.
-    
+
     Args:
         request: FastAPI request object
         entity_type: Entity type (tools, resources, prompts, servers)
@@ -8774,7 +8774,7 @@ async def admin_metrics_partial_html(
         per_page: Items per page (1-100)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         HTMLResponse with paginated table and OOB pagination controls
     """
@@ -8782,7 +8782,7 @@ async def admin_metrics_partial_html(
         f"User {get_user_email(user)} requested metrics partial "
         f"(entity_type={entity_type}, page={page}, per_page={per_page})"
     )
-    
+
     # Validate entity type
     valid_types = ["tools", "resources", "prompts", "servers"]
     if entity_type not in valid_types:
@@ -8790,11 +8790,11 @@ async def admin_metrics_partial_html(
             status_code=400,
             detail=f"Invalid entity_type. Must be one of: {', '.join(valid_types)}"
         )
-    
+
     # Constrain parameters
     page = max(1, page)
     per_page = max(1, min(per_page, 100))
-    
+
     # Get all items for this entity type
     if entity_type == "tools":
         all_items = await tool_service.get_top_tools(db, limit=None)
@@ -8804,16 +8804,16 @@ async def admin_metrics_partial_html(
         all_items = await prompt_service.get_top_prompts(db, limit=None)
     else:  # servers
         all_items = await server_service.get_top_servers(db, limit=None)
-    
+
     # Calculate pagination
     total_items = len(all_items)
     total_pages = math.ceil(total_items / per_page) if per_page > 0 else 0
     offset = (page - 1) * per_page
     paginated_items = all_items[offset : offset + per_page]
-    
+
     # Convert to JSON-serializable format
     data = jsonable_encoder(paginated_items)
-    
+
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
@@ -8823,7 +8823,7 @@ async def admin_metrics_partial_html(
         has_next=page < total_pages,
         has_prev=page > 1,
     )
-    
+
     # Render template
     return request.app.state.templates.TemplateResponse(
         "metrics_top_performers_partial.html",
