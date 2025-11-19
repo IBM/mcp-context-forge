@@ -7884,14 +7884,55 @@ function reloadAssociatedItems() {
                 resourcesContainer.innerHTML = html;
                 // If HTMX is available, process the newly-inserted HTML so hx-*
                 // triggers (like the infinite-scroll 'intersect' trigger) are
-                // initialized. We previously used fetch() to avoid HTMX race
-                // conditions but forgot to run htmx.process on the new nodes,
-                // which left the "Loading more resources" trigger inert.
+                // initialized. To avoid HTMX re-triggering the container's
+                // own `hx-get`/`hx-trigger="load"` (which would issue a second
+                // request without the gateway filter), temporarily remove those
+                // attributes from the container while we call `htmx.process`.
                 if (window.htmx && typeof window.htmx.process === "function") {
                     try {
+                        // Backup and remove attributes that could auto-fire
+                        const hadHxGet = resourcesContainer.hasAttribute(
+                            "hx-get",
+                        );
+                        const hadHxTrigger = resourcesContainer.hasAttribute(
+                            "hx-trigger",
+                        );
+                        const oldHxGet = resourcesContainer.getAttribute(
+                            "hx-get",
+                        );
+                        const oldHxTrigger = resourcesContainer.getAttribute(
+                            "hx-trigger",
+                        );
+
+                        if (hadHxGet) {
+                            resourcesContainer.removeAttribute("hx-get");
+                        }
+                        if (hadHxTrigger) {
+                            resourcesContainer.removeAttribute("hx-trigger");
+                        }
+
+                        // Process only the newly-inserted inner nodes to initialize
+                        // any hx-* behavior (infinite scroll, after-swap hooks, etc.)
                         window.htmx.process(resourcesContainer);
+
+                        // Restore original attributes so the container retains its
+                        // declarative behavior for future operations, but don't
+                        // re-process (we already processed child nodes).
+                        if (hadHxGet && oldHxGet !== null) {
+                            resourcesContainer.setAttribute(
+                                "hx-get",
+                                oldHxGet,
+                            );
+                        }
+                        if (hadHxTrigger && oldHxTrigger !== null) {
+                            resourcesContainer.setAttribute(
+                                "hx-trigger",
+                                oldHxTrigger,
+                            );
+                        }
+
                         console.log(
-                            "[Filter Update DEBUG] htmx.process called on resources container",
+                            "[Filter Update DEBUG] htmx.process called on resources container (attributes temporarily removed)",
                         );
                     } catch (e) {
                         console.warn(
