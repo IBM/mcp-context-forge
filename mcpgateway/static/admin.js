@@ -6694,8 +6694,12 @@ function initToolSelect(
                 );
 
                 // Detect pagination/infinite-scroll controls for tools
-                const hasPaginationControls = !!document.getElementById("tools-pagination-controls");
-                const hasScrollTrigger = !!document.querySelector("[id^='tools-scroll-trigger']");
+                const hasPaginationControls = !!document.getElementById(
+                    "tools-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='tools-scroll-trigger']",
+                );
                 const isPaginated = hasPaginationControls || hasScrollTrigger;
 
                 let allToolIds = [];
@@ -6706,8 +6710,13 @@ function initToolSelect(
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
                     // Paginated (or no visible items) => fetch full set from server
-                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
-                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
                     const response = await fetch(
                         `${window.ROOT_PATH}/admin/tools/ids${gatewayParam}`,
                     );
@@ -6992,8 +7001,12 @@ function initResourceSelect(
                 );
 
                 // Detect pagination/infinite-scroll controls for resources
-                const hasPaginationControls = !!document.getElementById("resources-pagination-controls");
-                const hasScrollTrigger = !!document.querySelector("[id^='resources-scroll-trigger']");
+                const hasPaginationControls = !!document.getElementById(
+                    "resources-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='resources-scroll-trigger']",
+                );
                 const isPaginated = hasPaginationControls || hasScrollTrigger;
 
                 let allIds = [];
@@ -7004,8 +7017,13 @@ function initResourceSelect(
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
                     // Paginated (or no visible items) => fetch full set from server
-                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
-                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
                     const resp = await fetch(
                         `${window.ROOT_PATH}/admin/resources/ids${gatewayParam}`,
                     );
@@ -7236,8 +7254,12 @@ function initPromptSelect(
                 );
 
                 // Detect pagination/infinite-scroll controls for prompts
-                const hasPaginationControls = !!document.getElementById("prompts-pagination-controls");
-                const hasScrollTrigger = !!document.querySelector("[id^='prompts-scroll-trigger']");
+                const hasPaginationControls = !!document.getElementById(
+                    "prompts-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='prompts-scroll-trigger']",
+                );
                 const isPaginated = hasPaginationControls || hasScrollTrigger;
 
                 let allIds = [];
@@ -7248,8 +7270,13 @@ function initPromptSelect(
                     visibleCheckboxes.forEach((cb) => (cb.checked = true));
                 } else {
                     // Paginated (or no visible items) => fetch full set from server
-                    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
-                    const gatewayParam = selectedGatewayIds && selectedGatewayIds.length ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}` : "";
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
                     const resp = await fetch(
                         `${window.ROOT_PATH}/admin/prompts/ids${gatewayParam}`,
                     );
@@ -7586,7 +7613,10 @@ function initGatewaySelect(
                         }
                     }
                 } catch (err) {
-                    console.error("Error ensuring null sentinel in gateway IDs:", err);
+                    console.error(
+                        "Error ensuring null sentinel in gateway IDs:",
+                        err,
+                    );
                 }
 
                 let allIdsInput = container.querySelector(
@@ -7741,7 +7771,9 @@ function getSelectedGatewayIds() {
     const selectedIds = Array.from(checkboxes)
         .map((cb) => {
             // Convert the special null-gateway checkbox to the literal 'null'
-            if (cb.dataset?.gatewayNull === "true") return "null";
+            if (cb.dataset?.gatewayNull === "true") {
+                return "null";
+            }
             return cb.value;
         })
         // Filter out any empty values to avoid sending empty CSV entries
