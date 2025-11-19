@@ -1995,6 +1995,7 @@ function showTopPerformerTab(activeType) {
  * Creates standard Alpine.js-based pagination controls matching the pattern
  * used in Tools/Resources/Prompts sections for visual consistency
  */
+// eslint-disable-next-line no-unused-vars
 function createStandardPaginationControls(
     idPrefix,
     totalItems,
