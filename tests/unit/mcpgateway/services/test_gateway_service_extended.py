@@ -93,9 +93,6 @@ class TestGatewayServiceExtended:
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
 
-            # Mock _validate_gateway_url to return True
-            service._validate_gateway_url = AsyncMock(return_value=True)
-
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
@@ -143,9 +140,6 @@ class TestGatewayServiceExtended:
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
-
-            # Mock _validate_gateway_url to return True (same as SSE test)
-            service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "streamablehttp")
@@ -422,15 +416,6 @@ class TestGatewayServiceExtended:
         assert callable(getattr(service, "_get_gateways"))
 
     @pytest.mark.asyncio
-    async def test_validate_gateway_url_exists(self):
-        """Test _validate_gateway_url method exists."""
-        service = GatewayService()
-
-        # Just test that the method exists and is callable
-        assert hasattr(service, "_validate_gateway_url")
-        assert callable(getattr(service, "_validate_gateway_url"))
-
-    @pytest.mark.asyncio
     async def test_redis_import_error_handling(self):
         """Test Redis import error handling path (lines 64-66)."""
         # This test verifies the REDIS_AVAILABLE flag functionality
@@ -481,57 +466,6 @@ class TestGatewayServiceExtended:
                 service = GatewayService()
 
                 assert service._redis_client is None
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_auth_failure_debug(self):
-        """Test _validate_gateway_url method exists and is callable."""
-        service = GatewayService()
-
-        # Just test that the method exists and is callable
-        assert hasattr(service, "_validate_gateway_url")
-        assert callable(getattr(service, "_validate_gateway_url"))
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_redirect_handling(self):
-        """Test _validate_gateway_url method functionality."""
-        service = GatewayService()
-
-        # Test that method exists
-        assert hasattr(service, "_validate_gateway_url")
-        assert callable(getattr(service, "_validate_gateway_url"))
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_redirect_auth_failure(self):
-        """Test _validate_gateway_url method signature."""
-        service = GatewayService()
-
-        # Test method exists with proper signature
-        # Standard
-        import inspect
-
-        sig = inspect.signature(service._validate_gateway_url)
-        assert len(sig.parameters) >= 3  # url and other params
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_sse_content_type(self):
-        """Test _validate_gateway_url is an async method."""
-        service = GatewayService()
-
-        # Test method is async
-        # Standard
-        import asyncio
-
-        assert asyncio.iscoroutinefunction(service._validate_gateway_url)
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_exception_handling(self):
-        """Test _validate_gateway_url method implementation."""
-        service = GatewayService()
-
-        # Verify method exists and has proper attributes
-        method = getattr(service, "_validate_gateway_url")
-        assert method is not None
-        assert callable(method)
 
     @pytest.mark.asyncio
     async def test_initialize_with_redis_logging(self):
