@@ -104,9 +104,9 @@ class PermissionService:
             True
         """
         try:
-            # First check if user is admin (bypass all permission checks)
-            if await self._is_user_admin(user_email):
-                return True
+            # # First check if user is admin (bypass all permission checks)
+            # if await self._is_user_admin(user_email):
+            #     return True
 
             # Get user's effective permissions from roles
             user_permissions = await self.get_user_permissions(user_email, team_id)

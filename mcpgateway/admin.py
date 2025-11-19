@@ -755,6 +755,7 @@ async def get_configuration_settings(
             "environment": settings.environment,
             "app_domain": str(settings.app_domain),
             "protocol_version": settings.protocol_version,
+            "docs_allow_basic_auth": settings.docs_allow_basic_auth,
         },
         "Authentication & Security": {
             "auth_required": settings.auth_required,
@@ -764,10 +765,13 @@ async def get_configuration_settings(
             "jwt_secret_key": mask_sensitive(settings.jwt_secret_key, "secret_key"),
             "jwt_audience": settings.jwt_audience,
             "jwt_issuer": settings.jwt_issuer,
+            "jwt_audience_verification": settings.jwt_audience_verification,
             "token_expiry": settings.token_expiry,
             "require_token_expiration": settings.require_token_expiration,
+            "auth_encryption_secret": mask_sensitive(settings.auth_encryption_secret, "auth_encryption_secret"),
             "mcp_client_auth_enabled": settings.mcp_client_auth_enabled,
             "trust_proxy_auth": settings.trust_proxy_auth,
+            "proxy_user_header": settings.proxy_user_header,
             "skip_ssl_verify": settings.skip_ssl_verify,
         },
         "SSO Configuration": {
@@ -782,18 +786,24 @@ async def get_configuration_settings(
             "sso_auto_create_users": settings.sso_auto_create_users,
             "sso_preserve_admin_auth": settings.sso_preserve_admin_auth,
             "sso_require_admin_approval": settings.sso_require_admin_approval,
+            "sso_trusted_domains": settings.sso_trusted_domains,
+            "sso_auto_admin_domains": settings.sso_auto_admin_domains,
         },
         "Email Authentication": {
             "email_auth_enabled": settings.email_auth_enabled,
             "platform_admin_email": settings.platform_admin_email,
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
+            "platform_admin_full_name": settings.platform_admin_full_name,
         },
         "Database & Cache": {
             "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
-            "cache_type": settings.cache_type,
-            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
             "db_pool_size": settings.db_pool_size,
             "db_max_overflow": settings.db_max_overflow,
+            "db_pool_timeout": settings.db_pool_timeout,
+            "cache_type": settings.cache_type,
+            "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
+            "cache_prefix": settings.cache_prefix,
+            "session_ttl": settings.session_ttl,
         },
         "Feature Flags": {
             "mcpgateway_ui_enabled": settings.mcpgateway_ui_enabled,
@@ -807,6 +817,7 @@ async def get_configuration_settings(
         "Federation": {
             "federation_enabled": settings.federation_enabled,
             "federation_discovery": settings.federation_discovery,
+            "federation_peers": [str(p) for p in settings.federation_peers],
             "federation_timeout": settings.federation_timeout,
             "federation_sync_interval": settings.federation_sync_interval,
         },
@@ -815,6 +826,14 @@ async def get_configuration_settings(
             "websocket_ping_interval": settings.websocket_ping_interval,
             "sse_retry_timeout": settings.sse_retry_timeout,
             "sse_keepalive_enabled": settings.sse_keepalive_enabled,
+            "sse_keepalive_interval": settings.sse_keepalive_interval,
+        },
+        "Compression": {
+            "compression_enabled": settings.compression_enabled,
+            "compression_minimum_size": settings.compression_minimum_size,
+            "compression_gzip_level": settings.compression_gzip_level,
+            "compression_brotli_quality": settings.compression_brotli_quality,
+            "compression_zstd_level": settings.compression_zstd_level,
         },
         "Logging": {
             "log_level": settings.log_level,
@@ -822,6 +841,7 @@ async def get_configuration_settings(
             "log_to_file": settings.log_to_file,
             "log_file": settings.log_file,
             "log_rotation_enabled": settings.log_rotation_enabled,
+            "log_requests": settings.log_requests,
         },
         "Resources & Tools": {
             "tool_timeout": settings.tool_timeout,
@@ -844,9 +864,60 @@ async def get_configuration_settings(
             "remove_server_headers": settings.remove_server_headers,
         },
         "Observability": {
+            "observability_enabled": settings.observability_enabled,
+            "observability_trace_http_requests": settings.observability_trace_http_requests,
+            "observability_trace_retention_days": settings.observability_trace_retention_days,
+            "observability_max_traces": settings.observability_max_traces,
+            "observability_sample_rate": settings.observability_sample_rate,
+            "observability_metrics_enabled": settings.observability_metrics_enabled,
+            "observability_events_enabled": settings.observability_events_enabled,
+            "observability_exclude_paths": settings.observability_exclude_paths,
             "otel_enable_observability": settings.otel_enable_observability,
             "otel_traces_exporter": settings.otel_traces_exporter,
+            "otel_exporter_otlp_endpoint": settings.otel_exporter_otlp_endpoint,
+            "otel_exporter_otlp_protocol": settings.otel_exporter_otlp_protocol,
+            "otel_exporter_otlp_insecure": settings.otel_exporter_otlp_insecure,
+            "otel_exporter_jaeger_endpoint": settings.otel_exporter_jaeger_endpoint,
+            "otel_exporter_zipkin_endpoint": settings.otel_exporter_zipkin_endpoint,
             "otel_service_name": settings.otel_service_name,
+            "otel_resource_attributes": settings.otel_resource_attributes,
+            "otel_bsp_max_queue_size": settings.otel_bsp_max_queue_size,
+            "otel_bsp_max_export_batch_size": settings.otel_bsp_max_export_batch_size,
+            "otel_bsp_schedule_delay": settings.otel_bsp_schedule_delay,
+        },
+        "DCR Configuration": {
+            "dcr_enabled": settings.dcr_enabled,
+            "dcr_auto_register_on_missing_credentials": settings.dcr_auto_register_on_missing_credentials,
+            "dcr_default_scopes": settings.dcr_default_scopes,
+            "dcr_allowed_issuers": settings.dcr_allowed_issuers,
+            "dcr_token_endpoint_auth_method": settings.dcr_token_endpoint_auth_method,
+            "dcr_metadata_cache_ttl": settings.dcr_metadata_cache_ttl,
+            "dcr_client_name_template": settings.dcr_client_name_template,
+        },
+        "OAuth Discovery": {
+            "oauth_discovery_enabled": settings.oauth_discovery_enabled,
+            "oauth_preferred_code_challenge_method": settings.oauth_preferred_code_challenge_method,
+            "oauth_request_timeout": settings.oauth_request_timeout,
+            "oauth_max_retries": settings.oauth_max_retries,
+            "oauth_default_timeout": settings.oauth_default_timeout,
+        },
+        "Ed25519 Signing": {
+            "enable_ed25519_signing": settings.enable_ed25519_signing,
+            "ed25519_private_key": mask_sensitive(settings.ed25519_private_key, "private_key"),
+            "prev_ed25519_private_key": mask_sensitive(settings.prev_ed25519_private_key, "private_key"),
+        },
+        "Pagination": {
+            "pagination_default_page_size": settings.pagination_default_page_size,
+            "pagination_max_page_size": settings.pagination_max_page_size,
+            "pagination_cursor_enabled": settings.pagination_cursor_enabled,
+            "pagination_default_sort_field": settings.pagination_default_sort_field,
+            "pagination_default_sort_order": settings.pagination_default_sort_order,
+        },
+        "LLM Chat": {
+            "llmchat_enabled": settings.llmchat_enabled,
+            "llmchat_session_ttl": settings.llmchat_session_ttl,
+            "llmchat_chat_history_ttl": settings.llmchat_chat_history_ttl,
+            "llmchat_chat_history_max_messages": settings.llmchat_chat_history_max_messages,
         },
         "Development": {
             "dev_mode": settings.dev_mode,
@@ -4013,7 +4084,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.create")  # Team write permission instead of admin user management
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -4097,7 +4168,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.write")
+@require_permission("teams.create")
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -4182,7 +4253,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.create")  # Team write permission instead of admin user management
 async def admin_remove_team_member(
     team_id: str,
     request: Request,

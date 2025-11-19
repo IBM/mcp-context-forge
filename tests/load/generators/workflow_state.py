@@ -51,7 +51,7 @@ class TeamInvitationGenerator(BaseGenerator):
 
         # Generate fake email addresses for invitations
         fake_domains = ["example.com", "test.com", self.email_domain]
-        roles = ["team_viewer", "team_member", "admin"]
+        roles = ["team_viewer", "team_member", "team_admin"]
 
         invitation_rate = self.get_scale_config("invitation_generation_rate", 0.3)  # 30% of teams have invitations
         teams_with_invitations = random.sample(teams, int(len(teams) * invitation_rate))

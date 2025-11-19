@@ -144,14 +144,14 @@ async def bootstrap_default_roles() -> None:
                     "name": "team_owner",
                     "description": "Team owner with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.write", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": ["teams.create", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
                 {
                     "name": "team_admin",
                     "description": "Team administrator with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.write", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": ["teams.create", "teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
                     "is_system_role": True,
                 },
                 {
