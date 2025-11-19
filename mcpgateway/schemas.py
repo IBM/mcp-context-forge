@@ -5324,7 +5324,7 @@ class TeamMemberResponse(BaseModel):
         ...     is_active=True
         ... )
         >>> member.role
-        'member'
+        'team_member'
     """
 
     id: str = Field(..., description="Member UUID")
@@ -5387,7 +5387,7 @@ class TeamInvitationResponse(BaseModel):
         ...     is_expired=False
         ... )
         >>> invitation.role
-        'member'
+        'team_member'
     """
 
     id: str = Field(..., description="Invitation UUID")
@@ -5412,7 +5412,7 @@ class TeamMemberUpdateRequest(BaseModel):
     Examples:
         >>> update = TeamMemberUpdateRequest(role="team_member")
         >>> update.role
-        'member'
+        'team_member'
     """
 
     role: Literal["team_owner", "team_member"] = Field(..., description="New role for the team member")

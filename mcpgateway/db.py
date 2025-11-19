@@ -1004,7 +1004,7 @@ class EmailTeamMember(Base):
         ...     invited_by="admin@example.com"
         ... )
         >>> member.role
-        'member'
+        'team_member'
     """
 
     __tablename__ = "email_team_members"
@@ -1069,7 +1069,7 @@ class EmailTeamMemberHistory(Base):
         >>> history.action
         'added'
         >>> history.role
-        'member'
+        'team_member'
         >>> isinstance(history.action_timestamp, type(utc_now()))
         True
     """
@@ -1139,7 +1139,7 @@ class EmailTeamInvitation(Base):
         ...     invited_by="admin@example.com"
         ... )
         >>> invitation.role
-        'member'
+        'team_member'
     """
 
     __tablename__ = "email_team_invitations"
