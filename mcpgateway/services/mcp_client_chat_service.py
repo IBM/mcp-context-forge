@@ -45,8 +45,11 @@ except ImportError:
     BaseTool = None  # type: ignore
     MultiServerMCPClient = None  # type: ignore
     ChatOllama = None  # type: ignore
+    OllamaLLM = None
     AzureChatOpenAI = None  # type: ignore
+    AzureOpenAI = None
     ChatOpenAI = None  # type: ignore
+    OpenAI = None
     create_react_agent = None  # type: ignore
 
 # Try to import Anthropic and Bedrock providers (they may not be installed)
@@ -58,6 +61,7 @@ try:
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
     ChatAnthropic = None  # type: ignore
+    AnthropicLLM = None
 
 try:
     # Third-Party
@@ -67,6 +71,7 @@ try:
 except ImportError:
     _BEDROCK_AVAILABLE = False
     ChatBedrock = None  # type: ignore
+    BedrockLLM = None
 
 try:
     # Third-Party
@@ -721,6 +726,9 @@ class AzureOpenAIProvider:
         Creates and caches the Azure OpenAI chat model instance on first call.
         Subsequent calls return the cached instance.
 
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
+
         Returns:
             AzureChatOpenAI: Configured Azure OpenAI chat model.
 
@@ -835,6 +843,9 @@ class OllamaProvider:
         Creates and caches the Ollama chat model instance on first call.
         Subsequent calls return the cached instance.
 
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
+
         Returns:
             ChatOllama: Configured Ollama chat model.
 
@@ -920,6 +931,9 @@ class OpenAIProvider:
 
         Creates and caches the OpenAI chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatOpenAI: Configured OpenAI chat model.
@@ -1037,6 +1051,9 @@ class AnthropicProvider:
         Creates and caches the Anthropic chat model instance on first call.
         Subsequent calls return the cached instance.
 
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
+
         Returns:
             ChatAnthropic: Configured Anthropic chat model.
 
@@ -1150,6 +1167,9 @@ class AWSBedrockProvider:
 
         Creates and caches the Bedrock chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatBedrock: Configured AWS Bedrock chat model.

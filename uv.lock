@@ -237,25 +237,6 @@ wheels = [
 ]
 
 [[package]]
-name = "anthropic"
-version = "0.73.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "docstring-parser" },
-    { name = "httpx" },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f0/07/f550112c3f5299d02f06580577f602e8a112b1988ad7c98ac1a8f7292d7e/anthropic-0.73.0.tar.gz", hash = "sha256:30f0d7d86390165f86af6ca7c3041f8720bb2e1b0e12a44525c8edfdbd2c5239", size = 425168, upload-time = "2025-11-14T18:47:52.635Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/15/b1/5d4d3f649e151e58dc938cf19c4d0cd19fca9a986879f30fea08a7b17138/anthropic-0.73.0-py3-none-any.whl", hash = "sha256:0d56cd8b3ca3fea9c9b5162868bdfd053fbc189b8b56d4290bd2d427b56db769", size = 367839, upload-time = "2025-11-14T18:47:51.195Z" },
-]
-
-[[package]]
 name = "antlr4-python3-runtime"
 version = "4.13.2"
 source = { registry = "https://pypi.org/simple" }
@@ -588,34 +569,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c4/cf/85379f13b76f3a69bca86b60237978af17d6aa0bc5998978c3b8cf05abb2/boolean_py-5.0.tar.gz", hash = "sha256:60cbc4bad079753721d32649545505362c754e121570ada4658b852a3a318d95", size = 37047, upload-time = "2025-04-03T10:39:49.734Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e5/ca/78d423b324b8d77900030fa59c4aa9054261ef0925631cd2501dd015b7b7/boolean_py-5.0-py3-none-any.whl", hash = "sha256:ef28a70bd43115208441b53a045d1549e2f0ec6e3d08a9d142cbc41c1938e8d9", size = 26577, upload-time = "2025-04-03T10:39:48.449Z" },
-]
-
-[[package]]
-name = "boto3"
-version = "1.40.75"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "botocore" },
-    { name = "jmespath" },
-    { name = "s3transfer" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/2c/0a6e49612ef9868382ef76292da2dd1dee7c74a0f1ec95323e76f6e2ef4b/boto3-1.40.75.tar.gz", hash = "sha256:a5219a2f397f8616462d7908e696c281f120aa2d8458280ff24f7ddeb2108faf", size = 111629, upload-time = "2025-11-17T21:58:37.667Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/85/2b0ea3ca19447d3a681b59b712a8f7861bfd0bc0129efd8a2da09d272837/boto3-1.40.75-py3-none-any.whl", hash = "sha256:c246fb35d9978b285c5b827a20b81c9e77d52f99c9d175fbd91f14396432953f", size = 139360, upload-time = "2025-11-17T21:58:36.181Z" },
-]
-
-[[package]]
-name = "botocore"
-version = "1.40.75"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jmespath" },
-    { name = "python-dateutil" },
-    { name = "urllib3" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/d7/11/a6a07cbe12e0161063f2dac82bb7a8f48f649b394863315cd6f3149b82ac/botocore-1.40.75.tar.gz", hash = "sha256:bf8b067209fee5a9738800d41852e113b8ebdb01bd7f1e8b4541d55ecdbdb8f3", size = 14475952, upload-time = "2025-11-17T21:58:27.24Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5a/29/15627031629f27230ee38bc7f55328b310794010c3039f0ecd353c06dc63/botocore-1.40.75-py3-none-any.whl", hash = "sha256:e822004688ca8035c518108e27d5b450d3ab0e0b3a73bcb8b87b80a8e5bd1910", size = 14141572, upload-time = "2025-11-17T21:58:23.896Z" },
 ]
 
 [[package]]
@@ -2580,35 +2533,6 @@ wheels = [
 ]
 
 [[package]]
-name = "langchain-anthropic"
-version = "1.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "anthropic" },
-    { name = "langchain-core" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/db/3e80e99002eaaeae71b90df6b8e604fc1f041f34a2bc9fb61a5d8b3799df/langchain_anthropic-1.0.4.tar.gz", hash = "sha256:46e2a842755609d4a0e9dcc505779093b1a462b04ee9024cbd751ea6853a8890", size = 669908, upload-time = "2025-11-14T19:01:24.144Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4e/f4/053f7a719d133ab889fd5b46ef2ab834c9f0d8b646ea587ad3773b4c089c/langchain_anthropic-1.0.4-py3-none-any.whl", hash = "sha256:ba3e580ac0691b268082b82280bb898af485b58dbf23a65f27e692c009e543ad", size = 46858, upload-time = "2025-11-14T19:01:22.814Z" },
-]
-
-[[package]]
-name = "langchain-aws"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "boto3" },
-    { name = "langchain-core" },
-    { name = "numpy" },
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/90/52/7e57fb7fc34c386625f66f0ab31da9cf2788b03ef15ae78ccd4c627b30cf/langchain_aws-1.0.0.tar.gz", hash = "sha256:597342bda0e7384e13590e9ab69c872ddcfbbf07d81ac6bb0f8a67970252212e", size = 214146, upload-time = "2025-10-17T19:06:49.001Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/5d/5b3c07780a8eb4b916ffe504893896f87f318924c86dcbeb89562baa2d20/langchain_aws-1.0.0-py3-none-any.whl", hash = "sha256:68f6965b5030d0779b02e731ce1c910a5f4518bfe0e2ae82999a5342bc46dbd5", size = 150400, upload-time = "2025-10-17T19:06:47.926Z" },
-]
-
-[[package]]
 name = "langchain-chroma"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3246,8 +3170,6 @@ redis = [
 toolops = [
     { name = "agent-lifecycle-toolkit" },
     { name = "aiofiles" },
-    { name = "langchain-anthropic" },
-    { name = "langchain-aws" },
     { name = "langchain-core" },
     { name = "langchain-mcp-adapters" },
     { name = "langchain-ollama" },
@@ -3353,18 +3275,16 @@ requires-dist = [
     { name = "jq", specifier = ">=1.10.0" },
     { name = "jsonpath-ng", specifier = ">=1.7.0" },
     { name = "jsonschema", specifier = ">=4.25.1" },
-    { name = "langchain-anthropic", marker = "extra == 'toolops'", specifier = ">=1.0.1" },
-    { name = "langchain-aws", marker = "extra == 'toolops'", specifier = ">=1.0.0" },
     { name = "langchain-core", marker = "extra == 'llmchat'", specifier = ">=1.0.4" },
-    { name = "langchain-core", marker = "extra == 'toolops'", specifier = ">=1.0.0" },
+    { name = "langchain-core", marker = "extra == 'toolops'", specifier = ">=1.0.4" },
     { name = "langchain-mcp-adapters", marker = "extra == 'llmchat'", specifier = ">=0.1.12" },
-    { name = "langchain-mcp-adapters", marker = "extra == 'toolops'", specifier = ">=0.1.11" },
+    { name = "langchain-mcp-adapters", marker = "extra == 'toolops'", specifier = ">=0.1.12" },
     { name = "langchain-ollama", marker = "extra == 'llmchat'", specifier = ">=1.0.0" },
     { name = "langchain-ollama", marker = "extra == 'toolops'", specifier = ">=1.0.0" },
     { name = "langchain-openai", marker = "extra == 'llmchat'", specifier = ">=1.0.2" },
-    { name = "langchain-openai", marker = "extra == 'toolops'", specifier = ">=1.0.0" },
+    { name = "langchain-openai", marker = "extra == 'toolops'", specifier = ">=1.0.2" },
     { name = "langgraph", marker = "extra == 'llmchat'", specifier = ">=1.0.2" },
-    { name = "langgraph", marker = "extra == 'toolops'", specifier = ">=1.0.0" },
+    { name = "langgraph", marker = "extra == 'toolops'", specifier = ">=1.0.2" },
     { name = "mcp", specifier = ">=1.21.0" },
     { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=0.9.0" },
     { name = "mcp-contextforge-gateway", extras = ["redis", "dev"], marker = "extra == 'dev-all'", specifier = ">=0.9.0" },
@@ -6374,18 +6294,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/73/e6/03b882225a1b0627e75339b420883dc3c90707a8917d2284abef7a58d317/ruff-0.14.0-py3-none-win32.whl", hash = "sha256:7450a243d7125d1c032cb4b93d9625dea46c8c42b4f06c6b709baac168e10543", size = 12367872, upload-time = "2025-10-07T18:21:46.67Z" },
     { url = "https://files.pythonhosted.org/packages/41/77/56cf9cf01ea0bfcc662de72540812e5ba8e9563f33ef3d37ab2174892c47/ruff-0.14.0-py3-none-win_amd64.whl", hash = "sha256:ea95da28cd874c4d9c922b39381cbd69cb7e7b49c21b8152b014bd4f52acddc2", size = 13464628, upload-time = "2025-10-07T18:21:50.318Z" },
     { url = "https://files.pythonhosted.org/packages/c6/2a/65880dfd0e13f7f13a775998f34703674a4554906167dce02daf7865b954/ruff-0.14.0-py3-none-win_arm64.whl", hash = "sha256:f42c9495f5c13ff841b1da4cb3c2a42075409592825dada7c5885c2c844ac730", size = 12565142, upload-time = "2025-10-07T18:21:53.577Z" },
-]
-
-[[package]]
-name = "s3transfer"
-version = "0.14.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "botocore" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/62/74/8d69dcb7a9efe8baa2046891735e5dfe433ad558ae23d9e3c14c633d1d58/s3transfer-0.14.0.tar.gz", hash = "sha256:eff12264e7c8b4985074ccce27a3b38a485bb7f7422cc8046fee9be4983e4125", size = 151547, upload-time = "2025-09-09T19:23:31.089Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/f0/ae7ca09223a81a1d890b2557186ea015f6e0502e9b8cb8e1813f1d8cfa4e/s3transfer-0.14.0-py3-none-any.whl", hash = "sha256:ea3b790c7077558ed1f02a3072fb3cb992bbbd253392f4b6e9e8976941c7d456", size = 85712, upload-time = "2025-09-09T19:23:30.041Z" },
 ]
 
 [[package]]

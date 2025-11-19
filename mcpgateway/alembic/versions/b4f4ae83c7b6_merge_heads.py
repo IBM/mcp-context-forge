@@ -9,10 +9,6 @@ Create Date: 2025-11-06 19:19:25.161135
 # Standard
 from typing import Sequence, Union
 
-# Third-Party
-from alembic import op
-import sqlalchemy as sa
-
 # revision identifiers, used by Alembic.
 revision: str = "b4f4ae83c7b6"
 down_revision: Union[str, Sequence[str], None] = ("3c89a45f32e5", "add_toolops_test_cases_table")

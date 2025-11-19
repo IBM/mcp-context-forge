@@ -37,7 +37,7 @@ from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI,  HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
@@ -120,7 +120,7 @@ from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
-from mcpgateway.toolops.services import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
+from mcpgateway.services.toolops_altk_service import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
 from mcpgateway.utils.db_isready import wait_for_db_ready
@@ -174,10 +174,10 @@ class ToolNLTestInput(BaseModel):
     Args:
         tool_id : Unique Tool ID
         tool_nl_test_cases: List of natural language test cases for testing MCP tool with the agent
-    
     Returns:
         This class defines tool NL test input format and returns nothing.
     """
+
     tool_id: str | None = Field(default=None, title="Tool ID", max_length=300)
     tool_nl_test_cases: list | None = Field(default=None, title="List of natural language test cases for testing MCP tool with the agent")
 
@@ -1410,7 +1410,7 @@ async def generate_testcases_for_tool(
         number_of_test_cases: Number of test cases to generate for the given tools (optional)
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
-        user (str): The authenticated user (from `require_auth` dependency).
+        db: DB session to connect with database
 
     Returns:
         List: A list of test cases generated for the tool , each test case is dictionary object
@@ -1443,7 +1443,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
         tool_nl_test_input: NL test case format input to run test cases with agent , it contains\
             - tool_id: Tool ID in context forge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
-        user (str): The authenticated user (from `require_auth` dependency).
+        db: DB session to connect with database
 
     Returns:
         List: A list of tool outputs after agent execution for the provided tool nl test cases

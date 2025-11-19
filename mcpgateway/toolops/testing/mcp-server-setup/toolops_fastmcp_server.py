@@ -16,21 +16,22 @@ import os
 from fastmcp import FastMCP
 import httpx
 
-def start_mcp_server_from_oapi(mcp_server_name,server_url,server_auth_headers,open_api_spec):
-    '''
+
+def start_mcp_server_from_oapi(mcp_server_name, server_url, server_auth_headers, open_api_spec):
+    """
     Method to create the MCP server using Open API specification
+
     Args:
         mcp_server_name: Name of the MCP server given by user.
         server_url: External application server url used in the open api specification
         server_auth_headers: headers with authorisation details such as bearer token
         open_api_spec: Open API specification in json format
 
-    Returns:
-        This method starts the MCP server and return nothing.
-    '''
+    """
     client = httpx.AsyncClient(base_url=server_url, headers=server_auth_headers)
     mcp = FastMCP.from_openapi(openapi_spec=open_api_spec, client=client, name=mcp_server_name)
     mcp.run()
+
 
 if __name__ == "__main__":
     SALESLOFT_BEARER_TOKEN = os.environ.get("SALESLOFT_BEARER_TOKEN", "")
@@ -40,11 +41,10 @@ if __name__ == "__main__":
         print("SALESLOFT_BEARER_TOKEN is provided ", "SALESLOFT_BEARER_TOKEN")
         mcp_server_name = "salesloft get all actions"
         server_url = "https://api.salesloft.com"
-        server_auth_headers={"Authorization": "Bearer " + SALESLOFT_BEARER_TOKEN}
+        server_auth_headers = {"Authorization": "Bearer " + SALESLOFT_BEARER_TOKEN}
         api_spec_path = "./mcpgateway/toolops/testing/mcp-server-setup/api_specs/Wipro_Salesloft_Get_all_actions_short.json"
         open_api_spec = json.load(open(api_spec_path, "r"))
-        start_mcp_server_from_oapi(mcp_server_name,server_url,server_auth_headers,open_api_spec)
-        
+        start_mcp_server_from_oapi(mcp_server_name, server_url, server_auth_headers, open_api_spec)
 
 
 """

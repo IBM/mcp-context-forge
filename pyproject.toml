@@ -185,13 +185,11 @@ llmchat = [
 ]
 
 toolops = [
-    "langchain-core>=1.0.0",
-    "langchain-mcp-adapters>=0.1.11",
+    "langchain-core>=1.0.4",
+    "langchain-mcp-adapters>=0.1.12",
     "langchain-ollama>=1.0.0",
-    "langchain-openai>=1.0.0",
-    "langgraph>=1.0.0",
-    "langchain-anthropic>=1.0.1",
-    "langchain-aws>=1.0.0",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
     "aiofiles>=25.1.0",
     "tomli>=2.3.0",
     "agent-lifecycle-toolkit>=0.7.0"

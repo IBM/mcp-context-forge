@@ -12,7 +12,6 @@ This module defines the utility funtions to use MCP-CF supported LLM providers i
 import json
 import os
 
-
 # Third-Party
 from dotenv import load_dotenv
 
@@ -41,17 +40,18 @@ TOOLOPS_TEMPERATURE = 0.1
 
 
 def get_llm_instance(model_type="completion"):
-    '''
+    """
     Method to get MCP-CF provider type llm instance based on model type
+
     Args:
         model_type : LLM instance type such as chat model or token completion model, accepeted values :'completion','chat'
-    
+
     Returns:
         llm_instance : LLM model instance used for inferencing the prompts/user inputs
         llm_config: LLM provider configuration provided in the environment variables
-    '''
+    """
     llm_provider = os.getenv("LLM_PROVIDER", "")
-    llm_instance, llm_config = None , None
+    llm_instance, llm_config = None, None
     logger.info("Configuring LLM instance for ToolOps , and LLM provider - " + llm_provider)
     try:
         provider_map = {
@@ -74,7 +74,7 @@ def get_llm_instance(model_type="completion"):
             oai_max_retries = int(os.getenv("OPENAI_MAX_RETRIES", "2"))
             oai_max_tokens = int(os.getenv("OPENAI_MAX_TOEKNS", "600"))
             # adding default headers for RITS LLM platform as required
-            if isinstance(oai_base_url,str) and "rits.fmaas.res.ibm.com" in oai_base_url:
+            if isinstance(oai_base_url, str) and "rits.fmaas.res.ibm.com" in oai_base_url:
                 default_headers = {"RITS_API_KEY": oai_api_key}
             else:
                 default_headers = None
@@ -158,9 +158,10 @@ chat_llm_instance, _ = get_llm_instance(model_type="chat")
 def execute_prompt(prompt):
     """
     Method for LLM inferencing using a prompt/user input
+
     Args:
         prompt: used specified prompt or inputs for LLM inferecning
-    
+
     Returns:
         response: LLM output response for the given prompt
     """
