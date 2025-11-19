@@ -2034,79 +2034,177 @@
                   class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
               </div>
-              <div
-                class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
-              >
-                <label
-                  class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
-                  for="associatedTools"
-                >
-                  Associated Tools
-                </label>
-                <input
-                  type="text"
-                  id="searchTools"
-                  placeholder="Search for tools..."
-                  class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
-                />
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div
-                  id="associatedTools"
-                  class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector"
-                  hx-trigger="load"
-                  hx-swap="innerHTML"
-                  hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
-                >
-                  <!-- Tools will be loaded via HTMX -->
-                  <div class="text-center py-4 text-gray-500 dark:text-gray-400">
-                    <svg class="animate-spin h-5 w-5 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                    <span class="ml-2">Loading tools...</span>
+                  class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
+                > 
+                  <label
+                    class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                    for="associatedGateways"
+                  >
+                    MCP Servers
+                  </label>
+                  <input
+                    type="text"
+                    id="searchGateways"
+                    placeholder="Search for MCP servers..."
+                    class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
+                  />
+                  <div
+                    id="associatedGateways"
+                    class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                  >
+                    {% for gateway in gateways %}
+                    <label
+                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                    >
+                      <input
+                        type="checkbox"
+                        name="associatedGateways"
+                        value="{{ gateway.id }}"
+                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <span class="select-none"
+                        >{{ gateway.slug or gateway.name
+                        }}</span
+                      >
+                    </label>
+                    {% endfor %}
+
+                    <!-- Special checkbox for RestTool (no gateway id) -->
+                    <label
+                      class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                    >
+                      <input
+                        type="checkbox"
+                        name="associatedGateways"
+                        value=""
+                        data-gateway-null="true"
+                        class="mcpserver-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                      />
+                      <span class="select-none">REST</span>
+                    </label>
+                    <p
+                      id="noGatewayMessage"
+                      class="text-gray-700 dark:text-gray-300"
+                      style="display: none"
+                    >
+                      No MCP server found containing "<span id="searchQueryServers"></span>"
+                    </p>
                   </div>
+                  <div class="flex justify-end mt-3 gap-2">
+                    <button
+                      type="button"
+                      id="selectAllGatewayBtn"
+                      class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                      aria-label="Select all MCP servers"
+                    >
+                      Select All
+                    </button>
+
+                    <button
+                      type="button"
+                      id="clearAllGatewayBtn"
+                      class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                      aria-label="Clear all selected MPC servers"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <p class="text-sm text-gray-600 dark:text-gray-400 mt-2">
+                    Choose an MCP server, then select the tools, resources, and prompts to configure your virtual server.
+                  </p>
+
+                  <!-- Selected pills -->
+                  <div
+                    id="selectedGatewayPills"
+                    class="mt-4 flex flex-wrap gap-2"
+                  ></div>
+
+                  <!-- Warning message -->
+                  <div
+                    id="selectedGatewayWarning"
+                    class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                    aria-live="polite"
+                  ></div>
                 </div>
-                <p
-                  id="noToolsMessage"
-                  class="text-gray-700 dark:text-gray-300 mt-2"
-                  style="display: none"
+
+                <div
+                  class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
                 >
-                  No tool found containing "<span id="searchQuery"></span>"
-                </p>
-                <div class="flex justify-end mt-3 gap-2">
-                  <button
-                    type="button"
-                    id="selectAllToolsBtn"
-                    class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
-                    aria-label="Select all tools"
+                  <label
+                    class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                    for="associatedTools"
                   >
-                    Select All
-                  </button>
+                    Associated Tools
+                  </label>
+                  <input
+                    type="text"
+                    id="searchTools"
+                    placeholder="Search for tools..."
+                    class="mb-4 block w-full rounded-md border-gray-300 dark:border-gray-600 shadow-sm p-2 dark:bg-gray-900 dark:text-gray-300"
+                  />
+                  <div
+                    id="associatedTools"
+                    class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
+                    hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector"
+                    hx-trigger="load"
+                    hx-swap="innerHTML"
+                    hx-on::after-swap="initToolSelect('associatedTools', 'selectedToolsPills', 'selectedToolsWarning', 6, 'selectAllToolsBtn', 'clearAllToolsBtn')"
+                  >
+                    <!-- Tools will be loaded via HTMX -->
+                    <div class="text-center py-4 text-gray-500 dark:text-gray-400">
+                      <svg class="animate-spin h-5 w-5 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span class="ml-2">Loading tools...</span>
+                    </div>
+                  </div>
+                  <p
+                    id="noToolsMessage"
+                    class="text-gray-700 dark:text-gray-300 mt-2"
+                    style="display: none"
+                  >
+                    No tool found containing "<span id="searchQueryTools"></span>"
+                  </p>
+                  <div class="flex justify-end mt-3 gap-2">
+                    <button
+                      type="button"
+                      id="selectAllToolsBtn"
+                      class="px-3 py-1 text-sm font-semibold text-green-600 border border-green-600 rounded-md hover:bg-green-50 focus:outline-none focus:ring-2 focus:ring-green-300 focus:ring-offset-1"
+                      aria-label="Select all tools"
+                    >
+                      Select All
+                    </button>
 
-                  <button
-                    type="button"
-                    id="clearAllToolsBtn"
-                    class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
-                    aria-label="Clear all selected tools"
-                  >
-                    Clear All
-                  </button>
+                    <button
+                      type="button"
+                      id="clearAllToolsBtn"
+                      class="px-3 py-1 text-sm font-semibold text-red-600 border border-red-600 rounded-md hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-300 focus:ring-offset-1"
+                      aria-label="Clear all selected tools"
+                    >
+                      Clear All
+                    </button>
+                  </div>
+
+                  <!-- Selected pills -->
+                  <div
+                    id="selectedToolsPills"
+                    class="mt-4 flex flex-wrap gap-2"
+                  ></div>
+
+                  <!-- Warning message -->
+                  <div
+                    id="selectedToolsWarning"
+                    class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
+                    aria-live="polite"
+                  ></div>
                 </div>
-
-                <!-- Selected pills -->
-                <div
-                  id="selectedToolsPills"
-                  class="mt-4 flex flex-wrap gap-2"
-                ></div>
-
-                <!-- Warning message -->
-                <div
-                  id="selectedToolsWarning"
-                  class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
-                  aria-live="polite"
-                ></div>
               </div>
-              <div>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
                 <label
                   class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                   for="associatedResources"
@@ -2225,6 +2323,7 @@
                   class="mt-2 min-h-[1.25rem] text-sm font-semibold text-yellow-600"
                   aria-live="polite"
                 ></div>
+                </div>
               </div>
             </div>
             <!-- 🔻 Error Display Span -->
