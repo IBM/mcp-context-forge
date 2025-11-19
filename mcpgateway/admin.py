@@ -5157,6 +5157,7 @@ async def admin_get_all_tool_ids(
 
     Args:
         include_inactive (bool): Whether to include inactive tools in the results
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local tools).
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -5647,6 +5648,7 @@ async def admin_get_all_prompt_ids(
 
     Args:
         include_inactive (bool): When True include prompts that are inactive.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local prompts).
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -5704,6 +5706,7 @@ async def admin_get_all_resource_ids(
 
     Args:
         include_inactive (bool): Whether to include inactive resources in the results.
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated. Accepts the literal value 'null' to indicate NULL gateway_id (local resources).
         db (Session): Database session dependency.
         user: Authenticated user object from dependency injection.
 
