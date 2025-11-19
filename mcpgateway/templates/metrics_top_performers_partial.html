@@ -39,7 +39,7 @@
         {{ "{:,}".format(item.get('executionCount', 0)) }}
       </td>
       <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-        {% set avg_response = item.get('avg_response_time') %}
+        {% set avg_response = item.get('avgResponseTime') %}
         {% if avg_response is not none and avg_response != 'N/A' %}
           {{ "%.0f"|format(avg_response|float) }}ms
         {% else %}
@@ -47,14 +47,14 @@
         {% endif %}
       </td>
       <td class="px-4 py-4 whitespace-nowrap text-sm">
-        {% set success_rate = item.get('success_rate', 0) or 0 %}
+        {% set success_rate = item.get('succesRate', 0) or 0 %}
         <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold 
           {% if success_rate >= 95 %}bg-green-100 text-green-800{% elif success_rate >= 80 %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
           {{ "%.1f"|format(success_rate) }}%
         </span>
       </td>
       <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-        {% set last_exec = item.get('last_execution_time') %}
+        {% set last_exec = item.get('lastExecution') %}
         {% if last_exec and last_exec != 'Never' %}
           {{ last_exec }}
         {% else %}
