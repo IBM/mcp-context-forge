@@ -56,6 +56,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_import_configuration,
     admin_import_tools,
     admin_list_a2a_agents,
+    admin_metrics_partial_html,
     admin_list_gateways,
     admin_list_import_statuses,
     admin_list_prompts,
@@ -2716,3 +2717,36 @@ class TestEdgeCasesAndErrorHandling:
                 # Generic exceptions return redirect
                 # assert isinstance(result, RedirectResponse)
                 assert isinstance(result, JSONResponse)
+
+    async def test_admin_metrics_partial_html_tools(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint for tools."""
+        with patch("mcpgateway.services.tool_service.ToolService.get_top_tools", new_callable=AsyncMock) as mock_get_tools:
+            mock_get_tools.return_value = [
+                MagicMock(name="Tool1", execution_count=10),
+                MagicMock(name="Tool2", execution_count=5),
+            ]
+            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200
+
+    async def test_admin_metrics_partial_html_invalid_entity(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint with invalid entity type."""
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, "test-user")
+        assert exc_info.value.status_code == 400
+
+    async def test_admin_metrics_partial_html_resources(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint for resources."""
+        with patch("mcpgateway.services.resource_service.ResourceService.get_top_resources", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = []
+            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200
+
+    async def test_admin_metrics_partial_html_pagination(self, mock_request, mock_db):
+        """Test admin metrics partial HTML endpoint with pagination."""
+        with patch("mcpgateway.services.prompt_service.PromptService.get_top_prompts", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = [MagicMock(name=f"Prompt{i}") for i in range(25)]
+            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, "test-user")
+            assert isinstance(result, HTMLResponse)
+            assert result.status_code == 200
