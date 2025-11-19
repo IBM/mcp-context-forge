@@ -780,7 +780,16 @@ class RoleService:
             True
             >>> # Simulate execute returning rowcount
             >>> class _Res:
-            ...     rowcount = 5
+            ...     def scalars(self):
+            ...         class _S:
+            ...             def all(self):
+            ...                 class _A:
+            ...                     def __init__(self):
+            ...                         self.is_active = True
+            ...                         self.revoked_by = None
+            ...                         self.revoked_at = None
+            ...                 return [_A() for _ in range(5)]
+            ...         return _S()
             >>> service.db.execute = lambda *_a, **_k: _Res()
             >>> asyncio.run(service.revoke_scope_role_assignments('team', 't1'))
             5

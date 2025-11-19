@@ -547,6 +547,21 @@ class TeamManagementService:
 
             await role_service.assign_role_to_user(user_email=user_email, role_id=role_id, scope="team", scope_id=team.id, granted_by=updated_by if updated_by else "")
 
+            # Revoke other roles
+            roles_assignments_to_disable = [ra for ra in list_role_assignments if ra.role_id != role_id]
+            await asyncio.gather(
+                *[
+                    role_service.revoke_role_from_user(
+                        user_email=user_email,
+                        role_id=role_assignment.role_id,
+                        scope="team",
+                        scope_id=team_id,
+                        revoked_by=updated_by if updated_by else "",
+                    )
+                    for role_assignment in roles_assignments_to_disable
+                ]
+            )
+
             logger.info(f"Updated role of {user_email} in team {team_id} to {new_role} by {updated_by}")
             return True
 
