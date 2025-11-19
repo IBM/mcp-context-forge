@@ -8758,7 +8758,7 @@ async def admin_metrics_partial_html(
     request: Request,
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(10, ge=1, le=100, description="Items per page"),
+    per_page: int = Query(10, ge=1, le=1000, description="Items per page"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8771,7 +8771,7 @@ async def admin_metrics_partial_html(
         request: FastAPI request object
         entity_type: Entity type (tools, resources, prompts, servers)
         page: Page number (1-indexed)
-        per_page: Items per page (1-100)
+        per_page: Items per page (1-1000)
         db: Database session
         user: Authenticated user
 
@@ -8796,7 +8796,7 @@ async def admin_metrics_partial_html(
 
     # Constrain parameters
     page = max(1, page)
-    per_page = max(1, min(per_page, 100))
+    per_page = max(1, min(per_page, 1000))
 
     # Get all items for this entity type
     if entity_type == "tools":
