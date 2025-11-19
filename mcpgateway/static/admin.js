@@ -994,8 +994,12 @@ function displayMetrics(data, retryCount = 0) {
 
     // Ensure parent sections exist, create container if missing
     const metricsPanel = document.getElementById("metrics-panel");
-    const aggregatedSection = document.getElementById("aggregated-metrics-section");
-    let aggregatedContent = document.getElementById("aggregated-metrics-content");
+    const aggregatedSection = document.getElementById(
+        "aggregated-metrics-section",
+    );
+    let aggregatedContent = document.getElementById(
+        "aggregated-metrics-content",
+    );
 
     console.log("Panel check:", {
         metricsPanel: !!metricsPanel,
@@ -1012,12 +1016,16 @@ function displayMetrics(data, retryCount = 0) {
             setTimeout(() => displayMetrics(data, retryCount + 1), 100);
             return;
         }
-        console.error("Aggregated metrics section not found after retries; cannot render metrics");
+        console.error(
+            "Aggregated metrics section not found after retries; cannot render metrics",
+        );
         return;
     }
 
     if (!aggregatedContent) {
-        console.warn("Aggregated metrics content container missing; creating fallback container");
+        console.warn(
+            "Aggregated metrics content container missing; creating fallback container",
+        );
         aggregatedContent = document.createElement("div");
         aggregatedContent.id = "aggregated-metrics-content";
         aggregatedContent.className = "overflow-auto mb-6 bg-gray-100";
@@ -1075,8 +1083,10 @@ function displayMetrics(data, retryCount = 0) {
         // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
         // (see <details> sections with top-tools-content, top-resources-content, etc. in admin.html)
         // Legacy JavaScript widget is disabled to prevent duplicate rendering
-        console.log("✓ Top Performers handled by HTMX - skipping legacy JavaScript widget");
-        
+        console.log(
+            "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget",
+        );
+
         // Individual metrics grid for all components
         const metricsContainer = document.createElement("div");
         metricsContainer.className =
@@ -1144,29 +1154,56 @@ function displayMetrics(data, retryCount = 0) {
 /**
  * Switch between Top Performers tabs
  */
+// eslint-disable-next-line no-unused-vars
 function switchTopPerformersTab(entityType) {
     // Hide all panels
-    const panels = document.querySelectorAll('.top-performers-panel');
-    panels.forEach(panel => panel.classList.add('hidden'));
-    
+    const panels = document.querySelectorAll(".top-performers-panel");
+    panels.forEach((panel) => panel.classList.add("hidden"));
+
     // Remove active state from all tabs
-    const tabs = document.querySelectorAll('.top-performers-tab');
-    tabs.forEach(tab => {
-        tab.classList.remove('border-indigo-500', 'text-indigo-600', 'dark:text-indigo-400');
-        tab.classList.add('border-transparent', 'text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'dark:text-gray-400', 'dark:hover:text-gray-300');
+    const tabs = document.querySelectorAll(".top-performers-tab");
+    tabs.forEach((tab) => {
+        tab.classList.remove(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+        tab.classList.add(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
     });
-    
+
     // Show selected panel
-    const selectedPanel = document.getElementById(`top-performers-panel-${entityType}`);
+    const selectedPanel = document.getElementById(
+        `top-performers-panel-${entityType}`,
+    );
     if (selectedPanel) {
-        selectedPanel.classList.remove('hidden');
+        selectedPanel.classList.remove("hidden");
     }
-    
+
     // Activate selected tab
-    const selectedTab = document.getElementById(`top-performers-tab-${entityType}`);
+    const selectedTab = document.getElementById(
+        `top-performers-tab-${entityType}`,
+    );
     if (selectedTab) {
-        selectedTab.classList.remove('border-transparent', 'text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'dark:text-gray-400', 'dark:hover:text-gray-300');
-        selectedTab.classList.add('border-indigo-500', 'text-indigo-600', 'dark:text-indigo-400');
+        selectedTab.classList.remove(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+        selectedTab.classList.add(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
     }
 }
 
@@ -1596,7 +1633,8 @@ function updateKPICards(kpiData) {
 //         return document.createElement("div"); // Safe fallback
 //     }
 // }
-function createEnhancedTopPerformersSection(topData) {
+// Removed unused function createEnhancedTopPerformersSection - handled by HTMX
+/* function createEnhancedTopPerformersSection(topData) {
     try {
         const section = document.createElement("div");
         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -1677,7 +1715,7 @@ function createEnhancedTopPerformersSection(topData) {
         showErrorMessage("Failed to load top performers section");
         return document.createElement("div");
     }
-}
+} */
 function calculateSuccessRate(item) {
     // API returns successRate directly as a percentage
     if (item.successRate !== undefined && item.successRate !== null) {
@@ -1732,6 +1770,7 @@ function formatLastUsed(timestamp) {
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTopPerformersTable(entityType, data, isActive) {
     const panel = document.createElement("div");
     panel.id = `top-${entityType}-panel`;
@@ -1898,7 +1937,9 @@ function createTopPerformersTable(entityType, data, isActive) {
 
     return panel;
 }
+*/
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTab(type, isActive) {
     const tab = document.createElement("a");
     tab.href = "#";
@@ -1918,7 +1959,9 @@ function createTab(type, isActive) {
     };
     return tab;
 }
+*/
 
+// eslint-disable-next-line no-unused-vars
 function showTopPerformerTab(activeType) {
     const entityTypes = [
         "tools",
@@ -1951,6 +1994,7 @@ function showTopPerformerTab(activeType) {
  * Creates standard Alpine.js-based pagination controls matching the pattern
  * used in Tools/Resources/Prompts sections for visual consistency
  */
+// eslint-disable-next-line no-unused-vars
 function createStandardPaginationControls(
     idPrefix,
     totalItems,
@@ -2130,6 +2174,7 @@ function createStandardPaginationControls(
     return wrapper;
 }
 
+// eslint-disable-next-line no-unused-vars
 function updateTableRows(tbody, entityType, data, page, perPage) {
     tbody.innerHTML = "";
     const start = (page - 1) * perPage;
@@ -2223,6 +2268,7 @@ function updateTableRows(tbody, entityType, data, page, perPage) {
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function exportMetricsToCSV(topData) {
     const headers = [
         "Entity Type",
@@ -2269,6 +2315,7 @@ function exportMetricsToCSV(topData) {
     a.click();
     URL.revokeObjectURL(url);
 }
+*/
 
 /**
  * SECURITY: Create top item card with safe content handling
