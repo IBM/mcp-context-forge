@@ -207,6 +207,12 @@ async def bootstrap_default_roles() -> None:
                     if not existing_assignment or not existing_assignment.is_active:
                         await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=admin_user.email)
                         logger.info(f"Assigned platform_admin role to {admin_user.email}")
+
+                        team = admin_user.get_personal_team()
+                        if team:
+                            team_owner_role = await role_service.get_role_by_name("team_owner", "team")
+                            if team_owner_role:
+                                await role_service.assign_role_to_user(user_email=admin_user.email, role_id=team_owner_role.id, scope="team", scope_id=team.id, granted_by=admin_user.email)
                     else:
                         logger.info("Admin user already has platform_admin role")
 

@@ -376,6 +376,7 @@ class UserRole(Base):
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="user_assignments")
+    user: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[user_email], back_populates="user_roles")
 
     def is_expired(self) -> bool:
         """Check if the role assignment has expired.
@@ -687,26 +688,26 @@ class EmailUser(Base):
         return False
 
     # Team relationships
-    team_memberships: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", foreign_keys="EmailTeamMember.user_email", back_populates="user")
+    user_roles: Mapped[List["UserRole"]] = relationship("UserRole", foreign_keys="UserRole.user_email", back_populates="user")
     created_teams: Mapped[List["EmailTeam"]] = relationship("EmailTeam", foreign_keys="EmailTeam.created_by", back_populates="creator")
     sent_invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", foreign_keys="EmailTeamInvitation.invited_by", back_populates="inviter")
 
     # API token relationships
     api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="user", cascade="all, delete-orphan")
 
-    def get_teams(self) -> List["EmailTeam"]:
-        """Get all teams this user is a member of.
+    def get_team_ids(self) -> List[str]:
+        """Get all team ids this user is a member of.
 
         Returns:
-            List[EmailTeam]: List of teams the user belongs to
+            List[str]: List of team IDs the user belongs to
 
         Examples:
             >>> user = EmailUser(email="user@example.com")
-            >>> teams = user.get_teams()
-            >>> isinstance(teams, list)
+            >>> team_ids = user.get_team_ids()
+            >>> isinstance(team_ids, list)
             True
         """
-        return [membership.team for membership in self.team_memberships if membership.is_active]
+        return [role.scope_id for role in self.user_roles if role.scope == "team" and role.is_active and role.scope_id is not None]
 
     def get_personal_team(self) -> Optional["EmailTeam"]:
         """Get the user's personal team.
@@ -737,7 +738,11 @@ class EmailUser(Base):
             >>> user.is_team_member("team-123")
             False
         """
-        return any(membership.team_id == team_id and membership.is_active for membership in self.team_memberships)
+        if self.user_roles:
+            for role in self.user_roles:
+                if role.scope_id == team_id and role.is_active:
+                    return True
+        return False
 
     def get_team_role(self, team_id: str) -> Optional[str]:
         """Get user's role in a specific team.
@@ -752,10 +757,35 @@ class EmailUser(Base):
             >>> user = EmailUser(email="user@example.com")
             >>> role = user.get_team_role("team-123")
         """
-        for membership in self.team_memberships:
-            if membership.team_id == team_id and membership.is_active:
-                return membership.role
+        if self.user_roles:
+            for role in self.user_roles:
+                if role.scope_id == team_id and role.is_active:
+                    return role.role.name
+
         return None
+
+    def get_teams(self) -> List["EmailTeam"]:
+        """Get all teams this user is a member of based on active team roles.
+
+        This method leverages the user_roles attribute to identify team memberships.
+        It requires an active SQLAlchemy session to load the EmailTeam objects
+        associated with the user's team-scoped roles.
+
+        Returns:
+            List[EmailTeam]: A list of EmailTeam objects the user is an active member of.
+        """
+        teams: List["EmailTeam"] = []
+        if not self.user_roles:
+            return teams
+
+        team_ids_from_roles = {user_role.scope_id for user_role in self.user_roles if user_role.scope == "team" and user_role.is_active and user_role.scope_id}
+
+        session = Session.object_session(self)
+
+        if session and team_ids_from_roles:
+            teams = session.query(EmailTeam).filter(EmailTeam.id.in_(team_ids_from_roles), EmailTeam.is_active.is_(True)).all()
+
+        return teams
 
 
 class EmailAuthEvent(Base):
