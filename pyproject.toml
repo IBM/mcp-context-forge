@@ -194,11 +194,11 @@ toolops = [
     "langchain-aws>=1.0.0",
     "aiofiles>=25.1.0",
     "tomli>=2.3.0",
-    "agent-lifecycle-toolkit @ git+ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git@main",
+    "agent-lifecycle-toolkit>=0.7.0"
     ]
 
 altk = [
-    "agent-lifecycle-toolkit @ git+ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git@main",
+    "agent-lifecycle-toolkit>=0.7.0",
     ]
 
 # Fuzzing and property-based testing

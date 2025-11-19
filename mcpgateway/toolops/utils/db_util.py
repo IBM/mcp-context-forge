@@ -4,9 +4,9 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi
 
-MCP Gateway - Main module for toolops related database operations.
+MCP Gateway - Main module for handling toolops related database operations.
 
-This module defines the utility funtions to read/write/update toolops database tables.
+This module defines the utility funtions to read/write/update toolops related database tables.
 """
 # Third-Party
 from sqlalchemy.orm import Session
@@ -21,7 +21,15 @@ logger = logging_service.get_logger(__name__)
 
 def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
     '''
-    method to write and update toolops test cases to database table
+    Method to write and update toolops test cases to database table
+    Args:
+        tool_id: unqiue Tool ID used in MCP-CF
+        test_cases: list of generated test cases, each test case is a dictionary object
+        run_status: status of test case generation request such as in-progess, complete , failed 
+        db: DB session to access the database
+
+    Returns:
+        This method updates or writes tool test case records to database table and returns nothing.
     '''
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
     if not tool_record:
@@ -42,7 +50,13 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
 
 def query_testcases_table(tool_id, db: Session):
     '''
-    method to read toolops test cases from database table
+    Method to read toolops test cases from database table
+    Args:
+        tool_id: unqiue Tool ID used in MCP-CF
+        db: DB session to access the database
+
+    Returns:
+        This method returns tool record for specified tool id and tool record contains 'tool_id','test_cases','run_status'.
     '''
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
     logger.info("Tool record obtained from table for tool - " + str(tool_id))

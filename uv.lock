@@ -40,8 +40,8 @@ wheels = [
 
 [[package]]
 name = "agent-lifecycle-toolkit"
-version = "0.5.0"
-source = { git = "ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git?rev=main#f2bbf2335c1ff9131ccaca70aa0dd3e455391c7c" }
+version = "0.7.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
     { name = "black" },
@@ -55,9 +55,10 @@ dependencies = [
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-huggingface" },
+    { name = "langchain-text-splitters" },
     { name = "langgraph" },
     { name = "litellm" },
-    { name = "llm-sandbox", extra = ["docker"] },
+    { name = "llm-sandbox", extra = ["docker", "podman"] },
     { name = "mellea" },
     { name = "nestful-wrapper" },
     { name = "nl2flow" },
@@ -77,6 +78,10 @@ dependencies = [
     { name = "transformers" },
     { name = "trl" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/93/ccb8a2f1f1dbbe31d73267c81e0755a9a0b47366416910586637cee17841/agent_lifecycle_toolkit-0.7.0.tar.gz", hash = "sha256:530fe75c0ee45d86b1e9b580dcef376973f2e79dc862d3c48fec796f46045962", size = 7513188, upload-time = "2025-11-18T23:56:24.243Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/c1/bf4484c421ab02d37c411dcb3b59988c439020dd6843d3963a8ebccc88b6/agent_lifecycle_toolkit-0.7.0-py3-none-any.whl", hash = "sha256:436870ce17388797c8bace4bd3d9eac52ffecc0a5f4471caf08507d3e45ff1c4", size = 387634, upload-time = "2025-11-18T23:56:22.084Z" },
 ]
 
 [[package]]
@@ -2906,6 +2911,10 @@ wheels = [
 docker = [
     { name = "docker" },
 ]
+podman = [
+    { name = "docker" },
+    { name = "podman" },
+]
 
 [[package]]
 name = "lomond"
@@ -3319,8 +3328,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-lifecycle-toolkit", marker = "extra == 'altk'", git = "ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git?rev=main" },
-    { name = "agent-lifecycle-toolkit", marker = "extra == 'toolops'", git = "ssh://git@github.com/AgentToolkit/agent-lifecycle-toolkit.git?rev=main" },
+    { name = "agent-lifecycle-toolkit", marker = "extra == 'altk'", specifier = ">=0.7.0" },
+    { name = "agent-lifecycle-toolkit", marker = "extra == 'toolops'", specifier = ">=0.7.0" },
     { name = "aiofiles", marker = "extra == 'toolops'", specifier = ">=25.1.0" },
     { name = "aiohttp", specifier = ">=3.13.2" },
     { name = "aiosqlite", marker = "extra == 'aiosqlite'", specifier = ">=0.21.0" },
@@ -4702,6 +4711,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e5/69/882ee5c9d017149285cab114ebeab373308ef0f874fcdac9beb90e0ac4da/ply-3.11.tar.gz", hash = "sha256:00c7c1aaa88358b9c765b6d3000c6eec0ba42abca5351b095321aef446081da3", size = 159130, upload-time = "2018-02-15T19:01:31.097Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a3/58/35da89ee790598a0700ea49b2a66594140f44dec458c07e8e3d4979137fc/ply-3.11-py2.py3-none-any.whl", hash = "sha256:096f9b8350b65ebd2fd1346b12452efe5b9607f7482813ffca50c22722a807ce", size = 49567, upload-time = "2018-02-15T19:01:27.172Z" },
+]
+
+[[package]]
+name = "podman"
+version = "5.6.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "urllib3" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3b/36/070e7bf682ac0868450584df79198c178323e80f73b8fb9b6fec8bde0a65/podman-5.6.0.tar.gz", hash = "sha256:cc5f7aa9562e30f992fc170a48da970a7132be60d8a2e2941e6c17bd0a0b35c9", size = 72832, upload-time = "2025-09-05T09:42:40.071Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/9e/8c62f05b104d9f00edbb4c298b152deceb393ea67f0288d89d1139d7a859/podman-5.6.0-py3-none-any.whl", hash = "sha256:967ff8ad8c6b851bc5da1a9410973882d80e235a9410b7d1e931ce0c3324fbe3", size = 88713, upload-time = "2025-09-05T09:42:38.405Z" },
 ]
 
 [[package]]
