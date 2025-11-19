@@ -1027,7 +1027,10 @@ flake8:                             ## 🐍  flake8 checks
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-	uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)
+
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
 
 markdownlint:					    ## 📖  Markdown linting
 	@# Install markdownlint-cli2 if not present
@@ -1073,7 +1076,9 @@ pycodestyle:                        ## 📝  Simple PEP-8 checker
 
 pre-commit: uv                      ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
-	uv run --active pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		uv run --active pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
