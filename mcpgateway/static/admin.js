@@ -803,6 +803,7 @@ async function loadMetricsInternal() {
             data = {}; // Use empty object as fallback
         }
 
+        console.log("Metrics data received:", data);
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -919,7 +920,7 @@ function hideMetricsLoading() {
  */
 function showMetricsError(error) {
     // Only show error in the aggregated metrics section, not the entire panel
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    const aggregatedSection = safeGetElement("aggregated-metrics-content");
     if (aggregatedSection) {
         const errorDiv = document.createElement("div");
         errorDiv.className = "text-center p-8";
@@ -988,16 +989,63 @@ function showMetricsPlaceholder() {
 // ENHANCED METRICS DISPLAY with Complete System Overview
 // ===================================================================
 
-function displayMetrics(data) {
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+function displayMetrics(data, retryCount = 0) {
+    console.log("displayMetrics called with:", data, "retry:", retryCount);
+
+    // Ensure parent sections exist, create container if missing
+    const metricsPanel = document.getElementById("metrics-panel");
+    const aggregatedSection = document.getElementById(
+        "aggregated-metrics-section",
+    );
+    let aggregatedContent = document.getElementById(
+        "aggregated-metrics-content",
+    );
+
+    console.log("Panel check:", {
+        metricsPanel: !!metricsPanel,
+        metricsPanelHidden: metricsPanel?.classList.contains("hidden"),
+        aggregatedSection: !!aggregatedSection,
+        aggregatedContent: !!aggregatedContent,
+    });
+
     if (!aggregatedSection) {
-        console.error("Aggregated metrics section element not found");
+        if (retryCount < 10) {
+            console.error(
+                `Aggregated metrics section missing, retrying (${retryCount + 1}/10) in 100ms`,
+            );
+            setTimeout(() => displayMetrics(data, retryCount + 1), 100);
+            return;
+        }
+        console.error(
+            "Aggregated metrics section not found after retries; cannot render metrics",
+        );
         return;
     }
+
+    if (!aggregatedContent) {
+        console.warn(
+            "Aggregated metrics content container missing; creating fallback container",
+        );
+        aggregatedContent = document.createElement("div");
+        aggregatedContent.id = "aggregated-metrics-content";
+        aggregatedContent.className =
+            "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
+
+        // Insert before chart if present, otherwise append to section
+        const chartElement = aggregatedSection.querySelector("#metricsChart");
+        if (chartElement && chartElement.parentElement === aggregatedSection) {
+            aggregatedSection.insertBefore(aggregatedContent, chartElement);
+        } else {
+            aggregatedSection.appendChild(aggregatedContent);
+        }
+    }
+
+    console.log("aggregated-metrics-content element ready:", aggregatedContent);
 
     try {
         // FIX: Handle completely empty data
         if (!data || Object.keys(data).length === 0) {
+            console.warn("Empty or null data received");
             const emptyStateDiv = document.createElement("div");
             emptyStateDiv.className = "text-center p-8 text-gray-500";
             emptyStateDiv.innerHTML = `
@@ -1010,8 +1058,8 @@ function displayMetrics(data) {
                     Refresh Metrics
                 </button>
             `;
-            aggregatedSection.innerHTML = "";
-            aggregatedSection.appendChild(emptyStateDiv);
+            aggregatedContent.innerHTML = "";
+            aggregatedContent.appendChild(emptyStateDiv);
             return;
         }
 
@@ -1019,74 +1067,78 @@ function displayMetrics(data) {
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
 
-        // System overview section (top priority display)
-        if (data.system || data.overall) {
-            const systemData = data.system || data.overall || {};
-            const systemSummary = createSystemSummaryCard(systemData);
-            mainContainer.appendChild(systemSummary);
-        }
-
-        // Key Performance Indicators section
+        // Key Performance Indicators section - render to dedicated container above Top Performers
         const kpiData = extractKPIData(data);
         if (Object.keys(kpiData).length > 0) {
-            const kpiSection = createKPISection(kpiData);
-            mainContainer.appendChild(kpiSection);
+            const kpiContainer = document.getElementById("kpi-metrics-section");
+            if (kpiContainer) {
+                const kpiSection = createKPISection(kpiData);
+                kpiContainer.innerHTML = "";
+                kpiContainer.appendChild(kpiSection);
+            }
         }
 
-        // Top Performers section (before individual metrics)
-        if (data.topPerformers || data.top) {
-            const topData = data.topPerformers || data.top;
-            // const topSection = createTopPerformersSection(topData);
-            const topSection = createEnhancedTopPerformersSection(topData);
+        // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
+        // (see <details> sections with top-tools-content, top-resources-content, etc. in admin.html)
+        // Legacy JavaScript widget is disabled to prevent duplicate rendering
+        console.log(
+            "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget",
+        );
 
-            mainContainer.appendChild(topSection);
+        // Individual metrics grid - render inside Top Performers section
+        const individualMetricsGrid = document.getElementById(
+            "individual-metrics-grid",
+        );
+        if (individualMetricsGrid) {
+            const metricsContainer = document.createElement("div");
+            metricsContainer.className =
+                "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
+
+            // Tools metrics
+            if (data.tools) {
+                const toolsCard = createMetricsCard("Tools", data.tools);
+                metricsContainer.appendChild(toolsCard);
+            }
+
+            // Resources metrics
+            if (data.resources) {
+                const resourcesCard = createMetricsCard(
+                    "Resources",
+                    data.resources,
+                );
+                metricsContainer.appendChild(resourcesCard);
+            }
+
+            // Prompts metrics
+            if (data.prompts) {
+                const promptsCard = createMetricsCard("Prompts", data.prompts);
+                metricsContainer.appendChild(promptsCard);
+            }
+
+            // Gateways metrics
+            if (data.gateways) {
+                const gatewaysCard = createMetricsCard(
+                    "Gateways",
+                    data.gateways,
+                );
+                metricsContainer.appendChild(gatewaysCard);
+            }
+
+            // Servers metrics
+            if (data.servers) {
+                const serversCard = createMetricsCard("Servers", data.servers);
+                metricsContainer.appendChild(serversCard);
+            }
+
+            // Performance metrics
+            if (data.performance) {
+                const performanceCard = createPerformanceCard(data.performance);
+                metricsContainer.appendChild(performanceCard);
+            }
+
+            individualMetricsGrid.innerHTML = "";
+            individualMetricsGrid.appendChild(metricsContainer);
         }
-
-        // Individual metrics grid for all components
-        const metricsContainer = document.createElement("div");
-        metricsContainer.className =
-            "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
-
-        // Tools metrics
-        if (data.tools) {
-            const toolsCard = createMetricsCard("Tools", data.tools);
-            metricsContainer.appendChild(toolsCard);
-        }
-
-        // Resources metrics
-        if (data.resources) {
-            const resourcesCard = createMetricsCard(
-                "Resources",
-                data.resources,
-            );
-            metricsContainer.appendChild(resourcesCard);
-        }
-
-        // Prompts metrics
-        if (data.prompts) {
-            const promptsCard = createMetricsCard("Prompts", data.prompts);
-            metricsContainer.appendChild(promptsCard);
-        }
-
-        // Gateways metrics
-        if (data.gateways) {
-            const gatewaysCard = createMetricsCard("Gateways", data.gateways);
-            metricsContainer.appendChild(gatewaysCard);
-        }
-
-        // Servers metrics
-        if (data.servers) {
-            const serversCard = createMetricsCard("Servers", data.servers);
-            metricsContainer.appendChild(serversCard);
-        }
-
-        // Performance metrics
-        if (data.performance) {
-            const performanceCard = createPerformanceCard(data.performance);
-            metricsContainer.appendChild(performanceCard);
-        }
-
-        mainContainer.appendChild(metricsContainer);
 
         // Recent activity section (bottom)
         if (data.recentActivity || data.recent) {
@@ -1096,8 +1148,8 @@ function displayMetrics(data) {
         }
 
         // Safe content replacement
-        aggregatedSection.innerHTML = "";
-        aggregatedSection.appendChild(mainContainer);
+        aggregatedContent.innerHTML = "";
+        aggregatedContent.appendChild(mainContainer);
 
         console.log("✓ Enhanced metrics display rendered successfully");
     } catch (error) {
@@ -1107,8 +1159,65 @@ function displayMetrics(data) {
 }
 
 /**
+ * Switch between Top Performers tabs
+ */
+// eslint-disable-next-line no-unused-vars
+function switchTopPerformersTab(entityType) {
+    // Hide all panels
+    const panels = document.querySelectorAll(".top-performers-panel");
+    panels.forEach((panel) => panel.classList.add("hidden"));
+
+    // Remove active state from all tabs
+    const tabs = document.querySelectorAll(".top-performers-tab");
+    tabs.forEach((tab) => {
+        tab.classList.remove(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+        tab.classList.add(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+    });
+
+    // Show selected panel
+    const selectedPanel = document.getElementById(
+        `top-performers-panel-${entityType}`,
+    );
+    if (selectedPanel) {
+        selectedPanel.classList.remove("hidden");
+    }
+
+    // Activate selected tab
+    const selectedTab = document.getElementById(
+        `top-performers-tab-${entityType}`,
+    );
+    if (selectedTab) {
+        selectedTab.classList.remove(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+        selectedTab.classList.add(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+    }
+}
+
+/**
  * SECURITY: Create system summary card with safe HTML generation
  */
+// eslint-disable-next-line no-unused-vars
 function createSystemSummaryCard(systemData) {
     try {
         const card = document.createElement("div");
@@ -1532,7 +1641,8 @@ function updateKPICards(kpiData) {
 //         return document.createElement("div"); // Safe fallback
 //     }
 // }
-function createEnhancedTopPerformersSection(topData) {
+// Removed unused function createEnhancedTopPerformersSection - handled by HTMX
+/* function createEnhancedTopPerformersSection(topData) {
     try {
         const section = document.createElement("div");
         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -1613,7 +1723,7 @@ function createEnhancedTopPerformersSection(topData) {
         showErrorMessage("Failed to load top performers section");
         return document.createElement("div");
     }
-}
+} */
 function calculateSuccessRate(item) {
     // API returns successRate directly as a percentage
     if (item.successRate !== undefined && item.successRate !== null) {
@@ -1668,6 +1778,7 @@ function formatLastUsed(timestamp) {
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTopPerformersTable(entityType, data, isActive) {
     const panel = document.createElement("div");
     panel.id = `top-${entityType}-panel`;
@@ -1819,17 +1930,25 @@ function createTopPerformersTable(entityType, data, isActive) {
     tableWrapper.appendChild(table);
     panel.appendChild(tableWrapper);
 
-    // Pagination controls (if needed)
+    // Pagination controls (using standard Alpine.js pattern)
     if (data.length > 5) {
-        const pagination = createPaginationControls(data.length, 5, (page) => {
-            updateTableRows(panel, entityType, data, page);
-        });
+        const pagination = createStandardPaginationControls(
+            `top-${entityType}`,
+            data.length,
+            5,
+            (page, perPage) => {
+                updateTableRows(tbody, entityType, data, page, perPage);
+            },
+            },
+        );
         panel.appendChild(pagination);
     }
 
     return panel;
 }
+*/
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTab(type, isActive) {
     const tab = document.createElement("a");
     tab.href = "#";
@@ -1849,7 +1968,9 @@ function createTab(type, isActive) {
     };
     return tab;
 }
+*/
 
+// eslint-disable-next-line no-unused-vars
 function showTopPerformerTab(activeType) {
     const entityTypes = [
         "tools",
@@ -1878,40 +1999,285 @@ function showTopPerformerTab(activeType) {
     });
 }
 
-function createPaginationControls(totalItems, itemsPerPage, onPageChange) {
-    const pagination = document.createElement("div");
-    pagination.className = "mt-4 flex justify-end space-x-2";
-    const totalPages = Math.ceil(totalItems / itemsPerPage);
+/**
+ * Creates standard Alpine.js-based pagination controls matching the pattern
+ * used in Tools/Resources/Prompts sections for visual consistency
+ */
+// eslint-disable-next-line no-unused-vars
+function createStandardPaginationControls(
+    idPrefix,
+    totalItems,
+    initialPerPage,
+    onPageChange,
+) {
+    const wrapper = document.createElement("div");
 
-    for (let page = 1; page <= totalPages; page++) {
-        const button = document.createElement("button");
-        button.className = `px-3 py-1 rounded ${page === 1 ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
-        button.textContent = page;
-        button.onclick = () => {
-            onPageChange(page);
-            pagination.querySelectorAll("button").forEach((btn) => {
-                btn.className = `px-3 py-1 rounded ${btn === button ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
-            });
-        };
-        pagination.appendChild(button);
-    }
+    // Store callback in a global namespace for Alpine.js to access
+    const callbackId = `pagination_${idPrefix}_${Date.now()}`;
+    window[callbackId] = onPageChange;
 
-    return pagination;
+    wrapper.setAttribute(
+        "x-data",
+        `{
+        currentPage: 1,
+        perPage: ${initialPerPage},
+        totalItems: ${totalItems},
+        callbackId: '${callbackId}',
+        get totalPages() { return Math.ceil(this.totalItems / this.perPage); },
+        get hasNext() { return this.currentPage < this.totalPages; },
+        get hasPrev() { return this.currentPage > 1; },
+        get startItem() { return Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems); },
+        get endItem() { return Math.min(this.currentPage * this.perPage, this.totalItems); },
+        
+        goToPage(page) {
+            if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+                this.currentPage = page;
+                window[this.callbackId](this.currentPage, this.perPage);
+            }
+        },
+        prevPage() {
+            if (this.hasPrev) { this.goToPage(this.currentPage - 1); }
+        },
+        nextPage() {
+            if (this.hasNext) { this.goToPage(this.currentPage + 1); }
+        },
+        changePageSize(size) {
+            this.perPage = parseInt(size);
+            this.currentPage = 1;
+            window[this.callbackId](this.currentPage, this.perPage);
+        }
+    }`,
+    );
+    wrapper.className =
+        "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
+
+    wrapper.innerHTML = `
+        <!-- Page Size Selector -->
+        <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <span>Show:</span>
+            <select
+                x-model="perPage"
+                @change="changePageSize($event.target.value)"
+                class="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            >
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+            <span>per page</span>
+        </div>
+
+        <!-- Page Info -->
+        <div class="text-sm text-gray-700 dark:text-gray-300">
+            <span x-text="\`Showing \${startItem} - \${endItem} of \${totalItems.toLocaleString()} items\`"></span>
+        </div>
+
+        <!-- Page Navigation -->
+        <div class="flex items-center gap-2">
+            <!-- First Page Button -->
+            <button
+                @click="goToPage(1)"
+                :disabled="!hasPrev"
+                :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="First Page"
+            >
+                ⏮️
+            </button>
+
+            <!-- Previous Page Button -->
+            <button
+                @click="prevPage()"
+                :disabled="!hasPrev"
+                :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Previous Page"
+            >
+                ◀️ Prev
+            </button>
+
+            <!-- Page Number Display -->
+            <div class="flex items-center gap-1">
+                <!-- Show first page if not near start -->
+                <template x-if="currentPage > 3">
+                    <button
+                        @click="goToPage(1)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                    >
+                        1
+                    </button>
+                </template>
+
+                <!-- Ellipsis if needed -->
+                <template x-if="currentPage > 4">
+                    <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+                </template>
+
+                <!-- Show 2 pages before current -->
+                <template x-for="i in [currentPage - 2, currentPage - 1]" :key="i">
+                    <button
+                        x-show="i >= 1"
+                        @click="goToPage(i)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="i"
+                    ></button>
+                </template>
+
+                <!-- Current Page (highlighted) -->
+                <button
+                    class="px-3 py-1 rounded-md border-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 font-semibold text-indigo-700 dark:text-indigo-300"
+                    disabled
+                    x-text="currentPage"
+                ></button>
+
+                <!-- Show 2 pages after current -->
+                <template x-for="i in [currentPage + 1, currentPage + 2]" :key="i">
+                    <button
+                        x-show="i <= totalPages"
+                        @click="goToPage(i)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="i"
+                    ></button>
+                </template>
+
+                <!-- Ellipsis if needed -->
+                <template x-if="currentPage < totalPages - 3">
+                    <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+                </template>
+
+                <!-- Show last page if not near end -->
+                <template x-if="currentPage < totalPages - 2">
+                    <button
+                        @click="goToPage(totalPages)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="totalPages"
+                    ></button>
+                </template>
+            </div>
+
+            <!-- Next Page Button -->
+            <button
+                @click="nextPage()"
+                :disabled="!hasNext"
+                :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Next Page"
+            >
+                Next ▶️
+            </button>
+
+            <!-- Last Page Button -->
+            <button
+                @click="goToPage(totalPages)"
+                :disabled="!hasNext"
+                :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Last Page"
+            >
+                ⏭️
+            </button>
+        </div>
+    `;
+    return wrapper;
 }
 
-function updateTableRows(panel, entityType, data, page) {
-    const tbody = panel.querySelector("tbody");
+// eslint-disable-next-line no-unused-vars
+function updateTableRows(tbody, entityType, data, page, perPage) {
     tbody.innerHTML = "";
-    const start = (page - 1) * 5;
-    const paginatedData = data.slice(start, start + 5);
+    const start = (page - 1) * perPage;
+    const paginatedData = data.slice(start, start + perPage);
 
-    paginatedData.forEach((item, index) => {
+    paginatedData.forEach((item, localIndex) => {
+        const globalIndex = start + localIndex; // Calculate global rank
         const row = document.createElement("tr");
-        // ... (same row creation logic as in createTopPerformersTable)
+        row.className =
+            "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200";
+
+        // Rank
+        const rankCell = document.createElement("td");
+        rankCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
+        const rankBadge = document.createElement("span");
+        rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${
+            globalIndex === 0
+                ? "bg-yellow-400 text-yellow-900"
+                : globalIndex === 1
+                  ? "bg-gray-300 text-gray-900"
+                  : globalIndex === 2
+                    ? "bg-orange-400 text-orange-900"
+                    : "bg-gray-100 text-gray-600"
+        }`;
+        rankBadge.textContent = globalIndex + 1;
+        rankBadge.setAttribute("aria-label", `Rank ${globalIndex + 1}`);
+        rankCell.appendChild(rankBadge);
+        row.appendChild(rankCell);
+
+        // Name (clickable for drill-down)
+        const nameCell = document.createElement("td");
+        nameCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
+        nameCell.textContent = escapeHtml(item.name || "Unknown");
+        nameCell.setAttribute("role", "button");
+        nameCell.setAttribute(
+            "aria-label",
+            `View details for ${item.name || "Unknown"}`,
+        );
+        row.appendChild(nameCell);
+
+        // Executions
+        const execCell = document.createElement("td");
+        execCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        execCell.textContent = formatNumber(
+            item.executionCount || item.execution_count || item.executions || 0,
+        );
+        row.appendChild(execCell);
+
+        // Avg Response Time
+        const avgTimeCell = document.createElement("td");
+        avgTimeCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        const avgTime = item.avg_response_time || item.avgResponseTime;
+        avgTimeCell.textContent = avgTime ? `${Math.round(avgTime)}ms` : "N/A";
+        row.appendChild(avgTimeCell);
+
+        // Success Rate
+        const successCell = document.createElement("td");
+        successCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
+        const successRate = calculateSuccessRate(item);
+        const successBadge = document.createElement("span");
+        successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            successRate >= 95
+                ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+                : successRate >= 80
+                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+                  : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+        }`;
+        successBadge.textContent = `${successRate}%`;
+        successBadge.setAttribute(
+            "aria-label",
+            `Success rate: ${successRate}%`,
+        );
+        successCell.appendChild(successBadge);
+        row.appendChild(successCell);
+
+        // Last Used
+        const lastUsedCell = document.createElement("td");
+        lastUsedCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        lastUsedCell.textContent = formatLastUsed(
+            item.last_execution || item.lastExecution,
+        );
+        row.appendChild(lastUsedCell);
+
         tbody.appendChild(row);
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function exportMetricsToCSV(topData) {
     const headers = [
         "Entity Type",
@@ -1958,6 +2324,7 @@ function exportMetricsToCSV(topData) {
     a.click();
     URL.revokeObjectURL(url);
 }
+*/
 
 /**
  * SECURITY: Create top item card with safe content handling
