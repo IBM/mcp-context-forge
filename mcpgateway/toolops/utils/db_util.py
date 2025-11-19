@@ -20,17 +20,16 @@ logger = logging_service.get_logger(__name__)
 
 
 def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
-    '''
+    """
     Method to write and update toolops test cases to database table
+
     Args:
         tool_id: unqiue Tool ID used in MCP-CF
         test_cases: list of generated test cases, each test case is a dictionary object
-        run_status: status of test case generation request such as in-progess, complete , failed 
+        run_status: status of test case generation request such as in-progess, complete , failed
         db: DB session to access the database
 
-    Returns:
-        This method updates or writes tool test case records to database table and returns nothing.
-    '''
+    """
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
     if not tool_record:
         test_case_record = TestCaseRecord(tool_id=tool_id, test_cases=test_cases, run_status=run_status)
@@ -49,15 +48,16 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
 
 
 def query_testcases_table(tool_id, db: Session):
-    '''
+    """
     Method to read toolops test cases from database table
+
     Args:
         tool_id: unqiue Tool ID used in MCP-CF
         db: DB session to access the database
 
     Returns:
         This method returns tool record for specified tool id and tool record contains 'tool_id','test_cases','run_status'.
-    '''
+    """
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
     logger.info("Tool record obtained from table for tool - " + str(tool_id))
     return tool_record

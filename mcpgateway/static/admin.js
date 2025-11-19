@@ -8541,7 +8541,7 @@ async function validateTool(toolId) {
             if (validationStatus == 'not-initiated') {
                 showErrorMessage('Please generate test cases before running validation.')
             } else if(validationStatus == 'in-progress') {
-                showErrorMessage('Test case generation is in progress. Please try validation once it's complete.')
+                showErrorMessage('Test case generation is in progress. Please try validation once it is complete.')
             } else if(validationStatus == 'failed') {
                 showErrorMessage('Test case generation failed. Please check your LLM connection and try again.')
                 console.log("Previous error while generating test cases: ", vsres[0]['error_message'])

@@ -10,7 +10,6 @@ MCP Gateway - module for converting MCP tool format to toolops specific internal
 # Standard
 from copy import deepcopy
 
-
 toolops_spec_template = {
     "binding": {"python": {"connections": {}, "function": "mcp-cf-tool-default", "requirements": []}},
     "description": None,
@@ -25,15 +24,16 @@ toolops_spec_template = {
 
 
 def convert_to_toolops_spec(mcp_cf_tool):
-    '''
+    """
     Method to convert MCP tool json format to toolops specific internal format
+
     Args:
         mcp_cf_tool: MCP tool in json format
+
     Returns:
         toolops_spec: Toolops specific internal format of the tool in json notation. \
                         This internal format is similar to MCP tool format.
-
-    '''
+    """
     toolops_spec = deepcopy(toolops_spec_template)
     toolops_spec["description"] = mcp_cf_tool.get("description", None)
     toolops_spec["display_name"] = mcp_cf_tool.get("displayName", None)
@@ -52,14 +52,15 @@ def convert_to_toolops_spec(mcp_cf_tool):
 
 
 def post_process_nl_test_cases(nl_test_cases):
-    '''
+    """
     Method for post processing of generated test cases to remove unwanted parameters
+
     Args:
         nl_test_cases: test cases dictionary object from test case geneation module, which contains test cases and other information.
-    
+
     Returns:
         test_cases: processed list of test cases after removing un-necessary parameters.
-    '''
+    """
     test_cases = nl_test_cases.get("Test_scenarios")
     for tc in test_cases:
         for un_wanted in ["scenario_type", "input"]:
