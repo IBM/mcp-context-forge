@@ -1028,7 +1028,7 @@ function displayMetrics(data, retryCount = 0) {
         );
         aggregatedContent = document.createElement("div");
         aggregatedContent.id = "aggregated-metrics-content";
-        aggregatedContent.className = "overflow-auto mb-6 bg-gray-100";
+        aggregatedContent.className = "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
 
         // Insert before chart if present, otherwise append to section
         const chartElement = aggregatedSection.querySelector("#metricsChart");
@@ -1066,18 +1066,15 @@ function displayMetrics(data, retryCount = 0) {
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
 
-        // System overview section (top priority display)
-        if (data.system || data.overall) {
-            const systemData = data.system || data.overall || {};
-            const systemSummary = createSystemSummaryCard(systemData);
-            mainContainer.appendChild(systemSummary);
-        }
-
-        // Key Performance Indicators section
+        // Key Performance Indicators section - render to dedicated container above Top Performers
         const kpiData = extractKPIData(data);
         if (Object.keys(kpiData).length > 0) {
-            const kpiSection = createKPISection(kpiData);
-            mainContainer.appendChild(kpiSection);
+            const kpiContainer = document.getElementById("kpi-metrics-section");
+            if (kpiContainer) {
+                const kpiSection = createKPISection(kpiData);
+                kpiContainer.innerHTML = "";
+                kpiContainer.appendChild(kpiSection);
+            }
         }
 
         // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
@@ -1087,51 +1084,55 @@ function displayMetrics(data, retryCount = 0) {
             "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget",
         );
 
-        // Individual metrics grid for all components
-        const metricsContainer = document.createElement("div");
-        metricsContainer.className =
-            "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
+        // Individual metrics grid - render inside Top Performers section
+        const individualMetricsGrid = document.getElementById("individual-metrics-grid");
+        if (individualMetricsGrid) {
+            const metricsContainer = document.createElement("div");
+            metricsContainer.className =
+                "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
 
-        // Tools metrics
-        if (data.tools) {
-            const toolsCard = createMetricsCard("Tools", data.tools);
-            metricsContainer.appendChild(toolsCard);
+            // Tools metrics
+            if (data.tools) {
+                const toolsCard = createMetricsCard("Tools", data.tools);
+                metricsContainer.appendChild(toolsCard);
+            }
+
+            // Resources metrics
+            if (data.resources) {
+                const resourcesCard = createMetricsCard(
+                    "Resources",
+                    data.resources,
+                );
+                metricsContainer.appendChild(resourcesCard);
+            }
+
+            // Prompts metrics
+            if (data.prompts) {
+                const promptsCard = createMetricsCard("Prompts", data.prompts);
+                metricsContainer.appendChild(promptsCard);
+            }
+
+            // Gateways metrics
+            if (data.gateways) {
+                const gatewaysCard = createMetricsCard("Gateways", data.gateways);
+                metricsContainer.appendChild(gatewaysCard);
+            }
+
+            // Servers metrics
+            if (data.servers) {
+                const serversCard = createMetricsCard("Servers", data.servers);
+                metricsContainer.appendChild(serversCard);
+            }
+
+            // Performance metrics
+            if (data.performance) {
+                const performanceCard = createPerformanceCard(data.performance);
+                metricsContainer.appendChild(performanceCard);
+            }
+
+            individualMetricsGrid.innerHTML = "";
+            individualMetricsGrid.appendChild(metricsContainer);
         }
-
-        // Resources metrics
-        if (data.resources) {
-            const resourcesCard = createMetricsCard(
-                "Resources",
-                data.resources,
-            );
-            metricsContainer.appendChild(resourcesCard);
-        }
-
-        // Prompts metrics
-        if (data.prompts) {
-            const promptsCard = createMetricsCard("Prompts", data.prompts);
-            metricsContainer.appendChild(promptsCard);
-        }
-
-        // Gateways metrics
-        if (data.gateways) {
-            const gatewaysCard = createMetricsCard("Gateways", data.gateways);
-            metricsContainer.appendChild(gatewaysCard);
-        }
-
-        // Servers metrics
-        if (data.servers) {
-            const serversCard = createMetricsCard("Servers", data.servers);
-            metricsContainer.appendChild(serversCard);
-        }
-
-        // Performance metrics
-        if (data.performance) {
-            const performanceCard = createPerformanceCard(data.performance);
-            metricsContainer.appendChild(performanceCard);
-        }
-
-        mainContainer.appendChild(metricsContainer);
 
         // Recent activity section (bottom)
         if (data.recentActivity || data.recent) {

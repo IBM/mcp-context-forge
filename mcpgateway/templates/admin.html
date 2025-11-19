@@ -6504,6 +6504,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
+        <!-- KPI Section (between system metrics and top performers) -->
+        <div id="kpi-metrics-section" class="mb-6"></div>
+
         <!-- Top Performers Section -->
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <h2 class="text-2xl font-bold dark:text-gray-200 mb-4">
@@ -6611,39 +6614,15 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             <div id="top-servers-loading-visible" class="htmx-indicator hidden">Loading...</div>
             <div id="top-servers-pagination-controls-visible"></div>
           </div>
+
+          <!-- Individual Metrics Grid (inside Top Performers section) -->
+          <div id="individual-metrics-grid" class="mt-8"></div>
         </div>
 
-        <!-- Aggregated Metrics Section -->
-        <div id="aggregated-metrics-section" class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
-          <h2 class="text-2xl font-bold dark:text-gray-200 mb-4">
-            Aggregated Metrics
-          </h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-            Metrics provide visibility into Tool, Resource, Prompt, and Server
-            usage across your Gateway-helpful for debugging and optimization.
-          </p>
-
-          <!-- Refresh button (also auto-refreshes when the tab is selected) -->
-          <button
-            onclick="loadAggregatedMetrics()"
-            class="mb-4 px-4 py-2 bg-indigo-600 text-white rounded"
-          >
-            Refresh Metrics
-          </button>
-
-          <!-- Aggregated Metrics Table -->
-          <div
-            id="aggregated-metrics-content"
-            class="overflow-auto mb-6 bg-gray-100"
-          ></div>
-
-          <!-- Overall Bar Chart for Total Executions -->
-          <canvas
-            id="metricsChart"
-            width="400"
-            height="200"
-            class="bg-white"
-          ></canvas>
+        <!-- Aggregated Metrics Section (hidden - metrics now in Top Performers) -->
+        <div id="aggregated-metrics-section" class="hidden">
+          <div id="aggregated-metrics-content"></div>
+          <canvas id="metricsChart"></canvas>
         </div>
       </div>
 
