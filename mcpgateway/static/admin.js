@@ -803,6 +803,7 @@ async function loadMetricsInternal() {
             data = {}; // Use empty object as fallback
         }
 
+        console.log("Metrics data received:", data);
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -919,7 +920,7 @@ function hideMetricsLoading() {
  */
 function showMetricsError(error) {
     // Only show error in the aggregated metrics section, not the entire panel
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    const aggregatedSection = safeGetElement("aggregated-metrics-content");
     if (aggregatedSection) {
         const errorDiv = document.createElement("div");
         errorDiv.className = "text-center p-8";
@@ -988,16 +989,54 @@ function showMetricsPlaceholder() {
 // ENHANCED METRICS DISPLAY with Complete System Overview
 // ===================================================================
 
-function displayMetrics(data) {
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+function displayMetrics(data, retryCount = 0) {
+    console.log("displayMetrics called with:", data, "retry:", retryCount);
+
+    // Ensure parent sections exist, create container if missing
+    const metricsPanel = document.getElementById("metrics-panel");
+    const aggregatedSection = document.getElementById("aggregated-metrics-section");
+    let aggregatedContent = document.getElementById("aggregated-metrics-content");
+
+    console.log("Panel check:", {
+        metricsPanel: !!metricsPanel,
+        metricsPanelHidden: metricsPanel?.classList.contains("hidden"),
+        aggregatedSection: !!aggregatedSection,
+        aggregatedContent: !!aggregatedContent,
+    });
+
     if (!aggregatedSection) {
-        console.error("Aggregated metrics section element not found");
+        if (retryCount < 10) {
+            console.error(
+                `Aggregated metrics section missing, retrying (${retryCount + 1}/10) in 100ms`,
+            );
+            setTimeout(() => displayMetrics(data, retryCount + 1), 100);
+            return;
+        }
+        console.error("Aggregated metrics section not found after retries; cannot render metrics");
         return;
     }
+
+    if (!aggregatedContent) {
+        console.warn("Aggregated metrics content container missing; creating fallback container");
+        aggregatedContent = document.createElement("div");
+        aggregatedContent.id = "aggregated-metrics-content";
+        aggregatedContent.className = "overflow-auto mb-6 bg-gray-100";
+
+        // Insert before chart if present, otherwise append to section
+        const chartElement = aggregatedSection.querySelector("#metricsChart");
+        if (chartElement && chartElement.parentElement === aggregatedSection) {
+            aggregatedSection.insertBefore(aggregatedContent, chartElement);
+        } else {
+            aggregatedSection.appendChild(aggregatedContent);
+        }
+    }
+
+    console.log("aggregated-metrics-content element ready:", aggregatedContent);
 
     try {
         // FIX: Handle completely empty data
         if (!data || Object.keys(data).length === 0) {
+            console.warn("Empty or null data received");
             const emptyStateDiv = document.createElement("div");
             emptyStateDiv.className = "text-center p-8 text-gray-500";
             emptyStateDiv.innerHTML = `
@@ -1010,8 +1049,8 @@ function displayMetrics(data) {
                     Refresh Metrics
                 </button>
             `;
-            aggregatedSection.innerHTML = "";
-            aggregatedSection.appendChild(emptyStateDiv);
+            aggregatedContent.innerHTML = "";
+            aggregatedContent.appendChild(emptyStateDiv);
             return;
         }
 
@@ -1033,15 +1072,11 @@ function displayMetrics(data) {
             mainContainer.appendChild(kpiSection);
         }
 
-        // Top Performers section (before individual metrics)
-        if (data.topPerformers || data.top) {
-            const topData = data.topPerformers || data.top;
-            // const topSection = createTopPerformersSection(topData);
-            const topSection = createEnhancedTopPerformersSection(topData);
-
-            mainContainer.appendChild(topSection);
-        }
-
+        // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
+        // (see <details> sections with top-tools-content, top-resources-content, etc. in admin.html)
+        // Legacy JavaScript widget is disabled to prevent duplicate rendering
+        console.log("✓ Top Performers handled by HTMX - skipping legacy JavaScript widget");
+        
         // Individual metrics grid for all components
         const metricsContainer = document.createElement("div");
         metricsContainer.className =
@@ -1096,13 +1131,42 @@ function displayMetrics(data) {
         }
 
         // Safe content replacement
-        aggregatedSection.innerHTML = "";
-        aggregatedSection.appendChild(mainContainer);
+        aggregatedContent.innerHTML = "";
+        aggregatedContent.appendChild(mainContainer);
 
         console.log("✓ Enhanced metrics display rendered successfully");
     } catch (error) {
         console.error("Error displaying metrics:", error);
         showMetricsError(error);
+    }
+}
+
+/**
+ * Switch between Top Performers tabs
+ */
+function switchTopPerformersTab(entityType) {
+    // Hide all panels
+    const panels = document.querySelectorAll('.top-performers-panel');
+    panels.forEach(panel => panel.classList.add('hidden'));
+    
+    // Remove active state from all tabs
+    const tabs = document.querySelectorAll('.top-performers-tab');
+    tabs.forEach(tab => {
+        tab.classList.remove('border-indigo-500', 'text-indigo-600', 'dark:text-indigo-400');
+        tab.classList.add('border-transparent', 'text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'dark:text-gray-400', 'dark:hover:text-gray-300');
+    });
+    
+    // Show selected panel
+    const selectedPanel = document.getElementById(`top-performers-panel-${entityType}`);
+    if (selectedPanel) {
+        selectedPanel.classList.remove('hidden');
+    }
+    
+    // Activate selected tab
+    const selectedTab = document.getElementById(`top-performers-tab-${entityType}`);
+    if (selectedTab) {
+        selectedTab.classList.remove('border-transparent', 'text-gray-500', 'hover:text-gray-700', 'hover:border-gray-300', 'dark:text-gray-400', 'dark:hover:text-gray-300');
+        selectedTab.classList.add('border-indigo-500', 'text-indigo-600', 'dark:text-indigo-400');
     }
 }
 

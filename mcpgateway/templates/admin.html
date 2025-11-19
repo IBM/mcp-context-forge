@@ -2220,7 +2220,7 @@
                 <div
                   id="associatedResources"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=50&render=selector"
+                  hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initResourceSelect('associatedResources', 'selectedResourcesPills', 'selectedResourcesWarning', 6, 'selectAllResourcesBtn', 'clearAllResourcesBtn')"
@@ -2280,7 +2280,7 @@
                 <div
                   id="associatedPrompts"
                   class="max-h-60 overflow-y-auto rounded-md border border-gray-300 dark:border-gray-700 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&render=selector"
+                  hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
                   hx-trigger="load"
                   hx-swap="innerHTML"
                   hx-on::after-swap="initPromptSelect('associatedPrompts', 'selectedPromptsPills', 'selectedPromptsWarning', 6, 'selectAllPromptsBtn', 'clearAllPromptsBtn')"
@@ -2500,7 +2500,7 @@
           <div class="overflow-x-auto">
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
-                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
+                 hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
@@ -3394,7 +3394,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/resources/partial -->
             <div id="resources-list-container"
-              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -3618,7 +3618,7 @@
           <div class="overflow-x-auto">
             <!-- HTMX container: will be replaced by /admin/prompts/partial -->
             <div id="prompts-list-container"
-              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
+              hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&include_inactive={{ include_inactive|default(false)|string|lower }}"
               hx-trigger="load"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -6504,7 +6504,116 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <!-- Aggregated Metrics Section (managed by JavaScript) -->
+        <!-- Top Performers Section -->
+        <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
+          <h2 class="text-2xl font-bold dark:text-gray-200 mb-4">
+            Top Performers
+          </h2>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
+            View the most frequently used tools, resources, prompts, and servers with paginated results.
+          </p>
+
+          <!-- Tab Navigation -->
+          <div class="border-b border-gray-200 dark:border-gray-700 mb-4">
+            <nav class="-mb-px flex space-x-8" aria-label="Top Performers Tabs">
+              <button
+                onclick="switchTopPerformersTab('tools')"
+                id="top-performers-tab-tools"
+                class="top-performers-tab border-b-2 border-indigo-500 py-2 px-1 text-sm font-medium text-indigo-600 dark:text-indigo-400"
+              >
+                Tools
+              </button>
+              <button
+                onclick="switchTopPerformersTab('resources')"
+                id="top-performers-tab-resources"
+                class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                Resources
+              </button>
+              <button
+                onclick="switchTopPerformersTab('prompts')"
+                id="top-performers-tab-prompts"
+                class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                Prompts
+              </button>
+              <button
+                onclick="switchTopPerformersTab('servers')"
+                id="top-performers-tab-servers"
+                class="top-performers-tab border-b-2 border-transparent py-2 px-1 text-sm font-medium text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300"
+              >
+                Servers
+              </button>
+            </nav>
+          </div>
+
+          <!-- Tab Content Panels -->
+          <div id="top-performers-panel-tools" class="top-performers-panel">
+            <div class="overflow-x-auto">
+              <div id="top-tools-content-visible"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=tools&page=1&per_page=10"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#top-tools-loading-visible">
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  Loading top tools...
+                </div>
+              </div>
+            </div>
+            <div id="top-tools-loading-visible" class="htmx-indicator hidden">Loading...</div>
+            <div id="top-tools-pagination-controls-visible"></div>
+          </div>
+
+          <div id="top-performers-panel-resources" class="top-performers-panel hidden">
+            <div class="overflow-x-auto">
+              <div id="top-resources-content-visible"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=resources&page=1&per_page=10"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#top-resources-loading-visible">
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  Loading top resources...
+                </div>
+              </div>
+            </div>
+            <div id="top-resources-loading-visible" class="htmx-indicator hidden">Loading...</div>
+            <div id="top-resources-pagination-controls-visible"></div>
+          </div>
+
+          <div id="top-performers-panel-prompts" class="top-performers-panel hidden">
+            <div class="overflow-x-auto">
+              <div id="top-prompts-content-visible"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=prompts&page=1&per_page=10"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#top-prompts-loading-visible">
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  Loading top prompts...
+                </div>
+              </div>
+            </div>
+            <div id="top-prompts-loading-visible" class="htmx-indicator hidden">Loading...</div>
+            <div id="top-prompts-pagination-controls-visible"></div>
+          </div>
+
+          <div id="top-performers-panel-servers" class="top-performers-panel hidden">
+            <div class="overflow-x-auto">
+              <div id="top-servers-content-visible"
+                   hx-get="{{ root_path }}/admin/metrics/partial?entity_type=servers&page=1&per_page=10"
+                   hx-trigger="load"
+                   hx-swap="outerHTML"
+                   hx-indicator="#top-servers-loading-visible">
+                <div class="text-center py-8 text-gray-500 dark:text-gray-400">
+                  Loading top servers...
+                </div>
+              </div>
+            </div>
+            <div id="top-servers-loading-visible" class="htmx-indicator hidden">Loading...</div>
+            <div id="top-servers-pagination-controls-visible"></div>
+          </div>
+        </div>
+
+        <!-- Aggregated Metrics Section -->
         <div id="aggregated-metrics-section" class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h2 class="text-2xl font-bold dark:text-gray-200 mb-4">
             Aggregated Metrics
@@ -6535,45 +6644,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             height="200"
             class="bg-white"
           ></canvas>
-
-          <hr class="my-6" />
-
-          <!-- Expandable sections for top items -->
-          <details id="top-tools-details" class="mb-4">
-            <summary
-              class="text-xl font-semibold cursor-pointer dark:text-gray-200"
-            >
-              Top Tools by Executions
-            </summary>
-            <div id="top-tools-content" class="mt-4"></div>
-          </details>
-
-          <details id="top-resources-details" class="mb-4">
-            <summary
-              class="text-xl font-semibold cursor-pointer dark:text-gray-200"
-            >
-              Top Resources by Executions
-            </summary>
-            <div id="top-resources-content" class="mt-4"></div>
-          </details>
-
-          <details id="top-servers-details" class="mb-4">
-            <summary
-              class="text-xl font-semibold cursor-pointer dark:text-gray-200"
-            >
-              Top Servers by Executions
-            </summary>
-            <div id="top-servers-content" class="mt-4"></div>
-          </details>
-
-          <details id="top-prompts-details" class="mb-4">
-            <summary
-              class="text-xl font-semibold cursor-pointer dark:text-gray-200"
-            >
-              Top Prompts by Executions
-            </summary>
-            <div id="top-prompts-content" class="mt-4"></div>
-          </details>
         </div>
       </div>
 
@@ -8965,7 +9035,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         id="edit-server-tools"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&render=selector"
+                        hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=20&render=selector"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initToolSelect('edit-server-tools', 'selectedEditToolsPills', 'selectedEditToolsWarning', 6, 'selectAllEditToolsBtn', 'clearAllEditToolsBtn')"
@@ -9025,7 +9095,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         id="edit-server-resources"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=50&render=selector"
+                        hx-get="{{ root_path }}/admin/resources/partial?page=1&per_page=20&render=selector"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initResourceSelect('edit-server-resources', 'selectedEditResourcesPills', 'selectedEditResourcesWarning', 6, 'selectAllEditResourcesBtn', 'clearAllEditResourcesBtn')"
@@ -9079,7 +9149,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div
                         id="edit-server-prompts"
                         class="max-h-60 overflow-y-auto rounded-md border border-gray-600 shadow-sm p-3 bg-gray-50 dark:bg-gray-900"
-                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=50&render=selector"
+                        hx-get="{{ root_path }}/admin/prompts/partial?page=1&per_page=20&render=selector"
                         hx-trigger="load"
                         hx-swap="innerHTML"
                         hx-on::after-swap="initPromptSelect('edit-server-prompts', 'selectedEditPromptsPills', 'selectedEditPromptsWarning', 6, 'selectAllEditPromptsBtn', 'clearAllEditPromptsBtn')"
