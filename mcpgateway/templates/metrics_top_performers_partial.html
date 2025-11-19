@@ -1,0 +1,83 @@
+<!-- htmlhint doctype-first:false -->
+<!-- Top Performers Table (matches tools_partial.html pattern) -->
+<table id="top-{{ entity_type }}-content-visible" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+  <thead class="bg-gray-50 dark:bg-gray-700">
+    <tr>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Rank</th>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Name</th>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Executions</th>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Avg Response Time</th>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Success Rate</th>
+      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">Last Used</th>
+    </tr>
+  </thead>
+  <tbody id="top-{{ entity_type }}-tbody" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+    {% for item in data %}
+    <tr class="hover:bg-gray-50 dark:hover:bg-gray-800">
+      <td class="px-4 py-4 whitespace-nowrap text-sm font-medium">
+        {% set rank = (pagination.page - 1) * pagination.per_page + loop.index %}
+        {% if rank == 1 %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">
+            🥇 {{ rank }}
+          </span>
+        {% elif rank == 2 %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-gray-200 text-gray-800">
+            🥈 {{ rank }}
+          </span>
+        {% elif rank == 3 %}
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-orange-100 text-orange-800">
+            🥉 {{ rank }}
+          </span>
+        {% else %}
+          <span class="text-gray-900 dark:text-gray-100">{{ rank }}</span>
+        {% endif %}
+      </td>
+      <td class="px-4 py-4 text-sm text-gray-900 dark:text-gray-100">
+        {{ item.get('name', 'N/A') }}
+      </td>
+      <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+        {{ "{:,}".format(item.get('executionCount', 0)) }}
+      </td>
+      <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+        {% set avg_response = item.get('avgResponseTime') %}
+        {% if avg_response is not none and avg_response != 'N/A' %}
+          {{ "%.0f"|format(avg_response|float) }}ms
+        {% else %}
+          N/A
+        {% endif %}
+      </td>
+      <td class="px-4 py-4 whitespace-nowrap text-sm">
+        {% set success_rate = item.get('successRate', 0) or 0 %}
+        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold 
+          {% if success_rate >= 95 %}bg-green-100 text-green-800{% elif success_rate >= 80 %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
+          {{ "%.1f"|format(success_rate) }}%
+        </span>
+      </td>
+      <td class="px-4 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
+        {% set last_exec = item.get('lastExecution') %}
+        {% if last_exec and last_exec != 'Never' %}
+          {{ last_exec }}
+        {% else %}
+          Never
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    {% if not data %}
+    <tr>
+      <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+        No data available
+      </td>
+    </tr>
+    {% endif %}
+  </tbody>
+</table>
+
+<!-- Out-of-band swap for pagination controls (matches tools pattern) -->
+<div id="top-{{ entity_type }}-pagination-controls-visible" hx-swap-oob="true">
+  {% set base_url = root_path + '/admin/metrics/partial' %}
+  {% set hx_target = '#top-' + entity_type + '-content-visible' %}
+  {% set hx_indicator = '#top-' + entity_type + '-loading-visible' %}
+  {% set query_params = {'entity_type': entity_type} %}
+  {% include 'pagination_controls.html' %}
+</div>
