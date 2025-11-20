@@ -9301,6 +9301,7 @@ document.addEventListener("DOMContentLoaded", () => {
             showErrorMessage(`❌ Error: ${err.message}`);
         }
     }
+    window.generateBulkTestCases = generateBulkTestCases;
 
     function clearAllSelections() {
         // Uncheck all checkboxes
@@ -14408,7 +14409,6 @@ window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
-window.generateBulkTestCases = generateBulkTestCases;
 window.generateToolTestCases = generateToolTestCases;
 window.generateTestCases = generateTestCases;
 window.enrichTool = enrichTool;
