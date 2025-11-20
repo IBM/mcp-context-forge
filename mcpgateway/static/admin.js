@@ -2237,7 +2237,10 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            tool.description = tool.description.slice(0, tool.description.indexOf("*"));
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
+            );
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -7850,63 +7853,63 @@ async function loadTools() {
             }
 
             // ✅ Build HTML rows dynamically
-            const rows = tools.map((tool) => {
-                const { id, name, integrationType, enabled, reachable } = tool;
-                let statusText = "";
-                let statusClass = "";
-            
-                if (enabled && reachable) {
-                    statusText = "Online";
-                    statusClass = "bg-green-100 text-green-800";
-                } else if (enabled) {
-                    statusText = "Offline";
-                    statusClass = "bg-yellow-100 text-yellow-800";
-                } else {
-                    statusText = "Inactive";
-                    statusClass = "bg-red-100 text-red-800";
-                }
-            
-                return `
-            <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
-                <td class="px-4 py-3">
-                <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
-                        data-tool="${name}###${id}">
-                </td>
-                <td class="px-4 py-3">${name}</td>
-                <td class="px-4 py-3">${integrationType || "-"}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
-                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
-                    ${statusText}
-                </span>
-                </td>
-                <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
-                <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                    <button onclick="validateTool('${id}')"
-                    class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
-                    Validate
-                    </button>
-                    <button onclick="generateToolTestCases('${id}')"
-                    class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
-                    Generate Test Cases
-                    </button>
-                    <button onclick="enrichTool('${id}')"
-                    class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
-                    Enrich
-                    </button>
-                    <button onclick="viewTool('${id}')"
-                    class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
-                    View
-                    </button>
-                    <button onclick="editTool('${id}')"
-                    class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
-                    Edit
-                    </button>
-                </div>
-                </td>
-            </tr>
-            `;
-            }).join("");
-
+            const rows = tools
+                .map((tool) => {
+                    const { id, name, integrationType, enabled, reachable } =
+                        tool;
+                    let statusText = "";
+                    let statusClass = "";
+                    if (enabled && reachable) {
+                        statusText = "Online";
+                        statusClass = "bg-green-100 text-green-800";
+                    } else if (enabled) {
+                        statusText = "Offline";
+                        statusClass = "bg-yellow-100 text-yellow-800";
+                    } else {
+                        statusText = "Inactive";
+                        statusClass = "bg-red-100 text-red-800";
+                    }
+                    return `
+                <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
+                    <td class="px-4 py-3">
+                    <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                            data-tool="${name}###${id}">
+                    </td>
+                    <td class="px-4 py-3">${name}</td>
+                    <td class="px-4 py-3">${integrationType || "-"}</td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
+                        ${statusText}
+                    </span>
+                    </td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                        <button onclick="validateTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
+                        Validate
+                        </button>
+                        <button onclick="generateToolTestCases('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
+                        Generate Test Cases
+                        </button>
+                        <button onclick="enrichTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
+                        Enrich
+                        </button>
+                        <button onclick="viewTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
+                        View
+                        </button>
+                        <button onclick="editTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
+                        Edit
+                        </button>
+                    </div>
+                    </td>
+                </tr>
+                `;
+                })
+                .join("");
             toolBody.innerHTML = rows;
         }
     } catch (error) {
@@ -7975,18 +7978,19 @@ async function enrichTool(toolId) {
 
         // 6. MAKE REQUEST with increased timeout
         //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
-        const response = await fetchWithTimeout(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+        const response = await fetchWithTimeout(
+            `/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
             {
                 method: "POST",
-                headers: { 
+                headers: {
                     "Cache-Control": "no-cache",
-                    Pragma: "no-cache", 
-                    "Content-Type": "application/json" 
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
                 },
                 body: JSON.stringify({ tool_id: toolId }),
-            }, toolTestState.requestTimeout, // Use the increased timeout
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
         );
-
         if (!response.ok) {
             if (response.status === 404) {
                 throw new Error(
@@ -8082,27 +8086,32 @@ document.addEventListener("DOMContentLoaded", () => {
         } else {
             selectedTools.forEach((tool) => {
                 const item = document.createElement("div");
-                item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+                item.className =
+                    "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
                 item.innerHTML = `
                     <span>${tool}</span>
                     <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
                 `;
-                item.querySelector(".remove-btn").addEventListener("click", () => {
-                    selectedTools = selectedTools.filter(t => t !== tool);
-                    const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
-                    if (box) {
-                        box.checked = false;
-                    }
-                    updateSelectedList();
-                });
+                item.querySelector(".remove-btn").addEventListener(
+                    "click",
+                    () => {
+                        selectedTools = selectedTools.filter((t) => t !== tool);
+                        const box = document.querySelector(`
+                            .tool-checkbox[data-tool="${tool}"]`);
+                        if (box) {
+                            box.checked = false;
+                        }
+                        updateSelectedList();
+                    },
+                );
                 selectedList.appendChild(item);
             });
         }
         selectedCount.textContent = selectedTools.length;
     }
-
+    
     // --- Search logic ---
-    if (searchBox !== null){
+    if (searchBox !== null) {
         searchBox.addEventListener("input", () => {
             const query = searchBox.value.trim().toLowerCase();
             document.querySelectorAll("#toolBody tr").forEach((row) => {
@@ -8810,25 +8819,30 @@ async function validateTool(toolId) {
 
                     // First section - Passthrough Headers
                     const headerSection = document.createElement("div");
-                    headerSection.className = 'mt-4 border-t pt-4';
+                    headerSection.className = "mt-4 border-t pt-4";
 
                     const headerDiv = document.createElement("div");
 
                     const label = document.createElement("label");
                     label.setAttribute("for", "validation-passthrough-headers");
-                    label.className = 'block text-sm font-medium text-gray-700 dark:text-gray-400';
-                    label.textContent = 'Passthrough Headers (Optional)';
+                    label.className =
+                        "block text-sm font-medium text-gray-700 dark:text-gray-400";
+                    label.textContent = "Passthrough Headers (Optional)";
 
                     const small = document.createElement("small");
-                    small.className = 'text-gray-500 dark:text-gray-400 block mb-2';
-                    small.textContent = 'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
+                    small.className =
+                        "text-gray-500 dark:text-gray-400 block mb-2";
+                    small.textContent =
+                        "Additional headers to send with the request (format: \"Header-Name: Value\", one per line)";
 
                     const textarea = document.createElement("textarea");
-                    textarea.id = 'validation-passthrough-headers';
-                    textarea.name = 'passthrough_headers';
+                    textarea.id = "validation-passthrough-headers";
+                    textarea.name = "passthrough_headers";
                     textarea.rows = 3;
-                    textarea.placeholder = 'Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456';
-                    textarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
+                    textarea.placeholder =
+                        "Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456";
+                    textarea.className =
+                        "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
 
                     headerDiv.appendChild(label);
                     headerDiv.appendChild(small);
@@ -8837,25 +8851,29 @@ async function validateTool(toolId) {
 
 
                     const nlUtteranceSection = document.createElement("div");
-                    nlUtteranceSection.className = 'mt-4 border-t pt-4';
+                    nlUtteranceSection.className = "mt-4 border-t pt-4";
 
                     const nlUtteranceDiv = document.createElement("div");
 
                     const nlUtterancelabel = document.createElement("label");
                     nlUtterancelabel.setAttribute("for", "test-passthrough-nlUtterances");
-                    nlUtterancelabel.className = 'block text-sm font-bold text-green-700 dark:text-green-400';
+                    nlUtterancelabel.className =
+                        "block text-sm font-bold text-green-700 dark:text-green-400";
                     nlUtterancelabel.textContent = "Generated Test Utterance";
 
                     const nlUtterancesmall = document.createElement("small");
-                    nlUtterancesmall.className = 'text-gray-500 dark:text-gray-400 block mb-2';
-                    nlUtterancesmall.textContent = 'Modify or add new utterances to test using the agent.';
+                    nlUtterancesmall.className =
+                        "text-gray-500 dark:text-gray-400 block mb-2";
+                    nlUtterancesmall.textContent =
+                        "Modify or add new utterances to test using the agent.";
 
                     const nlutextarea = document.createElement("textarea");
                     nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
-                    nlutextarea.name = 'passthrough_nlUtterances';
+                    nlutextarea.name = "passthrough_nlUtterances";
                     nlutextarea.rows = 3;
                     nlutextarea.value = test.nl_utterance.join("\n\n");
-                    nlutextarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
+                    nlutextarea.className =
+                        "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
 
                     nlUtteranceDiv.appendChild(nlUtterancelabel);
                     nlUtteranceDiv.appendChild(nlUtterancesmall);
@@ -8891,24 +8909,25 @@ async function validateTool(toolId) {
                     // Loading spinner
                     const loadingDiv = document.createElement("div");
                     loadingDiv.id = `tool-validation-loading-${index}`;
-                    loadingDiv.style.display = 'none';
+                    loadingDiv.style.display = "none";
 
                     const spinner = document.createElement("div");
-                    spinner.className = 'spinner';
+                    spinner.className = "spinner";
                     loadingDiv.appendChild(spinner);
 
                     // Result area
                     const resultDiv = document.createElement("div");
                     resultDiv.id = `tool-validation-result-${index}`;
-                    resultDiv.className = 'mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300';
-                    resultDiv.style.height = '400px';
+                    resultDiv.className =
+                        "mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300";
+                    resultDiv.style.height = "400px";
 
                     body.appendChild(formDiv);
                     body.appendChild(headerSection);
                     body.appendChild(nlUtteranceSection);
                     body.appendChild(runBtn);
                     body.appendChild(runAgentBtn);
-                    body.appendChild(loadingDiv)
+                    body.appendChild(loadingDiv);
                     body.appendChild(resultDiv);
                 });
 
@@ -8921,7 +8940,6 @@ async function validateTool(toolId) {
                     Run All Tests
                     </button>`;
                 container.appendChild(runAllDiv);
-
 
                 // Run All Tests wit hAgent button
                 // const runAGentAllDiv = document.createElement("div");
@@ -8937,38 +8955,44 @@ async function validateTool(toolId) {
                 document
                     .getElementById("run-all-tests-btn")
                     ?.addEventListener("click", async () => {
-                        showSuccessMessage("🔍 Validation in progress; View results by expanding each test case.");
-                    const total = testCases.length;
-                    document.querySelectorAll("#tool-validation-form-fields > div").forEach((acc) => {
-                        const body = acc.querySelector("div.hidden");
-                        const icon = acc.querySelector(".toggle-icon");
-                        if (body) {
-                            body.classList.remove("hidden");
-                        }
-                        if (icon) {
-                            icon.textContent = "−";
+                        showSuccessMessage(
+                            "🔍 Validation in progress; View results by expanding each test case.",
+                        );
+                        const total = testCases.length;
+                        document
+                            .querySelectorAll(
+                                "#tool-validation-form-fields > div",
+                            )
+                            .forEach((acc) => {
+                                const body = acc.querySelector("div.hidden");
+                                const icon = acc.querySelector(".toggle-icon");
+                                if (body) {
+                                    body.classList.remove("hidden");
+                                }
+                                if (icon) {
+                                    icon.textContent = "−";
+                                }
+                            });
+                        for (let i = 0; i < total; i++) {
+                            await runToolValidation(i);
                         }
                     });
-                    for (let i = 0; i < total; i++) {
-                        await runToolValidation(i);
-                    }
-                });
 
                 openModal("tool-validation-modal");
                 console.log("✓ Test modal with accordions loaded successfully");
             }
         } else {
-            showErrorMessage('Test case generation failed. Please check your LLM connection and try again.');
-        }
-
-
-        } catch (error) {
-            console.error("Error fetching tool details for testing:", error);
-            showErrorMessage(error.message);
-        } finally {
-            const testButton = document.querySelector(
-                `[onclick*="validateTool('${toolId}')"]`
+            showErrorMessage(
+                "Test case generation failed. Please check your LLM connection and try again.",
             );
+        }
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
         if (testButton) {
             testButton.disabled = false;
             testButton.textContent = "Validate";
@@ -8979,10 +9003,15 @@ async function validateTool(toolId) {
 
 async function runToolValidation(testIndex) {
     const form = document.querySelector(`#tool-validation-form-${testIndex}`);
-    const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
-
-    const loadingElement = safeGetElement(`tool-validation-loading-${testIndex}`);
-    const runButton = document.querySelector('button[onclick="runToolValidation()"]');
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolValidation()"]',
+    );
 
     if (!form || !AppState.currentTestTool) {
         console.error("Tool test form or current tool not found");
@@ -9256,10 +9285,15 @@ async function runToolValidation(testIndex) {
 
 async function runToolAgentValidation(testIndex) {
     const form = document.querySelector(`#tool-validation-form-${testIndex}`);
-    const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
-
-    const loadingElement = safeGetElement(`tool-validation-loading-${testIndex}`);
-    const runButton = document.querySelector('button[onclick="runToolAgentValidation()"]');
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolAgentValidation()"]',
+    );
 
     if (!form || !AppState.currentTestTool) {
         console.error("Tool test form or current tool not found");
@@ -9289,12 +9323,16 @@ async function runToolAgentValidation(testIndex) {
             resultContainer.innerHTML = "";
         }
 
-        const nlTestCases = document.getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
+        const nlTestCases = document
+            .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
             .value.split(/\r?\n\r?\n/);
         const toolId = AppState.currentTestTool.id;
 
         console.log(nlTestCases);
-        console.log("Running validation for the Tool: ", AppState.currentTestTool.name);
+        console.log(
+            "Running validation for the Tool: ",
+            AppState.currentTestTool.name,
+        );
         console.log("Running validation for the Tool Id: ", toolId);
 
         const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
@@ -9352,7 +9390,8 @@ async function runToolAgentValidation(testIndex) {
             }
         }
 
-        const response = await fetchWithTimeout("/toolops/validation/execute_tool_nl_testcases",
+        const response = await fetchWithTimeout(
+            "/toolops/validation/execute_tool_nl_testcases",
             {
                 method: "POST",
                 headers: {
@@ -10739,7 +10778,10 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
-            tool.description = tool.description.slice(0, tool.description.indexOf("*"));
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
+            );
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
