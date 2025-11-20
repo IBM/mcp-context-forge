@@ -432,7 +432,7 @@ clean:
 ## --- Automated checks --------------------------------------------------------
 smoketest:
 	@echo "🚀 Running smoketest..."
-	@bash -c '\
+	@/bin/bash -c 'source $(VENV_DIR)/bin/activate && \
 		./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }; \
 		echo "✅ Smoketest passed!" \
 	'
