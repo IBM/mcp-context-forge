@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -344,10 +344,10 @@ class TeamManagementService:
                 logger.warning(f"Team {team_id} not found for deletion")
                 return False
 
-            # Prevent deleting personal teams
-            if team.is_personal:
-                logger.warning(f"Cannot delete personal team {team_id}")
-                raise ValueError("Personal teams cannot be deleted")
+            # # Prevent deleting personal teams
+            # if team.is_personal:
+            #     logger.warning(f"Cannot delete personal team {team_id}")
+            #     raise ValueError("Personal teams cannot be deleted")
 
             # Soft delete the team
             team.is_active = False
@@ -359,6 +359,12 @@ class TeamManagementService:
             if scope_role_assignments:
                 await role_service.revoke_scope_role_assignments(scope="team", scope_id=team.id, revoked_by=deleted_by)
 
+            user_roles_stmt = delete(UserRole).where(UserRole.scope_id == team.id, UserRole.scope == "team")
+            self.db.execute(user_roles_stmt)
+
+            self.db.delete(team)
+            self.db.commit()
+            
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
 

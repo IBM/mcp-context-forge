@@ -435,6 +435,12 @@ class Permissions:
     TEAMS_JOIN = "teams.join"
     TEAMS_MANAGE_MEMBERS = "teams.manage_members"
 
+    # Gateway permissions
+    GATEWAYS_CREATE = "gateways.create"
+    GATEWAYS_READ = "gateways.read"
+    GATEWAYS_UPDATE = "gateways.update"
+    GATEWAYS_DELETE = "gateways.delete"
+
     # Tool permissions
     TOOLS_CREATE = "tools.create"
     TOOLS_READ = "tools.read"

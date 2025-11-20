@@ -23,7 +23,7 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import re
-from typing import Optional
+from typing import Optional, List
 
 # Third-Party
 from sqlalchemy import delete, func, select
@@ -32,9 +32,11 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailUser
+from mcpgateway.db import EmailAuthEvent, EmailUser, Role
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_service import RoleService
+from mcpgateway.services.team_management_service import TeamManagementService
 
 # Initialize logging
 logging_service = LoggingService()
@@ -766,24 +768,23 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
-            # Check if user owns any teams
-            # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            team_service = TeamManagementService(self.db)
+            user_teams = await team_service.get_user_teams(email)
+            teams_owned = [team for team in user_teams if team.created_by == email]
 
-            teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
-            teams_owned = self.db.execute(teams_owned_stmt).scalars().all()
+            role_service = RoleService(self.db)
+            roles: List[Role] = await role_service.list_roles()
+            team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+            roles_ids_with_teams_manage_members: List[str] = [r.id for r in team_roles_def if "teams.manage_members" in r.permissions]
 
             if teams_owned:
                 # For each team, try to transfer ownership to another owner
                 for team in teams_owned:
                     # Find other team owners who can take ownership
-                    potential_owners_stmt = (
-                        select(EmailTeamMember)
-                        .where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "team_owner")
-                        .order_by(EmailTeamMember.role.desc())
-                    )
-
-                    potential_owners = self.db.execute(potential_owners_stmt).scalars().all()
+                    team_roles = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
+                    potential_owners = [role for role in team_roles if role.role_id in roles_ids_with_teams_manage_members and role.user_email != email]
+                    logger.info(f'{potential_owners=} for team {team.name} owned by {email}')
 
                     if potential_owners:
                         # Transfer ownership to the first available owner
@@ -792,28 +793,17 @@ class EmailAuthService:
                         logger.info(f"Transferred team '{team.name}' ownership from {email} to {new_owner.user_email}")
                     else:
                         # No other owners available - check if it's a single-user team
-                        all_members_stmt = select(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                        all_members = self.db.execute(all_members_stmt).scalars().all()
-
-                        if len(all_members) == 1 and all_members[0].user_email == email:
+                        if len(team_roles) == 1 and team_roles[0].user_email == email:
                             # This is a single-user personal team - cascade delete it
                             logger.info(f"Deleting personal team '{team.name}' (single member: {email})")
-                            # Delete team members first (should be just the owner)
-                            delete_team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.team_id == team.id)
-                            self.db.execute(delete_team_members_stmt)
-                            # Delete the team
-                            self.db.delete(team)
+                            await team_service.delete_team(team.id, deleted_by=email)
                         else:
                             # Multi-member team with no other owners - cannot delete user
-                            raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
+                            raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(team_roles)} members but no other owners to transfer ownership to")
 
             # Delete related auth events first
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
-
-            # Remove user from all team memberships
-            team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)
-            self.db.execute(team_members_stmt)
 
             # Delete the user
             self.db.delete(user)
