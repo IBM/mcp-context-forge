@@ -48,6 +48,50 @@ docker build -t mcpgateway:latest -f Containerfile .
 
 ---
 
+## 🔒 Airgapped Deployments
+
+For environments without internet access, you can build a container with all UI assets bundled locally.
+
+### Build Airgapped Container
+
+Use `Containerfile.lite` which automatically downloads CDN assets during build:
+
+```bash
+docker build -f Containerfile.lite -t mcpgateway:airgapped .
+```
+
+This downloads and bundles:
+
+- Tailwind CSS (~404KB)
+- HTMX (~52KB)
+- CodeMirror (~216KB)
+- Alpine.js (~48KB)
+- Chart.js (~208KB)
+
+**Total: ~932KB of UI assets**
+
+### Run in Airgapped Mode
+
+```bash
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e MCPGATEWAY_UI_AIRGAPPED=true \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-test-key \
+  -e BASIC_AUTH_USER=admin \
+  -e BASIC_AUTH_PASSWORD=changeme \
+  -e AUTH_REQUIRED=true \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  mcpgateway:airgapped
+```
+
+!!! success "Fully Offline UI"
+    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. All CSS and JavaScript are served from local files bundled in the container.
+
+---
+
 ## 🏃 Run the Container
 
 ### With HTTP (no TLS)
