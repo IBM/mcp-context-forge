@@ -8043,8 +8043,7 @@ async function enrichTool(toolId) {
         }
     }
 }
-
-let toolopsTools;
+window.enrichTool = enrichTool;
 
 document.addEventListener("DOMContentLoaded", () => {
     const toolBody = document.getElementById("toolBody");
@@ -8175,7 +8174,7 @@ document.addEventListener("DOMContentLoaded", () => {
             .addEventListener("click", generateBulkTestCases);
     }
 
-    window.generateBulkTestCases = async function () {
+    async function generateBulkTestCases() {
         const testCases = parseInt(
             document.getElementById("gen-bulk-testcase-count").value,
         );
@@ -8221,7 +8220,8 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (err) {
             showErrorMessage(`❌ Error: ${err.message}`);
         }
-    };
+    }
+    window.generateBulkTestCases = generateBulkTestCases;
 
     function clearAllSelections() {
         // Uncheck all checkboxes
@@ -8328,6 +8328,7 @@ async function generateToolTestCases(toolId) {
         }
     }
 }
+window.generateToolTestCases = generateToolTestCases;
 
 async function generateTestCases() {
     const testCases = document.getElementById("gen-testcase-count").value;
@@ -8396,6 +8397,7 @@ async function generateTestCases() {
         }
     }
 }
+window.generateTestCases = generateTestCases;
 
 async function validateTool(toolId) {
     try {
