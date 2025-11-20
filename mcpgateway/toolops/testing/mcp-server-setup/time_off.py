@@ -1,24 +1,29 @@
+# Standard
 from enum import Enum
-from typing import Optional, List
-from datetime import datetime
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, validator
+from typing import List, Optional
 
-app = FastAPI(
-    title="SAP SuccessFactors Time Off API",
-    description="API for retrieving upcoming time off events",
-    version="1.0.0"
-)
+# Third-Party
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+app = FastAPI(title="SAP SuccessFactors Time Off API", description="API for retrieving upcoming time off events", version="1.0.0")
+
 
 class TimeOffTypes(str, Enum):
-    """Represents the time off event types in SAP SuccessFactors."""
+    """
+    Represents the time off event types in SAP SuccessFactors.
+    """
+
     ABSENCE = "ABSENCE"
     PUBLIC_HOLIDAY = "PUBLIC_HOLIDAY"
     NON_WORKING_DAY = "NON_WORKING_DAY"
 
 
 class UpcomingTimeOff(BaseModel):
-    """Represents an upcoming time off event in SAP SuccessFactors."""
+    """
+    Represents an upcoming time off event in SAP SuccessFactors.
+    """
+
     title: str
     start_date: str
     end_date: str
@@ -44,13 +49,16 @@ class UpcomingTimeOff(BaseModel):
                 "cross_midnight": False,
                 "type": "ABSENCE",
                 "status_formatted": None,
-                "absence_duration_category": None
+                "absence_duration_category": None,
             }
         }
 
 
 class UpcomingTimeOffResponse(BaseModel):
-    """Represents the response from getting a user's upcoming time off."""
+    """
+    Represents the response from getting a user's upcoming time off.
+    """
+
     time_off_events: List[UpcomingTimeOff]
 
     class Config:
@@ -68,7 +76,7 @@ class UpcomingTimeOffResponse(BaseModel):
                         "cross_midnight": False,
                         "type": "ABSENCE",
                         "status_formatted": None,
-                        "absence_duration_category": None
+                        "absence_duration_category": None,
                     }
                 ]
             }
@@ -76,33 +84,24 @@ class UpcomingTimeOffResponse(BaseModel):
 
 
 class TimeOffRequest(BaseModel):
-    """Request model for getting upcoming time off."""
+    """
+    Request model for getting upcoming time off.
+    """
+
     user_id: str = Field(..., description="User ID in SAP SuccessFactors")
     start_date: str = Field(..., description="Start date in YYYY-MM-DD format", example="2024-01-01")
     end_date: str = Field(..., description="End date in YYYY-MM-DD format", example="2024-01-05")
     time_off_types: List[TimeOffTypes] = Field(..., description="List of time off types to retrieve")
 
-    @validator('start_date', 'end_date')
-    def validate_date_format(cls, v):
-        try:
-            datetime.strptime(v, "%Y-%m-%d")
-            return v
-        except ValueError:
-            raise ValueError("Invalid date format. Please use YYYY-MM-DD.")
-
     class Config:
-        schema_extra = {
-            "example": {
-                "user_id": "12344",
-                "start_date": "2024-01-01",
-                "end_date": "2024-01-05",
-                "time_off_types": ["ABSENCE", "PUBLIC_HOLIDAY"]
-            }
-        }
+        schema_extra = {"example": {"user_id": "12344", "start_date": "2024-01-01", "end_date": "2024-01-05", "time_off_types": ["ABSENCE", "PUBLIC_HOLIDAY"]}}
 
 
 class ErrorResponse(BaseModel):
-    """Error response model."""
+    """
+    Error response model.
+    """
+
     status_code: int
     error: str
 
@@ -113,35 +112,30 @@ class ErrorResponse(BaseModel):
     summary="Get Upcoming Time Off",
     description="Retrieves the user's upcoming time off details from SAP SuccessFactors.",
     responses={
-        200: {
-            "description": "Successfully retrieved time off events",
-            "model": UpcomingTimeOffResponse
-        },
-        400: {
-            "description": "Invalid request parameters",
-            "model": ErrorResponse
-        },
-        500: {
-            "description": "Internal server error",
-            "model": ErrorResponse
-        }
-    }
+        200: {"description": "Successfully retrieved time off events", "model": UpcomingTimeOffResponse},
+        400: {"description": "Invalid request parameters", "model": ErrorResponse},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
 )
 def get_upcoming_time_off(request: TimeOffRequest) -> UpcomingTimeOffResponse:
     """
     Retrieves the user's upcoming time off details from SAP SuccessFactors.
-    
-    **Parameters:**
-    - **user_id**: User ID in SAP SuccessFactors
-    - **start_date**: Start date in YYYY-MM-DD format
-    - **end_date**: End date in YYYY-MM-DD format
-    - **time_off_types**: List of time off types (ABSENCE, PUBLIC_HOLIDAY, NON_WORKING_DAY)
-    
-    **Returns:**
-    - List of upcoming time off events matching the specified criteria
+
+    Args:
+        request: in TimeoffRequest format with following information
+            - user_id: User ID in SAP SuccessFactors
+            - start_date: Start date in YYYY-MM-DD format
+            - end_date: End date in YYYY-MM-DD format
+            - time_off_types: List of time off types (ABSENCE, PUBLIC_HOLIDAY, NON_WORKING_DAY)
+
+    Returns:
+        UpcomingTimeOffResponse: List of upcoming time off events matching the specified criteria
+
+    Raises:
+        HTTPException: For server error codes
     """
     time_off_events = []
-    
+
     for time_type in request.time_off_types:
         # Hard-coded values for testing
         if time_type == TimeOffTypes.ABSENCE:
@@ -207,27 +201,26 @@ def get_upcoming_time_off(request: TimeOffRequest) -> UpcomingTimeOffResponse:
                     absence_duration_category=None,
                 )
             )
-    
+
     if len(time_off_events) == 0:
-        raise HTTPException(
-            status_code=500,
-            detail="Invalid values for time off types, valid values are ABSENCE, PUBLIC_HOLIDAY, NON_WORKING_DAY"
-        )
-    
+        raise HTTPException(status_code=500, detail="Invalid values for time off types, valid values are ABSENCE, PUBLIC_HOLIDAY, NON_WORKING_DAY")
+
     return UpcomingTimeOffResponse(time_off_events=time_off_events)
 
 
 @app.get("/", summary="Root Endpoint")
 def read_root():
-    """Root endpoint with API information."""
-    return {
-        "message": "SAP SuccessFactors Time Off API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "openapi": "/openapi.json"
-    }
+    """
+    Root endpoint with API information.
+
+    Returns:
+        Live status of the root API
+    """
+    return {"message": "SAP SuccessFactors Time Off API", "version": "1.0.0", "docs": "/docs", "openapi": "/openapi.json"}
 
 
 if __name__ == "__main__":
+    # Third-Party
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
