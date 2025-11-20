@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/toolops/testing/mcp-server-setup/toolops_fastmcp_server.py
+"""Location: ./mcpgateway/toolops/testing/mcp-server-setup/sap_successfactors_mcp_server.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Jay Bandlamudi

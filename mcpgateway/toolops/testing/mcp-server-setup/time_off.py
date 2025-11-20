@@ -1,3 +1,13 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/toolops/testing/mcp-server-setup/time_off.py
+Copyright 2025
+SPDX-License-Identifier: Apache-2.0
+Authors: Jay Bandlamudi
+
+MCP Gateway - Script to set up test sap tool API
+
+This module creates API endpoint for toolops testing purpose.
+"""
 # Standard
 from enum import Enum
 from typing import List, Optional
@@ -220,7 +230,9 @@ def read_root():
 
 
 if __name__ == "__main__":
-    # Third-Party
+    """
+    Main method to start the time off API server
+    """
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
