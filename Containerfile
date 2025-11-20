@@ -55,7 +55,10 @@ LABEL maintainer="Mihai Criveti" \
       description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
+<<<<<<< HEAD
+=======
 ARG TARGETPLATFORM
+>>>>>>> 59fb8249badd7d8adad4cbce1fdff9a6124e1743
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # Install Python and build dependencies
@@ -73,7 +76,11 @@ WORKDIR /app
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
 # ----------------------------------------------------------------------------
+<<<<<<< HEAD
+RUN if [ `uname -m` = "s390x" ]; then \
+=======
 RUN if [ "$TARGETPLATFORM" = "linux/s390x" ]; then \
+>>>>>>> 59fb8249badd7d8adad4cbce1fdff9a6124e1743
         echo "Building for s390x."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
