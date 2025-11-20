@@ -126,7 +126,7 @@ def build_engine() -> Engine:
     elif backend in ("mysql", "mariadb"):
         # MariaDB/MySQL specific configuration
         logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
-        
+
         return create_engine(
             settings.database_url,
             pool_pre_ping=True,
@@ -137,7 +137,7 @@ def build_engine() -> Engine:
             connect_args=connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
         )
-    
+
     # Other databases support full pooling configuration
     return create_engine(
         settings.database_url,
@@ -227,7 +227,7 @@ def refresh_slugs_on_startup():
             except Exception:
                 logger.info("Gateway table not found, skipping slug refresh")
                 return
-                
+ 
             updated = False
             for gateway in gateways:
                 new_slug = slugify(gateway.name)
@@ -255,7 +255,7 @@ def refresh_slugs_on_startup():
                     session.commit()
             except Exception:
                 logger.info("Tool table not found, skipping tool name refresh")
-                
+           
     except Exception as e:
         logger.warning("Failed to refresh slugs on startup: %s", e)
 
