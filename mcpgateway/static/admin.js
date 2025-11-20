@@ -8632,7 +8632,7 @@ async function validateTool(toolId) {
 
                     // Render accordion-style test cases
                     testCases.forEach((test, index) => {
-                        const inputParameters = test["input_parameters"];
+                        const inputParameters = test.input_parameters;
                         const acc = document.createElement("div");
                         acc.className =
                             "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
