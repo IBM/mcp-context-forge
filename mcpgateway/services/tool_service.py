@@ -1415,9 +1415,10 @@ class ToolService:
                     if is_err is None:
                         is_err = getattr(tool_call_result, "isError", False)
                     tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
+                    success = not is_err
                     logger.debug(f"Final tool_result: {tool_result}")
                 else:
-                    tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")])
+                    tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 
                 # Plugin hook: tool post-invoke
                 if self._plugin_manager:

@@ -382,159 +382,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # For all other URLs, preserve the domain name
         return url
 
-    async def _validate_gateway_url(self, url: str, headers: dict, transport_type: str, timeout: Optional[int] = None):
-        """Validates whether a given URL is a valid MCP SSE or StreamableHTTP endpoint.
-
-        The function performs a lightweight protocol verification:
-        * For STREAMABLEHTTP, it sends a JSON-RPC ping request.
-        * For SSE, it sends a GET request expecting ``text/event-stream``.
-
-        Any authentication error, invalid content-type, unreachable endpoint,
-        unsupported transport type, or raised exception results in ``False``.
-
-        Args:
-            url (str): The endpoint URL to validate.
-            headers (dict): Request headers including authorization or protocol version.
-            transport_type (str): Expected transport type. One of:
-                * "SSE"
-                * "STREAMABLEHTTP"
-            timeout (int, optional): Request timeout in seconds. Uses default
-                settings.gateway_validation_timeout if not provided.
-
-        Returns:
-            bool: True if endpoint is reachable and matches protocol expectations.
-                    False for any failure or exception.
-
-        Examples:
-
-            Invalid transport type:
-            >>> class T:
-            ...     async def _validate_gateway_url(self, *a, **k):
-            ...         return False
-            >>> import asyncio
-            >>> asyncio.run(T()._validate_gateway_url(
-            ...     "http://example.com", {}, "WRONG"
-            ... ))
-            False
-
-            Authentication failure (simulated):
-            >>> class T:
-            ...     async def _validate_gateway_url(self, *a, **k):
-            ...         return False
-            >>> asyncio.run(T()._validate_gateway_url(
-            ...     "http://example.com/protected",
-            ...     {"Authorization": "Invalid"},
-            ...     "SSE"
-            ... ))
-            False
-
-            Incorrect content-type (simulated):
-            >>> class T:
-            ...     async def _validate_gateway_url(self, *a, **k):
-            ...         return False
-            >>> asyncio.run(T()._validate_gateway_url(
-            ...     "http://example.com/stream", {}, "STREAMABLEHTTP"
-            ... ))
-            False
-
-            Network or unexpected exception (simulated):
-            >>> class T:
-            ...     async def _validate_gateway_url(self, *a, **k):
-            ...         raise Exception("Simulated error")
-            >>> try:
-            ...     asyncio.run(T()._validate_gateway_url(
-            ...         "http://example.com", {}, "SSE"
-            ...     ))
-            ... except Exception as e:
-            ...     isinstance(e, Exception)
-            True
-        """
-        timeout = timeout or settings.gateway_validation_timeout
-        protocol_version = settings.protocol_version
-        transport = (transport_type or "").upper()
-
-        # create validation client
-        validation_client = ResilientHttpClient(
-            client_args={
-                "timeout": timeout,
-                "verify": not settings.skip_ssl_verify,
-                "follow_redirects": True,
-                "max_redirects": settings.gateway_max_redirects,
-            }
-        )
-
-        # headers copy
-        h = dict(headers or {})
-
-        # Small helper
-        def _auth_or_not_found(status: int) -> bool:
-            return status in (401, 403, 404)
-
-        try:
-            # STREAMABLE HTTP VALIDATION
-            if transport == "STREAMABLEHTTP":
-                h.setdefault("Content-Type", "application/json")
-                h.setdefault("Accept", "application/json, text/event-stream")
-                h.setdefault("MCP-Protocol-Version", "2025-06-18")
-
-                ping = {
-                    "jsonrpc": "2.0",
-                    "id": "ping-1",
-                    "method": "ping",
-                    "params": {},
-                }
-
-                try:
-                    async with validation_client.client.stream("POST", url, headers=h, timeout=timeout, json=ping) as resp:
-                        status = resp.status_code
-                        ctype = resp.headers.get("content-type", "")
-
-                        if _auth_or_not_found(status):
-                            return False
-
-                        # Accept both JSON and EventStream
-                        if ("application/json" in ctype) or ("text/event-stream" in ctype):
-                            return True
-
-                        return False
-
-                except Exception:
-                    return False
-
-            # SSE VALIDATION
-            elif transport == "SSE":
-                h.setdefault("Accept", "text/event-stream")
-                h.setdefault("MCP-Protocol-Version", protocol_version)
-
-                try:
-                    async with validation_client.client.stream("GET", url, headers=h, timeout=timeout) as resp:
-                        status = resp.status_code
-                        ctype = resp.headers.get("content-type", "")
-
-                        if _auth_or_not_found(status):
-                            return False
-
-                        if "text/event-stream" not in ctype:
-                            return False
-
-                        # Check if at least one SSE line arrives
-                        async for line in resp.aiter_lines():
-                            if line.strip():
-                                return True
-
-                        return False
-
-                except Exception:
-                    return False
-
-            # INVALID TRANSPORT
-            else:
-                return False
-
-        finally:
-            # always cleanly close the client
-            await validation_client.aclose()
-
     def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
         """Create an SSL context with the provided CA certificate.
 
@@ -1246,9 +1093,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             access_conditions = []
             # Filter by specific team
+
+            # Team-owned gateways (team-scoped gateways)
             access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])))
 
             access_conditions.append(and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email))
+
+            # Also include global public gateways (no team_id) so public gateways are visible regardless of selected team
+            access_conditions.append(DbGateway.visibility == "public")
 
             query = query.where(or_(*access_conditions))
         else:
@@ -1411,7 +1263,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # FIX for Issue #1025: Determine if URL actually changed before we update it
                 # We need this early because we update gateway.url below, and need to know
                 # if it actually changed to decide whether to re-fetch tools
-                url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
+                # tools/resoures/prompts are need to be re-fetched not only if URL changed , in case any update like authentication and visibility changed
+                # url_changed = gateway_update.url is not None and self.normalize_url(str(gateway_update.url)) != gateway.url
 
                 # Update fields if provided
                 if gateway_update.name is not None:
@@ -1491,96 +1344,96 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         gateway.auth_value = decoded_auth
 
                 # Try to reinitialize connection if URL actually changed
-                if url_changed:
-                    # Initialize empty lists in case initialization fails
-                    tools_to_add = []
-                    resources_to_add = []
-                    prompts_to_add = []
+                # if url_changed:
+                # Initialize empty lists in case initialization fails
+                tools_to_add = []
+                resources_to_add = []
+                prompts_to_add = []
 
-                    try:
-                        ca_certificate = getattr(gateway, "ca_certificate", None)
-                        capabilities, tools, resources, prompts = await self._initialize_gateway(
-                            gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
-                        )
-                        new_tool_names = [tool.name for tool in tools]
-                        new_resource_uris = [resource.uri for resource in resources]
-                        new_prompt_names = [prompt.name for prompt in prompts]
+                try:
+                    ca_certificate = getattr(gateway, "ca_certificate", None)
+                    capabilities, tools, resources, prompts = await self._initialize_gateway(
+                        gateway.url, gateway.auth_value, gateway.transport, gateway.auth_type, gateway.oauth_config, ca_certificate
+                    )
+                    new_tool_names = [tool.name for tool in tools]
+                    new_resource_uris = [resource.uri for resource in resources]
+                    new_prompt_names = [prompt.name for prompt in prompts]
 
-                        if gateway_update.one_time_auth:
-                            # For one-time auth, clear auth_type and auth_value after initialization
-                            gateway.auth_type = "one_time_auth"
-                            gateway.auth_value = None
-                            gateway.oauth_config = None
+                    if gateway_update.one_time_auth:
+                        # For one-time auth, clear auth_type and auth_value after initialization
+                        gateway.auth_type = "one_time_auth"
+                        gateway.auth_value = None
+                        gateway.oauth_config = None
 
-                        # Update tools using helper method
-                        tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
+                    # Update tools using helper method
+                    tools_to_add = self._update_or_create_tools(db, tools, gateway, "update")
 
-                        # Update resources using helper method
-                        resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
+                    # Update resources using helper method
+                    resources_to_add = self._update_or_create_resources(db, resources, gateway, "update")
 
-                        # Update prompts using helper method
-                        prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
+                    # Update prompts using helper method
+                    prompts_to_add = self._update_or_create_prompts(db, prompts, gateway, "update")
 
-                        # Log newly added items
-                        items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
-                        if items_added > 0:
-                            if tools_to_add:
-                                logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
-                            if resources_to_add:
-                                logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
-                            if prompts_to_add:
-                                logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
-                            logger.info(f"Total {items_added} new items added during gateway update")
-
-                        # Count items before cleanup for logging
-
-                        # Delete tools that are no longer available from the gateway
-                        stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
-                        for tool in stale_tools:
-                            db.delete(tool)
-
-                        # Delete resources that are no longer available from the gateway
-                        stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
-                        for resource in stale_resources:
-                            db.delete(resource)
-
-                        # Delete prompts that are no longer available from the gateway
-                        stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
-                        for prompt in stale_prompts:
-                            db.delete(prompt)
-
-                        gateway.capabilities = capabilities
-                        gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
-                        gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
-                        gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
-
-                        # Log cleanup results
-                        tools_removed = len(stale_tools)
-                        resources_removed = len(stale_resources)
-                        prompts_removed = len(stale_prompts)
-
-                        if tools_removed > 0:
-                            logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
-                        if resources_removed > 0:
-                            logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
-                        if prompts_removed > 0:
-                            logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
-
-                        gateway.last_seen = datetime.now(timezone.utc)
-
-                        # Add new items to database session
+                    # Log newly added items
+                    items_added = len(tools_to_add) + len(resources_to_add) + len(prompts_to_add)
+                    if items_added > 0:
                         if tools_to_add:
-                            db.add_all(tools_to_add)
+                            logger.info(f"Added {len(tools_to_add)} new tools during gateway update")
                         if resources_to_add:
-                            db.add_all(resources_to_add)
+                            logger.info(f"Added {len(resources_to_add)} new resources during gateway update")
                         if prompts_to_add:
-                            db.add_all(prompts_to_add)
+                            logger.info(f"Added {len(prompts_to_add)} new prompts during gateway update")
+                        logger.info(f"Total {items_added} new items added during gateway update")
 
-                        # Update tracking with new URL
-                        self._active_gateways.discard(gateway.url)
-                        self._active_gateways.add(gateway.url)
-                    except Exception as e:
-                        logger.warning(f"Failed to initialize updated gateway: {e}")
+                    # Count items before cleanup for logging
+
+                    # Delete tools that are no longer available from the gateway
+                    stale_tools = [tool for tool in gateway.tools if tool.original_name not in new_tool_names]
+                    for tool in stale_tools:
+                        db.delete(tool)
+
+                    # Delete resources that are no longer available from the gateway
+                    stale_resources = [resource for resource in gateway.resources if resource.uri not in new_resource_uris]
+                    for resource in stale_resources:
+                        db.delete(resource)
+
+                    # Delete prompts that are no longer available from the gateway
+                    stale_prompts = [prompt for prompt in gateway.prompts if prompt.name not in new_prompt_names]
+                    for prompt in stale_prompts:
+                        db.delete(prompt)
+
+                    gateway.capabilities = capabilities
+                    gateway.tools = [tool for tool in gateway.tools if tool.original_name in new_tool_names]  # keep only still-valid rows
+                    gateway.resources = [resource for resource in gateway.resources if resource.uri in new_resource_uris]  # keep only still-valid rows
+                    gateway.prompts = [prompt for prompt in gateway.prompts if prompt.name in new_prompt_names]  # keep only still-valid rows
+
+                    # Log cleanup results
+                    tools_removed = len(stale_tools)
+                    resources_removed = len(stale_resources)
+                    prompts_removed = len(stale_prompts)
+
+                    if tools_removed > 0:
+                        logger.info(f"Removed {tools_removed} tools no longer available during gateway update")
+                    if resources_removed > 0:
+                        logger.info(f"Removed {resources_removed} resources no longer available during gateway update")
+                    if prompts_removed > 0:
+                        logger.info(f"Removed {prompts_removed} prompts no longer available during gateway update")
+
+                    gateway.last_seen = datetime.now(timezone.utc)
+
+                    # Add new items to database session
+                    if tools_to_add:
+                        db.add_all(tools_to_add)
+                    if resources_to_add:
+                        db.add_all(resources_to_add)
+                    if prompts_to_add:
+                        db.add_all(prompts_to_add)
+
+                    # Update tracking with new URL
+                    self._active_gateways.discard(gateway.url)
+                    self._active_gateways.add(gateway.url)
+                except Exception as e:
+                    logger.warning(f"Failed to initialize updated gateway: {e}")
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
@@ -2998,7 +2851,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             try:
                 # Check if tool already exists for this gateway
                 existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway.id)).scalar_one_or_none()
-
                 if existing_tool:
                     # Update existing tool if there are changes
                     fields_to_update = False
@@ -3016,7 +2868,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     if basic_fields_changed or schema_fields_changed or auth_fields_changed:
                         fields_to_update = True
-
                     if fields_to_update:
                         existing_tool.url = gateway.url
                         existing_tool.description = tool.description
@@ -3339,83 +3190,82 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth=auth,
             )
 
-        if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="SSE"):
-            # Use async with for both sse_client and ClientSession
-            async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
-                async with ClientSession(*streams) as session:
-                    # Initialize the session
-                    response = await session.initialize()
-                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                    logger.debug(f"Server capabilities: {capabilities}")
+        # Use async with for both sse_client and ClientSession
+        async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
+            async with ClientSession(*streams) as session:
+                # Initialize the session
+                response = await session.initialize()
+                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                logger.debug(f"Server capabilities: {capabilities}")
 
-                    response = await session.list_tools()
-                    tools = response.tools
-                    tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                response = await session.list_tools()
+                tools = response.tools
+                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                    tools = [ToolCreate.model_validate(tool) for tool in tools]
-                    if tools:
-                        logger.info(f"Fetched {len(tools)} tools from gateway")
-                    # Fetch resources if supported
-                    resources = []
-                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present (will be fetched on demand)
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mime_type"),
-                                            template=resource_data.get("template"),
-                                            content="",
-                                        )
+                tools = [ToolCreate.model_validate(tool) for tool in tools]
+                if tools:
+                    logger.info(f"Fetched {len(tools)} tools from gateway")
+                # Fetch resources if supported
+                resources = []
+                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                if capabilities.get("resources"):
+                    try:
+                        response = await session.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present (will be fetched on demand)
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mime_type"),
+                                        template=resource_data.get("template"),
+                                        content="",
                                     )
-                                logger.info(f"Fetched {len(resources)} resources from gateway")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
+                                )
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch resources: {e}")
 
-                    # Fetch prompts if supported
-                    prompts = []
-                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                try:
-                                    prompts.append(PromptCreate.model_validate(prompt_data))
-                                except Exception:
-                                    # If validation fails, create minimal prompt
-                                    prompts.append(
-                                        PromptCreate(
-                                            name=prompt_data.get("name", ""),
-                                            description=prompt_data.get("description"),
-                                            template=prompt_data.get("template", ""),
-                                        )
+                # Fetch prompts if supported
+                prompts = []
+                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                if capabilities.get("prompts"):
+                    try:
+                        response = await session.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            try:
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            except Exception:
+                                # If validation fails, create minimal prompt
+                                prompts.append(
+                                    PromptCreate(
+                                        name=prompt_data.get("name", ""),
+                                        description=prompt_data.get("description"),
+                                        template=prompt_data.get("template", ""),
                                     )
-                                logger.info(f"Fetched {len(prompts)} prompts from gateway")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
+                                )
+                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch prompts: {e}")
 
-                    return capabilities, tools, resources, prompts
+                return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at {server_url}")
 
     async def connect_to_streamablehttp_server(self, server_url: str, authentication: Optional[Dict[str, str]] = None, ca_certificate: Optional[bytes] = None):
@@ -3460,61 +3310,60 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 auth=auth,
             )
 
-        if await self._validate_gateway_url(url=server_url, headers=authentication, transport_type="STREAMABLEHTTP"):
-            async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-                async with ClientSession(read_stream, write_stream) as session:
-                    # Initialize the session
-                    response = await session.initialize()
-                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                    logger.debug(f"Server capabilities: {capabilities}")
+        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                # Initialize the session
+                response = await session.initialize()
+                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
+                logger.debug(f"Server capabilities: {capabilities}")
 
-                    response = await session.list_tools()
-                    tools = response.tools
-                    tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                response = await session.list_tools()
+                tools = response.tools
+                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
 
-                    tools = [ToolCreate.model_validate(tool) for tool in tools]
-                    for tool in tools:
-                        tool.request_type = "STREAMABLEHTTP"
-                    if tools:
-                        logger.info(f"Fetched {len(tools)} tools from gateway")
+                tools = [ToolCreate.model_validate(tool) for tool in tools]
+                for tool in tools:
+                    tool.request_type = "STREAMABLEHTTP"
+                if tools:
+                    logger.info(f"Fetched {len(tools)} tools from gateway")
 
-                    # Fetch resources if supported
-                    resources = []
-                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            resources = []
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                resources.append(ResourceCreate.model_validate(resource_data))
-                            logger.info(f"Fetched {len(resources)} resources from gateway")
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch resources: {e}")
+                # Fetch resources if supported
+                resources = []
+                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                if capabilities.get("resources"):
+                    try:
+                        response = await session.list_resources()
+                        raw_resources = response.resources
+                        resources = []
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            resources.append(ResourceCreate.model_validate(resource_data))
+                        logger.info(f"Fetched {len(resources)} resources from gateway")
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch resources: {e}")
 
-                    # Fetch prompts if supported
-                    prompts = []
-                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            prompts = []
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                prompts.append(PromptCreate.model_validate(prompt_data))
-                        except Exception as e:
-                            logger.warning(f"Failed to fetch prompts: {e}")
+                # Fetch prompts if supported
+                prompts = []
+                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                if capabilities.get("prompts"):
+                    try:
+                        response = await session.list_prompts()
+                        raw_prompts = response.prompts
+                        prompts = []
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            prompts.append(PromptCreate.model_validate(prompt_data))
+                    except Exception as e:
+                        logger.warning(f"Failed to fetch prompts: {e}")
 
-                    return capabilities, tools, resources, prompts
+                return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")

@@ -554,67 +554,6 @@ class TestGatewayService:
         assert exc_info.value.gateway_id == 123
         assert exc_info.value.enabled is True
 
-
-    # ────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL - Parameterized Tests
-    # ────────────────────────────────────────────────────────────────────
-    @pytest.mark.parametrize(
-        "status_code,headers,transport_type,expected",
-        [
-            # SSE transport success cases
-            (200, {"content-type": "text/event-stream"}, "SSE", True),
-            # SSE transport failure cases - auth failures
-            (401, {"content-type": "text/event-stream"}, "SSE", False),
-            (403, {"content-type": "text/event-stream"}, "SSE", False),
-            # SSE transport failure cases - wrong content-type
-            (200, {"content-type": "application/json"}, "SSE", False),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_validate_gateway_url_responses(self, gateway_service, httpx_mock, status_code, headers, transport_type, expected):
-        """Test various HTTP responses during gateway URL validation."""
-        method = "POST" if transport_type == "STREAMABLEHTTP" else "GET"
-
-        # For SSE with 200 status, mock streaming response
-        if transport_type == "SSE" and status_code == 200 and "text/event-stream" in headers.get("content-type", ""):
-            httpx_mock.add_response(
-                method=method,
-                url="http://example.com",
-                status_code=status_code,
-                headers=headers,
-                content=b"data: test\n\n",  # Add SSE data so aiter_lines() returns something
-            )
-        else:
-            httpx_mock.add_response(
-                method=method,
-                url="http://example.com",
-                status_code=status_code,
-                headers=headers,
-            )
-
-        result = await gateway_service._validate_gateway_url(
-            url="http://example.com", headers={}, transport_type=transport_type
-        )
-
-        assert result is expected
-
-    @pytest.mark.parametrize(
-        "exception_class,exception_msg",
-        [
-            (httpx.ReadTimeout, "Timeout"),
-            (httpx.ConnectError, "Connection error"),
-            (httpx.UnsupportedProtocol, "Unsupported protocol"),
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_validate_gateway_url_exceptions(self, gateway_service, httpx_mock, exception_class, exception_msg):
-        """Test exception handling during gateway URL validation."""
-        httpx_mock.add_exception(exception_class(exception_msg))
-
-        result = await gateway_service._validate_gateway_url(url="http://example.com", headers={}, transport_type="SSE", timeout=2)
-
-        assert result is False
-
     # ────────────────────────────────────────────────────────────────────
     # Validate Gateway URL SSL Verification
     # ────────────────────────────────────────────────────────────────────
@@ -624,51 +563,6 @@ class TestGatewayService:
         Test case logic to verify settings.skip_ssl_verify
 
         """
-
-    # ───────────────────────────────────────────────────────────────────────────
-    # Validate Gateway - StreamableHTTP with mcp-session-id & redirected-url
-    # ───────────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_streamablehttp_redirect(self, gateway_service, httpx_mock):
-        """Test STREAMABLEHTTP transport with redirection and MCP session ID."""
-        # When follow_redirects=True, httpx handles redirects internally
-        # Only mock the FINAL response, not intermediate redirects
-        httpx_mock.add_response(
-            method="POST",
-            url="http://example.com",
-            status_code=200,
-            headers={"content-type": "application/json"},
-        )
-
-        result = await gateway_service._validate_gateway_url(
-            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
-        )
-
-        assert result is True
-
-    # ───────────────────────────────────────────────────────────────────────────
-    # Validate Gateway URL - Bulk Concurrent requests Validation
-    # ───────────────────────────────────────────────────────────────────────────
-    @pytest.mark.asyncio
-    async def test_bulk_concurrent_validation(self, gateway_service, httpx_mock):
-        """Test bulk concurrent gateway URL validations."""
-        urls = [f"http://gateway{i}.com" for i in range(20)]
-
-        # Add responses for all URLs with SSE content
-        for url in urls:
-            httpx_mock.add_response(
-                method="GET",
-                url=url,
-                status_code=200,
-                headers={"content-type": "text/event-stream"},
-                content=b"data: test\n\n",  # Add SSE data
-            )
-
-        # Run the validations concurrently
-        results = await asyncio.gather(*[gateway_service._validate_gateway_url(url, {}, "SSE") for url in urls])
-
-        # All should be True (validation success)
-        assert all(results)
 
     # ────────────────────────────────────────────────────────────────────
     # LIST / GET
@@ -1325,43 +1219,6 @@ class TestGatewayService:
             await gateway_service.forward_request(mock_gateway, "method", {})
 
     # ────────────────────────────────────────────────────────────────────
-    # VALIDATE GATEWAY URL REDIRECT COVERAGE
-    # ────────────────────────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_url_redirect_with_auth_failure(self, gateway_service, httpx_mock):
-        """Test redirect handling with authentication failure at redirect location."""
-        # Only mock final response with auth failure
-        httpx_mock.add_response(
-            method="POST",
-            url="http://example.com",
-            status_code=401,
-        )
-
-        result = await gateway_service._validate_gateway_url(
-            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
-        )
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_validate_gateway_url_redirect_with_mcp_session(self, gateway_service, httpx_mock):
-        """Test redirect handling with MCP session ID in response."""
-        # STREAMABLEHTTP uses POST method, and only mock final response
-        httpx_mock.add_response(
-            method="POST",  # Changed from GET to POST
-            url="http://example.com",
-            status_code=200,
-            headers={"mcp-session-id": "session123", "content-type": "application/json"},
-        )
-
-        result = await gateway_service._validate_gateway_url(
-            url="http://example.com", headers={}, transport_type="STREAMABLEHTTP"
-        )
-
-        assert result is True
-
-    # ────────────────────────────────────────────────────────────────────
     # REDIS/INITIALIZATION COVERAGE
     # ────────────────────────────────────────────────────────────────────
 
@@ -1494,9 +1351,6 @@ class TestGatewayService:
             mock_prompts_response.prompts = [mock_prompt]
             mock_session_instance.list_prompts.return_value = mock_prompts_response
 
-            # Mock _validate_gateway_url to return True
-            gateway_service._validate_gateway_url = AsyncMock(return_value=True)
-
             # Execute
             capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
@@ -1562,9 +1416,6 @@ class TestGatewayService:
                 mock_resource_create.model_validate.side_effect = [Exception("Validation error"), MagicMock()]
                 mock_resource_create.return_value = MagicMock()
 
-                # Mock _validate_gateway_url to return True
-                gateway_service._validate_gateway_url = AsyncMock(return_value=True)
-
                 # Execute
                 capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
@@ -1619,9 +1470,6 @@ class TestGatewayService:
                 mock_prompt_create.model_validate.side_effect = [Exception("Validation error"), MagicMock()]
                 mock_prompt_create.return_value = MagicMock()
 
-                # Mock _validate_gateway_url to return True
-                gateway_service._validate_gateway_url = AsyncMock(return_value=True)
-
                 # Execute
                 capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
@@ -1665,10 +1513,7 @@ class TestGatewayService:
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Make list_resources fail
-            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed")
-
-            # Mock _validate_gateway_url to return True
-            gateway_service._validate_gateway_url = AsyncMock(return_value=True)
+            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed") 
 
             # Execute
             capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
@@ -1714,9 +1559,6 @@ class TestGatewayService:
 
             # Make list_prompts fail
             mock_session_instance.list_prompts.side_effect = Exception("Prompt fetch failed")
-
-            # Mock _validate_gateway_url to return True
-            gateway_service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
             capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
