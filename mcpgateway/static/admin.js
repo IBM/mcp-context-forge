@@ -12383,19 +12383,19 @@ function setupSelectorSearch() {
         });
     }
 
-    // Resources search
-    const searchResources = safeGetElement("searchResources", true);
-    if (searchResources) {
-        searchResources.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedResources",
-                ".resource-item",
-                "noResourcesMessage",
-                "searchResourcesQuery",
-            );
-        });
-    }
+    // // Resources search
+    // const searchResources = safeGetElement("searchResources", true);
+    // if (searchResources) {
+    //     searchResources.addEventListener("input", function () {
+    //         filterSelectorItems(
+    //             this.value,
+    //             "#associatedResources",
+    //             ".resource-item",
+    //             "noResourcesMessage",
+    //             "searchResourcesQuery",
+    //         );
+    //     });
+    // }
 
     // Edit-server tools search (server-side, mirror of searchTools)
     const searchEditTools = safeGetElement("searchEditTools", true);
@@ -12448,6 +12448,20 @@ function setupSelectorSearch() {
             }
             promptSearchTimeout = setTimeout(() => {
                 serverSidePromptSearch(searchTerm);
+            }, 300);
+        });
+    }
+    // Resources search (server-side)
+    const searchResources = safeGetElement("searchResources", true);
+    if (searchResources) {
+        let resourceSearchTimeout;
+        searchResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (resourceSearchTimeout) {
+                clearTimeout(resourceSearchTimeout);
+            }
+            promptSearchTimeout = setTimeout(() => {
+                serverSideResourceSearch(searchTerm);
             }, 300);
         });
     }
@@ -19540,6 +19554,131 @@ async function serverSidePromptSearch(searchTerm) {
         console.error("Error searching prompts:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources and update the resouces list
+ */
+async function serverSideResourceSearch(searchTerm) {
+    const container = document.getElementById("associatedResources");
+    const noResultsMessage = safeGetElement("noResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+
+    if (!container) {
+        console.error("associatedResources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-purple-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompt selector
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Initialize resource mapping if needed
+                initResourceSelect(
+                    "associatedResources",
+                    "selectedResourcesPills",
+                    "selectedResourcesWarning",
+                    6,
+                    "selectAllResourcesBtn",
+                    "clearAllResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const displayName = resource.name || resource.id;
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(displayName)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Initialize Resource select mapping
+            initResourceSelect(
+                "associatedResources",
+                "selectedResourcesPills",
+                "selectedResourcesWarning",
+                6,
+                "selectAllResourcesBtn",
+                "clearAllResourcesBtn",
+            );
+
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
