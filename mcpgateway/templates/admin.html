@@ -5413,6 +5413,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   I Own
                 </button>
                 <button
+                  onclick="filterByRelationship('admin')"
+                  class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
+                  data-filter="team_admin"
+                >
+                  I'm an Admin
+                </button>
+                <button
                   onclick="filterByRelationship('member')"
                   class="filter-btn px-3 py-2 text-sm font-medium rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                   data-filter="team_member"
@@ -13708,8 +13715,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           let matchesRelationship = true;
           if (currentTeamFilter === 'owner') {
             matchesRelationship = relationshipBadge.includes('owner');
+          } else if (currentTeamFilter === 'admin') {
+            matchesRelationship = relationshipBadge.includes('admin') && !relationshipBadge.includes('owner');
           } else if (currentTeamFilter === 'member') {
-            matchesRelationship = relationshipBadge.includes('member') && !relationshipBadge.includes('owner');
+            matchesRelationship = relationshipBadge.includes('member') && !relationshipBadge.includes('owner') && !relationshipBadge.includes('admin');
           } else if (currentTeamFilter === 'public') {
             matchesRelationship = relationshipBadge.includes('join');
           }
