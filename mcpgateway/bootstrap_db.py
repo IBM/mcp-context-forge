@@ -267,7 +267,7 @@ async def main() -> None:
 
             # Apply MariaDB compatibility fixes if needed
             if settings.database_url.startswith(("mariadb", "mysql")):
-                # First-Party
+                # pylint: disable=import-outside-toplevel
                 from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
 
                 _modify_metadata_for_mariadb()

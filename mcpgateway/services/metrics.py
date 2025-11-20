@@ -124,7 +124,11 @@ def setup_metrics(app):
         )
 
         # Extract URL scheme for additional context
-        url_scheme = database_url.split("://")[0] if "://" in database_url else "unknown"
+        url_scheme = (
+            database_url.split("://", maxsplit=1)[0]
+            if "://" in database_url
+            else "unknown"
+        )
         db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
         # Create instrumentator instance
