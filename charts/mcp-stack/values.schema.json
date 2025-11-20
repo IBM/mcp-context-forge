@@ -439,6 +439,12 @@
               "description": "Enable admin UI",
               "default": "true"
             },
+            "MCPGATEWAY_UI_AIRGAPPED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable air-gapped mode for UI assets (serve vendored CSS/JS files locally)",
+              "default": "false"
+            },
             "MCPGATEWAY_ADMIN_API_ENABLED": {
               "type": "string",
               "enum": ["true", "false"],
