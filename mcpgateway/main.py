@@ -3628,7 +3628,17 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        current = await gateway_service.get_gateway(db, gateway_id)
+        has_resources = bool(current.capabilities.get("resources"))
         await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+
+        # If the gateway had resources and was successfully deleted, invalidate
+        # the whole resource cache. This is needed since the cache holds both
+        # individual resources and the full listing which will also need to be
+        # invalidated.
+        if has_resources:
+            await invalidate_resource_cache()
+
         return {"status": "success", "message": f"Gateway {gateway_id} deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
