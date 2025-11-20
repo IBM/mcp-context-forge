@@ -123,7 +123,7 @@ def build_engine() -> Engine:
             # Log pool events in debug mode
             echo_pool=settings.log_level == "DEBUG")
 
-    elif backend in ("mysql", "mariadb"):
+    if backend in ("mysql", "mariadb"):
         # MariaDB/MySQL specific configuration
         logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
 
