@@ -5,7 +5,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATIC_DIR="${SCRIPT_DIR}/../mcpgateway/static/vendor"
+STATIC_DIR="${SCRIPT_DIR}/../app/mcpgateway/static/vendor"
 
 # Create vendor directory structure
 mkdir -p "${STATIC_DIR}/tailwindcss"
