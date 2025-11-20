@@ -123,6 +123,21 @@ def build_engine() -> Engine:
             # Log pool events in debug mode
             echo_pool=settings.log_level == "DEBUG")
 
+    elif backend in ("mysql", "mariadb"):
+        # MariaDB/MySQL specific configuration
+        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+        
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=connect_args,
+            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+        )
+    
     # Other databases support full pooling configuration
     return create_engine(
         settings.database_url,
@@ -204,33 +219,45 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def refresh_slugs_on_startup():
     """Refresh slugs for all gateways and names of tools on startup."""
+    try:
+        with cast(Any, SessionLocal)() as session:
+            # Skip if tables don't exist yet (fresh database)
+            try:
+                gateways = session.query(Gateway).all()
+            except Exception:
+                logger.info("Gateway table not found, skipping slug refresh")
+                return
+                
+            updated = False
+            for gateway in gateways:
+                new_slug = slugify(gateway.name)
+                if gateway.slug != new_slug:
+                    gateway.slug = new_slug
+                    updated = True
+            if updated:
+                session.commit()
 
-    with cast(Any, SessionLocal)() as session:
-        gateways = session.query(Gateway).all()
-        updated = False
-        for gateway in gateways:
-            new_slug = slugify(gateway.name)
-            if gateway.slug != new_slug:
-                gateway.slug = new_slug
-                updated = True
-        if updated:
-            session.commit()
+            try:
+                tools = session.query(Tool).all()
+                for tool in tools:
+                    session.expire(tool, ["gateway"])
 
-        tools = session.query(Tool).all()
-        for tool in tools:
-            session.expire(tool, ["gateway"])
-
-        updated = False
-        for tool in tools:
-            if tool.gateway:
-                new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-            else:
-                new_name = slugify(tool.original_name)
-            if tool.name != new_name:
-                tool.name = new_name
-                updated = True
-        if updated:
-            session.commit()
+                updated = False
+                for tool in tools:
+                    if tool.gateway:
+                        new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+                    else:
+                        new_name = slugify(tool.original_name)
+                    if tool.name != new_name:
+                        tool.name = new_name
+                        updated = True
+                if updated:
+                    session.commit()
+            except Exception:
+                logger.info("Tool table not found, skipping tool name refresh")
+                
+    except Exception as e:
+        logger.warning("Failed to refresh slugs on startup: %s", e)
 
 
 class Base(DeclarativeBase):
