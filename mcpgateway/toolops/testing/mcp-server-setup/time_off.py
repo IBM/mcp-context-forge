@@ -233,6 +233,7 @@ if __name__ == "__main__":
     """
     Main method to start the time off API server
     """
+    # Third-Party
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
 
+    uvicorn.run(app, host="0.0.0.0", port=8000)
