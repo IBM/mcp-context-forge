@@ -29,7 +29,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint, MetaData
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -223,13 +223,15 @@ class Base(DeclarativeBase):
     """Base class for all models."""
 
     # MariaDB-compatible naming convention for foreign keys
-    metadata = MetaData(naming_convention={
-        "fk": "fk_%(table_name)s_%(column_0_name)s",
-        "pk": "pk_%(table_name)s",
-        "ix": "ix_%(table_name)s_%(column_0_name)s",
-        "uq": "uq_%(table_name)s_%(column_0_name)s",
-        "ck": "ck_%(table_name)s_%(constraint_name)s"
-    })
+    metadata = MetaData(
+        naming_convention={
+            "fk": "fk_%(table_name)s_%(column_0_name)s",
+            "pk": "pk_%(table_name)s",
+            "ix": "ix_%(table_name)s_%(column_0_name)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
