@@ -9124,7 +9124,6 @@ async function enrichTool(toolId) {
         }
     }
 }
-window.enrichTool = enrichTool;
 
 document.addEventListener("DOMContentLoaded", () => {
     const toolBody = document.getElementById("toolBody");
@@ -9302,7 +9301,6 @@ document.addEventListener("DOMContentLoaded", () => {
             showErrorMessage(`❌ Error: ${err.message}`);
         }
     }
-    window.generateBulkTestCases = generateBulkTestCases;
 
     function clearAllSelections() {
         // Uncheck all checkboxes
@@ -9409,7 +9407,6 @@ async function generateToolTestCases(toolId) {
         }
     }
 }
-window.generateToolTestCases = generateToolTestCases;
 
 async function generateTestCases() {
     const testCases = document.getElementById("gen-testcase-count").value;
@@ -9478,7 +9475,6 @@ async function generateTestCases() {
         }
     }
 }
-window.generateTestCases = generateTestCases;
 
 async function validateTool(toolId) {
     try {
@@ -14412,6 +14408,10 @@ window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
+window.generateBulkTestCases = generateBulkTestCases;
+window.generateToolTestCases = generateToolTestCases;
+window.generateTestCases = generateTestCases;
+window.enrichTool = enrichTool;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY
