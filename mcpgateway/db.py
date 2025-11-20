@@ -90,6 +90,8 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
+
+
 def build_engine() -> Engine:
     """Build the SQLAlchemy engine with appropriate settings.
 
@@ -130,6 +132,7 @@ def build_engine() -> Engine:
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args)
+
 
 engine = build_engine()
 
