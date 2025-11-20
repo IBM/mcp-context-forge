@@ -5501,8 +5501,20 @@ async function editServer(serverId) {
         }
 
         openModal("server-edit-modal");
+        // Initialize the select handlers for gateways, resources and prompts in the edit modal
+        // so that gateway changes will trigger filtering of associated items while editing.
+        if (document.getElementById("associatedEditGateways")) {
+            initGatewaySelect(
+                "associatedEditGateways",
+                "selectedGatewayPills",
+                "selectedGatewayWarning",
+                12,
+                "selectAllEditGatewayBtn",
+                "clearAllEditGatewayBtn",
+                "searchEditGateways",
+            );
+        }
 
-        // Initialize the select handlers for resources and prompts in the edit modal
         initResourceSelect(
             "edit-server-resources",
             "selectedEditResourcesPills",
@@ -8100,12 +8112,30 @@ function initGatewaySelect(
  * @returns {string[]} Array of selected gateway IDs
  */
 function getSelectedGatewayIds() {
-    const container = document.getElementById("associatedGateways");
-    console.log("[Gateway Selection DEBUG] Container found:", !!container);
+    // Prefer the gateway selection belonging to the currently active form.
+    // If the edit-server modal is open, use the edit modal's gateway container
+    // (`associatedEditGateways`). Otherwise use the create form container
+    // (`associatedGateways`). This allows the same filtering logic to work
+    // for both Add and Edit flows.
+    let container = document.getElementById("associatedGateways");
+    const editContainer = document.getElementById("associatedEditGateways");
+
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen = editModal && !editModal.classList.contains("hidden");
+
+    if (isEditModalOpen && editContainer) {
+        container = editContainer;
+    } else if (editContainer && editContainer.offsetParent !== null && !container) {
+        // If edit container is visible (e.g. modal rendered) and associatedGateways
+        // not present, prefer edit container.
+        container = editContainer;
+    }
+
+    console.log("[Gateway Selection DEBUG] Container used:", container ? container.id : null);
 
     if (!container) {
         console.warn(
-            "[Gateway Selection DEBUG] associatedGateways container not found",
+            "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
         );
         return [];
     }
@@ -8182,19 +8212,33 @@ function reloadAssociatedItems() {
         selectedGatewayIds,
     );
 
+    // Determine whether to reload the 'create server' containers (associated*)
+    // or the 'edit server' containers (edit-server-*). Prefer the edit
+    // containers when the edit modal is open or the edit-gateway selector
+    // exists and is visible.
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen = editModal && !editModal.classList.contains("hidden");
+    const editGateways = document.getElementById("associatedEditGateways");
+
+    const useEditContainers = isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
+
+    const toolsContainerId = useEditContainers ? "edit-server-tools" : "associatedTools";
+    const resourcesContainerId = useEditContainers ? "edit-server-resources" : "associatedResources";
+    const promptsContainerId = useEditContainers ? "edit-server-prompts" : "associatedPrompts";
+
     // Reload tools
-    const toolsContainer = document.getElementById("associatedTools");
+    const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
         const toolsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-        console.log("[Filter Update DEBUG] Tools URL:", toolsUrl);
+        console.log("[Filter Update DEBUG] Tools URL:", toolsUrl, "-> target:", `#${toolsContainerId}`);
 
-        // Use HTMX to reload the content
+        // Use HTMX to reload the content into the chosen container
         if (window.htmx) {
             htmx.ajax("GET", toolsUrl, {
-                target: "#associatedTools",
+                target: `#${toolsContainerId}`,
                 swap: "innerHTML",
             })
                 .then(() => {
@@ -8202,13 +8246,18 @@ function reloadAssociatedItems() {
                         "[Filter Update DEBUG] Tools reloaded successfully",
                     );
                     // Re-initialize the tool select after content is loaded
+                    const pillsId = useEditContainers ? "selectedEditToolsPills" : "selectedToolsPills";
+                    const warnId = useEditContainers ? "selectedEditToolsWarning" : "selectedToolsWarning";
+                    const selectBtn = useEditContainers ? "selectAllEditToolsBtn" : "selectAllToolsBtn";
+                    const clearBtn = useEditContainers ? "clearAllEditToolsBtn" : "clearAllToolsBtn";
+
                     initToolSelect(
-                        "associatedTools",
-                        "selectedToolsPills",
-                        "selectedToolsWarning",
+                        toolsContainerId,
+                        pillsId,
+                        warnId,
                         6,
-                        "selectAllToolsBtn",
-                        "clearAllToolsBtn",
+                        selectBtn,
+                        clearBtn,
                     );
                 })
                 .catch((err) => {
@@ -8223,11 +8272,11 @@ function reloadAssociatedItems() {
             );
         }
     } else {
-        console.warn("[Filter Update DEBUG] Tools container not found");
+        console.warn("[Filter Update DEBUG] Tools container not found ->", toolsContainerId);
     }
 
     // Reload resources - use fetch directly to avoid HTMX race conditions
-    const resourcesContainer = document.getElementById("associatedResources");
+    const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
         const resourcesUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8311,14 +8360,49 @@ function reloadAssociatedItems() {
                 }
 
                 // Re-initialize the resource select after content is loaded
+                const resPills = useEditContainers ? "selectedEditResourcesPills" : "selectedResourcesPills";
+                const resWarn = useEditContainers ? "selectedEditResourcesWarning" : "selectedResourcesWarning";
+                const resSelectBtn = useEditContainers ? "selectAllEditResourcesBtn" : "selectAllResourcesBtn";
+                const resClearBtn = useEditContainers ? "clearAllEditResourcesBtn" : "clearAllResourcesBtn";
+
                 initResourceSelect(
-                    "associatedResources",
-                    "selectedResourcesPills",
-                    "selectedResourcesWarning",
+                    resourcesContainerId,
+                    resPills,
+                    resWarn,
                     6,
-                    "selectAllResourcesBtn",
-                    "clearAllResourcesBtn",
+                    resSelectBtn,
+                    resClearBtn,
                 );
+                // Re-apply server-associated resource selections so selections
+                // persist across gateway-filtered reloads. The resources partial
+                // replaces checkbox inputs; use the container's
+                // `data-server-resources` attribute (set when opening edit modal)
+                // to restore checked state.
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const associated = JSON.parse(dataAttr);
+                        if (Array.isArray(associated) && associated.length > 0) {
+                            const resourceCheckboxes = resourcesContainer.querySelectorAll(
+                                'input[type="checkbox"][name="associatedResources"]',
+                            );
+                            resourceCheckboxes.forEach((cb) => {
+                                const val = parseInt(cb.value);
+                                if (!Number.isNaN(val) && associated.includes(val)) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger change so pills and counts update
+                            const event = new Event("change", { bubbles: true });
+                            resourcesContainer.dispatchEvent(event);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Error restoring associated resources:", e);
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -8334,7 +8418,7 @@ function reloadAssociatedItems() {
     }
 
     // Reload prompts
-    const promptsContainer = document.getElementById("associatedPrompts");
+    const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
         const promptsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8342,17 +8426,22 @@ function reloadAssociatedItems() {
 
         if (window.htmx) {
             htmx.ajax("GET", promptsUrl, {
-                target: "#associatedPrompts",
+                target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
                 // Re-initialize the prompt select after content is loaded
+                const pPills = useEditContainers ? "selectedEditPromptsPills" : "selectedPromptsPills";
+                const pWarn = useEditContainers ? "selectedEditPromptsWarning" : "selectedPromptsWarning";
+                const pSelectBtn = useEditContainers ? "selectAllEditPromptsBtn" : "selectAllPromptsBtn";
+                const pClearBtn = useEditContainers ? "clearAllEditPromptsBtn" : "clearAllPromptsBtn";
+
                 initPromptSelect(
-                    "associatedPrompts",
-                    "selectedPromptsPills",
-                    "selectedPromptsWarning",
+                    promptsContainerId,
+                    pPills,
+                    pWarn,
                     6,
-                    "selectAllPromptsBtn",
-                    "clearAllPromptsBtn",
+                    pSelectBtn,
+                    pClearBtn,
                 );
             });
         }
