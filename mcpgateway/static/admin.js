@@ -8190,7 +8190,8 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             showSuccessMessage("Test case generation for tool validation has started.");
             // Reset selections
-            document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
+            document.querySelectorAll(".tool-checkbox")
+                .forEach((cb) => { cb.checked = false; });
             selectedTools = [];
             selectedToolIds = [];
             updateSelectedList();
@@ -8204,7 +8205,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function clearAllSelections() {
         // Uncheck all checkboxes
-        document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
+        document.querySelectorAll(".tool-checkbox")
+            .forEach((cb) => { cb.checked = false; });
 
         // Empty the selected tools array
         selectedTools = [];
@@ -8216,10 +8218,16 @@ document.addEventListener("DOMContentLoaded", () => {
     // Button listeners
     const enrichToolsBtn = document.getElementById("enrichToolsBtn");
 
-    if (enrichToolsBtn !== null){
-        document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
-        document.getElementById("validateToolsBtn").addEventListener("click", () => openTestCaseModal());
-        document.getElementById("clearToolsBtn").addEventListener("click", () => clearAllSelections());
+    if (enrichToolsBtn !== null) {
+        document
+            .getElementById("enrichToolsBtn")
+            .addEventListener("click", () => callEnrichment());
+        document
+            .getElementById("validateToolsBtn")
+            .addEventListener("click", () => openTestCaseModal());
+        document
+            .getElementById("clearToolsBtn")
+            .addEventListener("click", () => clearAllSelections());
     }
 });
 
@@ -8268,12 +8276,12 @@ async function generateToolTestCases(toolId) {
             toolTestState.activeRequests.delete(toolId);
         }
 
-       // 5. CREATE NEW REQUEST with longer timeout
-       const controller = new AbortController();
-       toolTestState.activeRequests.set(toolId, controller);
-       toolTestState.lastRequestTime.set(toolId, now);
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
 
-       const toolIdElement = safeGetElement("gen-test-tool-id");
+        const toolIdElement = safeGetElement("gen-test-tool-id");
         if (toolIdElement) {
             toolIdElement.textContent = toolId || "Unknown";
         }
