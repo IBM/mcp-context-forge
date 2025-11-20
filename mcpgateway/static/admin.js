@@ -7498,6 +7498,38 @@ function initResourceSelect(
                     }
                 }
 
+                // If we're in the edit-server-resources container, maintain the
+                // `data-server-resources` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-resources") {
+                    try {
+                        let serverResources = [];
+                        const dataAttr = container.getAttribute("data-server-resources");
+                        if (dataAttr) {
+                            try {
+                                serverResources = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error("Error parsing data-server-resources:", e);
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverResources.includes(idVal)) {
+                                    serverResources.push(idVal);
+                                }
+                            } else {
+                                serverResources = serverResources.filter((x) => x !== idVal);
+                            }
+
+                            container.setAttribute("data-server-resources", JSON.stringify(serverResources));
+                        }
+                    } catch (err) {
+                        console.error("Error updating data-server-resources:", err);
+                    }
+                }
+
                 update();
             }
         });
@@ -7748,6 +7780,38 @@ function initPromptSelect(
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (err) {
                         console.error("Error updating allPromptIds:", err);
+                    }
+                }
+
+                // If we're in the edit-server-prompts container, maintain the
+                // `data-server-prompts` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-prompts") {
+                    try {
+                        let serverPrompts = [];
+                        const dataAttr = container.getAttribute("data-server-prompts");
+                        if (dataAttr) {
+                            try {
+                                serverPrompts = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error("Error parsing data-server-prompts:", e);
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverPrompts.includes(idVal)) {
+                                    serverPrompts.push(idVal);
+                                }
+                            } else {
+                                serverPrompts = serverPrompts.filter((x) => x !== idVal);
+                            }
+
+                            container.setAttribute("data-server-prompts", JSON.stringify(serverPrompts));
+                        }
+                    } catch (err) {
+                        console.error("Error updating data-server-prompts:", err);
                     }
                 }
 
