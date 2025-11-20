@@ -8109,7 +8109,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         selectedCount.textContent = selectedTools.length;
     }
-    
+
     // --- Search logic ---
     if (searchBox !== null) {
         searchBox.addEventListener("input", () => {
@@ -8134,14 +8134,19 @@ document.addEventListener("DOMContentLoaded", () => {
                 console.log(toolId);
                 fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
                     method: "POST",
-                    headers: { "Cache-Control": "no-cache",
-                        Pragma: "no-cache", "Content-Type": "application/json" },
+                    headers: {
+                        "Cache-Control": "no-cache",
+                        Pragma: "no-cache",
+                        "Content-Type": "application/json",
+                    },
                     body: JSON.stringify({ tool_id: toolId }),
                 });
             });
             showSuccessMessage("Tool description enrichment has started.");
             // Uncheck all checkboxes
-            document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
 
             // Empty the selected tools array
             selectedTools = [];
@@ -8149,7 +8154,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Update the selected tools list UI
             updateSelectedList();
-
         } catch (err) {
             //   responseDiv.textContent = `❌ Error: ${err.message}`;
             showErrorMessage(`❌ Error: ${err.message}`);
@@ -8163,35 +8167,51 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         // Show modal
-        document.getElementById("bulk-testcase-gen-modal").classList.remove("hidden");
-        document.getElementById("bulk-generate-btn").addEventListener("click", generateBulkTestCases);
+        document
+            .getElementById("bulk-testcase-gen-modal")
+            .classList.remove("hidden");
+        document
+            .getElementById("bulk-generate-btn")
+            .addEventListener("click", generateBulkTestCases);
     }
 
-    window.generateBulkTestCases = async function() {
-        const testCases = parseInt(document.getElementById("gen-bulk-testcase-count").value);
-        const variations = parseInt(document.getElementById("gen-bulk-nl-variation-count").value);
+    window.generateBulkTestCases = async function () {
+        const testCases = parseInt(
+            document.getElementById("gen-bulk-testcase-count").value,
+        );
+        const variations = parseInt(
+            document.getElementById("gen-bulk-nl-variation-count").value,
+        );
 
         if (!testCases || !variations || testCases < 1 || variations < 1) {
-            showErrorMessage("⚠️ Please enter valid numbers for test cases and variations.");
+            showErrorMessage(
+                "⚠️ Please enter valid numbers for test cases and variations.",
+            );
             return;
         }
 
         try {
             for (const toolId of selectedToolIds) {
-                fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
-                    method: "POST",
-                    headers: {
-                        "Cache-Control": "no-cache",
-                        "Pragma": "no-cache",
-                        "Content-Type": "application/json",
+                fetch(
+                    `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Cache-Control": "no-cache",
+                            Pragma: "no-cache",
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ tool_id: toolId }),
                     },
-                    body: JSON.stringify({ tool_id: toolId }),
-                });
+                );
             }
-            showSuccessMessage("Test case generation for tool validation has started.");
+            showSuccessMessage(
+                "Test case generation for tool validation has started.",
+            );
             // Reset selections
-            document.querySelectorAll(".tool-checkbox")
-                .forEach((cb) => { cb.checked = false; });
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
             selectedTools = [];
             selectedToolIds = [];
             updateSelectedList();
@@ -8201,12 +8221,13 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (err) {
             showErrorMessage(`❌ Error: ${err.message}`);
         }
-    }
+    };
 
     function clearAllSelections() {
         // Uncheck all checkboxes
-        document.querySelectorAll(".tool-checkbox")
-            .forEach((cb) => { cb.checked = false; });
+        document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+            cb.checked = false;
+        });
 
         // Empty the selected tools array
         selectedTools = [];
@@ -8315,14 +8336,16 @@ async function generateTestCases() {
     // const toolId = document.getElementById("gen-test-tool-id").value;
     const toolIdElement = safeGetElement("gen-test-tool-id");
     if (toolIdElement) {
-        toolId = toolIdElement.textContent  || "Unknown";
+        toolId = toolIdElement.textContent || "Unknown";
     }
     console.log(
         `Generate ${testCases} test cases with ${variations} variations for tool ${toolId}`,
     );
 
     try {
-        showSuccessMessage("Test case generation started successfully for the tool.");
+        showSuccessMessage(
+            "Test case generation started successfully for the tool.",
+        );
         closeModal("testcase-gen-modal");
         const response = await fetch(
             `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
@@ -8331,7 +8354,7 @@ async function generateTestCases() {
                 headers: {
                     "Cache-Control": "no-cache",
                     Pragma: "no-cache",
-                    "Content-Type": "application/json"
+                    "Content-Type": "application/json",
                 },
                 body: JSON.stringify({ tool_id: toolId }),
             },
