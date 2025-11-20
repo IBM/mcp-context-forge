@@ -224,6 +224,7 @@ AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
 # Core Features
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_UI_AIRGAPPED=false          # Use local CDN assets for airgapped deployments
 MCPGATEWAY_BULK_IMPORT_ENABLED=true
 MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200
 
@@ -238,6 +239,33 @@ MCPGATEWAY_A2A_METRICS_ENABLED=true
 FEDERATION_ENABLED=true
 FEDERATION_DISCOVERY=true
 FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
+```
+
+### Airgapped Deployments
+
+For environments without internet access, the Admin UI can be configured to use local CDN assets instead of external CDNs.
+
+```bash
+# Enable airgapped mode (loads CSS/JS from local files)
+MCPGATEWAY_UI_AIRGAPPED=true
+```
+
+!!! info "Airgapped Mode Features"
+    When `MCPGATEWAY_UI_AIRGAPPED=true`:
+
+    - All CSS and JavaScript libraries are loaded from local files
+    - No external CDN connections required (Tailwind, HTMX, CodeMirror, Alpine.js, Chart.js)
+    - Assets are automatically downloaded during container build
+    - Total asset size: ~932KB
+    - Full UI functionality maintained
+
+!!! warning "Container Build Required"
+    Airgapped mode requires building with `Containerfile.lite` which automatically downloads all CDN assets during the build process. The assets are not included in the Git repository.
+
+**Container Build Example:**
+```bash
+docker build -f Containerfile.lite -t mcpgateway:airgapped .
+docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
 ```
 
 ### Caching Configuration
