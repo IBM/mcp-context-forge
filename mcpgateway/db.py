@@ -136,6 +136,7 @@ def build_engine() -> Engine:
             pool_recycle=settings.db_pool_recycle,
             connect_args=connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+            pool_reset_on_return="commit",  # Reset connections properly
         )
 
     # Other databases support full pooling configuration
