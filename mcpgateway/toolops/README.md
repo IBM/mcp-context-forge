@@ -1,7 +1,7 @@
 
 ### Starting MCP context forge from git repo
 * Use `make venv` to create virtual environment (Tested with python 3.12)
-* Install MCP-CF and toolops using make dependencies using `make install install-dev install-altk install-toolops`. Make sure all the packages are installed in the create virtual environment.
+* Install MCP-CF and toolops dependencies using `make install install-dev install-altk install-toolops`. Please check if all the packages are installed in the created virtual environment.
 * `uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 2 --env-file .env` will start Context forge UI and APIs at http://localhost:4444/docs and toolops API endpoints will be shown.
 
 ### Important NOTE:
