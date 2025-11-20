@@ -227,7 +227,7 @@ def refresh_slugs_on_startup():
             except Exception:
                 logger.info("Gateway table not found, skipping slug refresh")
                 return
- 
+
             updated = False
             for gateway in gateways:
                 new_slug = slugify(gateway.name)
@@ -255,7 +255,7 @@ def refresh_slugs_on_startup():
                     session.commit()
             except Exception:
                 logger.info("Tool table not found, skipping tool name refresh")
-           
+
     except Exception as e:
         logger.warning("Failed to refresh slugs on startup: %s", e)
 
