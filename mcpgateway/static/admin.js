@@ -8568,8 +8568,8 @@ async function validateTool(toolId) {
 
         // Example validat cases (you can replace this with API-provided cases)
         let testCases = tool.testCases || [
-            { id: "t1", name: "Test Case 1", inputParameters: {} },
-            { id: "t2", name: "Test Case 2", inputParameters: {} },
+            { id: "t1", name: "Test Case 1", input_parameters: {} },
+            { id: "t2", name: "Test Case 2", input_parameters: {} },
         ];
 
         const validationStatusResponse = await fetchWithTimeout(
@@ -8632,7 +8632,7 @@ async function validateTool(toolId) {
 
                     // Render accordion-style test cases
                     testCases.forEach((test, index) => {
-                        const inputParameters = test.inputParameters;
+                        const inputParameters = test["input_parameters"];
                         const acc = document.createElement("div");
                         acc.className =
                             "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
