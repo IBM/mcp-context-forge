@@ -102,7 +102,9 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
         'team_456'
         >>> del sys.modules["mcpgateway.services.team_management_service"]
     """
-    team_id = payload.get("teams")[0] if payload.get("teams") else None
+    team_id = payload.get("teams", [None])[0]
+    if isinstance(team_id, dict):
+        team_id = team_id.get("id")
     user_email = payload.get("sub")
     # If no team found in token, get user's personal team
     if not team_id:
