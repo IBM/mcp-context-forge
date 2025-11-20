@@ -451,7 +451,6 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
-		uv pip list && \
 		uv run pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
