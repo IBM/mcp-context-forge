@@ -195,110 +195,22 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-# def run_migrations_online() -> None:
-    """Run migrations in 'online' mode.
-
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-    connection = config.attributes.get("connection")
-    if connection is None:
-        connectable = engine_from_config(
-            config.get_section(config.config_ini_section, {}),
-            prefix="sqlalchemy.",
-            poolclass=pool.NullPool,
-        )
-
-        with connectable.connect() as connection:
-            # MariaDB dialect support
-            if connection.engine.dialect.name == "mariadb":
-                # Third-Party
-                from sqlalchemy.dialects import postgresql
-
-                # Apply MariaDB naming convention
-                target_metadata.naming_convention = mariadb_naming_convention
-
-                def render_item(type_, obj, autogen_context):
-                    # Third-Party
-                    from sqlalchemy import String, VARCHAR
-
-                    if isinstance(type_, postgresql.UUID):
-                        return "String(36)"
-                    elif hasattr(type_, "__class__") and "JSONB" in str(type_.__class__):
-                        # Check MariaDB version for JSON support (10.4+)
-                        version = connection.engine.dialect.server_version_info
-                        if version and version >= (10, 4):
-                            return "JSON"
-                        else:
-                            return "Text"
-                    elif hasattr(type_, "__class__") and "ARRAY" in str(type_.__class__):
-                        return "Text"  # Replace ARRAY with TEXT for comma-separated values
-
-                    elif isinstance(type_, (String, VARCHAR)):
-                        if type_.length is None:
-                            return "String(255)"
-                        return f"String({type_.length})"
-                    return False
-
-                context.configure(
-                    connection=connection,
-                    target_metadata=target_metadata,
-                    render_item=render_item,
-                    include_object=lambda obj, name, type_, reflected, compare_to: True if type_ != "table" else connection.dialect.has_table(connection, name),
-                )
-            else:
-                context.configure(connection=connection, target_metadata=target_metadata)
-
-            with context.begin_transaction():
-                context.run_migrations()
-    else:
-        # MariaDB dialect support for existing connection
-        if connection.engine.dialect.name == "mariadb":
-            # Third-Party
-            from sqlalchemy.dialects import postgresql
-
-            # Apply MariaDB naming convention
-            target_metadata.naming_convention = mariadb_naming_convention
-
-            def render_item(type_, obj, autogen_context):
-                # Third-Party
-                from sqlalchemy import String, VARCHAR
-
-                if isinstance(type_, postgresql.UUID):
-                    return "String(36)"
-                elif hasattr(type_, "__class__") and "JSONB" in str(type_.__class__):
-                    # Check MariaDB version for JSON support (10.4+)
-                    version = connection.engine.dialect.server_version_info
-                    if version and version >= (10, 4):
-                        return "JSON"
-                    else:
-                        return "Text"
-                elif hasattr(type_, "__class__") and "ARRAY" in str(type_.__class__):
-                    return "Text"  # Replace ARRAY with TEXT for comma-separated values
-                elif isinstance(type_, (String, VARCHAR)) and type_.length is None:
-                    return "String(255)"  # Default VARCHAR length for MariaDB
-                return False
-
-            context.configure(
-                connection=connection,
-                target_metadata=target_metadata,
-                render_item=render_item,
-                include_object=lambda obj, name, type_, reflected, compare_to: True if type_ != "table" else connection.dialect.has_table(connection, name),
-            )
-        else:
-            context.configure(connection=connection, target_metadata=target_metadata)
-
-        with context.begin_transaction():
-            context.run_migrations()
-
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
 
     def configure_for_mariadb(connection):
-        """Apply MariaDB-specific autogenerate rules."""
-        from sqlalchemy.dialects import postgresql
+        """
+        Apply MariaDB-specific autogenerate rules.
+
+        Args:
+            connection: SQLAlchemy Connection object.
+                The active database connection being used by Alembic during
+                autogenerate. Used to apply MariaDB-specific type replacements
+                and rules.
+        """
+        # Third-Party
         from sqlalchemy import String, VARCHAR
+        from sqlalchemy.dialects import postgresql
 
         # Apply naming convention
         target_metadata.naming_convention = mariadb_naming_convention
@@ -328,8 +240,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             render_item=render_item,
             # prevent Alembic from generating tables that already exist
-            include_object=lambda obj, name, type_, reflected, compare_to:
-                not (type_ == "table" and connection.dialect.has_table(connection, name)),
+            include_object=lambda obj, name, type_, reflected, compare_to: not (type_ == "table" and connection.dialect.has_table(connection, name)),
         )
 
     # ----------------------------------------------------------------------
