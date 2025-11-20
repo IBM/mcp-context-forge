@@ -1027,7 +1027,6 @@ flake8:                             ## 🐍  flake8 checks
 
 pylint: uv                             ## 🐛  pylint checks
 	@echo "🐛 pylint $(TARGET) (parallel)..."
-
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv run --active pylint -j 0 --fail-on E --fail-under 10 $(TARGET)"
