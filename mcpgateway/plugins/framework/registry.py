@@ -67,21 +67,25 @@ class PluginInstanceRegistry:
         self._hooks_by_name: dict[str, dict[str, HookRef]] = {}
         self._priority_cache: dict[str, list[HookRef]] = {}
 
-    def register(self, plugin: Plugin) -> None:
+    def register(self, plugin: Plugin, instance_key: Optional[str] = None) -> None:
         """Register a plugin instance.
 
         Args:
             plugin: plugin to be registered.
+            instance_key: Optional unique key for this instance (e.g., "name:config_hash").
+                         If None, uses plugin.name as key (backward compatibility).
 
         Raises:
             ValueError: if plugin is already registered.
         """
-        if plugin.name in self._plugins:
-            raise ValueError(f"Plugin {plugin.name} already registered")
+        key = instance_key or plugin.name
+
+        if key in self._plugins:
+            raise ValueError(f"Plugin instance {key} already registered")
 
         plugin_ref = PluginRef(plugin)
 
-        self._plugins[plugin.name] = plugin_ref
+        self._plugins[key] = plugin_ref
 
         plugin_hooks = {}
 
@@ -98,7 +102,8 @@ class PluginInstanceRegistry:
             plugin_hooks[hook_type] = hook_ref
             # Invalidate priority cache for this hook
             self._priority_cache.pop(hook_type, None)
-        self._hooks_by_name[plugin.name] = plugin_hooks
+        # Index hooks by instance key, not just plugin.name (supports config-specific instances)
+        self._hooks_by_name[key] = plugin_hooks
 
         logger.info(f"Registered plugin: {plugin.name} with hooks: {list(plugin.hooks)}")
 

@@ -11,6 +11,7 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
+import logging
 import os
 from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar
@@ -37,6 +38,7 @@ from mcpgateway.plugins.framework.constants import (
     URL,
 )
 
+logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 
@@ -557,6 +559,7 @@ class PluginConfig(BaseModel):
         tags (list[str]): a list of tags for making the plugin searchable.
         mode (bool): whether the plugin is active.
         priority (int): indicates the order in which the plugin is run. Lower = higher priority. Default: 100.
+        post_priority (Optional[int]): Optional custom priority for post-hooks (enables wrapping behavior).
         conditions (Optional[list[PluginCondition]]): the conditions on which the plugin is run.
         applied_to (Optional[list[AppliedTo]]): the tools, fields, that the plugin is applied to.
         config (dict[str, Any]): the plugin specific configurations.
@@ -572,7 +575,8 @@ class PluginConfig(BaseModel):
     hooks: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     mode: PluginMode = PluginMode.ENFORCE
-    priority: int = 100  # Lower = higher priority
+    priority: Optional[int] = 100  # Lower = higher priority
+    post_priority: Optional[int] = None  # Optional custom priority for post-hooks
     conditions: list[PluginCondition] = Field(default_factory=list)  # When to apply
     applied_to: Optional[AppliedTo] = None  # Fields to apply to.
     config: Optional[dict[str, Any]] = None
@@ -729,6 +733,9 @@ class PluginSettings(BaseModel):
         fail_on_plugin_error (bool): error when there is a plugin connectivity or ignore.
         enable_plugin_api (bool): enable or disable plugins globally.
         plugin_health_check_interval (int): health check interval check.
+        auto_reverse_post_hooks (bool): automatically reverse plugin order on post-hooks for wrapping behavior.
+        enable_plugin_routing (bool): enable resource-centric plugin routing configuration.
+        rule_merge_strategy (str): strategy for merging matching rules - "most_specific" (default) or "merge_all".
     """
 
     parallel_execution_within_band: bool = False
@@ -736,6 +743,389 @@ class PluginSettings(BaseModel):
     fail_on_plugin_error: bool = False
     enable_plugin_api: bool = False
     plugin_health_check_interval: int = 60
+    auto_reverse_post_hooks: bool = False
+    enable_plugin_routing: bool = False
+    rule_merge_strategy: str = "most_specific"  # "most_specific" or "merge_all"
+
+
+# ============================================================================
+# PLUGIN ROUTING MODELS (Resource-Centric Configuration)
+# ============================================================================
+
+
+class EntityType(str, Enum):
+    """Types of entities that can have plugins attached.
+
+    Attributes:
+        TOOL: MCP tool entity.
+        PROMPT: MCP prompt entity.
+        RESOURCE: MCP resource entity.
+        AGENT: LLM agent entity.
+        SERVER: MCP server entity.
+        GATEWAY: MCP gateway entity.
+
+    Examples:
+        >>> EntityType.TOOL
+        <EntityType.TOOL: 'tool'>
+        >>> EntityType.TOOL.value
+        'tool'
+        >>> EntityType('prompt')
+        <EntityType.PROMPT: 'prompt'>
+    """
+
+    TOOL = "tool"
+    PROMPT = "prompt"
+    RESOURCE = "resource"
+    AGENT = "agent"
+    SERVER = "server"
+    GATEWAY = "gateway"
+
+
+class FieldSelection(BaseModel):
+    """Field selection for scoping plugin execution to specific fields.
+
+    Allows plugins to process only specific fields in payloads using JSONPath-like
+    notation. Supports dot notation, array indexing, and wildcards.
+
+    Attributes:
+        fields: Shorthand for input_fields (pre-hook only).
+        input_fields: Field paths to process on pre-hook (request).
+        output_fields: Field paths to process on post-hook (response).
+
+    Examples:
+        >>> # Simple field selection
+        >>> fs = FieldSelection(fields=["args.email", "args.phone"])
+        >>> fs.fields
+        ['args.email', 'args.phone']
+
+        >>> # Different fields for input and output
+        >>> fs2 = FieldSelection(
+        ...     input_fields=["args.user_id"],
+        ...     output_fields=["result.customer.ssn"]
+        ... )
+        >>> fs2.input_fields
+        ['args.user_id']
+        >>> fs2.output_fields
+        ['result.customer.ssn']
+
+        >>> # Array and wildcard support
+        >>> fs3 = FieldSelection(fields=["args.customers[*].email"])
+        >>> fs3.fields
+        ['args.customers[*].email']
+    """
+
+    fields: Optional[list[str]] = None
+    input_fields: Optional[list[str]] = None
+    output_fields: Optional[list[str]] = None
+
+
+class PluginAttachment(BaseModel):
+    """Plugin attachment configuration for resource-centric routing.
+
+    Represents HOW a plugin is attached to an entity (tool/prompt/resource/agent).
+    The plugin definition (PluginConfig) declares WHAT the plugin is.
+
+    Attributes:
+        name: Plugin name (references PluginConfig.name).
+        priority: Execution priority (lower = runs first).
+        post_priority: Optional custom priority for post-hooks (enables wrapping behavior).
+        scope: Entity types this plugin applies to (for gateway/server-level plugins).
+        hooks: Override plugin's declared hooks (use specific hooks only).
+        when: Runtime condition (transferred from rule, not set in config).
+        apply_to: Field selection for scoping to specific fields.
+        override: If True, replace inherited config instead of merging.
+        mode: Override plugin's default execution mode.
+        config: Plugin-specific configuration overrides/extensions.
+
+    Examples:
+        >>> # Basic attachment
+        >>> pa = PluginAttachment(name="pii_filter", priority=10)
+        >>> pa.name
+        'pii_filter'
+        >>> pa.priority
+        10
+
+        >>> # With field selection
+        >>> pa3 = PluginAttachment(
+        ...     name="pii_filter",
+        ...     priority=10,
+        ...     apply_to=FieldSelection(fields=["args.email"])
+        ... )
+        >>> pa3.apply_to.fields
+        ['args.email']
+
+        >>> # Server-level with scope
+        >>> pa4 = PluginAttachment(
+        ...     name="security_check",
+        ...     priority=5,
+        ...     scope=[EntityType.TOOL, EntityType.PROMPT]
+        ... )
+        >>> len(pa4.scope)
+        2
+
+        >>> # With post-hook priority for wrapping
+        >>> pa5 = PluginAttachment(
+        ...     name="transaction",
+        ...     priority=10,
+        ...     post_priority=30
+        ... )
+        >>> pa5.post_priority
+        30
+    """
+
+    name: str
+    priority: Optional[int] = None  # If None, assigned based on list position
+    post_priority: Optional[int] = None
+    scope: Optional[list[EntityType]] = None
+    hooks: Optional[list[str]] = None
+    when: Optional[str] = None  # Transferred from rule, not set in config
+    apply_to: Optional[FieldSelection] = None
+    override: bool = False
+    mode: Optional[PluginMode] = None
+    config: dict[str, Any] = Field(default_factory=dict)
+    instance_key: Optional[str] = None  # Unique instance key (name:config_hash), set during resolution
+
+    @model_validator(mode="after")
+    def warn_when_in_config(self) -> Self:
+        """Warn if 'when' is set directly on plugin attachment in config.
+
+        The 'when' field should be defined at the rule level, not on individual plugins.
+        The resolver transfers the rule's 'when' to plugins during resolution.
+
+        Returns:
+            The validated attachment.
+        """
+        if self.when:
+            logger.warning(
+                f"Plugin attachment '{self.name}' has 'when' clause set directly. "
+                f"This is not recommended - define 'when' at the rule level instead. "
+                f"The resolver will transfer rule 'when' clauses to plugins automatically."
+            )
+        return self
+
+
+class PluginHookRule(BaseModel):
+    """Plugin hook rule for declarative, flat rule-based routing.
+
+    Defines WHEN and WHERE plugins should be attached using exact matches,
+    tag-based matching, and complex expressions. Replaces hierarchical cascading.
+
+    Attributes:
+        entities: Entity types this rule applies to (tools, prompts, resources, agents).
+                 If None, applies to HTTP-level hooks (before entity resolution).
+        name: Exact entity name match(es) - fast path with hash lookup.
+              Can be single string or list of strings.
+        tags: Tag-based matching - fast path with set intersection.
+        hooks: Hook type filter(s) - applies only to specific hooks.
+               Examples: ["tool_pre_invoke", "tool_post_invoke"], ["http_pre_request"]
+        when: Complex policy expression - flexible path with expression evaluation.
+        server_name: Server name filter(s) - applies only to entities on these servers.
+        server_id: Server ID filter(s) - applies only to entities on these servers.
+        gateway_id: Gateway ID filter(s) - applies only to entities on these gateways.
+        priority: Rule priority (lower = runs first). Default: list order.
+        reverse_order_on_post: If True, reverse plugin order for post-hooks (wrapping).
+        plugins: Plugins to attach when rule matches.
+        metadata: Rule metadata for governance, auditing, documentation.
+
+    Examples:
+        >>> # Simple tag-based rule
+        >>> rule = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     tags=["customer", "pii"],
+        ...     plugins=[
+        ...         PluginAttachment(name="pii_filter", priority=10),
+        ...         PluginAttachment(name="audit_logger", priority=20)
+        ...     ]
+        ... )
+        >>> rule.tags
+        ['customer', 'pii']
+        >>> len(rule.plugins)
+        2
+
+        >>> # Exact name match
+        >>> rule2 = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     name="process_payment",
+        ...     plugins=[PluginAttachment(name="fraud_detector", priority=5)]
+        ... )
+        >>> rule2.name
+        'process_payment'
+
+        >>> # Multiple names
+        >>> rule3 = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     name=["create_user", "update_user", "delete_user"],
+        ...     reverse_order_on_post=True,
+        ...     plugins=[PluginAttachment(name="user_validator", priority=10)]
+        ... )
+        >>> len(rule3.name)
+        3
+
+        >>> # Complex expression
+        >>> rule4 = PluginHookRule(
+        ...     entities=[EntityType.RESOURCE],
+        ...     when="payload.uri.endswith('.env') or payload.uri.endswith('.secrets')",
+        ...     plugins=[PluginAttachment(name="secret_redactor", priority=1)]
+        ... )
+        >>> rule4.when
+        "payload.uri.endswith('.env') or payload.uri.endswith('.secrets')"
+
+        >>> # HTTP-level rule (no entities)
+        >>> rule5 = PluginHookRule(
+        ...     when="payload.method == 'POST'",
+        ...     plugins=[PluginAttachment(name="rate_limiter", priority=10)]
+        ... )
+        >>> rule5.entities is None
+        True
+
+        >>> # Server filtering
+        >>> rule6 = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     server_name="production-api",
+        ...     tags=["pii"],
+        ...     plugins=[PluginAttachment(name="pii_filter", priority=10)]
+        ... )
+        >>> rule6.server_name
+        'production-api'
+
+        >>> # With metadata
+        >>> rule7 = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     tags=["customer"],
+        ...     plugins=[PluginAttachment(name="audit_logger", priority=10)],
+        ...     metadata={"reason": "GDPR compliance", "ticket": "SEC-1234"}
+        ... )
+        >>> rule7.metadata['reason']
+        'GDPR compliance'
+
+        >>> # Hook type filtering
+        >>> rule8 = PluginHookRule(
+        ...     entities=[EntityType.TOOL],
+        ...     hooks=["tool_pre_invoke"],
+        ...     tags=["customer"],
+        ...     plugins=[PluginAttachment(name="pre_validator", priority=10)]
+        ... )
+        >>> rule8.hooks
+        ['tool_pre_invoke']
+
+        >>> # HTTP-level with hook filter
+        >>> rule9 = PluginHookRule(
+        ...     hooks=["http_pre_request"],
+        ...     plugins=[PluginAttachment(name="auth_checker", priority=5)]
+        ... )
+        >>> rule9.hooks
+        ['http_pre_request']
+        >>> rule9.entities is None
+        True
+    """
+
+    entities: Optional[list[EntityType]] = None  # None = HTTP-level
+    name: Optional[str | list[str]] = None  # Exact match (fast path)
+    tags: Optional[list[str]] = None  # Tag match (fast path)
+    hooks: Optional[list[str]] = None  # Hook type filter (e.g., ["tool_pre_invoke"])
+    when: Optional[str] = None  # Expression (flexible path)
+    server_name: Optional[str | list[str]] = None  # Server filter
+    server_id: Optional[str | list[str]] = None  # Server ID filter
+    gateway_id: Optional[str | list[str]] = None  # Gateway filter
+    priority: Optional[int] = None  # Rule priority (lower = first)
+    reverse_order_on_post: bool = False  # Reverse plugin order for post-hooks
+    plugins: list[PluginAttachment] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_rule(self) -> Self:
+        """Validate the plugin hook rule has valid configuration.
+
+        Checks:
+        1. Plugins list is not empty
+        2. At least one matching criterion is specified (name, tags, when, or entities)
+        3. 'when' expression has valid syntax (if specified)
+
+        Returns:
+            The validated rule.
+
+        Raises:
+            ValueError: If validation fails.
+        """
+        # Check plugins list is not empty
+        if not self.plugins:
+            raise ValueError("PluginHookRule must have at least one plugin in the 'plugins' list")
+
+        # Check at least one matching criterion exists
+        has_entities = self.entities is not None and len(self.entities) > 0
+        has_name = self.name is not None
+        has_tags = self.tags is not None and len(self.tags) > 0
+        has_hooks = self.hooks is not None and len(self.hooks) > 0
+        has_when = self.when is not None and len(self.when.strip()) > 0
+        has_server_name = self.server_name is not None
+        has_server_id = self.server_id is not None
+        has_gateway_id = self.gateway_id is not None
+
+        # At least one matching criterion must be set
+        if not (has_entities or has_name or has_tags or has_hooks or has_when or has_server_name or has_server_id or has_gateway_id):
+            raise ValueError(
+                "PluginHookRule must have at least one matching criterion: "
+                "'entities', 'name', 'tags', 'hooks', 'when', 'server_name', 'server_id', or 'gateway_id'. "
+                "A rule must specify what it applies to."
+            )
+
+        # Entity-level rules CAN match all entities of a type (catch-all rules are valid)
+        # e.g., entities: [tool] without other criteria applies to ALL tools
+        # This allows baseline plugins; more specific rules can override via priority
+
+        # Validate 'when' expression syntax if present
+        if self.when:
+            try:
+                # Import here to avoid circular dependency
+                # First-Party
+                from mcpgateway.plugins.framework.routing.evaluator import PolicyEvaluator
+
+                evaluator = PolicyEvaluator()
+                # Try to parse the expression (validates syntax, doesn't evaluate)
+                evaluator._parse_expression(self.when)
+            except SyntaxError as e:
+                raise ValueError(f"Invalid 'when' expression syntax: {self.when}. Error: {e}") from e
+            except Exception as e:
+                raise ValueError(f"Failed to validate 'when' expression: {self.when}. Error: {e}") from e
+
+        # Assign default priorities to plugins based on list position
+        # This enables implicit priority through order
+        for i, plugin in enumerate(self.plugins):
+            if plugin.priority is None:
+                # Assign priority based on position (0, 1, 2, ...)
+                plugin.priority = i
+
+        return self
+
+
+class ConfigMetadata(BaseModel):
+    """Top-level configuration metadata.
+
+    Used for config-wide attributes like tenant_id, environment, region.
+    Especially useful when using separate config files per tenant.
+
+    Attributes:
+        tenant_id: Tenant identifier.
+        environment: Environment (production, staging, development).
+        region: Cloud region or datacenter.
+        custom: Additional custom metadata.
+
+    Examples:
+        >>> metadata = ConfigMetadata(
+        ...     tenant_id="tenant-acme",
+        ...     environment="production",
+        ...     region="us-east-1"
+        ... )
+        >>> metadata.tenant_id
+        'tenant-acme'
+        >>> metadata.environment
+        'production'
+    """
+
+    tenant_id: Optional[str] = None
+    environment: Optional[str] = None
+    region: Optional[str] = None
+    custom: dict[str, Any] = Field(default_factory=dict)
 
 
 class Config(BaseModel):
@@ -746,12 +1136,18 @@ class Config(BaseModel):
         plugin_dirs (list[str]): The directories in which to look for plugins.
         plugin_settings (PluginSettings): global settings for plugins.
         server_settings (Optional[MCPServerConfig]): Server-side MCP configuration (when plugins run as server).
+        metadata (Optional[ConfigMetadata]): Config-wide metadata (tenant_id, environment, region, etc.).
+        routes (list[PluginHookRule]): Flat rule-based plugin routing (NEW declarative approach).
     """
 
     plugins: Optional[list[PluginConfig]] = []
     plugin_dirs: list[str] = []
-    plugin_settings: PluginSettings
+    plugin_settings: PluginSettings = Field(default_factory=PluginSettings)
     server_settings: Optional[MCPServerConfig] = None
+    # Config-wide metadata
+    metadata: Optional[ConfigMetadata] = None
+    # NEW: Flat rule-based plugin routing (declarative approach)
+    routes: list[PluginHookRule] = Field(default_factory=list)
 
 
 class PluginResult(BaseModel, Generic[T]):
@@ -800,6 +1196,11 @@ class GlobalContext(BaseModel):
             user (str): user ID associated with the request.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
+            entity_type (Optional[str]): entity type for resource-centric routing (e.g., "tool", "prompt", "resource").
+            entity_id (Optional[str]): unique entity ID for resource-centric routing (e.g., database ID).
+            entity_name (Optional[str]): entity name for resource-centric routing (e.g., "my_tool").
+            attachment_config (Optional[PluginAttachment]): The plugin attachment configuration for the current plugin execution.
+                Contains priority, field selection (apply_to), conditional execution (when), and plugin-specific config overrides.
             metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
             state (Optional[dict[str,Any]]): a global shared state across plugins.
 
@@ -819,12 +1220,34 @@ class GlobalContext(BaseModel):
         '123'
         >>> c.server_id
         'srv1'
+        >>> c2 = GlobalContext(request_id="123", entity_type="tool", entity_id="tool-123", entity_name="my_tool")
+        >>> c2.entity_type
+        'tool'
+        >>> c2.entity_id
+        'tool-123'
+        >>> c2.entity_name
+        'my_tool'
+        >>> # With attachment config for field selection
+        >>> from mcpgateway.plugins.framework.models import PluginAttachment, FieldSelection
+        >>> attachment = PluginAttachment(name="pii_filter", priority=10, apply_to=FieldSelection(fields=["args.email"]))
+        >>> c3 = GlobalContext(request_id="456", attachment_config=attachment)
+        >>> c3.attachment_config.name
+        'pii_filter'
+        >>> c3.attachment_config.apply_to.fields
+        ['args.email']
     """
 
     request_id: str
     user: Optional[str] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
+    server_name: Optional[str] = None
+    gateway_id: Optional[str] = None
+    entity_type: Optional[str] = None
+    entity_id: Optional[str] = None
+    entity_name: Optional[str] = None
+    tags: list[str] = Field(default_factory=list)
+    attachment_config: Optional["PluginAttachment"] = None
     state: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -11,7 +11,9 @@ plugins.
 
 # Standard
 from functools import cache
+import hashlib
 import importlib
+import json
 from types import ModuleType
 from typing import Any, Optional
 
@@ -438,3 +440,73 @@ def payload_matches(
 #         if index < len(conditions) - 1:
 #             current_result = True
 #     return current_result
+
+
+def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Deep merge two dictionaries, with override values taking precedence.
+
+    Recursively merges nested dictionaries. Lists and other types are replaced entirely.
+
+    Args:
+        base: Base configuration dictionary.
+        override: Override configuration dictionary (takes precedence).
+
+    Returns:
+        New dictionary with deep-merged values.
+
+    Examples:
+        >>> base = {"a": 1, "b": {"x": 10, "y": 20}, "c": [1, 2]}
+        >>> override = {"b": {"y": 30, "z": 40}, "d": 4}
+        >>> result = deep_merge(base, override)
+        >>> result == {"a": 1, "b": {"x": 10, "y": 30, "z": 40}, "c": [1, 2], "d": 4}
+        True
+        >>> # Base values preserved when not overridden
+        >>> deep_merge({"timeout": 30, "retry": 3}, {"timeout": 60})
+        {'timeout': 60, 'retry': 3}
+        >>> # Nested merge
+        >>> deep_merge({"db": {"host": "localhost", "port": 5432}}, {"db": {"port": 3306}})
+        {'db': {'host': 'localhost', 'port': 3306}}
+    """
+    # Standard
+    import copy
+
+    result = copy.deepcopy(base)
+
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            # Recursively merge nested dicts
+            result[key] = deep_merge(result[key], value)
+        else:
+            # Override (or add new key)
+            result[key] = copy.deepcopy(value)
+
+    return result
+
+
+def hash_config(config: dict[str, Any]) -> str:
+    """Create a stable hash of a configuration dictionary.
+
+    Uses JSON serialization with sorted keys to ensure deterministic hashing.
+
+    Args:
+        config: Configuration dictionary to hash.
+
+    Returns:
+        SHA256 hash of the config as hex string.
+
+    Examples:
+        >>> config1 = {"timeout": 30, "retry": 3}
+        >>> config2 = {"retry": 3, "timeout": 30}  # Different order
+        >>> hash_config(config1) == hash_config(config2)
+        True
+        >>> config3 = {"timeout": 60, "retry": 3}
+        >>> hash_config(config1) == hash_config(config3)
+        False
+        >>> # Empty config
+        >>> hash_config({})
+        'bf21a9e8fbc5a3846fb05b4fa0859e0917b2202f'
+    """
+    # Serialize with sorted keys for stability
+    config_json = json.dumps(config, sort_keys=True, default=str)
+    # Use SHA1 for shorter hashes (collision risk is acceptable here)
+    return hashlib.sha1(config_json.encode()).hexdigest()

@@ -16,6 +16,7 @@ import uuid
 # First-Party
 from mcpgateway.plugins.framework.errors import PluginError
 from mcpgateway.plugins.framework.models import (
+    PluginAttachment,
     PluginCondition,
     PluginConfig,
     PluginContext,
@@ -99,6 +100,15 @@ class Plugin(ABC):
             Plugin's priority.
         """
         return self._config.priority
+
+    @property
+    def post_priority(self) -> int | None:
+        """Return the plugin's post-hook priority.
+
+        Returns:
+            Plugin's post-hook priority, or None if not set.
+        """
+        return self._config.post_priority
 
     @property
     def config(self) -> PluginConfig:
@@ -316,6 +326,15 @@ class PluginRef:
             Plugin's priority.
         """
         return self._plugin.priority
+
+    @property
+    def post_priority(self) -> int | None:
+        """Returns the plugin's post-hook priority.
+
+        Returns:
+            Plugin's post-hook priority, or None if not set.
+        """
+        return self._plugin.post_priority
 
     @property
     def name(self) -> str:
@@ -594,3 +613,83 @@ class HookRef:
             An awaitable hook function reference.
         """
         return self._func
+
+
+class AttachedHookRef:
+    """A HookRef paired with its PluginAttachment configuration.
+
+    This composite object combines:
+    - HookRef: The actual plugin hook implementation (can be HookRef or ExternalHookRef)
+    - PluginAttachment: The routing configuration (priority, field selection, conditions, etc.)
+
+    Used in resource-centric routing to provide plugins with their attachment metadata.
+    Works with both internal (HookRef) and external (ExternalHookRef) plugins.
+
+    Attributes:
+        hook_ref: The HookRef or ExternalHookRef containing the plugin and hook method.
+        attachment: The PluginAttachment configuration for this execution.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.models import PluginAttachment, FieldSelection
+        >>> # Assuming you have a hook_ref and attachment:
+        >>> # attachment = PluginAttachment(name="pii_filter", priority=10, apply_to=FieldSelection(fields=["args.email"]))
+        >>> # attached = AttachedHookRef(hook_ref, attachment)
+        >>> # attached.hook_ref.name  # Plugin name
+        >>> # attached.attachment.priority  # Execution priority (10)
+        >>> # attached.attachment.apply_to.fields  # Field selection (["args.email"])
+    """
+
+    def __init__(self, hook_ref: HookRef, attachment: Optional[PluginAttachment] = None):
+        """Initialize an attached hook reference.
+
+        Args:
+            hook_ref: The hook reference to execute (HookRef or ExternalHookRef).
+            attachment: The plugin attachment configuration from routing. None for non-routed plugins.
+        """
+        self._hook_ref = hook_ref
+        self._attachment = attachment
+
+    @property
+    def hook_ref(self) -> HookRef:
+        """The underlying HookRef or ExternalHookRef.
+
+        Returns:
+            HookRef object (or subclass).
+        """
+        return self._hook_ref
+
+    @property
+    def attachment(self) -> Optional[PluginAttachment]:
+        """The plugin attachment configuration.
+
+        Returns:
+            PluginAttachment object with priority, field selection, etc., or None if not using routing.
+        """
+        return self._attachment
+
+    @property
+    def name(self) -> str:
+        """Plugin name (convenience accessor).
+
+        Returns:
+            Plugin name from attachment, or plugin name if no attachment.
+        """
+        return self._attachment.name if self._attachment else self._hook_ref.plugin_ref.name
+
+    @property
+    def hook(self) -> Callable[[PluginPayload, PluginContext], Awaitable[PluginResult]] | None:
+        """The hook function (convenience accessor).
+
+        Returns:
+            Hook function from HookRef.
+        """
+        return self._hook_ref.hook
+
+    @property
+    def plugin_ref(self) -> PluginRef:
+        """The plugin reference (convenience accessor).
+
+        Returns:
+            PluginRef from HookRef.
+        """
+        return self._hook_ref.plugin_ref

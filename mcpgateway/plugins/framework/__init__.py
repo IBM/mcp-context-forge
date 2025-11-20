@@ -18,10 +18,15 @@ import os
 from typing import Optional
 
 # First-Party
-from mcpgateway.plugins.framework.base import Plugin
+from mcpgateway.plugins.framework.base import AttachedHookRef, Plugin
 from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
 from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
-from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_registry
+from mcpgateway.plugins.framework.hooks.registry import (
+    HookMetadata,
+    HookPhase,
+    HookRegistry,
+    get_hook_registry,
+)
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
@@ -49,16 +54,28 @@ from mcpgateway.plugins.framework.hooks.prompts import (
 )
 from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokeResult, ToolPreInvokePayload
 from mcpgateway.plugins.framework.models import (
+    ConfigMetadata,
+    EntityType,
+    FieldSelection,
     GlobalContext,
     MCPServerConfig,
+    PluginAttachment,
     PluginCondition,
     PluginConfig,
     PluginContext,
     PluginErrorModel,
+    PluginHookRule,
     PluginMode,
     PluginPayload,
     PluginResult,
     PluginViolation,
+)
+from mcpgateway.plugins.framework.routing import (
+    EvaluationContext,
+    FieldSelector,
+    PolicyEvaluator,
+    RuleBasedResolver,
+    RuleMatchContext,
 )
 
 # Plugin manager singleton (lazy initialization)
@@ -98,11 +115,19 @@ __all__ = [
     "AgentPostInvokeResult",
     "AgentPreInvokePayload",
     "AgentPreInvokeResult",
+    "AttachedHookRef",
     "ConfigLoader",
+    "ConfigMetadata",
+    "EntityType",
+    "EvaluationContext",
     "ExternalPluginServer",
+    "FieldSelection",
+    "FieldSelector",
     "get_hook_registry",
     "get_plugin_manager",
     "GlobalContext",
+    "HookMetadata",
+    "HookPhase",
     "HookRegistry",
     "HttpAuthCheckPermissionPayload",
     "HttpAuthCheckPermissionResult",
@@ -117,11 +142,13 @@ __all__ = [
     "HttpPreRequestResult",
     "MCPServerConfig",
     "Plugin",
+    "PluginAttachment",
     "PluginCondition",
     "PluginConfig",
     "PluginContext",
     "PluginError",
     "PluginErrorModel",
+    "PluginHookRule",
     "PluginLoader",
     "PluginManager",
     "PluginMode",
@@ -129,6 +156,9 @@ __all__ = [
     "PluginResult",
     "PluginViolation",
     "PluginViolationError",
+    "PolicyEvaluator",
+    "RuleBasedResolver",
+    "RuleMatchContext",
     "PromptHookType",
     "PromptPosthookPayload",
     "PromptPosthookResult",
