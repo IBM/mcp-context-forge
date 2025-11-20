@@ -37,6 +37,7 @@ from typing import cast as typing_cast
 from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
+import hashlib
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -120,6 +121,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.role_service import RoleService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -3275,12 +3277,28 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 #                            TEAM ADMIN ROUTES                                #
 # ============================================================================ #
 
+def _generate_color_from_name(name: str) -> str:
+    """Generate a deterministic Tailwind color name from a role name.
+    
+    Args:
+        name: Role name to hash
 
-async def _generate_unified_teams_view(team_service, current_user, root_path):  # pylint: disable=unused-argument
+    Returns:
+        Tailwind color name string
+    """
+    # Available Tailwind base colors
+    palette = ["red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal",
+               "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "gray"]
+    # Hash the name and map to a color
+    idx = int(hashlib.sha256(name.encode()).hexdigest(), 16) % len(palette)
+    return palette[idx]
+
+async def _generate_unified_teams_view(team_service, role_service, current_user, root_path):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
     Args:
         team_service: Service for team operations
+        role_service: Service for role operations
         current_user: Current authenticated user
         root_path: Application root path
 
@@ -3295,6 +3313,17 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
     # Combine teams with relationship information
     all_teams = []
+
+    roles = await role_service.list_roles()
+    team_roles = [r for r in roles if r.scope == "team"]
+
+    role_badges = {
+        r.name: (
+            lambda color=_generate_color_from_name(r.name):
+            f'<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-{color}-100 text-{color}-800 dark:bg-{color}-900 dark:text-{color}-300">{r.name.replace("_", " ").upper()}</span>'
+        )()
+        for r in team_roles
+    }
 
     # Add user's teams (owned and member)
     for team in user_teams:
@@ -3321,22 +3350,8 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         # Relationship badge - special handling for personal teams
         if team.is_personal:
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">PERSONAL</span>'
-        elif relationship == "team_owner":
-            badge_html = (
-                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">OWNER</span>'
-            )
-        elif relationship == "team_admin":
-            badge_html = (
-                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">ADMIN</span>'
-            )
-        elif relationship == "team_member":
-            badge_html = (
-                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">MEMBER</span>'
-            )
-        elif relationship == "team_viewer":
-            badge_html = (
-                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">VIEWER</span>'
-            )
+        elif relationship in role_badges:
+            badge_html = role_badges[relationship]
         else:  # join
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">CAN JOIN</span>'
 
@@ -3362,6 +3377,8 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         # Escape team name for safe HTML attributes
         safe_team_name = html.escape(team.name)
 
+        roles_with_teams_manage_members = [r.name for r in team_roles if "teams.manage_members" in r.permissions]
+
         # Actions based on relationship - special handling for personal teams
         actions_html = ""
         if team.is_personal:
@@ -3373,7 +3390,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </span>
             </div>
             """
-        elif relationship in ["team_owner", "team_admin"]:
+        elif relationship in roles_with_teams_manage_members:
             delete_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="deleteTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete Team</button>'
             join_requests_button = (
                 f'<button data-team-id="{team.id}" onclick="viewJoinRequestsSafe(this)" class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">Join Requests</button>'
@@ -3481,6 +3498,7 @@ async def admin_list_teams(
     try:
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
+        role_service = RoleService(db)
 
         # Get current user
         user_email = get_user_email(user)
@@ -3492,7 +3510,7 @@ async def admin_list_teams(
 
         if unified:
             # Generate unified team view
-            return await _generate_unified_teams_view(team_service, current_user, root_path)
+            return await _generate_unified_teams_view(team_service, role_service, current_user, root_path)
 
         # Generate traditional admin view
         # if current_user.is_admin:
@@ -3679,6 +3697,12 @@ async def admin_view_team_members(
 
         # First-Party
         team_service = TeamManagementService(db)
+        role_service = RoleService(db)
+
+        roles = await role_service.list_roles()
+        team_roles_def = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Get team details
         team = await team_service.get_team_by_id(team_id)
@@ -3689,11 +3713,11 @@ async def admin_view_team_members(
         team_roles = await team_service.get_team_roles(team_id)
 
         # Count owners to determine if this is the last owner
-        owner_count = len([team_role for team_role in team_roles if team_role.role.name == "team_owner"])
+        team_mananger_count = len([team_role for team_role in team_roles if team_role.role.name in roles_with_teams_manage_members])
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        is_team_owner = current_user_role == "team_owner"
+        role_can_manage: bool = current_user_role in roles_with_teams_manage_members
 
         # Build member table with inline role editing for team owners
         members_html = """
@@ -3705,12 +3729,12 @@ async def admin_view_team_members(
         """
 
         for team_role in team_roles:
-            role_display = team_role.role.name.replace("_", " ").title() if team_role.role else "team_member"
-            is_last_owner = team_role.role.name == "team_owner" and owner_count == 1
+            role_display = (team_role.role.name if team_role.role else "unknown").replace("_", " ").title()
+            is_last_team_manager = team_role.role.name in roles_with_teams_manage_members and team_mananger_count == 1
             is_current_user = team_role.user_email == user_email
 
             # Role selection - only show for team owners and not for last owner
-            if is_team_owner and not is_last_owner:
+            if role_can_manage and not is_last_team_manager:
                 role_selector = f"""
                     <select
                         name="role"
@@ -3720,9 +3744,10 @@ async def admin_view_team_members(
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
-                        <option value="team_member" {"selected" if team_role.role.name == "team_member" else ""}>Member</option>
-                        <option value="team_admin" {"selected" if team_role.role.name == "team_admin" else ""}>Admin</option>
-                        <option value="team_owner" {"selected" if team_role.role.name == "team_owner" else ""}>Owner</option>
+                        {"".join([
+                            f'<option value="{r.name}" {"selected" if team_role.role.name == r.name else ""}>{r.name.replace("_", " ").title()}</option>'
+                            for r in team_roles_def
+                        ])}
                     </select>
                 """
             else:
@@ -3733,7 +3758,7 @@ async def admin_view_team_members(
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
             # Remove button - hide for current user and last owner
-            if is_team_owner and not is_current_user and not is_last_owner:
+            if role_can_manage and not is_current_user and not is_last_team_manager:
                 remove_button = f"""
                     <button
                         class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
@@ -3755,7 +3780,7 @@ async def admin_view_team_members(
             indicators = []
             if is_current_user:
                 indicators.append('<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>')
-            if is_last_owner:
+            if is_last_team_manager:
                 indicators.append(
                     '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>'
                 )
@@ -3805,7 +3830,7 @@ async def admin_view_team_members(
             </div>"""
 
         # Show Add Member interface for team owners
-        if is_team_owner:
+        if role_can_manage:
             management_html += f"""
             <div class="mb-6">
                 <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -3847,15 +3872,17 @@ async def admin_view_team_members(
             except Exception as e:
                 LOGGER.error(f"Error loading available users for team {team.id}: {e}")
 
-            management_html += """                        </select>
+            options_html = ''.join([
+                f'<option value="{r.name}">{r.name.replace("_", " ").title()}</option>'
+                for r in team_roles_def
+            ])
+            management_html += f"""                        </select>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role</label>
                                     <select name="role" required
                                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                                        <option value="team_member">Member</option>
-                                        <option value="team_admin">Admin</option>
-                                        <option value="team_owner">Owner</option>
+                                        {options_html}
                                     </select>
                                 </div>
                             </div>
