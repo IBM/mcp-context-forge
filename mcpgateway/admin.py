@@ -3363,15 +3363,13 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
         # Subtitle based on relationship - special handling for personal teams
         if team.is_personal:
             subtitle = "Your personal team • Private workspace"
-        elif relationship == "team_owner":
-            subtitle = "You own this team"
-        elif relationship == "team_admin":
-            subtitle = f"You are an admin • Owner: {team.created_by}"
-        elif relationship == "team_member":
-            subtitle = f"You are a member • Owner: {team.created_by}"
-        elif relationship == "team_viewer":
-            subtitle = f"You are a viewer • Owner: {team.created_by}"
-        else:  # join
+        elif relationship in [r.name for r in team_roles]:
+            if "owner" in relationship:
+                subtitle = "You own this team"
+            else:
+                role_display = relationship.replace('_', ' ').title()
+                subtitle = f"You are a {role_display} • Owner: {team.created_by}"
+        else:
             subtitle = f"Public team • Owner: {team.created_by}"
 
         # Escape team name for safe HTML attributes
@@ -3753,7 +3751,7 @@ async def admin_view_team_members(
             else:
                 # Show static role badge
                 role_color = (
-                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if team_role.role.name == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if "owner" in team_role.role.name else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                 )
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
@@ -4160,6 +4158,12 @@ async def admin_add_team_member(
         # First-Party
         team_service = TeamManagementService(db)
         auth_service = EmailAuthService(db)
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists and validate visibility
         team = await team_service.get_team_by_id(team_id)
@@ -4170,8 +4174,8 @@ async def admin_add_team_member(
         user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
             user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-            if user_role != "team_owner":
-                return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
+            if user_role not in roles_with_teams_manage_members:
+                return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
         email_val = form.get("user_email")
@@ -4242,6 +4246,12 @@ async def admin_update_team_member_role(
 
     try:
         team_service = TeamManagementService(db)
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
@@ -4251,8 +4261,8 @@ async def admin_update_team_member_role(
         # Only team owners can modify member roles
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "team_owner":
-            return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
+        if user_role not in roles_with_teams_manage_members:
+            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can modify member roles</div>', status_code=403)
 
         form = await request.form()
         ue_val = form.get("user_email")
@@ -4327,6 +4337,13 @@ async def admin_remove_team_member(
 
     try:
         team_service = TeamManagementService(db)
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
+
 
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
@@ -4336,7 +4353,7 @@ async def admin_remove_team_member(
         # Only team owners can remove members
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "team_owner":
+        if user_role not in roles_with_teams_manage_members:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
@@ -4408,6 +4425,13 @@ async def admin_leave_team(
 
     try:
         team_service = TeamManagementService(db)
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
+
 
         # Check if team exists
         team = await team_service.get_team_by_id(team_id)
@@ -4427,11 +4451,11 @@ async def admin_leave_team(
             return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
 
         # Check if user is the last owner
-        if user_role == "team_owner":
+        if user_role in roles_with_teams_manage_members:
             team_roles = await team_service.get_team_roles(team_id)
-            owner_count = sum(1 for role in team_roles if role.role.name == "team_owner")
+            owner_count = sum(1 for role in team_roles if role.role.name in roles_with_teams_manage_members)
             if owner_count <= 1:
-                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
+                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner or admin. Transfer ownership or delete the team instead.</div>', status_code=400)
 
         # Remove user from team
         success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email)
@@ -4625,13 +4649,21 @@ async def admin_list_join_requests(
         user_email = get_user_email(user)
         request.scope.get("root_path", "")
 
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
+
+
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
+        if user_role not in roles_with_teams_manage_members:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
 
         # Get join requests
@@ -4711,10 +4743,18 @@ async def admin_approve_join_request(
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
+
+
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
-            return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
+        if user_role not in roles_with_teams_manage_members:
+            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can approve join requests</div>', status_code=403)
 
         # Approve join request
         member = await team_service.approve_join_request(request_id, approved_by=user_email)
@@ -4770,10 +4810,18 @@ async def admin_reject_join_request(
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
+        role_service = RoleService(db)
+
+        roles: List[Role] = await role_service.list_roles()
+        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+
+        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
+
+
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
-            return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
+        if user_role not in roles_with_teams_manage_members:
+            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can reject join requests</div>', status_code=403)
 
         # Reject join request
         success = await team_service.reject_join_request(request_id, rejected_by=user_email)
