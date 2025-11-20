@@ -30,6 +30,7 @@ import uuid
 # Third-Party
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -89,38 +90,48 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
-if backend == "sqlite":
-    # SQLite supports connection pooling with proper configuration
-    # For SQLite, we use a smaller pool size since it's file-based
-    sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
-    sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+def build_engine() -> Engine:
+    """Build the SQLAlchemy engine with appropriate settings.
 
-    logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+    This function constructs the SQLAlchemy engine using the database URL
+    and connection arguments determined by the backend type. It also configures
+    the connection pool size and timeout based on application settings.
 
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
-        pool_size=sqlite_pool_size,
-        max_overflow=sqlite_max_overflow,
-        pool_timeout=settings.db_pool_timeout,
-        pool_recycle=settings.db_pool_recycle,
-        # SQLite specific optimizations
-        poolclass=QueuePool,  # Explicit pool class
-        connect_args=connect_args,
-        # Log pool events in debug mode
-        echo_pool=settings.log_level == "DEBUG",
-    )
-else:
+    Returns:
+        SQLAlchemy Engine instance configured for the specified database.
+    """
+    if backend == "sqlite":
+        # SQLite supports connection pooling with proper configuration
+        # For SQLite, we use a smaller pool size since it's file-based
+        sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
+        sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+
+        logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,  # quick liveness check per checkout
+            pool_size=sqlite_pool_size,
+            max_overflow=sqlite_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            # SQLite specific optimizations
+            poolclass=QueuePool,  # Explicit pool class
+            connect_args=connect_args,
+            # Log pool events in debug mode
+            echo_pool=settings.log_level == "DEBUG")
+
     # Other databases support full pooling configuration
-    engine = create_engine(
+    return create_engine(
         settings.database_url,
         pool_pre_ping=True,  # quick liveness check per checkout
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
-        connect_args=connect_args,
-    )
+        connect_args=connect_args)
+
+engine = build_engine()
 
 # Initialize SQLAlchemy instrumentation for observability
 if settings.observability_enabled:
@@ -3696,16 +3707,16 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def patch_string_columns_for_mariadb(base, engine) -> None:
+def patch_string_columns_for_mariadb(base, engine_) -> None:
     """
     MariaDB requires VARCHAR to have an explicit length.
     Auto-assign VARCHAR(255) to any String() columns without a length.
 
     Args:
         base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
-        engine (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
+        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
     """
-    if engine.dialect.name != "mariadb":
+    if engine_.dialect.name != "mariadb":
         return
 
     for table in base.metadata.tables.values():
