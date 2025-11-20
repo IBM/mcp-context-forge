@@ -2237,7 +2237,7 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
+            tool.description = tool.description.slice(0, tool.description.indexOf("*"));
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -7822,48 +7822,51 @@ async function testTool(toolId) {
 
 async function loadTools() {
     const toolBody = document.getElementById("toolBody");
-    console.log('Loading tools...');
+    console.log("Loading tools...");
     try {
-        if (toolBody !== null){
-            toolBody.innerHTML = `
+        if (toolBody !== null) {
+            toolBody.innerHTML = ` 
                 <tr>
                     <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
                 </tr>
                 `;
-        const response = await fetch(`${window.ROOT_PATH}/tools`, { method: "GET" });
+            const response = await fetch(`${window.ROOT_PATH}/tools`, {
+                method: "GET",
+            });
 
-        if (!response.ok) throw new Error("Failed to load tools");
+            if (!response.ok) {
+                throw new Error("Failed to load tools");
+            }
+            const tools = await response.json(); // 👈 expect JSON array
+            console.log("Fetched tools:", tools);
 
-        const tools = await response.json(); // 👈 expect JSON array
-        console.log("Fetched tools:", tools);
+            //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
 
-        //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
-
-        if (!tools.length) {
-            toolBody.innerHTML = `
-            <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
-            `;
-            return;
-        }
-
-        // ✅ Build HTML rows dynamically
-        const rows = tools.map(tool => {
-            const { id, name, integrationType, enabled, reachable } = tool;
-            let statusText = "";
-            let statusClass = "";
-
-            if (enabled && reachable) {
-            statusText = "Online";
-            statusClass = "bg-green-100 text-green-800";
-            } else if (enabled) {
-            statusText = "Offline";
-            statusClass = "bg-yellow-100 text-yellow-800";
-            } else {
-            statusText = "Inactive";
-            statusClass = "bg-red-100 text-red-800";
+            if (!tools.length) {
+                toolBody.innerHTML = `
+                <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
+                `;
+                return;
             }
 
-            return `
+            // ✅ Build HTML rows dynamically
+            const rows = tools.map((tool) => {
+                const { id, name, integrationType, enabled, reachable } = tool;
+                let statusText = "";
+                let statusClass = "";
+            
+                if (enabled && reachable) {
+                    statusText = "Online";
+                    statusClass = "bg-green-100 text-green-800";
+                } else if (enabled) {
+                    statusText = "Offline";
+                    statusClass = "bg-yellow-100 text-yellow-800";
+                } else {
+                    statusText = "Inactive";
+                    statusClass = "bg-red-100 text-red-800";
+                }
+            
+                return `
             <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
                 <td class="px-4 py-3">
                 <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
@@ -7902,24 +7905,23 @@ async function loadTools() {
                 </td>
             </tr>
             `;
-        }).join("");
+            }).join("");
 
-        toolBody.innerHTML = rows;
-    }
-
+            toolBody.innerHTML = rows;
+        }
     } catch (error) {
-      console.error("Error loading tools:", error);
-      if ( toolBody !== null){
-        toolBody.innerHTML = `
-            <tr>
-            <td colspan="5" class="text-center py-4 text-red-500">Failed to load tools. Please try again.</td>
-            </tr>
-        `;
-      }
+        console.error("Error loading tools:", error);
+        if (toolBody !== null) {
+            toolBody.innerHTML = `
+                <tr>
+                <td colspan="5" class="text-center py-4 text-red-500">Failed to load tools. Please try again.</td>
+                </tr>
+            `;
+        }
     }
-  }
+}
 
-  document.addEventListener("DOMContentLoaded", loadTools);
+document.addEventListener("DOMContentLoaded", loadTools);
 
 async function enrichTool(toolId) {
     try {
@@ -7966,19 +7968,23 @@ async function enrichTool(toolId) {
             toolTestState.activeRequests.delete(toolId);
         }
 
-       // 5. CREATE NEW REQUEST with longer timeout
-       const controller = new AbortController();
-       toolTestState.activeRequests.set(toolId, controller);
-       toolTestState.lastRequestTime.set(toolId, now);
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
 
-       // 6. MAKE REQUEST with increased timeout
-    //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
-        const response = await fetchWithTimeout(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
-            method: "POST",
-            headers: { "Cache-Control": "no-cache",
-                Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify({ tool_id: toolId }),
-        }, toolTestState.requestTimeout, // Use the increased timeout
+        // 6. MAKE REQUEST with increased timeout
+        //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const response = await fetchWithTimeout(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+            {
+                method: "POST",
+                headers: { 
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache", 
+                    "Content-Type": "application/json" 
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            }, toolTestState.requestTimeout, // Use the increased timeout
         );
 
         if (!response.ok) {
@@ -8012,20 +8018,19 @@ async function enrichTool(toolId) {
         const oldDesc = safeGetElement("view-old-description");
 
         if (newDesc) {
-            newDesc.textContent = (data.enriched_desc || "Unknown");
+            newDesc.textContent = data.enriched_desc || "Unknown";
         }
         if (oldDesc) {
-            oldDesc.textContent = (data.original_desc || "Unknown");
+            oldDesc.textContent = data.original_desc || "Unknown";
         }
-        openModal('description-view-modal');
+        openModal("description-view-modal");
         // showSuccessMessage(`Tool enriched successfully`);
-
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
-        } finally {
+    } finally {
         const testButton = document.querySelector(
-            `[onclick*="enrichTool('${toolId}')"]`
+            `[onclick*="enrichTool('${toolId}')"]`,
         );
         if (testButton) {
             testButton.disabled = false;
@@ -8035,7 +8040,7 @@ async function enrichTool(toolId) {
     }
 }
 
-var toolopsTools;
+let toolopsTools;
 
 document.addEventListener("DOMContentLoaded", () => {
     const toolBody = document.getElementById("toolBody");
@@ -8046,150 +8051,151 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedTools = [];
     let selectedToolIds = [];
 
-    if (toolBody !== null)
+    if (toolBody !== null) {
         // ✅ Use event delegation for dynamically added checkboxes
         toolBody.addEventListener("change", (event) => {
-        const cb = event.target;
-        if (cb.classList.contains("tool-checkbox")) {
-            const toolName = cb.getAttribute("data-tool");
-
-            if (cb.checked) {
-            if (!selectedTools.includes(toolName)) {
-                selectedTools.push(toolName.split('###')[0]);
-                selectedToolIds.push(toolName.split('###')[1]);
+            const cb = event.target;
+            if (cb.classList.contains("tool-checkbox")) {
+                const toolName = cb.getAttribute("data-tool");
+                if (cb.checked) {
+                    if (!selectedTools.includes(toolName)) {
+                        selectedTools.push(toolName.split("###")[0]);
+                        selectedToolIds.push(toolName.split("###")[1]);
+                    }
+                } else {
+                    selectedTools = selectedTools.filter(
+                        (t) => t !== toolName.split("###")[0],
+                    );
+                    selectedToolIds = selectedToolIds.filter(
+                        (t) => t !== toolName.split("###")[1],
+                    );
+                }
+                updateSelectedList();
             }
-            } else {
-            selectedTools = selectedTools.filter(t => t !== toolName.split('###')[0]);
-            selectedToolIds = selectedToolIds.filter(t => t !== toolName.split('###')[1]);
-            }
-            updateSelectedList();
-        }
         });
+    }
 
     function updateSelectedList() {
-      selectedList.innerHTML = "";
-      if (selectedTools.length === 0) {
-        selectedList.textContent = "No tools selected";
-      } else {
-        selectedTools.forEach(tool => {
-          const item = document.createElement("div");
-          item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
-          item.innerHTML = `
-            <span>${tool}</span>
-            <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
-          `;
-          item.querySelector(".remove-btn").addEventListener("click", () => {
-            selectedTools = selectedTools.filter(t => t !== tool);
-            const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
-            if (box) box.checked = false;
-            updateSelectedList();
-          });
-          selectedList.appendChild(item);
-        });
-      }
-      selectedCount.textContent = selectedTools.length;
+        selectedList.innerHTML = "";
+        if (selectedTools.length === 0) {
+            selectedList.textContent = "No tools selected";
+        } else {
+            selectedTools.forEach((tool) => {
+                const item = document.createElement("div");
+                item.className = "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+                item.innerHTML = `
+                    <span>${tool}</span>
+                    <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
+                `;
+                item.querySelector(".remove-btn").addEventListener("click", () => {
+                    selectedTools = selectedTools.filter(t => t !== tool);
+                    const box = document.querySelector(`.tool-checkbox[data-tool="${tool}"]`);
+                    if (box) {
+                        box.checked = false;
+                    }
+                    updateSelectedList();
+                });
+                selectedList.appendChild(item);
+            });
+        }
+        selectedCount.textContent = selectedTools.length;
     }
 
     // --- Search logic ---
-    if (searchBox !== null)
+    if (searchBox !== null){
         searchBox.addEventListener("input", () => {
-        const query = searchBox.value.trim().toLowerCase();
-        document.querySelectorAll("#toolBody tr").forEach(row => {
-            const name = row.dataset.name;
-            row.style.display = name.includes(query) ? "" : "none";
+            const query = searchBox.value.trim().toLowerCase();
+            document.querySelectorAll("#toolBody tr").forEach((row) => {
+                const name = row.dataset.name;
+                row.style.display = name.includes(query) ? "" : "none";
+            });
         });
-        });
-
+    }
     // Generic API call for Enrich/Validate
-  async function callEnrichment() {
-    // const selectedTools = getSelectedTools();
+    async function callEnrichment() {
+        // const selectedTools = getSelectedTools();
 
-    if (selectedTools.length === 0) {
-        showErrorMessage("⚠️ Please select at least one tool.");
-      return;
-    }
-    try {
-      console.log(selectedToolIds)
-      selectedToolIds.forEach(toolId => {
-        console.log(toolId)
-        const res = fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
-            method: "POST",
-            headers: { "Cache-Control": "no-cache",
-                Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify({ tool_id: toolId }),
-          });
-        });
-    //   if (!res.ok) throw new Error(`Server error: ${res.status}`);
-    //   const data = await res.json();
-    //   enrichedDescription = data
-    //   responseDiv.textContent = "Tool description enrichment has started.";
-    showSuccessMessage("Tool description enrichment has started.");
-    // Uncheck all checkboxes
-    document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+        if (selectedTools.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
+        try {
+            console.log(selectedToolIds);
+            selectedToolIds.forEach((toolId) => {
+                console.log(toolId);
+                fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+                    method: "POST",
+                    headers: { "Cache-Control": "no-cache",
+                        Pragma: "no-cache", "Content-Type": "application/json" },
+                    body: JSON.stringify({ tool_id: toolId }),
+                });
+            });
+            showSuccessMessage("Tool description enrichment has started.");
+            // Uncheck all checkboxes
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
 
-    // Empty the selected tools array
-    selectedTools = [];
-    selectedToolIds = [];
+            // Empty the selected tools array
+            selectedTools = [];
+            selectedToolIds = [];
 
-    // Update the selected tools list UI
-    updateSelectedList();
+            // Update the selected tools list UI
+            updateSelectedList();
 
-    } catch (err) {
-    //   responseDiv.textContent = `❌ Error: ${err.message}`;
-      showErrorMessage(`❌ Error: ${err.message}`);
-    }
-  }
-
-  function openTestCaseModal() {
-    if (selectedToolIds.length === 0) {
-      showErrorMessage("⚠️ Please select at least one tool.");
-      return;
+        } catch (err) {
+            //   responseDiv.textContent = `❌ Error: ${err.message}`;
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
     }
 
-    // Show modal
-    document.getElementById("bulk-testcase-gen-modal").classList.remove("hidden");
-    document.getElementById("bulk-generate-btn").addEventListener("click", generateBulkTestCases);
+    function openTestCaseModal() {
+        if (selectedToolIds.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
 
-  }
-
-  window.generateBulkTestCases = async function() {
-    const testCases = parseInt(document.getElementById("gen-bulk-testcase-count").value);
-    const variations = parseInt(document.getElementById("gen-bulk-nl-variation-count").value);
-
-    if (!testCases || !variations || testCases < 1 || variations < 1) {
-      showErrorMessage("⚠️ Please enter valid numbers for test cases and variations.");
-      return;
+        // Show modal
+        document.getElementById("bulk-testcase-gen-modal").classList.remove("hidden");
+        document.getElementById("bulk-generate-btn").addEventListener("click", generateBulkTestCases);
     }
 
-    try {
-      for (const toolId of selectedToolIds) {
-        fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
-          method: "POST",
-          headers: {
-            "Cache-Control": "no-cache",
-            "Pragma": "no-cache",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ tool_id: toolId }),
-        });
-      }
-      showSuccessMessage("Test case generation for tool validation has started.");
-      // Reset selections
-      document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
-      selectedTools = [];
-      selectedToolIds = [];
-      updateSelectedList();
+    window.generateBulkTestCases = async function() {
+        const testCases = parseInt(document.getElementById("gen-bulk-testcase-count").value);
+        const variations = parseInt(document.getElementById("gen-bulk-nl-variation-count").value);
 
-      // Close modal immediately after clicking Generate
-      closeModal("bulk-testcase-gen-modal");
-    } catch (err) {
-      showErrorMessage(`❌ Error: ${err.message}`);
+        if (!testCases || !variations || testCases < 1 || variations < 1) {
+            showErrorMessage("⚠️ Please enter valid numbers for test cases and variations.");
+            return;
+        }
+
+        try {
+            for (const toolId of selectedToolIds) {
+                fetch(`/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`, {
+                    method: "POST",
+                    headers: {
+                        "Cache-Control": "no-cache",
+                        "Pragma": "no-cache",
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ tool_id: toolId }),
+                });
+            }
+            showSuccessMessage("Test case generation for tool validation has started.");
+            // Reset selections
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
+            selectedTools = [];
+            selectedToolIds = [];
+            updateSelectedList();
+
+            // Close modal immediately after clicking Generate
+            closeModal("bulk-testcase-gen-modal");
+        } catch (err) {
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
     }
-  }
 
     function clearAllSelections() {
         // Uncheck all checkboxes
-        document.querySelectorAll(".tool-checkbox").forEach(cb => cb.checked = false);
+        document.querySelectorAll(".tool-checkbox").forEach((cb) => cb.checked = false);
 
         // Empty the selected tools array
         selectedTools = [];
@@ -8197,16 +8203,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Update the selected tools list UI
         updateSelectedList();
-      }
+    }
     // Button listeners
-    var enrichToolsBtn = document.getElementById("enrichToolsBtn")
+    const enrichToolsBtn = document.getElementById("enrichToolsBtn");
 
     if (enrichToolsBtn !== null){
         document.getElementById("enrichToolsBtn").addEventListener("click", () => callEnrichment());
         document.getElementById("validateToolsBtn").addEventListener("click", () => openTestCaseModal());
         document.getElementById("clearToolsBtn").addEventListener("click", () => clearAllSelections());
     }
-  });
+});
 
 
 
@@ -8268,16 +8274,16 @@ async function generateToolTestCases(toolId) {
         // document.getElementById("gen-test-tool-id").style.display = 'block';
 
 
-       openModal("testcase-gen-modal");
+        openModal("testcase-gen-modal");
 
-       tcgButton.disabled = false;
+        tcgButton.disabled = false;
         tcgButton.textContent = "Generate Test Cases";
         tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
 
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
-        } finally {
+    } finally {
         const testButton = document.querySelector(
             `[onclick*="generateToolTestCases('${toolId}')"]`
         );
@@ -8293,6 +8299,7 @@ async function generateToolTestCases(toolId) {
 async function generateTestCases(){
     const testCases = document.getElementById("gen-testcase-count").value;
     const variations = document.getElementById("gen-nl-variation-count").value;
+    var toolId;
     // const toolId = document.getElementById("gen-test-tool-id").value;
     const toolIdElement = safeGetElement("gen-test-tool-id");
     if (toolIdElement) {
@@ -8340,7 +8347,7 @@ async function generateTestCases(){
     } catch (error) {
         console.error("Error fetching tool details for testing:", error);
         showErrorMessage(error.message);
-        } finally {
+    } finally {
         const testButton = document.querySelector(
             `[onclick*="generateToolTestCases('${toolId}')"]`
         );
@@ -8349,8 +8356,8 @@ async function generateTestCases(){
             testButton.textContent = "Generate Test Cases";
             testButton.classList.remove("opacity-50", "cursor-not-allowed");
         }
-    }
-  };
+    };
+};
 
 async function validateTool(toolId) {
     try {
@@ -8405,13 +8412,13 @@ async function validateTool(toolId) {
             toolTestState.activeRequests.delete(toolId);
         }
 
-       // 5. CREATE NEW REQUEST with longer timeout
-       const controller = new AbortController();
-       toolTestState.activeRequests.set(toolId, controller);
-       toolTestState.lastRequestTime.set(toolId, now);
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
 
-       // 6. MAKE REQUEST with increased timeout
-       const response = await fetchWithTimeout(
+        // 6. MAKE REQUEST with increased timeout
+        const response = await fetchWithTimeout(
             `${window.ROOT_PATH}/admin/tools/${toolId}`,
             {
                 signal: controller.signal,
@@ -8466,7 +8473,7 @@ async function validateTool(toolId) {
         if (descElement) {
             if (tool.description) {
                 // Escape HTML and then replace newlines with <br/> tags
-                tool.description = tool.description.slice(0, tool.description.indexOf('*'));
+                tool.description = tool.description.slice(0, tool.description.indexOf("*"));
                 descElement.innerHTML = escapeHtml(tool.description).replace(
                     /\n/g,
                     "<br/>",
@@ -8499,20 +8506,25 @@ async function validateTool(toolId) {
         // Modal setup
         const title = safeGetElement("tool-validation-modal-title");
         const desc = safeGetElement("tool-validation-modal-description");
-        if (title) title.textContent = `Test Tool: ${tool.name || "Unknown"}`;
-        if (desc)
+        if (title) {
+            title.textContent = `Test Tool: ${tool.name || "Unknown"}`;
+        }
+        if (desc) {
             desc.textContent = tool.description || "No description available.";
-        if (!container) return;
+        }
+        if (!container) { 
+            return;
+        }
 
         container.innerHTML = "";
 
         // Parse schema safely
         if (typeof schema === "string") {
             try {
-            schema = JSON.parse(schema);
+                schema = JSON.parse(schema);
             } catch (e) {
-            console.error("Invalid schema JSON", e);
-            schema = {};
+                console.error("Invalid schema JSON", e);
+                schema = {};
             }
         }
 
@@ -8539,12 +8551,12 @@ async function validateTool(toolId) {
         if(validationStatus.constructor === Array){
             validationStatus = validationStatus[0]['status']
             if (validationStatus == 'not-initiated') {
-                showErrorMessage('Please generate test cases before running validation.')
+                showErrorMessage('Please generate test cases before running validation.');
             } else if(validationStatus == 'in-progress') {
-                showErrorMessage('Test case generation is in progress. Please try validation once it is complete.')
+                showErrorMessage('Test case generation is in progress. Please try validation once it is complete.');
             } else if(validationStatus == 'failed') {
-                showErrorMessage('Test case generation failed. Please check your LLM connection and try again.')
-                console.log("Previous error while generating test cases: ", vsres[0]['error_message'])
+                showErrorMessage('Test case generation failed. Please check your LLM connection and try again.');
+                console.log("Previous error while generating test cases: ", vsres[0]['error_message']);
             } else {
                 const validationResponse = await fetchWithTimeout(`/toolops/validation/generate_testcases?tool_id=${toolId}&mode=query`, {
                     method: "POST",
@@ -8572,8 +8584,8 @@ async function validateTool(toolId) {
                     header.className =
                     "w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium";
                     header.innerHTML = `
-                    <span>${`Test Case ${index + 1}`}</span>
-                    <span class="toggle-icon">+</span>
+                        <span>${`Test Case ${index + 1}`}</span>
+                        <span class="toggle-icon">+</span>
                     `;
 
                     const body = document.createElement("div");
@@ -8581,9 +8593,9 @@ async function validateTool(toolId) {
 
                     // Toggle open/close
                     header.addEventListener("click", () => {
-                    const isOpen = !body.classList.contains("hidden");
-                    body.classList.toggle("hidden", isOpen);
-                    header.querySelector(".toggle-icon").textContent = isOpen ? "+" : "−";
+                        const isOpen = !body.classList.contains("hidden");
+                        body.classList.toggle("hidden", isOpen);
+                        header.querySelector(".toggle-icon").textContent = isOpen ? "+" : "−";
                     });
 
                     acc.appendChild(header);
@@ -8596,221 +8608,222 @@ async function validateTool(toolId) {
                     formDiv.className = "space-y-3";
 
                     if (schema && schema.properties) {
-                    for (const key in schema.properties) {
-                        const prop = schema.properties[key];
+                        for (const key in schema.properties) {
+                            const prop = schema.properties[key];
 
-                        // Validate the property name
-                        const keyValidation = validateInputName(key, "schema property");
-                        if (!keyValidation.valid) {
-                            console.warn(`Skipping invalid schema property: ${key}`);
-                            continue;
-                        }
+                            // Validate the property name
+                            const keyValidation = validateInputName(key, "schema property");
+                            if (!keyValidation.valid) {
+                                console.warn(`Skipping invalid schema property: ${key}`);
+                                continue;
+                            }
 
-                        const fieldDiv = document.createElement("div");
-                        fieldDiv.className = "mb-4";
+                            const fieldDiv = document.createElement("div");
+                            fieldDiv.className = "mb-4";
 
-                        // Field label - use textContent to avoid double escaping
-                        const label = document.createElement("label");
-                        // label.textContent = key;
-                        label.className =
-                        "block text-sm font-medium text-gray-700 dark:text-gray-300";
-                        // Create span for label text
-                        const labelText = document.createElement("span");
-                        labelText.textContent = keyValidation.value;
-                        label.appendChild(labelText);
-                        let default_value = ""
-                        if (keyValidation.value in input_parameters) {
-                            default_value = input_parameters[keyValidation.value]
-                        }
+                            // Field label - use textContent to avoid double escaping
+                            const label = document.createElement("label");
+                            // label.textContent = key;
+                            label.className =
+                            "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                            // Create span for label text
+                            const labelText = document.createElement("span");
+                            labelText.textContent = keyValidation.value;
+                            label.appendChild(labelText);
+                            let default_value = ""
+                            if (keyValidation.value in input_parameters) {
+                                default_value = input_parameters[keyValidation.value]
+                            }
 
 
-                        // Add red star if field is required
-                        if (schema.required && schema.required.includes(key)) {
-                            const requiredMark = document.createElement("span");
-                            requiredMark.textContent = " *";
-                            requiredMark.className = "text-red-500";
-                            label.appendChild(requiredMark);
-                        }
+                            // Add red star if field is required
+                            if (schema.required &&
+                                schema.required.includes(key)) {
+                                const requiredMark = document.createElement("span");
+                                requiredMark.textContent = " *";
+                                requiredMark.className = "text-red-500";
+                                label.appendChild(requiredMark);
+                            }
 
-                        fieldDiv.appendChild(label);
+                            fieldDiv.appendChild(label);
 
-                        // Description help text - use textContent
-                        if (prop.description) {
-                            const description = document.createElement("small");
-                            description.textContent = prop.description;
-                            description.className = "text-gray-500 block mb-1";
-                            fieldDiv.appendChild(description);
-                        }
+                            // Description help text - use textContent
+                            if (prop.description) {
+                                const description = document.createElement("small");
+                                description.textContent = prop.description;
+                                description.className = "text-gray-500 block mb-1";
+                                fieldDiv.appendChild(description);
+                            }
 
-                        // const input = document.createElement("input");
-                        // input.name = key;
-                        // input.className =
-                        // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
-                        // input.value = test.inputs[key] || prop.default || "";
-                        // fieldDiv.appendChild(input);
+                            // const input = document.createElement("input");
+                            // input.name = key;
+                            // input.className =
+                            // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
+                            // input.value = test.inputs[key] || prop.default || "";
+                            // fieldDiv.appendChild(input);
 
-                        if (prop.type === "array") {
-                            const arrayContainer = document.createElement("div");
-                            arrayContainer.className = "space-y-2";
+                            if (prop.type === "array") {
+                                const arrayContainer = document.createElement("div");
+                                arrayContainer.className = "space-y-2";
 
-                            function createArrayInput(value = "") {
-                                const wrapper = document.createElement("div");
-                                wrapper.className = "flex items-center space-x-2";
+                                function createArrayInput(value = "") {
+                                    const wrapper = document.createElement("div");
+                                    wrapper.className = "flex items-center space-x-2";
 
-                                const input = document.createElement("input");
-                                input.name = keyValidation.value;
-                                input.required =
-                                    schema.required && schema.required.includes(key);
-                                input.className =
-                                    "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                                    const input = document.createElement("input");
+                                    input.name = keyValidation.value;
+                                    input.required =
+                                        schema.required && schema.required.includes(key);
+                                    input.className =
+                                        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
-                                const itemTypes = Array.isArray(prop.items?.anyOf)
-                                    ? prop.items.anyOf.map((t) => t.type)
-                                    : [prop.items?.type];
+                                    const itemTypes = Array.isArray(prop.items?.anyOf)
+                                        ? prop.items.anyOf.map((t) => t.type)
+                                        : [prop.items?.type];
 
-                                if (
-                                    itemTypes.includes("number") ||
-                                    itemTypes.includes("integer")
-                                ) {
-                                    input.type = "number";
-                                    input.step = itemTypes.includes("integer")
-                                        ? "1"
-                                        : "any";
-                                } else if (itemTypes.includes("boolean")) {
-                                    input.type = "checkbox";
-                                    input.value = "true";
-                                    input.checked = value === true || value === "true";
-                                } else {
-                                    input.type = "text";
+                                    if (
+                                        itemTypes.includes("number") ||
+                                        itemTypes.includes("integer")
+                                    ) {
+                                        input.type = "number";
+                                        input.step = itemTypes.includes("integer")
+                                            ? "1"
+                                            : "any";
+                                    } else if (itemTypes.includes("boolean")) {
+                                        input.type = "checkbox";
+                                        input.value = "true";
+                                        input.checked = value === true || value === "true";
+                                    } else {
+                                        input.type = "text";
+                                    }
+
+                                    if (
+                                        typeof value === "string" ||
+                                        typeof value === "number"
+                                    ) {
+                                        input.value = value;
+                                    }
+
+                                    const delBtn = document.createElement("button");
+                                    delBtn.type = "button";
+                                    delBtn.className =
+                                        "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
+                                    delBtn.title = "Delete";
+                                    delBtn.textContent = "×";
+                                    delBtn.addEventListener("click", () => {
+                                        arrayContainer.removeChild(wrapper);
+                                    });
+
+                                    wrapper.appendChild(input);
+
+                                    if (itemTypes.includes("boolean")) {
+                                        const hidden = document.createElement("input");
+                                        hidden.type = "hidden";
+                                        hidden.name = keyValidation.value;
+                                        hidden.value = "false";
+                                        wrapper.appendChild(hidden);
+                                    }
+
+                                    wrapper.appendChild(delBtn);
+                                    return wrapper;
                                 }
 
-                                if (
-                                    typeof value === "string" ||
-                                    typeof value === "number"
-                                ) {
-                                    input.value = value;
-                                }
-
-                                const delBtn = document.createElement("button");
-                                delBtn.type = "button";
-                                delBtn.className =
-                                    "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
-                                delBtn.title = "Delete";
-                                delBtn.textContent = "×";
-                                delBtn.addEventListener("click", () => {
-                                    arrayContainer.removeChild(wrapper);
+                                const addBtn = document.createElement("button");
+                                addBtn.type = "button";
+                                addBtn.className =
+                                    "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
+                                addBtn.textContent = "Add items";
+                                addBtn.addEventListener("click", () => {
+                                    arrayContainer.appendChild(createArrayInput());
                                 });
 
-                                wrapper.appendChild(input);
-
-                                if (itemTypes.includes("boolean")) {
-                                    const hidden = document.createElement("input");
-                                    hidden.type = "hidden";
-                                    hidden.name = keyValidation.value;
-                                    hidden.value = "false";
-                                    wrapper.appendChild(hidden);
-                                }
-
-                                wrapper.appendChild(delBtn);
-                                return wrapper;
-                            }
-
-                            const addBtn = document.createElement("button");
-                            addBtn.type = "button";
-                            addBtn.className =
-                                "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
-                            addBtn.textContent = "Add items";
-                            addBtn.addEventListener("click", () => {
-                                arrayContainer.appendChild(createArrayInput());
-                            });
-
-                            if (Array.isArray(prop.default)) {
-                                if (prop.default.length > 0) {
-                                    prop.default.forEach((val) => {
-                                        arrayContainer.appendChild(
-                                            createArrayInput(val),
-                                        );
-                                    });
+                                if (Array.isArray(prop.default)) {
+                                    if (prop.default.length > 0) {
+                                        prop.default.forEach((val) => {
+                                            arrayContainer.appendChild(
+                                                createArrayInput(val),
+                                            );
+                                        });
+                                    } else {
+                                        // Create one empty input for empty default arrays
+                                        arrayContainer.appendChild(createArrayInput());
+                                    }
                                 } else {
-                                    // Create one empty input for empty default arrays
                                     arrayContainer.appendChild(createArrayInput());
                                 }
-                            } else {
-                                arrayContainer.appendChild(createArrayInput());
-                            }
 
-                            fieldDiv.appendChild(arrayContainer);
-                            fieldDiv.appendChild(addBtn);
-                        } else {
-                            // Input field with validation (with multiline support)
-                            let fieldInput;
-                            const isTextType = prop.type === "text";
-                            if (isTextType) {
-                                fieldInput = document.createElement("textarea");
-                                fieldInput.rows = 4;
+                                fieldDiv.appendChild(arrayContainer);
+                                fieldDiv.appendChild(addBtn);
                             } else {
-                                fieldInput = document.createElement("input");
-                                if (prop.type === "number" || prop.type === "integer") {
-                                    fieldInput.type = "number";
-                                } else if (prop.type === "boolean") {
-                                    fieldInput.type = "checkbox";
-                                    fieldInput.value = "true";
-                                } else {
+                                // Input field with validation (with multiline support)
+                                let fieldInput;
+                                const isTextType = prop.type === "text";
+                                if (isTextType) {
                                     fieldInput = document.createElement("textarea");
-                                    fieldInput.rows = 1;
-                                }
-                            }
-
-                            fieldInput.name = keyValidation.value;
-                            fieldInput.required =
-                                schema.required && schema.required.includes(key);
-                            fieldInput.className =
-                                prop.type === "boolean"
-                                    ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                                    : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-
-                            // Set default values here
-                            if (prop.default !== undefined) {
-                                if (fieldInput.type === "checkbox") {
-                                    fieldInput.checked = prop.default === true;
-                                } else if (isTextType) {
-                                    fieldInput.value = prop.default;
+                                    fieldInput.rows = 4;
                                 } else {
-                                    fieldInput.value = prop.default;
+                                    fieldInput = document.createElement("input");
+                                    if (prop.type === "number" || prop.type === "integer") {
+                                        fieldInput.type = "number";
+                                    } else if (prop.type === "boolean") {
+                                        fieldInput.type = "checkbox";
+                                        fieldInput.value = "true";
+                                    } else {
+                                        fieldInput = document.createElement("textarea");
+                                        fieldInput.rows = 1;
+                                    }
+                                }
+
+                                fieldInput.name = keyValidation.value;
+                                fieldInput.required =
+                                    schema.required && schema.required.includes(key);
+                                fieldInput.className =
+                                    prop.type === "boolean"
+                                        ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                                        : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                                // Set default values here
+                                if (prop.default !== undefined) {
+                                    if (fieldInput.type === "checkbox") {
+                                        fieldInput.checked = prop.default === true;
+                                    } else if (isTextType) {
+                                        fieldInput.value = prop.default;
+                                    } else {
+                                        fieldInput.value = prop.default;
+                                    }
+                                }
+                                fieldInput.value = default_value
+                                fieldDiv.appendChild(fieldInput);
+                                if (prop.default !== undefined) {
+                                    if (fieldInput.type === "checkbox") {
+                                        const hiddenInput = document.createElement("input");
+                                        hiddenInput.type = "hidden";
+                                        hiddenInput.value = "false";
+                                        hiddenInput.name = keyValidation.value;
+                                        fieldDiv.appendChild(hiddenInput);
+                                    }
                                 }
                             }
-                            fieldInput.value = default_value
-                            fieldDiv.appendChild(fieldInput);
-                            if (prop.default !== undefined) {
-                                if (fieldInput.type === "checkbox") {
-                                    const hiddenInput = document.createElement("input");
-                                    hiddenInput.type = "hidden";
-                                    hiddenInput.value = "false";
-                                    hiddenInput.name = keyValidation.value;
-                                    fieldDiv.appendChild(hiddenInput);
-                                }
-                            }
+                            formDiv.appendChild(fieldDiv);
                         }
-                        formDiv.appendChild(fieldDiv);
-                    }
                     }
 
                     // First section - Passthrough Headers
-                    const headerSection = document.createElement('div');
+                    const headerSection = document.createElement("div");
                     headerSection.className = 'mt-4 border-t pt-4';
 
-                    const headerDiv = document.createElement('div');
+                    const headerDiv = document.createElement("div");
 
-                    const label = document.createElement('label');
-                    label.setAttribute('for', 'validation-passthrough-headers');
+                    const label = document.createElement("label");
+                    label.setAttribute("for", "validation-passthrough-headers");
                     label.className = 'block text-sm font-medium text-gray-700 dark:text-gray-400';
                     label.textContent = 'Passthrough Headers (Optional)';
 
-                    const small = document.createElement('small');
+                    const small = document.createElement("small");
                     small.className = 'text-gray-500 dark:text-gray-400 block mb-2';
                     small.textContent = 'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
 
-                    const textarea = document.createElement('textarea');
+                    const textarea = document.createElement("textarea");
                     textarea.id = 'validation-passthrough-headers';
                     textarea.name = 'passthrough_headers';
                     textarea.rows = 3;
@@ -8823,25 +8836,25 @@ async function validateTool(toolId) {
                     headerSection.appendChild(headerDiv);
 
 
-                    const nlUtteranceSection = document.createElement('div');
+                    const nlUtteranceSection = document.createElement("div");
                     nlUtteranceSection.className = 'mt-4 border-t pt-4';
 
-                    const nlUtteranceDiv = document.createElement('div');
+                    const nlUtteranceDiv = document.createElement("div");
 
-                    const nlUtterancelabel = document.createElement('label');
-                    nlUtterancelabel.setAttribute('for', 'test-passthrough-nlUtterances');
+                    const nlUtterancelabel = document.createElement("label");
+                    nlUtterancelabel.setAttribute("for", "test-passthrough-nlUtterances");
                     nlUtterancelabel.className = 'block text-sm font-bold text-green-700 dark:text-green-400';
                     nlUtterancelabel.textContent = "Generated Test Utterance";
 
-                    const nlUtterancesmall = document.createElement('small');
+                    const nlUtterancesmall = document.createElement("small");
                     nlUtterancesmall.className = 'text-gray-500 dark:text-gray-400 block mb-2';
                     nlUtterancesmall.textContent = 'Modify or add new utterances to test using the agent.';
 
-                    const nlutextarea = document.createElement('textarea');
+                    const nlutextarea = document.createElement("textarea");
                     nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
                     nlutextarea.name = 'passthrough_nlUtterances';
                     nlutextarea.rows = 3;
-                    nlutextarea.value = test.nl_utterance.join('\n\n');
+                    nlutextarea.value = test.nl_utterance.join("\n\n");
                     nlutextarea.className = 'w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200';
 
                     nlUtteranceDiv.appendChild(nlUtterancelabel);
@@ -8876,23 +8889,23 @@ async function validateTool(toolId) {
                     });
 
                     // Loading spinner
-                    const loadingDiv = document.createElement('div');
+                    const loadingDiv = document.createElement("div");
                     loadingDiv.id = `tool-validation-loading-${index}`;
                     loadingDiv.style.display = 'none';
 
-                    const spinner = document.createElement('div');
+                    const spinner = document.createElement("div");
                     spinner.className = 'spinner';
                     loadingDiv.appendChild(spinner);
 
                     // Result area
-                    const resultDiv = document.createElement('div');
+                    const resultDiv = document.createElement("div");
                     resultDiv.id = `tool-validation-result-${index}`;
                     resultDiv.className = 'mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300';
                     resultDiv.style.height = '400px';
 
                     body.appendChild(formDiv);
-                    body.appendChild(headerSection)
-                    body.appendChild(nlUtteranceSection)
+                    body.appendChild(headerSection);
+                    body.appendChild(nlUtteranceSection);
                     body.appendChild(runBtn);
                     body.appendChild(runAgentBtn);
                     body.appendChild(loadingDiv)
@@ -8924,43 +8937,47 @@ async function validateTool(toolId) {
                 document
                     .getElementById("run-all-tests-btn")
                     ?.addEventListener("click", async () => {
-                        showSuccessMessage("🔍 Validation in progress; View results by expanding each test case.")
+                        showSuccessMessage("🔍 Validation in progress; View results by expanding each test case.");
                     const total = testCases.length;
                     document.querySelectorAll("#tool-validation-form-fields > div").forEach((acc) => {
                         const body = acc.querySelector("div.hidden");
                         const icon = acc.querySelector(".toggle-icon");
-                        if (body) body.classList.remove("hidden");
-                        if (icon) icon.textContent = "−";
-                      });
+                        if (body) {
+                            body.classList.remove("hidden");
+                        }
+                        if (icon) {
+                            icon.textContent = "−";
+                        }
+                    });
                     for (let i = 0; i < total; i++) {
                         await runToolValidation(i);
                     }
-                    });
+                });
 
                 openModal("tool-validation-modal");
                 console.log("✓ Test modal with accordions loaded successfully");
             }
         } else {
-            showErrorMessage('Test case generation failed. Please check your LLM connection and try again.')
+            showErrorMessage('Test case generation failed. Please check your LLM connection and try again.');
         }
 
 
         } catch (error) {
-        console.error("Error fetching tool details for testing:", error);
-        showErrorMessage(error.message);
+            console.error("Error fetching tool details for testing:", error);
+            showErrorMessage(error.message);
         } finally {
-        const testButton = document.querySelector(
-            `[onclick*="validateTool('${toolId}')"]`
-        );
+            const testButton = document.querySelector(
+                `[onclick*="validateTool('${toolId}')"]`
+            );
         if (testButton) {
             testButton.disabled = false;
             testButton.textContent = "Validate";
             testButton.classList.remove("opacity-50", "cursor-not-allowed");
         }
     }
-  }
+}
 
-  async function runToolValidation(testIndex) {
+async function runToolValidation(testIndex) {
     const form = document.querySelector(`#tool-validation-form-${testIndex}`);
     const resultContainer = document.querySelector(`#tool-validation-result-${testIndex}`);
 
@@ -9272,16 +9289,15 @@ async function runToolAgentValidation(testIndex) {
             resultContainer.innerHTML = "";
         }
 
-        const nl_test_cases = document.getElementById(`validation-passthrough-nlUtterances-${testIndex}`).value.split(/\r?\n\r?\n/);
-        const toolId = AppState.currentTestTool.id
+        const nlTestCases = document.getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
+            .value.split(/\r?\n\r?\n/);
+        const toolId = AppState.currentTestTool.id;
 
-        console.log(nl_test_cases)
-        console.log('Running validation for the Tool: ', AppState.currentTestTool.name)
-        console.log('Running validation for the Tool Id: ', toolId)
+        console.log(nlTestCases);
+        console.log("Running validation for the Tool: ", AppState.currentTestTool.name);
+        console.log("Running validation for the Tool Id: ", toolId);
 
-
-        const payload = { tool_id: toolId, tool_nl_test_cases: nl_test_cases };
-
+        const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
 
         // Parse custom headers from the passthrough headers field
         const requestHeaders = {
@@ -9336,12 +9352,17 @@ async function runToolAgentValidation(testIndex) {
             }
         }
 
-        const response = await fetchWithTimeout(`/toolops/validation/execute_tool_nl_testcases`, {
-            method: "POST",
-            headers: { "Cache-Control": "no-cache",
-                Pragma: "no-cache", "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-        }, toolTestState.requestTimeout, // Use the increased timeout
+        const response = await fetchWithTimeout("/toolops/validation/execute_tool_nl_testcases",
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
         );
 
         const result = await response.json();
@@ -10718,7 +10739,7 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
-            tool.description = tool.description.slice(0, tool.description.indexOf('*'));
+            tool.description = tool.description.slice(0, tool.description.indexOf("*"));
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
