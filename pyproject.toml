@@ -184,19 +184,18 @@ llmchat = [
     "langgraph>=1.0.2",
 ]
 
+altk = [
+    "agent-lifecycle-toolkit>=0.7.0",
+    ]
+
 toolops = [
     "langchain-core>=1.0.4",
     "langchain-mcp-adapters>=0.1.12",
     "langchain-ollama>=1.0.0",
     "langchain-openai>=1.0.2",
     "langgraph>=1.0.2",
-    "aiofiles>=25.1.0",
-    "tomli>=2.3.0",
-    "agent-lifecycle-toolkit>=0.7.0"
-    ]
-
-altk = [
     "agent-lifecycle-toolkit>=0.7.0",
+    "fastmcp>=2.13.1",
     ]
 
 # Fuzzing and property-based testing

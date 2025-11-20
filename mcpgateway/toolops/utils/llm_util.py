@@ -33,7 +33,7 @@ from mcpgateway.services.mcp_client_chat_service import (
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-load_dotenv(".env")
+load_dotenv()
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
 TOOLOPS_TEMPERATURE = 0.1
