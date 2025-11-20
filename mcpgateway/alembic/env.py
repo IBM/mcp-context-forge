@@ -215,7 +215,7 @@ def run_migrations_online() -> None:
         # Apply naming convention
         target_metadata.naming_convention = mariadb_naming_convention
 
-        def render_item(type_, obj, autogen_context):
+        def render_item(type_, obj, _autogen_context):
             # UUID → String(36)
             if isinstance(type_, postgresql.UUID):
                 return "String(36)"
@@ -240,7 +240,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             render_item=render_item,
             # prevent Alembic from generating tables that already exist
-            include_object=lambda obj, name, type_, reflected, compare_to: not (type_ == "table" and connection.dialect.has_table(connection, name)),
+            include_object=lambda obj, name, type_, _reflected, _compare_to: not (type_ == "table" and connection.dialect.has_table(connection, name)),
         )
 
     # ----------------------------------------------------------------------
