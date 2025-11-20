@@ -147,6 +147,14 @@ install: venv
 install-db: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[redis,postgres]"
 
+.PHONY: install-altk
+install-altk: venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[altk]"
+
+.PHONY: install-toolops
+install-toolops: venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install .[toolops]"
+
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install --group dev ."
@@ -443,6 +451,7 @@ test:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		uv pip list && \
 		uv run pytest -n auto --maxfail=0 -v --ignore=tests/fuzz"
 
 test-profile:
