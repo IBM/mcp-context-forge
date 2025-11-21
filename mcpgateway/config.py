@@ -56,7 +56,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from typing import Annotated, Any, Callable, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -1573,7 +1573,21 @@ def generate_settings_schema() -> dict[str, Any]:
     return Settings.model_json_schema(mode="validation")
 
 
-settings = get_settings()
+# Lazy "instance" of settings
+class LazySettingsWrapper:
+    """Lazily initialize settings singleton on getattr"""
+
+    def __init__(self, get_settings_fn: Callable[[], BaseSettings]) -> None:
+        """Initialize the settings object."""
+        self._get_settings = get_settings_fn
+
+    def __getattr__(self, key: str) -> Any:
+        """Get the real settings object and forward to it"""
+        return getattr(self._get_settings(), key)
+
+
+settings = LazySettingsWrapper(get_settings)
+
 
 if __name__ == "__main__":
     if "--schema" in sys.argv:
