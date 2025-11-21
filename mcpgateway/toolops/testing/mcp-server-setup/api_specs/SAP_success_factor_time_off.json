@@ -14,7 +14,7 @@
         "/api/time-off/upcoming": {
             "post": {
                 "summary": "Get Upcoming Time Off",
-                "description": "Retrieves the user's upcoming time off details from SAP SuccessFactors.",
+                "description": "Retrieves upcoming time off",
                 "operationId": "get_upcoming_time_off",
                 "requestBody": {
                     "content": {
@@ -144,7 +144,6 @@
                 "required": [
                     "user_id",
                     "start_date",
-                    "end_date",
                     "time_off_types"
                 ],
                 "title": "TimeOffRequest",
