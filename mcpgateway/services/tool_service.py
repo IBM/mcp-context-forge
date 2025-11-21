@@ -44,6 +44,7 @@ from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
@@ -1131,7 +1132,8 @@ class ToolService:
 
         # Plugin hook: tool pre-invoke
         context_table = None
-        request_id = uuid.uuid4().hex
+        # Use correlation ID from context if available, otherwise generate new one
+        request_id = get_correlation_id() or uuid.uuid4().hex
         # Use gateway_id if available, otherwise use a generic server identifier
         gateway_id = getattr(tool, "gateway_id", "unknown")
         server_id = gateway_id if isinstance(gateway_id, str) else "unknown"

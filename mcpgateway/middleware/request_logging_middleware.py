@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.correlation_id import get_correlation_id
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -171,13 +172,28 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # Mask sensitive headers
             masked_headers = mask_sensitive_headers(dict(request.headers))
 
-            logger.log(
-                log_level,
-                f"📩 Incoming request: {request.method} {request.url.path}\n"
-                f"Query params: {dict(request.query_params)}\n"
-                f"Headers: {masked_headers}\n"
-                f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
-            )
+            # Get correlation ID for request tracking
+            request_id = get_correlation_id()
+
+            # Try to log with extra parameter, fall back to without if not supported
+            try:
+                logger.log(
+                    log_level,
+                    f"📩 Incoming request: {request.method} {request.url.path}\n"
+                    f"Query params: {dict(request.query_params)}\n"
+                    f"Headers: {masked_headers}\n"
+                    f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
+                    extra={"request_id": request_id},
+                )
+            except TypeError:
+                # Fall back for test loggers that don't accept extra parameter
+                logger.log(
+                    log_level,
+                    f"📩 Incoming request: {request.method} {request.url.path}\n"
+                    f"Query params: {dict(request.query_params)}\n"
+                    f"Headers: {masked_headers}\n"
+                    f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
+                )
 
         except Exception as e:
             logger.warning(f"Failed to log request body: {e}")
