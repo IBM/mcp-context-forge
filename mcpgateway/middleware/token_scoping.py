@@ -14,7 +14,7 @@ and time-based restrictions.
 from datetime import datetime, timezone
 import ipaddress
 import re
-from typing import Optional
+from typing import Optional, List
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -22,8 +22,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
 # First-Party
-from mcpgateway.db import Permissions
+from mcpgateway.db import Permissions, Role, UserRole
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
@@ -336,7 +337,7 @@ class TokenScopingMiddleware:
         # Default allow for unmatched paths
         return True
 
-    def _check_team_membership(self, payload: dict) -> bool:
+    async def _check_team_membership(self, payload: dict) -> bool:
         """
         Check if user still belongs to teams in the token.
 
@@ -366,25 +367,20 @@ class TokenScopingMiddleware:
         from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
 
         db = next(get_db())
-        try:
-            for team in teams:
-                # Extract team ID from dict or use string directly (backward compatibility)
-                team_id = team["id"] if isinstance(team, dict) else team
 
-                membership = db.execute(
-                    select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active))
-                ).scalar_one_or_none()
-
-                if not membership:
-                    logger.warning(f"Token invalid: User {user_email} no longer member of team {team_id}")
-                    return False
-
-            return True
-        finally:
+        role_service = RoleService(db)
+        user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
+        
+        if not user_roles:
+            logger.warning(f"User {user_email} has no team roles assigned")
             db.close()
+            return False
+        
+        db.close()
+        return True
 
     def _check_resource_team_ownership(self, request_path: str, token_teams: list) -> bool:  # pylint: disable=too-many-return-statements
         """
@@ -418,7 +414,7 @@ class TokenScopingMiddleware:
         # Normalize token_teams: extract team IDs from dict objects (backward compatibility)
         token_team_ids = []
         for team in token_teams:
-            if isinstance(team, dict):
+            if isinstance(team, dict) and "id" in team:
                 token_team_ids.append(team["id"])
             else:
                 token_team_ids.append(team)
@@ -694,7 +690,7 @@ class TokenScopingMiddleware:
                 return await call_next(request)
 
             # TEAM VALIDATION: Check team membership
-            if not self._check_team_membership(payload):
+            if not await self._check_team_membership(payload):
                 logger.warning("Token rejected: User no longer member of associated team(s)")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
 

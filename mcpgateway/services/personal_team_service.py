@@ -83,8 +83,6 @@ class PersonalTeamService:
             Personal team creation is handled automatically during user registration.
             The team name is derived from the user's full name or email.
 
-            After creation, a record is inserted into EmailTeamMemberHistory to track the membership event.
-
             Note:
                 This method is async and cannot be directly called with 'await' in doctest. To test async methods, use an event loop in real tests.
 

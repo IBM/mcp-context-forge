@@ -43,7 +43,7 @@ from mcpgateway.db import (
     EmailTeam,
     EmailTeamInvitation,
     EmailTeamJoinRequest,
-    EmailTeamMember,
+    UserRole,
     EmailUser,
     Gateway,
     OAuthToken,
@@ -173,17 +173,9 @@ class SystemStatsService:
             >>> # assert "personal" in stats["breakdown"]
             >>> # assert "organizational" in stats["breakdown"]
         """
-        # Optimized from 3 queries to 2 using aggregated SELECT (separate tables need separate queries)
-        team_result = db.execute(
-            select(
-                func.count(EmailTeam.id).label("total_teams"),
-                func.sum(case((EmailTeam.is_personal.is_(True), 1), else_=0)).label("personal_teams"),
-            ).select_from(EmailTeam)
-        ).one()
-        team_members = db.execute(select(func.count(EmailTeamMember.id))).scalar() or 0
-
-        total_teams = team_result.total_teams or 0
-        personal_teams = team_result.personal_teams or 0
+        total_teams = db.query(func.count(EmailTeam.id)).scalar() or 0
+        personal_teams = db.query(func.count(EmailTeam.id)).filter(EmailTeam.is_personal.is_(True)).scalar() or 0
+        team_members = db.query(func.count(func.distinct(UserRole.user_email))).filter(UserRole.is_active.is_(True)).scalar() or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
 

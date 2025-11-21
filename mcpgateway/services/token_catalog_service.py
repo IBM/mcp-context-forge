@@ -357,7 +357,7 @@ class TokenCatalogService:
         # Validate team exists and user is active member
         if team_id:
             # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailTeam, UserRole  # pylint: disable=import-outside-toplevel
 
             # Check if team exists
             team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
@@ -367,7 +367,7 @@ class TokenCatalogService:
 
             # Verify user is an active member of the team
             membership = self.db.execute(
-                select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.is_active.is_(True)))
+                select(UserRole).where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, UserRole.is_active.is_(True)))
             ).scalar_one_or_none()
 
             if not membership:
@@ -472,10 +472,10 @@ class TokenCatalogService:
         """
         # Validate user is team owner
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import UserRole  # pylint: disable=import-outside-toplevel
 
         membership = self.db.execute(
-            select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "team_owner", EmailTeamMember.is_active.is_(True)))
+            select(UserRole).where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, UserRole.role == "team_owner", UserRole.is_active.is_(True)))
         ).scalar_one_or_none()
 
         if not membership:

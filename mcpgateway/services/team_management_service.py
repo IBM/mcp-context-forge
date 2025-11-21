@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser, Role, UserRole, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailUser, Role, UserRole, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
 
@@ -394,7 +394,6 @@ class TeamManagementService:
             >>> service = TeamManagementService(Mock())
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
-            >>> # After adding, EmailTeamMemberHistory is updated
             >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "admin@example.com")
         """
         try:
@@ -462,7 +461,6 @@ class TeamManagementService:
 
         Examples:
             Team membership management with role-based access control.
-            After removal, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             team = await self.get_team_by_id(team_id)
@@ -519,7 +517,6 @@ class TeamManagementService:
 
         Examples:
             Role management within teams for access control.
-            After role update, EmailTeamMemberHistory is updated via _log_team_member_action.
         """
         try:
             # Validate role
@@ -839,7 +836,7 @@ class TeamManagementService:
             logger.error(f"Failed to list join requests for team {team_id}: {e}")
             return []
 
-    async def approve_join_request(self, request_id: str, approved_by: str) -> Optional[EmailTeamMember]:
+    async def approve_join_request(self, request_id: str, approved_by: str) -> Optional[UserRole]:
         """Approve a team join request.
 
         Args:
@@ -847,7 +844,7 @@ class TeamManagementService:
             approved_by: Email of the user approving the request
 
         Returns:
-            EmailTeamMember: New team member or None if request not found
+            UserRole: New user role or None if request not found
 
         Raises:
             ValueError: If request not found, expired, or already processed
@@ -865,20 +862,25 @@ class TeamManagementService:
                 raise ValueError("Join request has expired")
 
             # Add user to team
-            member = EmailTeamMember(
-                team_id=join_request.team_id, user_email=join_request.user_email, role="team_member", invited_by=approved_by, joined_at=utc_now()
-            )  # New joiners are always members
-            self.db.add(member)
+            # New joiners are always members
+            user_role = UserRole(
+                user_email=join_request.user_email,
+                role_id=(await RoleService(self.db).get_role_by_name("team_member", "team")).id,
+                scope="team",
+                scope_id=join_request.team_id,
+                granted_by=approved_by,
+            )
+            self.db.add(user_role)
             # Update join request status
             join_request.status = "approved"
             join_request.reviewed_at = utc_now()
             join_request.reviewed_by = approved_by
 
             self.db.flush()
-            self.db.refresh(member)
+            self.db.refresh(user_role)
 
             logger.info(f"Approved join request {request_id}: user {join_request.user_email} joined team {join_request.team_id}")
-            return member
+            return user_role
 
         except Exception as e:
             self.db.rollback()

@@ -538,9 +538,9 @@ class PermissionService:
             bool: True if user is a team member
         """
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import UserRole  # pylint: disable=import-outside-toplevel
 
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        member = self.db.execute(select(UserRole).where(and_(UserRole.user_email == user_email, UserRole.scope_id == team_id, UserRole.is_active))).scalar_one_or_none()
 
         return member is not None
 
@@ -555,8 +555,8 @@ class PermissionService:
             Optional[str]: User's role in the team or None if not a member
         """
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import UserRole  # pylint: disable=import-outside-toplevel
 
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
+        member = self.db.execute(select(UserRole).where(and_(UserRole.user_email == user_email, UserRole.scope_id == team_id, UserRole.is_active))).scalar_one_or_none()
 
-        return member.role if member else None
+        return member.role.name if member else None
