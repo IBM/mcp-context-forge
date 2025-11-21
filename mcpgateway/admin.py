@@ -8784,18 +8784,12 @@ async def admin_metrics_partial_html(
     Raises:
         HTTPException: If entity_type is not one of the valid types
     """
-    LOGGER.debug(
-        f"User {get_user_email(user)} requested metrics partial "
-        f"(entity_type={entity_type}, page={page}, per_page={per_page})"
-    )
+    LOGGER.debug(f"User {get_user_email(user)} requested metrics partial " f"(entity_type={entity_type}, page={page}, per_page={per_page})")
 
     # Validate entity type
     valid_types = ["tools", "resources", "prompts", "servers"]
     if entity_type not in valid_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid entity_type. Must be one of: {', '.join(valid_types)}"
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid entity_type. Must be one of: {', '.join(valid_types)}")
 
     # Constrain parameters
     page = max(1, page)
