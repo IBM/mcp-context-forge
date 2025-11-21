@@ -1135,7 +1135,14 @@ class ToolService:
         # Use gateway_id if available, otherwise use a generic server identifier
         gateway_id = getattr(tool, "gateway_id", "unknown")
         server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
-        global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None)
+        global_context = GlobalContext(
+            request_id=request_id,
+            server_id=server_id,
+            tenant_id=None,
+            entity_type="tool",
+            entity_id=str(tool.id),
+            entity_name=tool.name,
+        )
 
         start_time = time.monotonic()
         success = False

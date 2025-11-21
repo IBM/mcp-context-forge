@@ -34,13 +34,15 @@ import logging
 from typing import Any, Optional, Union
 
 # First-Party
-from mcpgateway.plugins.framework.base import HookRef, Plugin
+from mcpgateway.plugins.framework.base import AttachedHookRef, HookRef, Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.models import (
     Config,
+    EntityType,
     GlobalContext,
+    PluginConfig,
     PluginContext,
     PluginContextTable,
     PluginErrorModel,
@@ -49,6 +51,8 @@ from mcpgateway.plugins.framework.models import (
     PluginResult,
 )
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
+from mcpgateway.plugins.framework.routing import EvaluationContext
+from mcpgateway.plugins.framework.routing.rule_resolver import RuleBasedResolver, RuleMatchContext
 from mcpgateway.plugins.framework.utils import payload_matches
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
@@ -102,7 +106,7 @@ class PluginExecutor:
 
     async def execute(
         self,
-        hook_refs: list[HookRef],
+        hook_refs: list[AttachedHookRef],
         payload: PluginPayload,
         global_context: GlobalContext,
         hook_type: str,
@@ -112,7 +116,8 @@ class PluginExecutor:
         """Execute plugins in priority order with timeout protection.
 
         Args:
-            hook_refs: List of hook references to execute, sorted by priority.
+            hook_refs: List of AttachedHookRef to execute, sorted by priority.
+                      AttachedHookRef.attachment may be None for non-routed plugins.
             payload: The payload to be processed by plugins.
             global_context: Shared context for all plugins containing request metadata.
             hook_type: The hook type identifier (e.g., "tool_pre_invoke").
@@ -154,7 +159,10 @@ class PluginExecutor:
         combined_metadata: dict[str, Any] = {}
         current_payload: PluginPayload | None = None
 
-        for hook_ref in hook_refs:
+        for attached_hook_ref in hook_refs:
+            # Extract the actual HookRef
+            hook_ref = attached_hook_ref.hook_ref
+
             # Skip disabled plugins
             if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
                 continue
@@ -164,13 +172,32 @@ class PluginExecutor:
                 logger.debug("Skipping plugin %s - conditions not met", hook_ref.plugin_ref.name)
                 continue
 
+            # Build metadata combining global context metadata + attachment metadata
+            merged_metadata = {} if not global_context.metadata else deepcopy(global_context.metadata)
+
+            # Merge attachment config/metadata if present
+            if attached_hook_ref.attachment and attached_hook_ref.attachment.config:
+                # Add attachment metadata with prefix to avoid conflicts
+                attachment_meta = {
+                    "_attachment": {
+                        "name": attached_hook_ref.attachment.name,
+                        "priority": attached_hook_ref.attachment.priority,
+                        "config": attached_hook_ref.attachment.config,
+                    }
+                }
+                merged_metadata.update(attachment_meta)
+
             tmp_global_context = GlobalContext(
                 request_id=global_context.request_id,
                 user=global_context.user,
                 tenant_id=global_context.tenant_id,
                 server_id=global_context.server_id,
+                entity_type=global_context.entity_type,
+                entity_id=global_context.entity_id,
+                entity_name=global_context.entity_name,
+                attachment_config=attached_hook_ref.attachment,  # Will be None for old system
                 state={} if not global_context.state else deepcopy(global_context.state),
-                metadata={} if not global_context.metadata else deepcopy(global_context.metadata),
+                metadata=merged_metadata,
             )
             # Get or create local context for this plugin
             local_context_key = global_context.request_id + hook_ref.plugin_ref.uuid
@@ -400,6 +427,7 @@ class PluginManager:
     - Plugin lifecycle management (initialization, execution, shutdown)
     - Context management with automatic cleanup
     - Hook execution orchestration
+    - Cached plugin routing resolution
 
     Attributes:
         config: The loaded plugin configuration.
@@ -431,6 +459,9 @@ class PluginManager:
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
     _config: Config | None = None
     _executor: PluginExecutor = PluginExecutor()
+    _resolver: RuleBasedResolver = RuleBasedResolver()
+    # Cache for resolved AttachedHookRefs: (entity_type, entity_name, hook_type) -> list[AttachedHookRef]
+    _routing_cache: dict[tuple[str, str, str], list[AttachedHookRef]] = {}
 
     def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
         """Initialize plugin manager.
@@ -549,8 +580,9 @@ class PluginManager:
         This method:
         1. Shuts down all registered plugins
         2. Clears the plugin registry
-        3. Cleans up stored contexts
-        4. Resets initialization state
+        3. Clears routing cache
+        4. Cleans up stored contexts
+        5. Resets initialization state
 
         Examples:
             >>> manager = PluginManager("plugins/config.yaml")
@@ -563,6 +595,9 @@ class PluginManager:
 
         # Shutdown all plugins
         await self._registry.shutdown()
+
+        # Clear routing cache
+        self.clear_routing_cache()
 
         # Clear context store
 
@@ -580,10 +615,15 @@ class PluginManager:
     ) -> tuple[PluginResult, PluginContextTable | None]:
         """Invoke a set of plugins configured for the hook point in priority order.
 
+        Automatically uses resource-centric routing if:
+        - enable_plugin_routing is True in config
+        - global_context has entity_type and entity_name set
+
         Args:
             hook_type: The type of hook to execute.
             payload: The plugin payload for which the plugins will analyze and modify.
             global_context: Shared context for all plugins with request metadata.
+                           Include entity_type and entity_name for resource-centric routing.
             local_contexts: Optional existing contexts from previous hook executions.
             violations_as_exceptions: Raise violations as exceptions rather than as returns.
 
@@ -596,20 +636,339 @@ class PluginManager:
             >>> manager = PluginManager("plugins/config.yaml")
             >>> # In async context:
             >>> # await manager.initialize()
-            >>> # payload = ResourcePreFetchPayload("file:///data.txt")
-            >>> # context = GlobalContext(request_id="123", server_id="srv1")
-            >>> # result, contexts = await manager.resource_pre_fetch(payload, context)
-            >>> # if result.continue_processing:
-            >>> #     # Use modified payload
-            >>> #     uri = result.modified_payload.uri
+            >>> # With resource-centric routing:
+            >>> # context = GlobalContext(
+            >>> #     request_id="123",
+            >>> #     server_id="srv1",
+            >>> #     entity_type="tool",
+            >>> #     entity_name="my_tool"
+            >>> # )
+            >>> # result, contexts = await manager.invoke_hook("tool_pre_invoke", payload, context)
         """
-        # Get plugins configured for this hook
-        hook_refs = self._registry.get_hook_refs_for_hook(hook_type=hook_type)
+        # Determine which plugin resolution system to use
+        use_routing = self._config and self._config.plugin_settings.enable_plugin_routing and global_context.entity_type and global_context.entity_name
+
+        if use_routing:
+            # New resource-centric routing system (returns list[AttachedHookRef])
+            # Pass payload for enhanced runtime filtering (creates plugin instances as needed)
+            attached_refs = await self._resolve_with_routing(hook_type, global_context, payload)
+        else:
+            # Old condition-based system (returns list[HookRef], wrap them)
+            hook_refs = self._registry.get_hook_refs_for_hook(hook_type=hook_type)
+            # Wrap in AttachedHookRef with attachment=None
+            attached_refs = [AttachedHookRef(hook_ref, attachment=None) for hook_ref in hook_refs]
 
         # Execute plugins
-        result = await self._executor.execute(hook_refs, payload, global_context, hook_type, local_contexts, violations_as_exceptions)
+        result = await self._executor.execute(attached_refs, payload, global_context, hook_type, local_contexts, violations_as_exceptions)
 
         return result
+
+    async def _resolve_with_routing(
+        self,
+        hook_type: str,
+        global_context: GlobalContext,
+        payload: Optional[PluginPayload] = None,
+    ) -> list[AttachedHookRef]:
+        """Resolve plugins using the resource-centric routing system with caching.
+
+        Uses two-level resolution:
+        1. Static resolution (cached): Match rules, look up HookRefs, create AttachedHookRefs
+           - Creates plugin instances with merged configs as needed
+        2. Runtime filtering: Evaluate 'when' clauses from PluginAttachments with actual payload
+
+        Args:
+            hook_type: The type of hook to execute.
+            global_context: Shared context with entity_type and entity_name.
+            payload: Optional plugin payload for enhanced runtime filtering.
+
+        Returns:
+            List of AttachedHookRef objects (HookRef + PluginAttachment) sorted by priority,
+            filtered by runtime 'when' clause evaluation.
+        """
+        if not self._config or not global_context.entity_type or not global_context.entity_name:
+            return []
+
+        # Map string entity_type to EntityType enum
+        try:
+            entity_type = EntityType(global_context.entity_type)
+        except ValueError:
+            logger.warning(f"Unknown entity_type: {global_context.entity_type}. Falling back to registry.")
+            # Return empty list since we can't do routing without valid entity_type
+            return []
+
+        # Check cache first
+        # Include infrastructure filters in cache key since rules can match based on these
+        cache_key = (
+            global_context.entity_type,
+            global_context.entity_name,
+            hook_type,
+            global_context.server_name,
+            global_context.server_id,
+            global_context.gateway_id,
+        )
+
+        if cache_key in self._routing_cache:
+            static_refs = self._routing_cache[cache_key]
+            logger.debug(f"Using cached routing for {global_context.entity_type}:{global_context.entity_name} " f"hook={hook_type} ({len(static_refs)} refs)")
+        else:
+            # Perform static resolution (no 'when' evaluation, creates instances as needed)
+            static_refs = await self._resolve_static(hook_type, global_context, entity_type)
+
+            # Cache the result
+            self._routing_cache[cache_key] = static_refs
+            logger.debug(f"Cached routing for {global_context.entity_type}:{global_context.entity_name} " f"hook={hook_type} ({len(static_refs)} refs)")
+
+        # Apply runtime filtering (evaluate 'when' clauses from attachments with actual payload)
+        filtered_refs = self._filter_attachments_runtime(static_refs, global_context, payload)
+
+        return filtered_refs
+
+    def _get_base_plugin_config_dict(self, plugin_name: str) -> dict:
+        """Get base configuration dict for a plugin by name from registry.
+
+        Args:
+            plugin_name: Name of the plugin.
+
+        Returns:
+            Base plugin config dict, or empty dict if not found.
+        """
+        plugin_ref = self._registry.get_plugin(plugin_name)
+        if plugin_ref and plugin_ref.plugin.config:
+            # plugin.config is a PluginConfig model, get the config dict from it
+            return plugin_ref.plugin.config.config or {}
+        return {}
+
+    def _get_plugin_config(self, plugin_name: str) -> Optional[PluginConfig]:
+        """Get full PluginConfig for a plugin by name.
+
+        Args:
+            plugin_name: Name of the plugin.
+
+        Returns:
+            PluginConfig or None if not found.
+        """
+        if not self._config or not self._config.plugins:
+            return None
+
+        for plugin_config in self._config.plugins:
+            if plugin_config.name == plugin_name:
+                return plugin_config
+
+        return None
+
+    async def _resolve_static(
+        self,
+        hook_type: str,
+        global_context: GlobalContext,
+        entity_type: EntityType,
+    ) -> list[AttachedHookRef]:
+        """Resolve AttachedHookRefs statically (no 'when' evaluation).
+
+        Creates plugin instances with merged configs as needed.
+
+        Args:
+            hook_type: The type of hook to execute.
+            global_context: Shared context with entity info.
+            entity_type: Entity type enum.
+
+        Returns:
+            List of AttachedHookRef objects with 'when' clauses preserved for runtime eval.
+        """
+        # Build rule match context for resolver
+        match_context = RuleMatchContext(
+            name=global_context.entity_name or "",
+            entity_type=global_context.entity_type or "",
+            entity_id=global_context.entity_id,
+            tags=global_context.tags or [],
+            metadata=global_context.metadata or {},
+            server_name=global_context.server_name,
+            server_id=global_context.server_id,
+            gateway_id=global_context.gateway_id,
+            payload={},  # Will be populated during runtime filtering if needed
+        )
+
+        # Get rules from config
+        rules = self._config.routes if self._config else []
+
+        # Get merge strategy from plugin settings
+        merge_strategy = "most_specific"  # default
+        if self._config and self._config.plugin_settings:
+            merge_strategy = self._config.plugin_settings.rule_merge_strategy
+
+        # Use resolver to get sorted plugin attachments (with 'when' clauses preserved)
+        plugin_attachments = self._resolver.resolve_for_entity(
+            rules=rules,
+            context=match_context,
+            hook_type=hook_type,
+            eval_context=None,  # Don't evaluate 'when' clauses during static resolution
+            merge_strategy=merge_strategy,
+        )
+
+        # Convert PluginAttachment + HookRef -> AttachedHookRef
+        # with config merging and instance key creation
+        # First-Party
+        from mcpgateway.plugins.framework.utils import deep_merge, hash_config
+
+        attached_refs: list[AttachedHookRef] = []
+        for attachment in plugin_attachments:
+            # Merge configs and create instance key
+            base_config = self._get_base_plugin_config_dict(attachment.name)
+
+            if attachment.override:
+                # Replace base config entirely
+                merged_config = attachment.config
+            else:
+                # Deep merge rule config with base config
+                merged_config = deep_merge(base_config, attachment.config)
+
+            # Create instance key that includes hooks and mode overrides
+            # This ensures different instances are created when hooks or mode differ
+            instance_data = {
+                "config": merged_config,
+                "hooks": attachment.hooks if attachment.hooks else None,
+                "mode": attachment.mode if attachment.mode else None,
+            }
+            config_hash = hash_config(instance_data)
+            instance_key = f"{attachment.name}:{config_hash}"
+
+            # Store instance key in attachment for caching
+            attachment.instance_key = instance_key
+
+            # Check if instance exists, if not create it
+            if not self._registry.get_plugin(instance_key):
+                # Get base plugin config to create new instance
+                base_plugin_config = self._get_plugin_config(attachment.name)
+                if base_plugin_config:
+                    try:
+                        # Build update dict with all available overrides from PluginAttachment
+                        updates: dict[str, Any] = {"config": merged_config}
+                        if attachment.hooks:
+                            updates["hooks"] = attachment.hooks
+                        if attachment.mode:
+                            updates["mode"] = attachment.mode
+
+                        # Create new PluginConfig with all overrides
+                        # Pydantic v2: use model_copy with update
+                        new_config = base_plugin_config.model_copy(update=updates)
+
+                        # Instantiate plugin with merged config (async)
+                        plugin = await self._loader.load_and_instantiate_plugin(new_config)
+
+                        if plugin:
+                            # Register with instance key
+                            self._registry.register(plugin, instance_key)
+                            logger.info(f"Created plugin instance {instance_key} with merged config")
+                        else:
+                            logger.warning(f"Failed to instantiate plugin {instance_key}, falling back to base")
+                            instance_key = attachment.name
+                    except Exception as e:
+                        logger.error(f"Error instantiating plugin {instance_key}: {e}, falling back to base")
+                        instance_key = attachment.name
+                else:
+                    logger.warning(f"Base plugin config not found for {attachment.name}, falling back to base")
+                    instance_key = attachment.name
+
+            # Look up plugin hook by instance key
+            hook_ref = self._registry.get_plugin_hook_by_name(instance_key, hook_type)
+            if hook_ref:
+                # Create composite object pairing HookRef with its attachment config
+                attached_ref = AttachedHookRef(hook_ref, attachment)
+                attached_refs.append(attached_ref)
+            else:
+                logger.warning(
+                    f"Plugin '{attachment.name}' (instance: {instance_key}) configured for {global_context.entity_type}:{global_context.entity_name} " f"but not found in registry. Skipping."
+                )
+
+        return attached_refs
+
+    def _filter_attachments_runtime(
+        self,
+        attached_refs: list[AttachedHookRef],
+        global_context: GlobalContext,
+        payload: Optional[PluginPayload] = None,
+    ) -> list[AttachedHookRef]:
+        """Filter AttachedHookRefs at runtime by evaluating 'when' clauses.
+
+        Extracts args, payload dict, and other data from the actual payload for
+        enhanced 'when' clause evaluation.
+
+        Args:
+            attached_refs: Pre-resolved AttachedHookRefs from cache.
+            global_context: Runtime context for evaluation.
+            payload: Optional plugin payload for extracting args/payload dict.
+
+        Returns:
+            Filtered list of AttachedHookRefs.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.routing.evaluator import PolicyEvaluator
+
+        filtered = []
+        evaluator = PolicyEvaluator()
+
+        # Extract data from payload for evaluation context
+        args_dict = {}
+        payload_dict = {}
+        tags_list = []
+
+        if payload:
+            # Extract args if available (tools, prompts, agents)
+            if hasattr(payload, "args") and payload.args:
+                args_dict = payload.args if isinstance(payload.args, dict) else {}
+
+            # Extract tags if available
+            if hasattr(payload, "tags") and payload.tags:
+                tags_list = payload.tags if isinstance(payload.tags, list) else []
+
+            # Convert payload to dict for full access
+            try:
+                payload_dict = payload.model_dump() if hasattr(payload, "model_dump") else {}
+            except Exception as e:
+                logger.debug(f"Could not convert payload to dict: {e}")
+                payload_dict = {}
+
+        for attached_ref in attached_refs:
+            # Check if attachment has a 'when' clause
+            if attached_ref.attachment and attached_ref.attachment.when:
+                # Build evaluation context from global_context + payload
+                eval_context = EvaluationContext(
+                    name=global_context.entity_name or "",
+                    entity_type=global_context.entity_type or "",
+                    entity_id=global_context.entity_id,
+                    tags=tags_list,
+                    metadata=global_context.metadata or {},
+                    server_name=None,  # TODO: Resolve server name from server_id
+                    server_id=global_context.server_id,
+                    gateway_id=None,  # TODO: Get gateway_id if available
+                    args=args_dict,
+                    payload=payload_dict,
+                    user=global_context.user,
+                    tenant_id=global_context.tenant_id,
+                )
+
+                try:
+                    if not evaluator.evaluate(attached_ref.attachment.when, eval_context):
+                        logger.debug(f"Skipping plugin {attached_ref.hook_ref.plugin_ref.name}: " f"when clause '{attached_ref.attachment.when}' evaluated to False")
+                        continue
+                except Exception as e:
+                    logger.error(f"Failed to evaluate when clause for plugin {attached_ref.hook_ref.plugin_ref.name}: {e}. " "Skipping plugin.")
+                    continue
+
+            filtered.append(attached_ref)
+
+        return filtered
+
+    def clear_routing_cache(self):
+        """Clear the plugin routing resolution cache.
+
+        Use this when configuration changes at runtime or plugins are reloaded.
+
+        Examples:
+            >>> manager = PluginManager()
+            >>> manager.clear_routing_cache()
+        """
+        self._routing_cache.clear()
+        logger.info("Cleared plugin routing cache")
 
     async def invoke_hook_for_plugin(
         self,

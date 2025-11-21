@@ -746,34 +746,6 @@ class PromptService:
                 else:
                     prompt_id_int = prompt_id
 
-                if self._plugin_manager:
-                    if not request_id:
-                        request_id = uuid.uuid4().hex
-                    global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
-                    pre_result, context_table = await self._plugin_manager.invoke_hook(
-                        PromptHookType.PROMPT_PRE_FETCH,
-                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments),
-                        global_context=global_context,
-                        local_contexts=None,
-                        violations_as_exceptions=True,
-                    )
-
-                    # Use modified payload if provided
-                    if pre_result.modified_payload:
-                        payload = pre_result.modified_payload
-                        # Re-parse the modified prompt_id
-                        if isinstance(payload.prompt_id, int):
-                            prompt_id_int = payload.prompt_id
-                            prompt_name = None
-                        elif isinstance(payload.prompt_id, str):
-                            try:
-                                prompt_id_int = int(payload.prompt_id)
-                                prompt_name = None
-                            except ValueError:
-                                prompt_name = payload.prompt_id
-                                prompt_id_int = None
-                        arguments = payload.args
-
                 # Find prompt by ID or name
                 if prompt_id_int is not None:
                     prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
@@ -795,6 +767,33 @@ class PromptService:
                         raise PromptNotFoundError(f"Prompt '{search_key}' exists but is inactive")
 
                     raise PromptNotFoundError(f"Prompt not found: {search_key}")
+
+                # Now that we have the prompt, invoke plugin hooks with entity context
+                context_table = None
+                if self._plugin_manager:
+                    if not request_id:
+                        request_id = uuid.uuid4().hex
+                    global_context = GlobalContext(
+                        request_id=request_id,
+                        user=user,
+                        server_id=server_id,
+                        tenant_id=tenant_id,
+                        entity_type="prompt",
+                        entity_id=str(prompt.id),
+                        entity_name=prompt.name,
+                    )
+                    pre_result, context_table = await self._plugin_manager.invoke_hook(
+                        PromptHookType.PROMPT_PRE_FETCH,
+                        payload=PromptPrehookPayload(prompt_id=str(prompt.id), args=arguments),
+                        global_context=global_context,
+                        local_contexts=None,
+                        violations_as_exceptions=True,
+                    )
+
+                    # Use modified payload if provided
+                    if pre_result.modified_payload:
+                        payload = pre_result.modified_payload
+                        arguments = payload.args
 
                 if not arguments:
                     result = PromptResult(

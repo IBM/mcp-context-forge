@@ -190,23 +190,25 @@ def _register_http_auth_hooks() -> None:
 
     This is called lazily to avoid circular import issues.
     Registers four hook types:
-    - HTTP_PRE_REQUEST: Transform headers before authentication (middleware)
-    - HTTP_POST_REQUEST: Inspect response after request completion (middleware)
-    - HTTP_AUTH_RESOLVE_USER: Custom user authentication (auth layer)
-    - HTTP_AUTH_CHECK_PERMISSION: Custom permission checking (RBAC layer)
+    - HTTP_PRE_REQUEST: Transform headers before authentication (middleware) - PRE phase
+    - HTTP_POST_REQUEST: Inspect response after request completion (middleware) - POST phase
+    - HTTP_AUTH_RESOLVE_USER: Custom user authentication (auth layer) - PRE phase (before request)
+    - HTTP_AUTH_CHECK_PERMISSION: Custom permission checking (RBAC layer) - PRE phase (before request)
     """
     # Import here to avoid circular dependency at module load time
     # First-Party
-    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase  # pylint: disable=import-outside-toplevel
 
     registry = get_hook_registry()
 
     # Only register if not already registered (idempotent)
     if not registry.is_registered(HttpHookType.HTTP_PRE_REQUEST):
+        # HTTP_PRE_REQUEST and HTTP_POST_REQUEST auto-detect correctly
         registry.register_hook(HttpHookType.HTTP_PRE_REQUEST, HttpPreRequestPayload, HttpPreRequestResult)
         registry.register_hook(HttpHookType.HTTP_POST_REQUEST, HttpPostRequestPayload, HttpPostRequestResult)
-        registry.register_hook(HttpHookType.HTTP_AUTH_RESOLVE_USER, HttpAuthResolveUserPayload, HttpAuthResolveUserResult)
-        registry.register_hook(HttpHookType.HTTP_AUTH_CHECK_PERMISSION, HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResult)
+        # Auth hooks need explicit phase since they don't have _pre_/_post_ in name
+        registry.register_hook(HttpHookType.HTTP_AUTH_RESOLVE_USER, HttpAuthResolveUserPayload, HttpAuthResolveUserResult, HookPhase.PRE)
+        registry.register_hook(HttpHookType.HTTP_AUTH_CHECK_PERMISSION, HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResult, HookPhase.PRE)
 
 
 _register_http_auth_hooks()

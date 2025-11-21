@@ -806,6 +806,7 @@ class ResourceService:
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
                 # Check for template
+                resource = None
                 if uri is not None and "{" in uri and "}" in uri:
                     content = await self._read_template_resource(uri)
                 else:
@@ -820,6 +821,12 @@ class ResourceService:
                         raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
                     content = resource.content
+
+                    # Populate entity context now that we have the resource
+                    if plugin_eligible and resource:
+                        global_context.entity_type = "resource"
+                        global_context.entity_id = str(resource.id)
+                        global_context.entity_name = resource.name
 
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
