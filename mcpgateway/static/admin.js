@@ -20065,12 +20065,18 @@ async function serverSideEditPromptsSearch(searchTerm) {
                     if (dataAttr) {
                         const serverPrompts = JSON.parse(dataAttr);
                         if (Array.isArray(serverPrompts) && serverPrompts.length > 0) {
+                            // Normalize serverPrompts to a set of strings for robust comparison
+                            const serverPromptSet = new Set(serverPrompts.map((s) => String(s)));
+
                             const checkboxes = container.querySelectorAll(
                                 'input[name="associatedPrompts"]',
                             );
                             checkboxes.forEach((cb) => {
+                                const promptId = cb.value;
                                 const promptName = cb.getAttribute("data-prompt-name") || (window.promptMapping && window.promptMapping[cb.value]);
-                                if (promptName && serverPrompts.includes(promptName)) {
+
+                                // Check by id first (string), then by name as a fallback
+                                if (serverPromptSet.has(promptId) || (promptName && serverPromptSet.has(String(promptName)))) {
                                     cb.checked = true;
                                 }
                             });
@@ -20153,12 +20159,17 @@ async function serverSideEditPromptsSearch(searchTerm) {
                 if (dataAttr) {
                     const serverPrompts = JSON.parse(dataAttr);
                     if (Array.isArray(serverPrompts) && serverPrompts.length > 0) {
+                        // Normalize serverPrompts to a set of strings for robust comparison
+                        const serverPromptSet = new Set(serverPrompts.map((s) => String(s)));
+
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedPrompts"]',
                         );
                         checkboxes.forEach((cb) => {
+                            const promptId = cb.value;
                             const promptName = cb.getAttribute("data-prompt-name") || (window.promptMapping && window.promptMapping[cb.value]);
-                            if (promptName && serverPrompts.includes(promptName)) {
+
+                            if (serverPromptSet.has(promptId) || (promptName && serverPromptSet.has(String(promptName)))) {
                                 cb.checked = true;
                             }
                         });
