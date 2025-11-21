@@ -173,6 +173,16 @@ starting
 
 ## Testing with gateway
 
+### Authentication & Tokens
+```bash
+# Generate JWT bearer token
+python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+
+# Export for API calls
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+```
+
+
 1. Add server fast-time that exposes git tools in the mcp gateway
 ```bash
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
