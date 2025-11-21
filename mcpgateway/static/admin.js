@@ -5540,10 +5540,15 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
-            // Set associated tools checkboxes
-            const toolCheckboxes = document.querySelectorAll(
-                'input[name="associatedTools"]',
+            // Set associated tools checkboxes (scope to edit modal container only)
+            const editToolContainer = document.getElementById(
+                "edit-server-tools",
             );
+            const toolCheckboxes = editToolContainer
+                ? editToolContainer.querySelectorAll(
+                      'input[name="associatedTools"]',
+                  )
+                : document.querySelectorAll('input[name="associatedTools"]');
 
             toolCheckboxes.forEach((checkbox) => {
                 let isChecked = false;
@@ -5559,10 +5564,17 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated resources checkboxes
-            const resourceCheckboxes = document.querySelectorAll(
-                'input[name="associatedResources"]',
+            // Set associated resources checkboxes (scope to edit modal container only)
+            const editResourceContainer = document.getElementById(
+                "edit-server-resources",
             );
+            const resourceCheckboxes = editResourceContainer
+                ? editResourceContainer.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  )
+                : document.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5572,10 +5584,17 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated prompts checkboxes
-            const promptCheckboxes = document.querySelectorAll(
-                'input[name="associatedPrompts"]',
+            // Set associated prompts checkboxes (scope to edit modal container only)
+            const editPromptContainer = document.getElementById(
+                "edit-server-prompts",
             );
+            const promptCheckboxes = editPromptContainer
+                ? editPromptContainer.querySelectorAll(
+                      'input[name="associatedPrompts"]',
+                  )
+                : document.querySelectorAll(
+                      'input[name="associatedPrompts"]',
+                  );
 
             promptCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5647,10 +5666,11 @@ async function editServer(serverId) {
 
 // Helper function to set edit server associations
 function setEditServerAssociations(server) {
-    // Set associated tools checkboxes
-    const toolCheckboxes = document.querySelectorAll(
-        'input[name="associatedTools"]',
-    );
+    // Set associated tools checkboxes (scope to edit modal container only)
+    const toolContainer = document.getElementById("edit-server-tools");
+    const toolCheckboxes = toolContainer
+        ? toolContainer.querySelectorAll('input[name="associatedTools"]')
+        : document.querySelectorAll('input[name="associatedTools"]');
 
     if (toolCheckboxes.length === 0) {
         return;
@@ -5669,10 +5689,13 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated resources checkboxes
-    const resourceCheckboxes = document.querySelectorAll(
-        'input[name="associatedResources"]',
-    );
+    // Set associated resources checkboxes (scope to edit modal container only)
+    const resourceContainer = document.getElementById("edit-server-resources");
+    const resourceCheckboxes = resourceContainer
+        ? resourceContainer.querySelectorAll(
+              'input[name="associatedResources"]',
+          )
+        : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -5682,10 +5705,11 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated prompts checkboxes
-    const promptCheckboxes = document.querySelectorAll(
-        'input[name="associatedPrompts"]',
-    );
+    // Set associated prompts checkboxes (scope to edit modal container only)
+    const promptContainer = document.getElementById("edit-server-prompts");
+    const promptCheckboxes = promptContainer
+        ? promptContainer.querySelectorAll('input[name="associatedPrompts"]')
+        : document.querySelectorAll('input[name="associatedPrompts"]');
 
     promptCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
