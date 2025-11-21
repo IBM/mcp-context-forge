@@ -174,6 +174,8 @@ starting
 ## Testing with gateway
 
 ### Authentication & Tokens
+Run the following from the project root folder:
+
 ```bash
 # Generate JWT bearer token
 python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
