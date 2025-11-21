@@ -8133,7 +8133,11 @@ function initGatewaySelect(
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
                 // Log gateway_id when checkbox is clicked
-                const gatewayId = e.target.value;
+                // Normalize the special null-gateway checkbox to the literal string "null"
+                let gatewayId = e.target.value;
+                if (e.target.dataset && e.target.dataset.gatewayNull === "true") {
+                    gatewayId = "null";
+                }
                 const gatewayName =
                     e.target.nextElementSibling?.textContent?.trim() ||
                     "Unknown";
@@ -8161,15 +8165,15 @@ function initGatewaySelect(
                     try {
                         let allIds = JSON.parse(allIdsInput.value);
 
-                        if (e.target.checked) {
-                            // Add the ID if it's not already there
-                            if (!allIds.includes(gatewayId)) {
-                                allIds.push(gatewayId);
+                            if (e.target.checked) {
+                                // Add the ID if it's not already there
+                                if (!allIds.includes(gatewayId)) {
+                                    allIds.push(gatewayId);
+                                }
+                            } else {
+                                // Remove the ID from the array
+                                allIds = allIds.filter((id) => id !== gatewayId);
                             }
-                        } else {
-                            // Remove the ID from the array
-                            allIds = allIds.filter((id) => id !== gatewayId);
-                        }
 
                         // Update the hidden field
                         allIdsInput.value = JSON.stringify(allIds);
