@@ -19,10 +19,10 @@ from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, Tool
 from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
 
 
-# """This test case is responsible for verifying cedarplugin functionality for all hooks"""
+# """This test case is responsible for verifying cedarplugin functionality for post tool hooks"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin for post tool invocation"""   
     policy_config = [
         {
             'id': 'allow-employee-basic-access', 
@@ -101,10 +101,10 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
     assert allow_count == 3
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for all hooks"""
+"""This test case is responsible for verifying cedarplugin functionality for post tool hooks"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin for post tool invocation"""  
     policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
     
     policy_output_keywords = {"view_full": "view_full_output","view_redacted": "view_redacted_output"}
@@ -156,7 +156,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
 # """This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin tool pre invoke hook."""   
     policy_config = [
         {
             'id': 'allow-employee-basic-access', 
@@ -234,7 +234,7 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
 # # """This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin tool pre invoke."""   
     policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
     policy_output_keywords = {"view_full": "view_full_output","view_redacted": "view_redacted_output"}
     policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*" }
@@ -278,9 +278,9 @@ async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
     assert allow_count == 3
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for prompt pre fetch"""
 @pytest.mark.asyncio
-async def test_cedarpolicyplugin_prompt_pre_invoke_rbac():
+async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
     """Test plugin prompt prefetch hook."""   
     policy_config = [
         {
@@ -344,9 +344,9 @@ async def test_cedarpolicyplugin_prompt_pre_invoke_rbac():
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for prompt pre fetch"""
 @pytest.mark.asyncio
-async def test_cedarpolicyplugin_prompt_pre_invoke_custom_dsl_rbac():
+async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
     """Test plugin prompt prefetch hook."""   
     policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
 
@@ -394,10 +394,10 @@ async def test_cedarpolicyplugin_prompt_pre_invoke_custom_dsl_rbac():
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for prompt post fetch"""
 @pytest.mark.asyncio
-async def test_cedarpolicyplugin_prompt_post_invoke_cedar_rbac():
-    """Test plugin prompt prefetch hook."""   
+async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
+    """Test plugin prompt postfetch hook."""   
     policy_config = [
         {
             'id': 'redact-non-admin-views', 
@@ -468,10 +468,10 @@ async def test_cedarpolicyplugin_prompt_post_invoke_cedar_rbac():
     assert redact_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for prompt post fetch"""
 @pytest.mark.asyncio
-async def test_cedarpolicyplugin_prompt_post_invoke_custom_dsl_rbac():
-    """Test plugin prompt prefetch hook."""   
+async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
+    """Test plugin prompt postfetch hook."""   
     policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
 
     policy_output_keywords = {"view_full": "view_full_output","view_redacted": "view_redacted_output"}
@@ -526,10 +526,10 @@ async def test_cedarpolicyplugin_prompt_post_invoke_custom_dsl_rbac():
     assert redact_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for resource pre fetch"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin resource prefetch hook."""   
     policy_config = [
         {
             'id': 'redact-non-admin-resource-views', 
@@ -594,10 +594,10 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for resource pre fetch"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin resource prefetch hook."""   
     policy_config = '[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output'
 
     policy_output_keywords = {"view_full": "view_full_output","view_redacted": "view_redacted_output"}
@@ -647,10 +647,10 @@ async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
     assert deny_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for resource post fetch"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin resource post fetch."""   
     policy_config = [
         {
             'id': 'redact-non-admin-resource-views', 
@@ -725,10 +725,10 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     assert redact_count == 1
 
 
-# # """This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+# # """This test case is responsible for verifying cedarplugin functionality for resource post fetch"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
-    """Test plugin prompt prefetch hook."""   
+    """Test plugin resource postfetch hook."""   
     policy_config = '[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output'
     policy_output_keywords = {"view_full": "view_full_output","view_redacted": "view_redacted_output"}
     policy_redaction_spec = {"pattern":  "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}

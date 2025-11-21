@@ -24,34 +24,34 @@ class CedarInput(BaseModel):
         resource (str): specifies the resource
         context (Optional[dict[str, Any]]) : context provided for policy evaluation.
     """
+
     principal: str = ""
     action: str = ""
     resource: str = ""
-    context: Optional[dict[Any,Any]] = None
+    context: Optional[dict[Any, Any]] = None
 
-class ResourceTemplate(BaseModel):
-    type: str
-    uri: str
-
-class BaseTemplate(BaseModel):
-    type: str
-    name: str
-
-class CedarPolicy(BaseModel):
-    id: str
-    effect: str
-    principal: str
-    action: list
-    resource: list[Union[ResourceTemplate,BaseTemplate]]
 
 class Redaction(BaseModel):
+    """Configuration for Redaction
+
+    Attributes:
+        pattern (str) : pattern detected in output to redact
+    """
+
     pattern: str = ""
 
-class CedarConfig(BaseModel):
-    """Configuration for the OPA plugin."""
 
-    # Base url on which opa server is running
-    policy_lang: str  = "None"
-    policy: Union[list,str] = None
-    policy_output_keywords : Optional[dict] = None
+class CedarConfig(BaseModel):
+    """Configuration for the Cedar plugin.
+
+    Attributes:
+        policy_land (str) : cedar or custom_dsl. If policy is represented in cedar mode or custom_dsl mode
+        policy (Union[list, str]): RBAC policy defined
+        policy_output_keywords (dict): this is to internally check if certain type of views are allowed for outputs
+        policy_redaction_spec (Redaction) : pattern or other parameters provided to redact the output
+    """
+
+    policy_lang: str = "None"
+    policy: Union[list, str] = None
+    policy_output_keywords: Optional[dict] = None
     policy_redaction_spec: Optional[Redaction] = None
