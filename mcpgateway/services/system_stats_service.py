@@ -43,7 +43,6 @@ from mcpgateway.db import (
     EmailTeam,
     EmailTeamInvitation,
     EmailTeamJoinRequest,
-    UserRole,
     EmailUser,
     Gateway,
     OAuthToken,
@@ -63,6 +62,7 @@ from mcpgateway.db import (
     TokenUsageLog,
     Tool,
     ToolMetric,
+    UserRole,
 )
 
 logger = logging.getLogger(__name__)

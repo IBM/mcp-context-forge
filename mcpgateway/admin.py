@@ -23,6 +23,7 @@ from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
 from functools import wraps
+import hashlib
 import html
 import io
 import json
@@ -37,7 +38,6 @@ from typing import cast as typing_cast
 from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
-import hashlib
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -61,6 +61,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Role as DbRole
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -3277,9 +3278,10 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 #                            TEAM ADMIN ROUTES                                #
 # ============================================================================ #
 
+
 def _generate_color_from_name(name: str) -> str:
     """Generate a deterministic Tailwind color name from a role name.
-    
+
     Args:
         name: Role name to hash
 
@@ -3287,11 +3289,11 @@ def _generate_color_from_name(name: str) -> str:
         Tailwind color name string
     """
     # Available Tailwind base colors
-    palette = ["red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal",
-               "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "gray"]
+    palette = ["red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "gray"]
     # Hash the name and map to a color
     idx = int(hashlib.sha256(name.encode()).hexdigest(), 16) % len(palette)
     return palette[idx]
+
 
 async def _generate_unified_teams_view(team_service, role_service, current_user, root_path):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
@@ -3314,16 +3316,14 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
     # Combine teams with relationship information
     all_teams = []
 
-    roles = await role_service.list_roles()
+    roles: List[DbRole] = await role_service.list_roles()
     team_roles = [r for r in roles if r.scope == "team"]
 
-    role_badges = {
-        r.name: (
-            lambda color=_generate_color_from_name(r.name):
-            f'<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-{color}-100 text-{color}-800 dark:bg-{color}-900 dark:text-{color}-300">{r.name.replace("_", " ").upper()}</span>'
-        )()
-        for r in team_roles
-    }
+    role_badges = {}
+    for r in team_roles:
+        color = _generate_color_from_name(r.name)
+        badge_html = f'<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-{color}-100 text-{color}-800 dark:bg-{color}-900 dark:text-{color}-300">{r.name.replace("_", " ").upper()}</span>'
+        role_badges[r.name] = badge_html
 
     # Add user's teams (owned and member)
     for team in user_teams:
@@ -3345,13 +3345,13 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
         team = item["team"]
         relationship = item["relationship"]
         member_count = item["member_count"]
-        pending_request = item.get("pending_request")
+        pending_request = item.get("pending_request", None)
 
         # Relationship badge - special handling for personal teams
         if team.is_personal:
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">PERSONAL</span>'
         elif relationship in role_badges:
-            badge_html = role_badges[relationship]
+            badge_html = role_badges.get(relationship)
         else:  # join
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">CAN JOIN</span>'
 
@@ -3367,7 +3367,7 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
             if "owner" in relationship:
                 subtitle = "You own this team"
             else:
-                role_display = relationship.replace('_', ' ').title()
+                role_display = relationship.replace("_", " ").title()
                 subtitle = f"You are a {role_display} • Owner: {team.created_by}"
         else:
             subtitle = f"Public team • Owner: {team.created_by}"
@@ -3870,10 +3870,7 @@ async def admin_view_team_members(
             except Exception as e:
                 LOGGER.error(f"Error loading available users for team {team.id}: {e}")
 
-            options_html = ''.join([
-                f'<option value="{r.name}">{r.name.replace("_", " ").title()}</option>'
-                for r in team_roles_def
-            ])
+            options_html = "".join([f'<option value="{r.name}">{r.name.replace("_", " ").title()}</option>' for r in team_roles_def])
             management_html += f"""                        </select>
                                 </div>
                                 <div>
@@ -4160,8 +4157,8 @@ async def admin_add_team_member(
         auth_service = EmailAuthService(db)
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
@@ -4248,8 +4245,8 @@ async def admin_update_team_member_role(
         team_service = TeamManagementService(db)
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
@@ -4339,11 +4336,10 @@ async def admin_remove_team_member(
         team_service = TeamManagementService(db)
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
 
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
@@ -4427,11 +4423,10 @@ async def admin_leave_team(
         team_service = TeamManagementService(db)
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
 
         # Check if team exists
         team = await team_service.get_team_by_id(team_id)
@@ -4651,11 +4646,10 @@ async def admin_list_join_requests(
 
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
 
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
@@ -4745,11 +4739,10 @@ async def admin_approve_join_request(
 
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
@@ -4812,11 +4805,10 @@ async def admin_reject_join_request(
 
         role_service = RoleService(db)
 
-        roles: List[Role] = await role_service.list_roles()
-        team_roles_def: List[Role] = [r for r in roles if r.scope == "team"]
+        roles: List[DbRole] = await role_service.list_roles()
+        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
 
         roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)

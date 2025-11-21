@@ -26,19 +26,19 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam as DbEmailTeam
-from mcpgateway.db import UserRole as DbUserRole
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import UserRole as DbUserRole
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.role_service import RoleService
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 
@@ -967,16 +967,14 @@ class ServerService:
                     team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id).first()
                     if not team:
                         raise ValueError(f"Team {team_id} not found")
-                    
+
                     role_service = RoleService(db)
                     roles = await role_service.list_roles()
                     roles_with_edit_access = [r.name for r in roles if "servers.update" in r.permissions and r.is_active]
 
                     # Verify user is a member of the team
                     membership = (
-                        db.query(DbUserRole)
-                        .filter(DbUserRole.scope_id == team_id, DbUserRole.user_email == user_email, DbUserRole.is_active, DbUserRole.role.name.in_(roles_with_edit_access))
-                        .first()
+                        db.query(DbUserRole).filter(DbUserRole.scope_id == team_id, DbUserRole.user_email == user_email, DbUserRole.is_active, DbUserRole.role.name.in_(roles_with_edit_access)).first()
                     )
                     if not membership:
                         raise ValueError("User membership in team not sufficient for this update.")

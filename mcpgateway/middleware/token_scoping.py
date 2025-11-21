@@ -14,7 +14,7 @@ and time-based restrictions.
 from datetime import datetime, timezone
 import ipaddress
 import re
-from typing import Optional, List
+from typing import List, Optional
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
 # First-Party
-from mcpgateway.db import Permissions, Role, UserRole
+from mcpgateway.db import Permissions, UserRole
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.verify_credentials import verify_jwt_token
@@ -363,9 +363,6 @@ class TokenScopingMiddleware:
             logger.warning("Token missing user email")
             return False
 
-        # Third-Party
-        from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
 
@@ -373,12 +370,12 @@ class TokenScopingMiddleware:
 
         role_service = RoleService(db)
         user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
-        
+
         if not user_roles:
             logger.warning(f"User {user_email} has no team roles assigned")
             db.close()
             return False
-        
+
         db.close()
         return True
 

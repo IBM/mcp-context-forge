@@ -23,7 +23,7 @@ Examples:
 # Standard
 from datetime import datetime, timezone
 import re
-from typing import Optional, List
+from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import delete, func, select
@@ -784,7 +784,7 @@ class EmailAuthService:
                     # Find other team owners who can take ownership
                     team_roles = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
                     potential_owners = [role for role in team_roles if role.role_id in roles_ids_with_teams_manage_members and role.user_email != email]
-                    logger.info(f'{potential_owners=} for team {team.name} owned by {email}')
+                    logger.info(f"{potential_owners=} for team {team.name} owned by {email}")
 
                     if potential_owners:
                         # Transfer ownership to the first available owner

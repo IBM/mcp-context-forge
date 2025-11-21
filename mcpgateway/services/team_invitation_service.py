@@ -26,10 +26,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailUser, utc_now, UserRole, Role
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailUser, Role, UserRole, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
-from tests.unit.mcpgateway.services.test_role_service import role_service
 
 # Initialize logging
 logging_service = LoggingService()
@@ -161,7 +160,7 @@ class TeamInvitationService:
             role_service = RoleService(self.db)
             roles = await role_service.list_roles()
             roles_with_invite_permission = [r.name for r in roles if "team.manage_members" in r.permissions and r.is_active]
-            
+
             # Check if inviter is a member of the team with appropriate permissions
             inviter_membership = self.db.query(UserRole).filter(UserRole.scope_id == team_id, UserRole.user_email == invited_by, UserRole.is_active.is_(True)).first()
 
@@ -293,9 +292,7 @@ class TeamInvitationService:
                 raise ValueError("Team not found or inactive")
 
             # Check if user is already a member
-            existing_member = (
-                self.db.query(UserRole).filter(UserRole.scope_id == invitation.team_id, UserRole.user_email == invitation.email, UserRole.is_active.is_(True)).first()
-            )
+            existing_member = self.db.query(UserRole).filter(UserRole.scope_id == invitation.team_id, UserRole.user_email == invitation.email, UserRole.is_active.is_(True)).first()
 
             if existing_member:
                 logger.warning(f"User {invitation.email} is already a member of team {invitation.team_id}")
