@@ -26,8 +26,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailUser, utc_now, UserRole, Role
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.role_service import RoleService
+from tests.unit.mcpgateway.services.test_role_service import role_service
 
 # Initialize logging
 logging_service = LoggingService()
@@ -156,20 +158,24 @@ class TeamInvitationService:
                 logger.warning(f"Inviter {invited_by} not found")
                 return None
 
+            role_service = RoleService(self.db)
+            roles = await role_service.list_roles()
+            roles_with_invite_permission = [r.name for r in roles if "team.manage_members" in r.permissions and r.is_active]
+            
             # Check if inviter is a member of the team with appropriate permissions
-            inviter_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == invited_by, EmailTeamMember.is_active.is_(True)).first()
+            inviter_membership = self.db.query(UserRole).filter(UserRole.scope_id == team_id, UserRole.user_email == invited_by, UserRole.is_active.is_(True)).first()
 
             if not inviter_membership:
                 logger.warning(f"Inviter {invited_by} is not a member of team {team_id}")
                 raise ValueError("Only team members can send invitations")
 
             # Only owners can send invitations
-            if inviter_membership.role != "team_owner":
+            if inviter_membership.role.name not in roles_with_invite_permission:
                 logger.warning(f"User {invited_by} does not have permission to invite to team {team_id}")
                 raise ValueError("Only team owners can send invitations")
 
             # Check if user is already a team member
-            existing_member = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == email, EmailTeamMember.is_active.is_(True)).first()
+            existing_member = self.db.query(UserRole).filter(UserRole.scope_id == team_id, UserRole.user_email == email, UserRole.is_active.is_(True)).first()
 
             if existing_member:
                 logger.warning(f"User {email} is already a member of team {team_id}")
@@ -184,7 +190,7 @@ class TeamInvitationService:
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
+                current_member_count = self.db.query(UserRole).filter(UserRole.scope_id == team_id, UserRole.is_active.is_(True)).count()
 
                 pending_invitation_count = self.db.query(EmailTeamInvitation).filter(EmailTeamInvitation.team_id == team_id, EmailTeamInvitation.is_active.is_(True)).count()
 
@@ -288,7 +294,7 @@ class TeamInvitationService:
 
             # Check if user is already a member
             existing_member = (
-                self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == invitation.email, EmailTeamMember.is_active.is_(True)).first()
+                self.db.query(UserRole).filter(UserRole.scope_id == invitation.team_id, UserRole.user_email == invitation.email, UserRole.is_active.is_(True)).first()
             )
 
             if existing_member:
@@ -300,15 +306,26 @@ class TeamInvitationService:
 
             # Check team member limit
             if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.is_active.is_(True)).count()
+                current_member_count = self.db.query(UserRole).filter(UserRole.scope_id == invitation.team_id, UserRole.is_active.is_(True)).count()
                 if current_member_count >= team.max_members:
                     logger.warning(f"Team {invitation.team_id} has reached maximum member limit")
                     raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
 
             # Create team membership
-            membership = EmailTeamMember(team_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
+            # user_role = UserRole(scope_id=invitation.team_id, user_email=invitation.email, role=invitation.role, joined_at=utc_now(), invited_by=invitation.invited_by, is_active=True)
 
-            self.db.add(membership)
+            # self.db.add(user_role)
+            role_service = RoleService(self.db)
+            role_obj: Optional[Role] = await role_service.get_role_by_name(invitation.role, "team")
+            if role_obj:
+                await role_service.assign_role_to_user(
+                    user_email=invitation.email,
+                    role_id=role_obj.id,
+                    scope="team",
+                    scope_id=invitation.team_id,
+                    granted_by=invitation.invited_by,
+                    expires_at=None,
+                )
 
             # Deactivate the invitation
             invitation.is_active = False
@@ -382,13 +399,35 @@ class TeamInvitationService:
                 return False
 
             # Check if revoker has permission
-            revoker_membership = (
-                self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == invitation.team_id, EmailTeamMember.user_email == revoked_by, EmailTeamMember.is_active.is_(True)).first()
-            )
+            role_service = RoleService(self.db)
+            roles = await role_service.list_roles()
+            roles_with_revoke_permission = [r.name for r in roles if "team.manage_members" in r.permissions and r.is_active]
 
-            if not revoker_membership or revoker_membership.role != "team_owner":
+            revoker_memberships = await role_service.list_user_roles(revoked_by, "team", invitation.team_id)
+
+            if not revoker_memberships:
+                logger.warning(f"User {revoked_by} is not a member of team {invitation.team_id}")
+                return False
+
+            revoker_membership = revoker_memberships[0]
+
+            if not revoker_membership or revoker_membership.role.name not in roles_with_revoke_permission:
                 logger.warning(f"User {revoked_by} does not have permission to revoke invitation {invitation_id}")
                 return False
+
+            role_to_be_revoked = await role_service.get_role_by_name(invitation.role, "team")
+
+            if not role_to_be_revoked:
+                logger.warning(f"Role {invitation.role} not found for invitation {invitation_id}")
+                return False
+
+            await role_service.revoke_role_from_user(
+                user_email=invitation.email,
+                role_id=role_to_be_revoked.id,
+                scope="team",
+                scope_id=invitation.team_id,
+                revoked_by=revoked_by,
+            )
 
             # Revoke the invitation
             invitation.is_active = False
