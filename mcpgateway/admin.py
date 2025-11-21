@@ -224,6 +224,41 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 rate_limit_storage = defaultdict(list)
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP address from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        str: Client IP address
+    """
+    # Check for X-Forwarded-For header (proxy/load balancer)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    # Check for X-Real-IP header
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+
+    # Fall back to direct client IP
+    return request.client.host if request.client else "unknown"
+
+
+def get_user_agent(request: Request) -> str:
+    """Extract user agent from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        str: User agent string
+    """
+    return request.headers.get("User-Agent", "unknown")
+
+
 def rate_limit(requests_per_minute: Optional[int] = None):
     """Apply rate limiting to admin endpoints.
 
@@ -2681,6 +2716,44 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
+            # Check if password change is required OR if user is using default password
+            needs_password_change = user.password_change_required
+
+            # Also check if user is using the default password "changeme"
+            if not needs_password_change:
+                # First-Party
+                from mcpgateway.services.argon2_service import Argon2PasswordService
+
+                password_service = Argon2PasswordService()
+                is_using_default_password = password_service.verify_password("changeme", user.password_hash)
+                if is_using_default_password:
+                    needs_password_change = True
+                    # Set the flag in database for future reference
+                    user.password_change_required = True
+                    db.commit()
+                    LOGGER.info(f"User {email} is using default password - forcing password change")
+
+            if needs_password_change:
+                LOGGER.info(f"User {email} requires password change - redirecting to change password page")
+
+                # Create temporary JWT token for password change process
+                # First-Party
+                from mcpgateway.routers.email_auth import create_access_token
+
+                token, _ = await create_access_token(user)
+
+                # Create redirect response to password change page
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+
+                # Set JWT token as secure cookie for the password change process
+                # First-Party
+                from mcpgateway.utils.security_cookies import set_auth_cookie
+
+                set_auth_cookie(response, token, remember_me=False)
+
+                return response
+
             # Create JWT token with proper audience and issuer claims
             # First-Party
             from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
@@ -2757,6 +2830,150 @@ async def admin_logout(request: Request) -> RedirectResponse:
     response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
 
     return response
+
+
+@admin_router.get("/change-password-required", response_class=HTMLResponse)
+async def change_password_required_page(request: Request) -> HTMLResponse:
+    """
+    Render the password change required page.
+
+    This page is shown when a user's password has expired and must be changed
+    to continue accessing the system.
+
+    Args:
+        request (Request): FastAPI request object.
+
+    Returns:
+        HTMLResponse: The password change required page.
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+    # Get root path for template
+    root_path = request.scope.get("root_path", "")
+
+    return request.app.state.templates.TemplateResponse("change-password-required.html", {"request": request, "root_path": root_path})
+
+
+@admin_router.post("/change-password-required")
+async def change_password_required_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    """
+    Handle password change requirement form submission.
+
+    This endpoint processes the forced password change form, validates the credentials,
+    changes the password, clears the password_change_required flag, and redirects to admin panel.
+
+    Args:
+        request (Request): FastAPI request object.
+        db (Session): Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to admin panel on success or back to form with error.
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+    try:
+        form = await request.form()
+        current_password_val = form.get("current_password")
+        new_password_val = form.get("new_password")
+        confirm_password_val = form.get("confirm_password")
+
+        current_password = current_password_val if isinstance(current_password_val, str) else None
+        new_password = new_password_val if isinstance(new_password_val, str) else None
+        confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
+
+        if not all([current_password, new_password, confirm_password]):
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
+
+        if new_password != confirm_password:
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
+
+        # Get user from JWT token in cookie
+        try:
+            jwt_token = request.cookies.get("jwt_token")
+            if not jwt_token:
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+
+            # Authenticate using the token
+            # Third-Party
+            from fastapi.security import HTTPAuthorizationCredentials
+
+            # First-Party
+            from mcpgateway.auth import get_current_user
+
+            # Create credentials object from cookie
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+            current_user = await get_current_user(credentials, db, request)
+
+            if not current_user:
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+        except Exception as e:
+            LOGGER.error(f"Authentication error: {e}")
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+
+        # Authenticate using the email auth service
+        # First-Party
+        from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
+
+        auth_service = EmailAuthService(db)
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
+
+        try:
+            # Change password
+            success = await auth_service.change_password(email=current_user.email, old_password=current_password, new_password=new_password, ip_address=ip_address, user_agent=user_agent)
+
+            if success:
+                # Clear the password_change_required flag
+                current_user.password_change_required = False
+                db.commit()
+
+                # Create new JWT token
+                # First-Party
+                from mcpgateway.routers.email_auth import create_access_token
+
+                token, _ = await create_access_token(current_user)
+
+                # Create redirect response to admin panel
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+                # Update JWT token cookie
+                # First-Party
+                from mcpgateway.utils.security_cookies import set_auth_cookie
+
+                set_auth_cookie(response, token, remember_me=False)
+
+                LOGGER.info(f"User {current_user.email} successfully changed their expired password")
+                return response
+            else:
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
+
+        except AuthenticationError:
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
+        except PasswordValidationError as e:
+            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+        except Exception as e:
+            LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+
+    except Exception as e:
+        LOGGER.error(f"Password change handler error: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
 # ============================================================================ #
@@ -4329,6 +4546,21 @@ async def admin_list_users(
             if not is_current_user and not is_last_admin:
                 delete_button = f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
 
+            # Build force password change button/indicator
+            password_change_button = ""
+            if not is_current_user:
+                if user_obj.password_change_required:
+                    password_change_button = '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-md">Password Change Required</span>'
+                else:
+                    password_change_button = f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/force-password-change" hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" hx-swap="outerHTML">Force Password Change</button>'
+
+            # Password change required badge
+            password_badge = (
+                '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
+                if user_obj.password_change_required
+                else ""
+            )
+
             users_html += f"""
             <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
                 <div class="flex justify-between items-start">
@@ -4339,6 +4571,7 @@ async def admin_list_users(
                             <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
                             {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ""}
                             {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ""}
+                            {password_badge}
                         </div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
@@ -4350,6 +4583,7 @@ async def admin_list_users(
                             Edit
                         </button>
                         {activate_deactivate_button}
+                        {password_change_button}
                         {delete_button}
                     </div>
                 </div>
@@ -4398,6 +4632,11 @@ async def admin_create_user(
         new_user = await auth_service.create_user(
             email=str(form.get("email", "")), password=str(form.get("password", "")), full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
         )
+
+        # If the user was created with the default password "changeme", force password change
+        if str(form.get("password", "")) == "changeme":
+            new_user.password_change_required = True
+            db.commit()
 
         LOGGER.info(f"Admin {user} created user: {new_user.email}")
 
@@ -4799,6 +5038,93 @@ async def admin_delete_user(
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {str(e)}</div>', status_code=400)
+
+
+@admin_router.post("/users/{user_email}/force-password-change")
+@require_permission("admin.user_management")
+async def admin_force_password_change(
+    user_email: str,
+    _request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Force user to change password on next login.
+
+    Args:
+        user_email: Email of user to force password change
+        _request: FastAPI request object
+        db: Database session
+        user: Current authenticated user context
+
+    Returns:
+        HTMLResponse: Updated user card with success message
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    try:
+        # Get root path for URL construction
+        root_path = _request.scope.get("root_path", "") if _request else ""
+
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+
+        # URL decode the email
+        decoded_email = urllib.parse.unquote(user_email)
+
+        # Get current user email from JWT
+        current_user_email = get_user_email(user)
+
+        # Get the user to update
+        user_obj = await auth_service.get_user_by_email(decoded_email)
+        if not user_obj:
+            return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
+
+        # Set password_change_required flag
+        user_obj.password_change_required = True
+        db.commit()
+
+        LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
+
+        # Return updated user card with status indicator
+        user_html = f"""
+        <div class="user-card bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow duration-200">
+            <div class="flex items-start justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
+                        {user_obj.get_display_name()[0].upper()}
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{html.escape(user_obj.get_display_name())}</h3>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">{html.escape(user_obj.email)}</p>
+                        <div class="flex items-center space-x-2 mt-1">
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' if user_obj.is_active else 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'}">
+                                {'Active' if user_obj.is_active else 'Inactive'}
+                            </span>
+                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">Admin</span>' if user_obj.is_admin else ''}
+                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300"><i class="fas fa-key mr-1"></i>Password Change Required</span>' if user_obj.password_change_required else ''}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-col space-y-2">
+                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500" 
+                            hx-get="{root_path}/admin/users/{user_obj.email}/edit" hx-target="#user-edit-modal-content">
+                        Edit
+                    </button>
+                    {'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") + '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>' if user_obj.is_active else '<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") + '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'}
+                    {('<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") + '/force-password-change" hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" hx-swap="outerHTML">Force Password Change</button>') if not user_obj.password_change_required else '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-md">Password Change Required</span>'}
+                    <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
+                </div>
+            </div>
+        </div>
+        """
+        return HTMLResponse(content=user_html)
+
+    except Exception as e:
+        LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
+        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {str(e)}</div>', status_code=400)
 
 
 @admin_router.get("/tools")

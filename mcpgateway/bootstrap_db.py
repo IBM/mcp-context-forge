@@ -83,11 +83,12 @@ async def bootstrap_admin_user() -> None:
                 is_admin=True,
             )
 
-            # Mark admin user as email verified
+            # Mark admin user as email verified and require password change on first login
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
+            admin_user.password_change_required = True  # Force admin to change default password
             db.commit()
 
             # Personal team is automatically created during user creation if enabled
