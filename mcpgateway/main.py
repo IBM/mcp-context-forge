@@ -166,6 +166,7 @@ else:
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
+
 # Initialize services
 tool_service = ToolService()
 resource_service = ResourceService()
@@ -4924,6 +4925,17 @@ if settings.llmchat_enabled:
         logger.info("LLM Chat router included")
     except ImportError:
         logger.debug("LLM Chat router not available")
+
+# Include Toolops router
+if settings.toolops_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.toolops_router import toolops_router
+
+        app.include_router(toolops_router)
+        logger.info("Toolops router included")
+    except ImportError:
+        logger.debug("Toolops router not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled
