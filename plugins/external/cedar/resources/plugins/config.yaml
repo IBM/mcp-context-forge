@@ -14,15 +14,6 @@ plugins:
         tenant_ids: []  # Apply to all tenants
     config:
       policy_lang: cedar
-      rbac_roles:
-        employee: 
-          - alice
-        manager:
-          - bob
-        hr: 
-          - carol
-        admin: 
-          - admin
       policy_output_keywords: 
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
@@ -75,7 +66,14 @@ plugins:
           principal: Role::"admin"
           action:
             - Action::"view_full_output"
-          resource: Resource::"example.com/data" #Resource::<resource_uri>
+          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>
+
+        - id: allow-employee-redacted-resources # policy for resources
+          effect: Permit
+          principal: Role::"employee"
+          action:
+            - Action::"view_redacted_output"
+          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>          
 
         - id: allow-admin-prompts # policy for resources
           effect: Permit

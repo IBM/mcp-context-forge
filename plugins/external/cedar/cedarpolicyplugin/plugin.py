@@ -85,8 +85,13 @@ class CedarPolicyPlugin(Plugin):
         self.cedar_context_key = "cedar_policy_context"
         self.jwt_info = {}
 
-    def _set_jwt_info(self,info: dict) -> None:
-        self.jwt_info["users"] = info
+    def _set_jwt_info(self,user_role_mapping: dict) -> None:
+        """Sets user role mapping information from jwt tokens
+
+        Args:
+          info(dict): with user mappings
+        """
+        self.jwt_info["users"] = user_role_mapping
     
     def _extract_payload_key(self, content: Any = None, key: str = None, result: dict[str, list] = None) -> None:
         """Function to extract values of passed in key in the payload recursively based on if the content is of type list, dict
@@ -139,29 +144,35 @@ class CedarPolicyPlugin(Plugin):
         current_role = None
         current_resource = None
         current_actions = []
+        resource_category = None
+        resource_name = None
 
+
+        pattern = r'\[role:([A-Za-z0-9_]+):(resource|prompt|server|agent)/([^\]]+)\]'
         for line in lines:
-            match = re.match(r'\[role:(\w+):(\w+)\]', line)
+            match = re.match(pattern, line)
             if match:
-                if current_role and current_resource and current_actions:
+                if current_role and resource_category and resource_name and current_actions:
+                    resource_category = resource_category.capitalize()
                     policies.append({
-                        "id": f"allow-{current_role}-{current_resource}",
+                        "id": f"allow-{current_role}-{resource_category}",
                         "effect": "Permit",
                         "principal": f'Role::"{current_role}"',
                         "action": [f'Action::"{a}"' for a in current_actions],
-                        "resource": f'Resource::"{current_resource}"'
+                        "resource": f'{resource_category}::"{resource_name}"'
                     })
-                current_role, current_resource = match.groups()
+                current_role, resource_category, resource_name = match.groups()
                 current_actions = []
             else:
                 current_actions.append(line)
-        if current_role and current_resource and current_actions:
+        if current_role and resource_category and resource_name and current_actions:
+            resource_category = resource_category.capitalize()
             policies.append({
-                "id": f"allow-{current_role}-{current_resource}",
+                "id": f"allow-{current_role}-{resource_category}",
                 "effect": "Permit",
                 "principal": f'Role::"{current_role}"',
                 "action": [f'Action::"{a}"' for a in current_actions],
-                "resource": f'Resource::"{current_resource}"'
+                "resource": f'{resource_category}::"{resource_name}"'
             })
 
         cedar_policy_text = self._yamlpolicy2text(policies)
@@ -220,6 +231,8 @@ class CedarPolicyPlugin(Plugin):
         policy = None
         user = ""
         server_id = ""
+
+
 
         if self.cedar_config.policy_lang == "cedar":
             if self.cedar_config.policy:
@@ -477,6 +490,8 @@ class CedarPolicyPlugin(Plugin):
         policy = None
         user = ""
         server_id = ""
+
+
 
         if self.cedar_config.policy_lang == "cedar":
             if self.cedar_config.policy:

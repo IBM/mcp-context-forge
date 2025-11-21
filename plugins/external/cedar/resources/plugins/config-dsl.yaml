@@ -13,24 +13,22 @@ plugins:
       - server_ids: []  # Apply to all servers
         tenant_ids: []  # Apply to all tenants
     config:
-      policy_lang: cedar # custom_dsl
-      policy:
-        rbac: |
-          [role:users:server/hr_services]
-          get_users
-          submit_request
+      policy_lang: custom_dsl
+      policy_output_keywords: 
+        view_full: "view_full_output"
+        view_redacted: "view_redacted_output"
+      policy_redaction_spec:
+        pattern: '"\$\d{1,}(,\d{1,})*"' # provide regex, if none, then replace all
+      policy: |
+        [role:hr:server/hr_tool]
+        update_payroll
 
-          [role:admin:agent/agent_x]
-          customer_service
-          approval
+        [role:admin:resource/example.com/data]
+        view_full_output
 
-          [role:admin:resource/example.com/data]
-          view
-          download
-
-          [role:admin:prompt/judge_prompts]
-          view
-          download
+        [role:admin:prompt/judge_prompts]
+        view_full_output
+          
 
 
 # Plugin directories to scan
