@@ -154,6 +154,7 @@ class Settings(BaseSettings):
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
+    client_mode: bool = False
 
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -448,24 +449,25 @@ class Settings(BaseSettings):
             value = str(v)
 
         # Check for default/weak secrets
-        weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
-        if value.lower() in weak_secrets:
-            logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
+        if not info.data.get("client_mode"):
+            weak_secrets = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+            if value.lower() in weak_secrets:
+                logger.warning(f"🔓 SECURITY WARNING - {field_name}: Default/weak secret detected! Please set a strong, unique value for production.")
 
-        # Check minimum length
-        if len(value) < 32:
-            logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
+            # Check minimum length
+            if len(value) < 32:
+                logger.warning(f"⚠️  SECURITY WARNING - {field_name}: Secret should be at least 32 characters long. Current length: {len(value)}")
 
-        # Basic entropy check (at least 10 unique characters)
-        if len(set(value)) < 10:
-            logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
+            # Basic entropy check (at least 10 unique characters)
+            if len(set(value)) < 10:
+                logger.warning(f"🔑 SECURITY WARNING - {field_name}: Secret has low entropy. Consider using a more random value.")
 
         # Always return SecretStr to keep it secret-safe
         return v if isinstance(v, SecretStr) else SecretStr(value)
 
     @field_validator("basic_auth_password")
     @classmethod
-    def validate_admin_password(cls, v: str | SecretStr) -> SecretStr:
+    def validate_admin_password(cls, v: str | SecretStr, info: ValidationInfo) -> SecretStr:
         """Validate admin password meets security requirements.
 
         Args:
@@ -480,31 +482,32 @@ class Settings(BaseSettings):
         else:
             value = v
 
-        if value == "changeme":  # nosec B105 - checking for default value
-            logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
+        if not info.data.get("client_mode"):
+            if value == "changeme":  # nosec B105 - checking for default value
+                logger.warning("🔓 SECURITY WARNING: Default admin password detected! Please change the BASIC_AUTH_PASSWORD immediately.")
 
-        # Note: We can't access password_min_length here as it's not set yet during validation
-        # Using default value of 8 to match the field default
-        min_length = 8  # This matches the default in password_min_length field
-        if len(value) < min_length:
-            logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(value)}")
+            # Note: We can't access password_min_length here as it's not set yet during validation
+            # Using default value of 8 to match the field default
+            min_length = 8  # This matches the default in password_min_length field
+            if len(value) < min_length:
+                logger.warning(f"⚠️  SECURITY WARNING: Admin password should be at least {min_length} characters long. Current length: {len(value)}")
 
-        # Check password complexity
-        has_upper = any(c.isupper() for c in value)
-        has_lower = any(c.islower() for c in value)
-        has_digit = any(c.isdigit() for c in value)
-        has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', value))
+            # Check password complexity
+            has_upper = any(c.isupper() for c in value)
+            has_lower = any(c.islower() for c in value)
+            has_digit = any(c.isdigit() for c in value)
+            has_special = bool(re.search(r'[!@#$%^&*(),.?":{}|<>]', value))
 
-        complexity_score = sum([has_upper, has_lower, has_digit, has_special])
-        if complexity_score < 3:
-            logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
+            complexity_score = sum([has_upper, has_lower, has_digit, has_special])
+            if complexity_score < 3:
+                logger.warning("🔐 SECURITY WARNING: Admin password has low complexity. Should contain at least 3 of: uppercase, lowercase, digits, special characters")
 
         # Always return SecretStr to keep it secret-safe
         return v if isinstance(v, SecretStr) else SecretStr(value)
 
     @field_validator("allowed_origins")
     @classmethod
-    def validate_cors_origins(cls, v: Any) -> set[str] | None:
+    def validate_cors_origins(cls, v: Any, info: ValidationInfo) -> set[str] | None:
         """Validate CORS allowed origins.
 
         Args:
@@ -522,19 +525,20 @@ class Settings(BaseSettings):
             raise ValueError("allowed_origins must be a set or list of strings")
 
         dangerous_origins = ["*", "null", ""]
-        for origin in v:
-            if origin in dangerous_origins:
-                logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. Consider specifying explicit origins instead of wildcards.")
+        if not info.data.get("client_mode"):
+            for origin in v:
+                if origin in dangerous_origins:
+                    logger.warning(f"🌐 SECURITY WARNING: Dangerous CORS origin '{origin}' detected. Consider specifying explicit origins instead of wildcards.")
 
-            # Validate URL format
-            if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
-                logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. Origins should start with http:// or https://")
+                # Validate URL format
+                if not origin.startswith(("http://", "https://")) and origin not in dangerous_origins:
+                    logger.warning(f"⚠️  SECURITY WARNING: Invalid origin format '{origin}'. Origins should start with http:// or https://")
 
         return set({str(origin) for origin in v})
 
     @field_validator("database_url")
     @classmethod
-    def validate_database_url(cls, v: str) -> str:
+    def validate_database_url(cls, v: str, info: ValidationInfo) -> str:
         """Validate database connection string security.
 
         Args:
@@ -544,9 +548,10 @@ class Settings(BaseSettings):
             str: The validated database URL.
         """
         # Check for hardcoded passwords in non-SQLite databases
-        if not v.startswith("sqlite"):
-            if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
-                logger.warning("Potentially weak database password detected. Consider using a stronger password.")
+        if not info.data.get("client_mode"):
+            if not v.startswith("sqlite"):
+                if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
+                    logger.warning("Potentially weak database password detected. Consider using a stronger password.")
 
         # Warn about SQLite in production
         if v.startswith("sqlite"):
@@ -561,6 +566,9 @@ class Settings(BaseSettings):
         Returns:
             Itself.
         """
+        if self.client_mode:
+            return self
+
         # Check for dangerous combinations - only log warnings, don't raise errors
         if not self.auth_required and self.mcpgateway_ui_enabled:
             logger.warning("🔓 SECURITY WARNING: Admin UI is enabled without authentication. Consider setting AUTH_REQUIRED=true for production.")
@@ -1526,7 +1534,7 @@ Disallow: /
 
 
 @lru_cache()
-def get_settings() -> Settings:
+def get_settings(**kwargs: Dict[str, Any]) -> Settings:
     """Get cached settings instance.
 
     Returns:
@@ -1543,7 +1551,7 @@ def get_settings() -> Settings:
     """
     # Instantiate a fresh Pydantic Settings object,
     # loading from env vars or .env exactly once.
-    cfg = Settings()
+    cfg = Settings(**kwargs)
     # Validate that transport_type is correct; will
     # raise if mis-configured.
     cfg.validate_transport()
