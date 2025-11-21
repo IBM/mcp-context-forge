@@ -12439,7 +12439,7 @@ function setupSelectorSearch() {
         });
     }
 
-        // Edit-server prompts search (server-side, mirror of searchPrompts)
+    // Edit-server prompts search (server-side, mirror of searchPrompts)
     const searchEditPrompts = safeGetElement("searchEditPrompts", true);
     if (searchEditPrompts) {
         let editSearchTimeout;
@@ -12492,6 +12492,46 @@ function setupSelectorSearch() {
                 serverSideResourceSearch(searchTerm);
             }, 300);
         });
+    }
+
+    // Edit-server resources search (server-side, mirror of searchResources)
+    const searchEditResources = safeGetElement("searchEditResources", true);
+    if (searchEditResources) {
+        let editSearchTimeout;
+        searchEditResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditResourcesSearch(searchTerm);
+            }, 300);
+        });
+
+        // If HTMX swaps/paginates the edit resources container, re-run server-side search
+        const editResourcesContainer = document.getElementById("edit-server-resources");
+        if (editResourcesContainer) {
+            editResourcesContainer.addEventListener("htmx:afterSwap", function () {
+                try {
+                    const current = searchEditResources.value || "";
+                    if (current && current.trim() !== "") {
+                        serverSideEditResourcesSearch(current);
+                    } else {
+                        // No active search — ensure the selector is initialized
+                        initResourceSelect(
+                            "edit-server-resources",
+                            "selectedEditResourcesPills",
+                            "selectedEditResourcesWarning",
+                            6,
+                            "selectAllEditResourcesBtn",
+                            "clearAllEditResourcesBtn",
+                        );
+                    }
+                } catch (err) {
+                    console.error("Error handling edit-resources afterSwap:", err);
+                }
+            });
+        }
     }
 }
 
@@ -19485,6 +19525,28 @@ function updatePromptMapping(container) {
 }
 
 /**
+ * Update the resource mapping with resources in the given container
+ */
+function updateResourceMapping(container) {
+    if (!window.resourceMapping) {
+        window.resourceMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll('input[name="associatedResources"]');
+    checkboxes.forEach((checkbox) => {
+        const resourceId = checkbox.value;
+        const resourceName =
+            checkbox.getAttribute("data-resource-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            resourceId;
+        if (resourceId && resourceName) {
+            window.resourceMapping[resourceId] = resourceName;
+        }
+    });
+}
+
+
+/**
  * Perform server-side search for prompts and update the prompt list
  */
 async function serverSidePromptSearch(searchTerm) {
@@ -20112,6 +20174,196 @@ async function serverSideEditPromptsSearch(searchTerm) {
         console.error("Error searching prompts:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources in the edit-server selector and update the list
+ */
+async function serverSideEditResourcesSearch(searchTerm) {
+    const container = document.getElementById("edit-server-resources");
+    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+
+    if (!container) {
+        console.error("edit-server-resources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching Resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default resources selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update resource mapping
+                updateResourceMapping(container);
+                // Restore checked state for any resources already associated with the server
+                try {
+                    const dataAttr = container.getAttribute("data-server-resources");
+                    if (dataAttr) {
+                        const serverResources = JSON.parse(dataAttr);
+                        if (Array.isArray(serverResources) && serverResources.length > 0) {
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedResources"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const resourceName = cb.getAttribute("data-resource-name") || (window.resourceMapping && window.resourceMapping[cb.value]);
+                                if (resourceName && serverResources.includes(resourceName)) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector('input[type="checkbox"]');
+                            if (firstCb) {
+                                firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error restoring edit-server resources checked state:", e);
+                }
+
+                // Re-initialize the selector logic for the edit container (resource-specific)
+                initResourceSelect(
+                    "edit-server-resources",
+                    "selectedEditResourcesPills",
+                    "selectedEditResourcesWarning",
+                    6,
+                    "selectAllEditResourcesBtn",
+                    "clearAllEditResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const name = resource.name || resource.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(name)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateResourceMapping(container);
+
+            // Restore checked state for any resources already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-resources");
+                if (dataAttr) {
+                    const serverResources = JSON.parse(dataAttr);
+                    if (Array.isArray(serverResources) && serverResources.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const resourceName = cb.getAttribute("data-resource-name") || (window.resourceMapping && window.resourceMapping[cb.value]);
+                            if (resourceName && serverResources.includes(resourceName)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector('input[type="checkbox"]');
+                        if (firstCb) {
+                            firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Error restoring edit-server resources checked state:", e);
+            }
+
+            // Initialize selector behavior
+            initResourceSelect(
+                "edit-server-resources",
+                "selectedEditResourcesPills",
+                "selectedEditResourcesWarning",
+                6,
+                "selectAllEditResourcesBtn",
+                "clearAllEditResourcesBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
