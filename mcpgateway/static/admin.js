@@ -12383,19 +12383,6 @@ function setupSelectorSearch() {
         });
     }
 
-    // // Resources search
-    // const searchResources = safeGetElement("searchResources", true);
-    // if (searchResources) {
-    //     searchResources.addEventListener("input", function () {
-    //         filterSelectorItems(
-    //             this.value,
-    //             "#associatedResources",
-    //             ".resource-item",
-    //             "noResourcesMessage",
-    //             "searchResourcesQuery",
-    //         );
-    //     });
-    // }
 
     // Edit-server tools search (server-side, mirror of searchTools)
     const searchEditTools = safeGetElement("searchEditTools", true);
@@ -12451,6 +12438,47 @@ function setupSelectorSearch() {
             }, 300);
         });
     }
+
+        // Edit-server prompts search (server-side, mirror of searchPrompts)
+    const searchEditPrompts = safeGetElement("searchEditPrompts", true);
+    if (searchEditPrompts) {
+        let editSearchTimeout;
+        searchEditPrompts.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditPromptsSearch(searchTerm);
+            }, 300);
+        });
+
+        // If HTMX swaps/paginates the edit prompts container, re-run server-side search
+        const editPromptsContainer = document.getElementById("edit-server-prompts");
+        if (editPromptsContainer) {
+            editPromptsContainer.addEventListener("htmx:afterSwap", function () {
+                try {
+                    const current = searchEditPrompts.value || "";
+                    if (current && current.trim() !== "") {
+                        serverSideEditPromptsSearch(current);
+                    } else {
+                        // No active search — ensure the selector is initialized
+                        initPromptSelect(
+                            "edit-server-prompts",
+                            "selectedEditPromptsPills",
+                            "selectedEditPromptsWarning",
+                            6,
+                            "selectAllEditPromptsBtn",
+                            "clearAllEditPromptsBtn",
+                        );
+                    }
+                } catch (err) {
+                    console.error("Error handling edit-prompts afterSwap:", err);
+                }
+            });
+        }
+    }
+
     // Resources search (server-side)
     const searchResources = safeGetElement("searchResources", true);
     if (searchResources) {
@@ -12460,7 +12488,7 @@ function setupSelectorSearch() {
             if (resourceSearchTimeout) {
                 clearTimeout(resourceSearchTimeout);
             }
-            promptSearchTimeout = setTimeout(() => {
+            resourceSearchTimeout = setTimeout(() => {
                 serverSideResourceSearch(searchTerm);
             }, 300);
         });
@@ -19436,6 +19464,27 @@ function updateToolMapping(container) {
 }
 
 /**
+ * Update the prompt mapping with prompts in the given container
+ */
+function updatePromptMapping(container) {
+    if (!window.promptMapping) {
+        window.promptMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll('input[name="associatedPrompts"]');
+    checkboxes.forEach((checkbox) => {
+        const promptId = checkbox.value;
+        const promptName =
+            checkbox.getAttribute("data-prompt-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            promptId;
+        if (promptId && promptName) {
+            window.promptMapping[promptId] = promptName;
+        }
+    });
+}
+
+/**
  * Perform server-side search for prompts and update the prompt list
  */
 async function serverSidePromptSearch(searchTerm) {
@@ -19872,6 +19921,197 @@ async function serverSideEditToolSearch(searchTerm) {
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching tools</div>';
 
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for prompts in the edit-server selector and update the list
+ */
+async function serverSideEditPromptsSearch(searchTerm) {
+    const container = document.getElementById("edit-server-prompts");
+    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+
+    if (!container) {
+        console.error("edit-server-prompts container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching prompts...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompts selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update prompt mapping
+                updatePromptMapping(container);
+
+                // Restore checked state for any prompts already associated with the server
+                try {
+                    const dataAttr = container.getAttribute("data-server-prompts");
+                    if (dataAttr) {
+                        const serverPrompts = JSON.parse(dataAttr);
+                        if (Array.isArray(serverPrompts) && serverPrompts.length > 0) {
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedPrompts"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const promptName = cb.getAttribute("data-prompt-name") || (window.promptMapping && window.promptMapping[cb.value]);
+                                if (promptName && serverPrompts.includes(promptName)) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector('input[type="checkbox"]');
+                            if (firstCb) {
+                                firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error restoring edit-server prompts checked state:", e);
+                }
+
+                // Re-initialize the selector logic for the edit container (prompt-specific)
+                initPromptSelect(
+                    "edit-server-prompts",
+                    "selectedEditPromptsPills",
+                    "selectedEditPromptsWarning",
+                    6,
+                    "selectAllEditPromptsBtn",
+                    "clearAllEditPromptsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+            }
+        } catch (error) {
+            console.error("Error loading prompts:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.prompts && data.prompts.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.prompts.forEach((prompt) => {
+                const name = prompt.name || prompt.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 prompt-item"
+                        data-prompt-id="${escapeHtml(prompt.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="${escapeHtml(prompt.id)}"
+                            data-prompt-name="${escapeHtml(name)}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updatePromptMapping(container);
+
+            // Restore checked state for any prompts already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-prompts");
+                if (dataAttr) {
+                    const serverPrompts = JSON.parse(dataAttr);
+                    if (Array.isArray(serverPrompts) && serverPrompts.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const promptName = cb.getAttribute("data-prompt-name") || (window.promptMapping && window.promptMapping[cb.value]);
+                            if (promptName && serverPrompts.includes(promptName)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector('input[type="checkbox"]');
+                        if (firstCb) {
+                            firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Error restoring edit-server prompts checked state:", e);
+            }
+
+            // Initialize selector behavior
+            initPromptSelect(
+                "edit-server-prompts",
+                "selectedEditPromptsPills",
+                "selectedEditPromptsWarning",
+                6,
+                "selectAllEditPromptsBtn",
+                "clearAllEditPromptsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching prompts:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
