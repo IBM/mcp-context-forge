@@ -1,0 +1,58 @@
+# cert-manager CA Issuer Setup (APPLY ONCE)
+# This example shows how to set up a self-signed CA using cert-manager
+# for issuing mTLS certificates to the MCP Gateway and plugins.
+#
+# Prerequisites:
+# - cert-manager must be installed in your cluster
+#   Install: kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+#
+# Usage:
+# 1. Create namespace: kubectl create namespace mcp-gateway-test
+# 2. Apply this file ONCE: kubectl apply -f cert-manager-issuer-example.yaml
+# 3. Deploy stack with use_cert_manager: true in mcp-stack.yaml
+#
+# NOTE: This creates long-lived infrastructure (CA + Issuer).
+#       Do NOT delete this when tearing down your MCP stack deployment.
+#       The CA certificate will be reused across deployments.
+#
+---
+# Self-signed Issuer (used to create the CA certificate)
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mcp-selfsigned-issuer
+  namespace: mcp-gateway-test
+spec:
+  selfSigned: {}
+
+---
+# CA Certificate (root of trust for all mTLS certificates)
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-ca-certificate
+  namespace: mcp-gateway-test
+spec:
+  isCA: true
+  commonName: mcp-ca
+  secretName: mcp-ca-secret
+  duration: 19800h  # 825 days (≈ 2.25 years)
+  renewBefore: 13200h  # Renew at 2/3 of lifetime
+  privateKey:
+    algorithm: RSA
+    size: 4096
+  issuerRef:
+    name: mcp-selfsigned-issuer
+    kind: Issuer
+
+---
+# CA Issuer (used to sign gateway and plugin certificates)
+# This is what your mcp-stack.yaml references via cert_manager_issuer
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: mcp-ca-issuer
+  namespace: mcp-gateway-test
+spec:
+  ca:
+    secretName: mcp-ca-secret

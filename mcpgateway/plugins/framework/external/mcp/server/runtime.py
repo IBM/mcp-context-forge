@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./mcpgateway/plugins/framework/external/mcp/server/runtime.py
 Copyright 2025
