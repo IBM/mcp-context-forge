@@ -5498,8 +5498,8 @@ async function editServer(serverId) {
         if (document.getElementById("associatedEditGateways")) {
             initGatewaySelect(
                 "associatedEditGateways",
-                "selectedGatewayPills",
-                "selectedGatewayWarning",
+                "selectedEditGatewayPills",
+                "selectedEditGatewayWarning",
                 12,
                 "selectAllEditGatewayBtn",
                 "clearAllEditGatewayBtn",
