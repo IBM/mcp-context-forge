@@ -43,7 +43,7 @@ from mcpgateway.db import (
     EmailTeam,
     EmailTeamInvitation,
     EmailTeamJoinRequest,
-    EmailTeamMember,
+    UserRole,
     EmailUser,
     Gateway,
     OAuthToken,
@@ -166,7 +166,7 @@ class SystemStatsService:
         """
         total_teams = db.query(func.count(EmailTeam.id)).scalar() or 0
         personal_teams = db.query(func.count(EmailTeam.id)).filter(EmailTeam.is_personal.is_(True)).scalar() or 0
-        team_members = db.query(func.count(EmailTeamMember.id)).scalar() or 0
+        team_members = db.query(func.count(func.distinct(UserRole.user_email))).filter(UserRole.is_active.is_(True)).scalar() or 0
 
         return {"total": total_teams, "breakdown": {"personal": personal_teams, "organizational": total_teams - personal_teams, "members": team_members}}
 
