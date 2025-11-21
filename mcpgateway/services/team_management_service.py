@@ -23,7 +23,7 @@ from datetime import timedelta
 from typing import List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -364,7 +364,7 @@ class TeamManagementService:
 
             self.db.delete(team)
             self.db.commit()
-            
+
             logger.info(f"Deleted team {team_id} by {deleted_by}")
             return True
 
