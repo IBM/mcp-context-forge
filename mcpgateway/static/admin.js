@@ -19872,12 +19872,15 @@ async function serverSideEditToolSearch(searchTerm) {
                     if (dataAttr) {
                         const serverTools = JSON.parse(dataAttr);
                         if (Array.isArray(serverTools) && serverTools.length > 0) {
+                            // Normalize serverTools to a set of strings for robust comparison
+                            const serverToolSet = new Set(serverTools.map((s) => String(s)));
                             const checkboxes = container.querySelectorAll(
                                 'input[name="associatedTools"]',
                             );
                             checkboxes.forEach((cb) => {
+                                const toolId = cb.value;
                                 const toolName = cb.getAttribute("data-tool-name") || (window.toolMapping && window.toolMapping[cb.value]);
-                                if (toolName && serverTools.includes(toolName)) {
+                                if (serverToolSet.has(toolId) || (toolName && serverToolSet.has(String(toolName)))) {
                                     cb.checked = true;
                                 }
                             });
@@ -19961,12 +19964,15 @@ async function serverSideEditToolSearch(searchTerm) {
                 if (dataAttr) {
                     const serverTools = JSON.parse(dataAttr);
                     if (Array.isArray(serverTools) && serverTools.length > 0) {
+                        // Normalize serverTools to a set of strings for robust comparison
+                        const serverToolSet = new Set(serverTools.map((s) => String(s)));
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedTools"]',
                         );
                         checkboxes.forEach((cb) => {
+                            const toolId = cb.value;
                             const toolName = cb.getAttribute("data-tool-name") || (window.toolMapping && window.toolMapping[cb.value]);
-                            if (toolName && serverTools.includes(toolName)) {
+                            if (serverToolSet.has(toolId) || (toolName && serverToolSet.has(String(toolName)))) {
                                 cb.checked = true;
                             }
                         });
@@ -20266,12 +20272,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
                     if (dataAttr) {
                         const serverResources = JSON.parse(dataAttr);
                         if (Array.isArray(serverResources) && serverResources.length > 0) {
+                            // Normalize serverResources to a set of strings for robust comparison
+                            const serverResourceSet = new Set(serverResources.map((s) => String(s)));
                             const checkboxes = container.querySelectorAll(
                                 'input[name="associatedResources"]',
                             );
                             checkboxes.forEach((cb) => {
+                                const resourceId = cb.value;
                                 const resourceName = cb.getAttribute("data-resource-name") || (window.resourceMapping && window.resourceMapping[cb.value]);
-                                if (resourceName && serverResources.includes(resourceName)) {
+                                if (serverResourceSet.has(resourceId) || (resourceName && serverResourceSet.has(String(resourceName)))) {
                                     cb.checked = true;
                                 }
                             });
@@ -20354,12 +20363,17 @@ async function serverSideEditResourcesSearch(searchTerm) {
                 if (dataAttr) {
                     const serverResources = JSON.parse(dataAttr);
                     if (Array.isArray(serverResources) && serverResources.length > 0) {
+                        // Normalize serverResources to a set of strings for robust comparison
+                        const serverResourceSet = new Set(serverResources.map((s) => String(s)));
+
                         const checkboxes = container.querySelectorAll(
                             'input[name="associatedResources"]',
                         );
                         checkboxes.forEach((cb) => {
+                            const resourceId = cb.value;
                             const resourceName = cb.getAttribute("data-resource-name") || (window.resourceMapping && window.resourceMapping[cb.value]);
-                            if (resourceName && serverResources.includes(resourceName)) {
+                            // Check by id first (string), then by name as a fallback
+                            if (serverResourceSet.has(resourceId) || (resourceName && serverResourceSet.has(String(resourceName)))) {
                                 cb.checked = true;
                             }
                         });
