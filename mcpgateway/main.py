@@ -315,7 +315,7 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     results = [match.value for match in main_matches]
 
     if mappings:
-        results = get_result_mappings(results, mappings)
+        results = transform_data_with_mappings(results, mappings)
 
     if len(results) == 1 and isinstance(results[0], dict):
         return results[0]
@@ -323,7 +323,7 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     return results
 
 
-def get_result_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
+def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
     """
     Applies the given JSONPath expression and mappings to the data.
     Only return data that is required by the user dynamically.
@@ -339,15 +339,8 @@ def get_result_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
         HTTPException: If there's an error parsing or executing the JSONPath expressions.
 
     Examples:
-        # TODO: get rest of these examples working.
-        >>> get_result_mappings({'a': 1, 'b': 2}, '$.a')
-        [1]
-        >>> get_result_mappings([{'a': 1}, {'a': 2}], '$[*].a')
-        [1, 2]
-        >>> get_result_mappings({'a': {'b': 2}}, '$.a.b')
-        [2]
-        >>> get_result_mappings({'a': 1}, '$.b')
-        []
+        >>> transform_data_with_mappings([{'first_name': "Bruce", 'second_name': "Wayne"},{'first_name': "Diana", 'second_name': "Prince"}], {"n": "$.first_name"})
+        [{'n': 'Bruce'}, {'n': 'Diana'}]
     """
 
     mapped_results = []
@@ -358,11 +351,13 @@ def get_result_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
                 mapping_expr = parse(mapping_expr_str)
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:
                 raise HTTPException(status_code=400,
                                     detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+
             if not mapping_matches:
                 mapped_item[new_key] = None
             elif len(mapping_matches) == 1:
