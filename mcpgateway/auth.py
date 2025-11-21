@@ -106,7 +106,7 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
     if isinstance(team_id, dict):
         team_id = team_id.get("id")
     user_email = payload.get("sub")
-    
+
     # If no team found in token, get user's personal team
     if not team_id:
 
