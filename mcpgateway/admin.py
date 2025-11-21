@@ -5815,6 +5815,7 @@ async def admin_search_resources(
 
     return {"resources": resources, "count": len(resources)}
 
+
 @admin_router.get("/prompts/search", response_class=JSONResponse)
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
