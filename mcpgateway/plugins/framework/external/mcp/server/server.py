@@ -41,7 +41,7 @@ class ExternalPluginServer:
                         If set, this attribute overrides the value in PLUGINS_CONFIG_PATH.
 
         Examples:
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway.plugins/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> server is not None
             True
         """
@@ -57,7 +57,7 @@ class ExternalPluginServer:
 
         Examples:
             >>> import asyncio
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway.plugins/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> plugins = asyncio.run(server.get_plugin_configs())
             >>> len(plugins) > 0
             True
@@ -79,7 +79,7 @@ class ExternalPluginServer:
 
         Examples:
             >>> import asyncio
-            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
+            >>> server = ExternalPluginServer(config_path="./tests/unit/mcpgateway.plugins/plugins/fixtures/configs/valid_multiple_plugins_filter.yaml")
             >>> c = asyncio.run(server.get_plugin_config(name = "DenyListPlugin"))
             >>> c is not None
             True

@@ -15,12 +15,12 @@ from llmguardplugin.schema import LLMGuardConfig
 
 # First-Party
 from mcpgateway.plugins.framework import (
-    Plugin,
     PluginConfig,
     PluginContext,
     PluginError,
     PluginErrorModel,
     PluginViolation,
+    Plugin,
     PromptPosthookPayload,
     PromptPosthookResult,
     PromptPrehookPayload,

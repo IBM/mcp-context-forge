@@ -97,6 +97,47 @@ class HttpPreRequestPayload(PluginPayload):
     client_port: int | None = None
     headers: HttpHeaderPayload
 
+    def model_dump_pb(self):
+        """Convert to protobuf HttpPreRequestPayload message.
+
+        Returns:
+            http_pb2.HttpPreRequestPayload: Protobuf message.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import http_pb2, types_pb2
+
+        # Convert headers
+        headers_dict = self.headers.root if hasattr(self.headers, "root") else self.headers
+        headers_pb = types_pb2.HttpHeaders(headers=headers_dict)
+
+        return http_pb2.HttpPreRequestPayload(
+            path=self.path,
+            method=self.method,
+            client_host=self.client_host or "",
+            client_port=self.client_port or 0,
+            headers=headers_pb,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "HttpPreRequestPayload":
+        """Create from protobuf HttpPreRequestPayload message.
+
+        Args:
+            proto: http_pb2.HttpPreRequestPayload protobuf message.
+
+        Returns:
+            HttpPreRequestPayload: Pydantic model instance.
+        """
+        headers = HttpHeaderPayload(dict(proto.headers.headers)) if proto.HasField("headers") else HttpHeaderPayload({})
+
+        return cls(
+            path=proto.path,
+            method=proto.method,
+            client_host=proto.client_host if proto.client_host else None,
+            client_port=proto.client_port if proto.client_port else None,
+            headers=headers,
+        )
+
 
 class HttpPostRequestPayload(HttpPreRequestPayload):
     """Payload for HTTP post-request hook (middleware layer).
@@ -112,6 +153,58 @@ class HttpPostRequestPayload(HttpPreRequestPayload):
 
     response_headers: HttpHeaderPayload | None = None
     status_code: int | None = None
+
+    def model_dump_pb(self):
+        """Convert to protobuf HttpPostRequestPayload message.
+
+        Returns:
+            http_pb2.HttpPostRequestPayload: Protobuf message.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import http_pb2, types_pb2
+
+        # Convert headers
+        headers_dict = self.headers.root if hasattr(self.headers, "root") else self.headers
+        headers_pb = types_pb2.HttpHeaders(headers=headers_dict)
+
+        # Convert response headers if present
+        response_headers_pb = None
+        if self.response_headers:
+            response_dict = self.response_headers.root if hasattr(self.response_headers, "root") else self.response_headers
+            response_headers_pb = types_pb2.HttpHeaders(headers=response_dict)
+
+        return http_pb2.HttpPostRequestPayload(
+            path=self.path,
+            method=self.method,
+            client_host=self.client_host or "",
+            client_port=self.client_port or 0,
+            headers=headers_pb,
+            response_headers=response_headers_pb,
+            status_code=self.status_code or 0,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "HttpPostRequestPayload":
+        """Create from protobuf HttpPostRequestPayload message.
+
+        Args:
+            proto: http_pb2.HttpPostRequestPayload protobuf message.
+
+        Returns:
+            HttpPostRequestPayload: Pydantic model instance.
+        """
+        headers = HttpHeaderPayload(dict(proto.headers.headers)) if proto.HasField("headers") else HttpHeaderPayload({})
+        response_headers = HttpHeaderPayload(dict(proto.response_headers.headers)) if proto.HasField("response_headers") else None
+
+        return cls(
+            path=proto.path,
+            method=proto.method,
+            client_host=proto.client_host if proto.client_host else None,
+            client_port=proto.client_port if proto.client_port else None,
+            headers=headers,
+            response_headers=response_headers,
+            status_code=proto.status_code if proto.status_code else None,
+        )
 
 
 class HttpAuthResolveUserPayload(PluginPayload):
@@ -132,6 +225,62 @@ class HttpAuthResolveUserPayload(PluginPayload):
     headers: HttpHeaderPayload
     client_host: str | None = None
     client_port: int | None = None
+
+    def model_dump_pb(self):
+        """Convert to protobuf HttpAuthResolveUserPayload message.
+
+        Returns:
+            http_pb2.HttpAuthResolveUserPayload: Protobuf message.
+        """
+        # Third-Party
+        from google.protobuf import json_format, struct_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.generated import http_pb2, types_pb2
+
+        # Convert credentials dict to Struct
+        credentials_struct = None
+        if self.credentials:
+            credentials_struct = struct_pb2.Struct()
+            json_format.ParseDict(self.credentials, credentials_struct)
+
+        # Convert headers
+        headers_dict = self.headers.root if hasattr(self.headers, "root") else self.headers
+        headers_pb = types_pb2.HttpHeaders(headers=headers_dict)
+
+        return http_pb2.HttpAuthResolveUserPayload(
+            credentials=credentials_struct,
+            headers=headers_pb,
+            client_host=self.client_host or "",
+            client_port=self.client_port or 0,
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "HttpAuthResolveUserPayload":
+        """Create from protobuf HttpAuthResolveUserPayload message.
+
+        Args:
+            proto: http_pb2.HttpAuthResolveUserPayload protobuf message.
+
+        Returns:
+            HttpAuthResolveUserPayload: Pydantic model instance.
+        """
+        # Third-Party
+        from google.protobuf import json_format
+
+        # Convert Struct to dict
+        credentials = None
+        if proto.HasField("credentials"):
+            credentials = json_format.MessageToDict(proto.credentials)
+
+        headers = HttpHeaderPayload(dict(proto.headers.headers)) if proto.HasField("headers") else HttpHeaderPayload({})
+
+        return cls(
+            credentials=credentials,
+            headers=headers,
+            client_host=proto.client_host if proto.client_host else None,
+            client_port=proto.client_port if proto.client_port else None,
+        )
 
 
 class HttpAuthCheckPermissionPayload(PluginPayload):
@@ -163,6 +312,47 @@ class HttpAuthCheckPermissionPayload(PluginPayload):
     client_host: str | None = None
     user_agent: str | None = None
 
+    def model_dump_pb(self):
+        """Convert to protobuf HttpAuthCheckPermissionPayload message.
+
+        Returns:
+            http_pb2.HttpAuthCheckPermissionPayload: Protobuf message.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import http_pb2
+
+        return http_pb2.HttpAuthCheckPermissionPayload(
+            user_email=self.user_email,
+            permission=self.permission,
+            resource_type=self.resource_type or "",
+            team_id=self.team_id or "",
+            is_admin=self.is_admin,
+            auth_method=self.auth_method or "",
+            client_host=self.client_host or "",
+            user_agent=self.user_agent or "",
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "HttpAuthCheckPermissionPayload":
+        """Create from protobuf HttpAuthCheckPermissionPayload message.
+
+        Args:
+            proto: http_pb2.HttpAuthCheckPermissionPayload protobuf message.
+
+        Returns:
+            HttpAuthCheckPermissionPayload: Pydantic model instance.
+        """
+        return cls(
+            user_email=proto.user_email,
+            permission=proto.permission,
+            resource_type=proto.resource_type if proto.resource_type else None,
+            team_id=proto.team_id if proto.team_id else None,
+            is_admin=proto.is_admin,
+            auth_method=proto.auth_method if proto.auth_method else None,
+            client_host=proto.client_host if proto.client_host else None,
+            user_agent=proto.user_agent if proto.user_agent else None,
+        )
+
 
 class HttpAuthCheckPermissionResultPayload(PluginPayload):
     """Result payload for permission checking hook.
@@ -176,6 +366,35 @@ class HttpAuthCheckPermissionResultPayload(PluginPayload):
 
     granted: bool
     reason: str | None = None
+
+    def model_dump_pb(self):
+        """Convert to protobuf HttpAuthCheckPermissionResultPayload message.
+
+        Returns:
+            http_pb2.HttpAuthCheckPermissionResultPayload: Protobuf message.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.generated import http_pb2
+
+        return http_pb2.HttpAuthCheckPermissionResultPayload(
+            granted=self.granted,
+            reason=self.reason or "",
+        )
+
+    @classmethod
+    def model_validate_pb(cls, proto) -> "HttpAuthCheckPermissionResultPayload":
+        """Create from protobuf HttpAuthCheckPermissionResultPayload message.
+
+        Args:
+            proto: http_pb2.HttpAuthCheckPermissionResultPayload protobuf message.
+
+        Returns:
+            HttpAuthCheckPermissionResultPayload: Pydantic model instance.
+        """
+        return cls(
+            granted=proto.granted,
+            reason=proto.reason if proto.reason else None,
+        )
 
 
 # Type aliases for hook results
