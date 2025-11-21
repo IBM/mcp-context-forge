@@ -40,7 +40,7 @@ The OPA plugin and loader configuration can be customized in `resources/plugins/
 
 ## Installation
 
-1. In the folder `external/opa`, copy .env.example .env
+1. In the folder `external/opa`, copy .env.template .env
 2. Add the plugin configuration to `plugins/external/opa/resources/plugins/config.yaml`:
 
 ```yaml
