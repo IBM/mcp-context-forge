@@ -58,15 +58,15 @@ def _use_batch() -> bool:
 
 def column_exists(table, column, conn):
     """
-        Check whether a given column exists in a database table.
+    Check whether a given column exists in a database table.
 
-        Args:
-            table (str): Name of the database table to inspect.
-            column (str): Name of the column to check for.
-            conn (Connection): SQLAlchemy connection object used for inspection.
+    Args:
+        table (str): Name of the database table to inspect.
+        column (str): Name of the column to check for.
+        conn (Connection): SQLAlchemy connection object used for inspection.
 
-        Returns:
-            bool: True if the column exists in the table, otherwise False.
+    Returns:
+        bool: True if the column exists in the table, otherwise False.
     """
     insp = inspect(conn)
     return column in [col["name"] for col in insp.get_columns(table)]

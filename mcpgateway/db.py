@@ -121,7 +121,8 @@ def build_engine() -> Engine:
             poolclass=QueuePool,  # Explicit pool class
             connect_args=connect_args,
             # Log pool events in debug mode
-            echo_pool=settings.log_level == "DEBUG")
+            echo_pool=settings.log_level == "DEBUG",
+        )
 
     if backend in ("mysql", "mariadb"):
         # MariaDB/MySQL specific configuration
@@ -136,7 +137,6 @@ def build_engine() -> Engine:
             pool_recycle=settings.db_pool_recycle,
             connect_args=connect_args,
             isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
-            pool_reset_on_return="commit",  # Reset connections properly
         )
 
     # Other databases support full pooling configuration
@@ -147,7 +147,8 @@ def build_engine() -> Engine:
         max_overflow=settings.db_max_overflow,
         pool_timeout=settings.db_pool_timeout,
         pool_recycle=settings.db_pool_recycle,
-        connect_args=connect_args)
+        connect_args=connect_args,
+    )
 
 
 engine = build_engine()
