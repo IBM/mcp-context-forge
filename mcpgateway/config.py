@@ -152,9 +152,9 @@ class Settings(BaseSettings):
     app_name: str = "MCP_Gateway"
     host: str = "127.0.0.1"
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
+    client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
     database_url: str = "sqlite:///./mcp.db"
-    client_mode: bool = False
 
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
@@ -553,9 +553,9 @@ class Settings(BaseSettings):
                 if "password" in v and any(weak in v for weak in ["password", "123", "admin", "test"]):
                     logger.warning("Potentially weak database password detected. Consider using a stronger password.")
 
-        # Warn about SQLite in production
-        if v.startswith("sqlite"):
-            logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
+            # Warn about SQLite in production
+            if v.startswith("sqlite"):
+                logger.info("Using SQLite database. Consider PostgreSQL or MySQL for production.")
 
         return v
 
