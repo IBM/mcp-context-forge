@@ -47,21 +47,26 @@ class HookMetadata(BaseModel):
         payload_class: The Pydantic payload model class.
         result_class: The Pydantic result model class.
         phase: Whether this is a pre or post hook.
+        entity_type: Optional entity type this hook applies to (tool, prompt, resource, http, agent, etc.).
 
     Examples:
         >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
         >>> meta = HookMetadata(
         ...     payload_class=PluginPayload,
         ...     result_class=PluginResult,
-        ...     phase=HookPhase.PRE
+        ...     phase=HookPhase.PRE,
+        ...     entity_type="tool"
         ... )
         >>> meta.phase
         <HookPhase.PRE: 'pre'>
+        >>> meta.entity_type
+        'tool'
     """
 
     payload_class: Type[PluginPayload]
     result_class: Type[PluginResult]
     phase: HookPhase
+    entity_type: Optional[str] = None
 
     class Config:
         """Pydantic config."""
@@ -110,19 +115,30 @@ class HookRegistry:
         payload_class: Type[PluginPayload],
         result_class: Type[PluginResult],
         phase: Optional[HookPhase] = None,
+        entity_type: Optional[str] = None,
     ) -> None:
-        """Register a hook type with its payload, result classes, and phase.
+        """Register a hook type with its payload, result classes, phase, and entity type.
 
         The phase is auto-detected from the hook_type name if not provided:
         - Names containing "_pre_" or ending with "_pre" are PRE hooks
         - Names containing "_post_" or ending with "_post" are POST hooks
         - Raises PluginError if phase cannot be detected and not explicitly provided
 
+        The entity_type is auto-detected from the hook_type prefix if not provided:
+        - "tool_*" hooks -> entity_type="tool"
+        - "prompt_*" hooks -> entity_type="prompt"
+        - "resource_*" hooks -> entity_type="resource"
+        - "http_*" hooks -> entity_type="http"
+        - "agent_*" hooks -> entity_type="agent"
+        - "server_*" hooks -> entity_type="server"
+
         Args:
             hook_type: The hook type identifier (e.g., "tool_pre_invoke").
             payload_class: The Pydantic model class for the hook's payload.
             result_class: The Pydantic model class for the hook's result.
             phase: Optional hook phase (PRE or POST). Auto-detected if not provided.
+            entity_type: Optional entity type (tool, prompt, resource, http, agent, server).
+                Auto-detected from hook_type prefix if not provided.
 
         Raises:
             ValueError: If phase cannot be auto-detected and not explicitly provided.
@@ -130,18 +146,19 @@ class HookRegistry:
         Examples:
             >>> registry = HookRegistry()
             >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
-            >>> # Explicit phase
-            >>> registry.register_hook("custom_pre", PluginPayload, PluginResult, HookPhase.PRE)
+            >>> # Explicit phase and entity type
+            >>> registry.register_hook("custom_pre", PluginPayload, PluginResult, HookPhase.PRE, "tool")
             >>> registry.get_phase("custom_pre")
             <HookPhase.PRE: 'pre'>
+            >>> registry.get_entity_type("custom_pre")
+            'tool'
 
             >>> # Auto-detect from name
             >>> registry.register_hook("tool_pre_invoke", PluginPayload, PluginResult)
             >>> registry.get_phase("tool_pre_invoke")
             <HookPhase.PRE: 'pre'>
-            >>> registry.register_hook("tool_post_invoke", PluginPayload, PluginResult)
-            >>> registry.get_phase("tool_post_invoke")
-            <HookPhase.POST: 'post'>
+            >>> registry.get_entity_type("tool_pre_invoke")
+            'tool'
         """
         # Auto-detect phase from hook_type name if not provided
         if phase is None:
@@ -155,8 +172,15 @@ class HookRegistry:
                     f"Cannot auto-detect phase for hook '{hook_type}'. " "Hook name must contain '_pre_', '_post_', or end with '_pre' or '_post', " "or phase must be explicitly provided."
                 )
 
+        # Auto-detect entity_type from hook_type prefix if not provided
+        if entity_type is None:
+            for prefix in ["tool", "prompt", "resource", "http", "agent", "server"]:
+                if hook_type.startswith(f"{prefix}_"):
+                    entity_type = prefix
+                    break
+
         # Store in metadata dict
-        self._hook_metadata[hook_type] = HookMetadata(payload_class=payload_class, result_class=result_class, phase=phase)
+        self._hook_metadata[hook_type] = HookMetadata(payload_class=payload_class, result_class=result_class, phase=phase, entity_type=entity_type)
 
     def get_payload_type(self, hook_type: str) -> Optional[Type[PluginPayload]]:
         """Get the payload class for a hook type.
@@ -356,6 +380,57 @@ class HookRegistry:
             <HookPhase.PRE: 'pre'>
         """
         return self._hook_metadata.get(hook_type)
+
+    def get_entity_type(self, hook_type: str) -> Optional[str]:
+        """Get the entity type for a hook.
+
+        Args:
+            hook_type: The hook type identifier.
+
+        Returns:
+            The entity type (tool, prompt, resource, http, etc.), or None if not set.
+
+        Examples:
+            >>> registry = HookRegistry()
+            >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
+            >>> registry.register_hook("tool_pre_invoke", PluginPayload, PluginResult)
+            >>> registry.get_entity_type("tool_pre_invoke")
+            'tool'
+        """
+        metadata = self._hook_metadata.get(hook_type)
+        return metadata.entity_type if metadata else None
+
+    def get_hooks_for_entity_type(self, entity_type: str, phase: Optional[HookPhase] = None) -> list[str]:
+        """Get all hook types for a specific entity type and optional phase.
+
+        Args:
+            entity_type: The entity type (tool, prompt, resource, http, agent, server).
+            phase: Optional phase filter (PRE or POST). If None, returns all hooks.
+
+        Returns:
+            List of hook type identifiers matching the criteria.
+
+        Examples:
+            >>> registry = HookRegistry()
+            >>> from mcpgateway.plugins.framework import PluginPayload, PluginResult
+            >>> registry.register_hook("tool_pre_invoke", PluginPayload, PluginResult)
+            >>> registry.register_hook("tool_post_invoke", PluginPayload, PluginResult)
+            >>> registry.register_hook("prompt_pre_fetch", PluginPayload, PluginResult)
+            >>> # Get all tool hooks
+            >>> tool_hooks = registry.get_hooks_for_entity_type("tool")
+            >>> sorted(tool_hooks)
+            ['tool_post_invoke', 'tool_pre_invoke']
+            >>> # Get only tool PRE hooks
+            >>> pre_hooks = registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
+            >>> pre_hooks
+            ['tool_pre_invoke']
+        """
+        hooks = []
+        for hook_name, metadata in self._hook_metadata.items():
+            if metadata.entity_type == entity_type:
+                if phase is None or metadata.phase == phase:
+                    hooks.append(hook_name)
+        return hooks
 
 
 # Global singleton instance

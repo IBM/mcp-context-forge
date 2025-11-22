@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
+from pathlib import Path
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
@@ -114,6 +115,7 @@ from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
+from mcpgateway.services.plugin_route_service import init_plugin_route_service
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
@@ -165,6 +167,10 @@ else:
     _PLUGINS_ENABLED = settings.plugins_enabled
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
+
+# Initialize plugin route service if plugins are enabled
+if _PLUGINS_ENABLED:
+    init_plugin_route_service(Path(_config_file))
 
 # Initialize services
 tool_service = ToolService()

@@ -59,6 +59,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.plugins.framework import get_plugin_manager
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -2483,6 +2484,7 @@ async def admin_ui(
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
+    plugin_manager = get_plugin_manager()
 
     response = request.app.state.templates.TemplateResponse(
         request,
@@ -2513,6 +2515,7 @@ async def admin_ui(
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
+            "plugin_manager": plugin_manager,
         },
     )
 
@@ -11381,6 +11384,908 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         raise
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+##################################################
+# Plugin Routing Endpoints
+##################################################
+
+
+async def _get_entity_by_id(db: Session, entity_type: str, entity_id: str):
+    """Helper to get an entity by ID and type.
+
+    Args:
+        db: Database session.
+        entity_type: Type of entity (tool, prompt, resource).
+        entity_id: Entity ID (UUID string).
+
+    Returns:
+        The entity model object.
+
+    Raises:
+        HTTPException: If entity not found.
+    """
+    if entity_type == "tool":
+        entity = db.query(DbTool).filter(DbTool.id == entity_id).first()
+        entity_name = "Tool"
+    elif entity_type == "prompt":
+        entity = db.query(DbPrompt).filter(DbPrompt.id == entity_id).first()
+        entity_name = "Prompt"
+    elif entity_type == "resource":
+        entity = db.query(DbResource).filter(DbResource.id == entity_id).first()
+        entity_name = "Resource"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported entity type: {entity_type}")
+
+    if not entity:
+        raise HTTPException(status_code=404, detail=f"{entity_name} {entity_id} not found")
+
+    return entity
+
+
+async def _get_plugins_for_entity_and_hook(
+    route_service,
+    entity_type: str,
+    entity_name: str,
+    entity_id: str,
+    tags: list[str],
+    server_name: Optional[str],
+    server_id: Optional[str],
+    hook_type: str,
+):
+    """Helper to get plugins for a specific entity and hook type.
+
+    This calls the route service with a specific hook_type so the resolver
+    applies proper ordering (including post-hook reversal if configured).
+
+    Args:
+        route_service: PluginRouteService instance.
+        entity_type: Type of entity.
+        entity_name: Name of entity.
+        entity_id: Entity ID.
+        tags: Entity tags.
+        server_name: Server name.
+        server_id: Server ID.
+        hook_type: Specific hook type to resolve plugins for.
+
+    Returns:
+        List of plugin data dicts with name, priority, and config.
+    """
+    plugins = await route_service.get_routes_for_entity(
+        entity_type=entity_type,
+        entity_name=entity_name,
+        entity_id=entity_id,
+        tags=tags,
+        server_name=server_name,
+        server_id=server_id,
+        hook_type=hook_type,
+    )
+
+    return [{"name": p.name, "priority": p.priority, "config": p.config} for p in plugins]
+
+
+@admin_router.get("/tools/{tool_id}/plugins", response_class=JSONResponse)
+async def get_tool_plugins(
+    _request: Request,
+    tool_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get plugins that apply to a specific tool.
+
+    Returns both pre-invoke and post-invoke plugins with their execution order.
+    Post-hooks are shown in their actual execution order (may be reversed based on config).
+    """
+    try:
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get services
+        route_service = get_plugin_route_service()
+        hook_registry = get_hook_registry()
+
+        # Get pre and post hook types for tools using the registry
+        pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
+        post_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.POST)
+
+        # Get plugins for each hook type (resolver applies correct ordering)
+        pre_hooks = []
+        post_hooks = []
+
+        # Tool has many-to-many with servers, get first if available
+        first_server = tool.servers[0] if tool.servers else None
+
+        # Use first pre-hook type (typically tool_pre_invoke)
+        if pre_hook_types:
+            pre_hooks = await _get_plugins_for_entity_and_hook(
+                route_service,
+                entity_type="tool",
+                entity_name=tool.name,
+                entity_id=str(tool.id),
+                tags=tool.tags or [],
+                server_name=first_server.name if first_server else None,
+                server_id=str(first_server.id) if first_server else None,
+                hook_type=pre_hook_types[0],
+            )
+
+        # Use first post-hook type (typically tool_post_invoke)
+        if post_hook_types:
+            post_hooks = await _get_plugins_for_entity_and_hook(
+                route_service,
+                entity_type="tool",
+                entity_name=tool.name,
+                entity_id=str(tool.id),
+                tags=tool.tags or [],
+                server_name=first_server.name if first_server else None,
+                server_id=str(first_server.id) if first_server else None,
+                hook_type=post_hook_types[0],
+            )
+
+        return {
+            "tool_id": tool.id,
+            "tool_name": tool.name,
+            "pre_hooks": pre_hooks,
+            "post_hooks": post_hooks,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error getting tool plugins: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Bulk plugin operations (must be before parameterized routes)
+@admin_router.get("/tools/bulk/plugins/status", response_class=JSONResponse)
+async def get_bulk_plugin_status(
+    request: Request,
+    tool_ids: str = Query(..., description="Comma-separated list of tool IDs"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Get plugin configuration status for multiple tools.
+
+    Returns which plugins are configured on all, some, or none of the selected tools.
+
+    Args:
+        request: FastAPI request object
+        tool_ids: Comma-separated tool IDs
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON with plugin status breakdown
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        tool_id_list = [tid.strip() for tid in tool_ids.split(",") if tid.strip()]
+
+        if not tool_id_list:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No tool IDs provided"},
+            )
+
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+
+        route_service = get_plugin_route_service()
+        hook_registry = get_hook_registry()
+
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import HookPhase
+
+        # Get plugin configurations for each tool (with actual hook configuration)
+        tool_plugins = {}  # tool_id -> {plugin_name -> {pre: bool, post: bool, priority: int}}
+        tool_names = {}
+
+        for tool_id in tool_id_list:
+            try:
+                tool = await _get_entity_by_id(db, "tool", tool_id)
+                tool_names[tool_id] = tool.name
+                first_server = tool.servers[0] if tool.servers else None
+
+                # Get pre-hook plugins for this tool
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.POST)
+
+                pre_plugins = []
+                post_plugins = []
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="tool",
+                        entity_name=tool.name,
+                        entity_id=str(tool.id),
+                        tags=tool.tags or [],
+                        server_name=first_server.name if first_server else None,
+                        server_id=str(first_server.id) if first_server else None,
+                        hook_type=pre_hook_types[0],
+                    )
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="tool",
+                        entity_name=tool.name,
+                        entity_id=str(tool.id),
+                        tags=tool.tags or [],
+                        server_name=first_server.name if first_server else None,
+                        server_id=str(first_server.id) if first_server else None,
+                        hook_type=post_hook_types[0],
+                    )
+
+                # Build plugin info with actual hook configuration
+                plugin_info = {}
+                for p in pre_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["pre"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                for p in post_plugins:
+                    name = p.get("name", p.get("plugin_name", ""))
+                    if name not in plugin_info:
+                        plugin_info[name] = {"pre": False, "post": False, "priority": p.get("priority", 0)}
+                    plugin_info[name]["post"] = True
+                    plugin_info[name]["priority"] = max(plugin_info[name]["priority"], p.get("priority", 0))
+
+                tool_plugins[tool_id] = plugin_info
+
+            except Exception as e:
+                LOGGER.warning(f"Could not get plugins for tool {tool_id}: {e}")
+                tool_plugins[tool_id] = {}
+                tool_names[tool_id] = f"Tool {tool_id}"
+
+        # Analyze plugin distribution across tools
+        all_plugins = set()
+        for plugins in tool_plugins.values():
+            all_plugins.update(plugins.keys())
+
+        LOGGER.info(f"Tool plugins mapping: {tool_plugins}")
+        LOGGER.info(f"All unique plugins found: {all_plugins}")
+
+        plugin_status = {}
+        for plugin in all_plugins:
+            # Count tools that have this plugin
+            tool_count = sum(1 for plugins in tool_plugins.values() if plugin in plugins)
+            total_tools = len(tool_id_list)
+
+            if tool_count == total_tools:
+                status = "all"
+            elif tool_count > 0:
+                status = "some"
+            else:
+                status = "none"
+
+            # Aggregate hook configuration across tools
+            has_pre = any(plugins.get(plugin, {}).get("pre", False) for plugins in tool_plugins.values())
+            has_post = any(plugins.get(plugin, {}).get("post", False) for plugins in tool_plugins.values())
+
+            # Get max priority across tools
+            max_priority = max((plugins.get(plugin, {}).get("priority", 0) for plugins in tool_plugins.values()), default=0)
+
+            plugin_status[plugin] = {
+                "status": status,
+                "count": tool_count,
+                "total": total_tools,
+                "pre_hooks": ["tool_pre_invoke"] if has_pre else [],
+                "post_hooks": ["tool_post_invoke"] if has_post else [],
+                "priority": max_priority,
+            }
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "tool_count": len(tool_id_list),
+                "tool_names": tool_names,
+                "tool_plugins": {tid: list(plugins.keys()) for tid, plugins in tool_plugins.items()},
+                "plugin_status": plugin_status,
+            }
+        )
+    except Exception as e:
+        LOGGER.error(f"Error getting bulk plugin status: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.post("/tools/bulk/plugins", response_class=JSONResponse)
+async def add_bulk_plugins(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Add a plugin to multiple tools at once (bulk operation).
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON response with success/failure counts
+    """
+    try:
+        # Parse form data manually
+        form_data = await request.form()
+
+        # Extract and validate form fields
+        tool_ids = form_data.getlist("tool_ids")
+        # Accept both plugin_name (singular) and plugin_names (plural) for flexibility
+        plugin_name = form_data.get("plugin_name") or form_data.get("plugin_names")
+        priority = int(form_data.get("priority", 10))
+        hooks = form_data.getlist("hooks") if "hooks" in form_data else None
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        LOGGER.info("=== BULK ADD PLUGIN REQUEST ===")
+        LOGGER.info(f"Tool IDs: {tool_ids}")
+        LOGGER.info(f"Plugin Name: {plugin_name}")
+        LOGGER.info(f"Priority: {priority}")
+        LOGGER.info(f"Hooks: {hooks}")
+        LOGGER.info(f"Reverse order on post: {reverse_order_on_post}")
+
+        if not tool_ids:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No tool IDs provided"},
+            )
+
+        if not plugin_name:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No plugin name provided"},
+            )
+
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        route_service = get_plugin_route_service()
+        success_count = 0
+        failed_count = 0
+        errors = []
+
+        for tool_id in tool_ids:
+            try:
+                # Get tool from database
+                tool = await _get_entity_by_id(db, "tool", tool_id)
+
+                # Add plugin route
+                await route_service.add_simple_route(
+                    entity_type="tool",
+                    entity_name=tool.name,
+                    plugin_name=plugin_name,
+                    priority=priority,
+                    hooks=hooks if hooks else None,
+                    reverse_order_on_post=reverse_order_on_post,
+                )
+                success_count += 1
+
+            except Exception as e:
+                LOGGER.error(f"Failed to add plugin {plugin_name} to tool {tool_id}: {e}")
+                failed_count += 1
+                errors.append({"tool_id": tool_id, "error": str(e)})
+
+        # Save configuration after all additions
+        try:
+            await route_service.save_config()
+        except Exception as e:
+            LOGGER.error(f"Failed to save plugin configuration: {e}")
+            return JSONResponse(status_code=500, content={"success": False, "message": "Failed to save plugin configuration", "error": str(e)})
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Added plugin to {success_count} tools" + (f", {failed_count} failed" if failed_count > 0 else ""),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error in bulk add plugins: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
+@admin_router.delete("/tools/bulk/plugins", response_class=JSONResponse)
+async def remove_bulk_plugins(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Remove a plugin from multiple tools at once (bulk operation).
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON response with success/failure counts
+    """
+    # Parse form data manually to debug
+    form_data = await request.form()
+    LOGGER.info(f"Bulk remove plugins - raw form data keys: {list(form_data.keys())}")
+    LOGGER.info(f"Bulk remove plugins - raw form data: {dict(form_data)}")
+    LOGGER.info(f"Bulk remove plugins - multi(): {list(form_data.multi_items())}")
+
+    # Extract and validate form fields
+    tool_ids = form_data.getlist("tool_ids")
+    # Accept both singular and plural forms, and support multiple plugins
+    plugin_names_list = form_data.getlist("plugin_names")
+    plugin_name_list = form_data.getlist("plugin_name")
+    LOGGER.info(f"getlist('plugin_names'): {plugin_names_list}")
+    LOGGER.info(f"getlist('plugin_name'): {plugin_name_list}")
+
+    plugin_names = plugin_names_list if plugin_names_list else plugin_name_list
+    # Also check for single value if getlist returns empty
+    if not plugin_names:
+        single_name = form_data.get("plugin_names") or form_data.get("plugin_name")
+        LOGGER.info(f"Fallback single_name: {single_name}")
+        if single_name:
+            plugin_names = [single_name]
+
+    # Check for clear_all flag
+    clear_all = form_data.get("clear_all") == "true"
+
+    LOGGER.info(f"Bulk remove plugins - tool_ids: {tool_ids}, plugin_names: {plugin_names}, clear_all: {clear_all}")
+
+    if not tool_ids:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "No tool IDs provided"},
+        )
+
+    if not plugin_names and not clear_all:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "No plugin name provided"},
+        )
+
+    # First-Party
+    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+    from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+    route_service = get_plugin_route_service()
+    hook_registry = get_hook_registry()
+    success_count = 0
+    failed_count = 0
+    errors = []
+
+    # If clear_all, get all plugins for each tool and remove them
+    if clear_all:
+        for tool_id in tool_ids:
+            try:
+                tool = await _get_entity_by_id(db, "tool", tool_id)
+                first_server = tool.servers[0] if tool.servers else None
+
+                # Get all configured plugins for this tool
+                pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
+                post_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.POST)
+
+                all_plugin_names = set()
+
+                if pre_hook_types:
+                    pre_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="tool",
+                        entity_name=tool.name,
+                        entity_id=str(tool.id),
+                        tags=tool.tags or [],
+                        server_name=first_server.name if first_server else None,
+                        server_id=str(first_server.id) if first_server else None,
+                        hook_type=pre_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in pre_plugins)
+
+                if post_hook_types:
+                    post_plugins = await _get_plugins_for_entity_and_hook(
+                        route_service,
+                        entity_type="tool",
+                        entity_name=tool.name,
+                        entity_id=str(tool.id),
+                        tags=tool.tags or [],
+                        server_name=first_server.name if first_server else None,
+                        server_id=str(first_server.id) if first_server else None,
+                        hook_type=post_hook_types[0],
+                    )
+                    all_plugin_names.update(p.get("name", "") for p in post_plugins)
+
+                # Remove all plugins
+                for pname in all_plugin_names:
+                    if pname:
+                        removed = await route_service.remove_plugin_from_entity(
+                            entity_type="tool",
+                            entity_name=tool.name,
+                            plugin_name=pname,
+                        )
+                        if removed:
+                            success_count += 1
+                        else:
+                            failed_count += 1
+
+            except Exception as e:
+                LOGGER.warning(f"Error clearing plugins for tool {tool_id}: {e}")
+                failed_count += 1
+                errors.append({"tool_id": tool_id, "error": str(e)})
+
+        # Save config after clearing
+        await route_service.save_config()
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Cleared plugins from {len(tool_ids)} tools",
+                "removed": success_count,
+                "failed": failed_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    # Loop over all tools and all plugins (non-clear_all case)
+    for tool_id in tool_ids:
+        for plugin_name in plugin_names:
+            try:
+                # Get tool from database
+                tool = await _get_entity_by_id(db, "tool", tool_id)
+
+                # Remove plugin from entity
+                removed = await route_service.remove_plugin_from_entity(
+                    entity_type="tool",
+                    entity_name=tool.name,
+                    plugin_name=plugin_name,
+                )
+
+                if removed:
+                    success_count += 1
+                else:
+                    failed_count += 1
+                    errors.append({"tool_id": tool_id, "plugin": plugin_name, "error": "Plugin not found on this tool"})
+
+            except Exception as e:
+                LOGGER.error(f"Failed to remove plugin {plugin_name} from tool {tool_id}: {e}")
+                failed_count += 1
+                errors.append({"tool_id": tool_id, "plugin": plugin_name, "error": str(e)})
+
+    # Save configuration after all removals
+    try:
+        await route_service.save_config()
+    except Exception as e:
+        LOGGER.error(f"Failed to save plugin configuration: {e}")
+        return JSONResponse(status_code=500, content={"success": False, "message": "Failed to save plugin configuration", "error": str(e)})
+
+    return JSONResponse(
+        content={
+            "success": True,
+            "message": f"Removed {success_count} plugin attachment(s)" + (f", {failed_count} failed" if failed_count > 0 else ""),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "errors": errors if errors else None,
+        }
+    )
+
+
+@admin_router.post("/tools/{tool_id}/plugins", response_class=HTMLResponse)
+async def add_tool_plugin(
+    request: Request,
+    tool_id: str,
+    db: Session = Depends(get_db),
+):
+    """Quick-add a plugin to a tool.
+
+    Creates a simple name-based routing rule.
+    Accepts form data from HTMX forms.
+    Returns updated plugins UI HTML.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        plugin_name = form_data.get("plugin_name")
+        priority = int(form_data.get("priority", 10))
+        hooks = form_data.getlist("hooks") if "hooks" in form_data else None
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        if not plugin_name:
+            raise HTTPException(status_code=400, detail="Plugin name is required")
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Add simple route
+        await route_service.add_simple_route(
+            entity_type="tool",
+            entity_name=tool.name,
+            plugin_name=plugin_name,
+            priority=priority,
+            hooks=hooks if hooks else None,
+            reverse_order_on_post=reverse_order_on_post,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Added plugin {plugin_name} to tool {tool.name}")
+
+        # Return updated plugins UI
+        return await get_tool_plugins_ui(request, tool_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error adding tool plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.delete("/tools/{tool_id}/plugins/{plugin_name}", response_class=HTMLResponse)
+async def remove_tool_plugin(
+    request: Request,
+    tool_id: str,
+    plugin_name: str,
+    hook: Optional[str] = Query(None, description="Specific hook to remove (e.g., tool_pre_invoke or tool_post_invoke)"),
+    db: Session = Depends(get_db),
+):
+    """Remove a plugin from a tool.
+
+    Removes the plugin from simple name-based routing rules only.
+    If hook is specified, only removes from that specific hook type.
+    Returns updated plugins UI HTML.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Remove plugin from entity (optionally for specific hook only)
+        removed = await route_service.remove_plugin_from_entity(
+            entity_type="tool",
+            entity_name=tool.name,
+            plugin_name=plugin_name,
+            hook=hook,
+        )
+
+        if not removed:
+            hook_msg = f" for hook {hook}" if hook else ""
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found in simple rules for tool {tool.name}{hook_msg}",
+            )
+
+        # Save configuration
+        await route_service.save_config()
+
+        hook_msg = f" from {hook}" if hook else ""
+        LOGGER.info(f"Removed plugin {plugin_name}{hook_msg} from tool {tool.name}")
+
+        # Return updated plugins UI
+        return await get_tool_plugins_ui(request, tool_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error removing tool plugin: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/tools/{tool_id}/plugins/reverse-post-hooks", response_class=HTMLResponse)
+async def toggle_reverse_post_hooks(
+    request: Request,
+    tool_id: str,
+    db: Session = Depends(get_db),
+):
+    """Toggle reverse_order_on_post for all plugin rules of a tool.
+
+    When enabled, post-hooks execute in reverse order (LIFO - last added runs first).
+    Returns updated plugins UI HTML.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Toggle reverse_order_on_post for all rules of this tool
+        new_state = await route_service.toggle_reverse_post_hooks(
+            entity_type="tool",
+            entity_name=tool.name,
+        )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Toggled reverse_order_on_post to {new_state} for tool {tool.name}")
+
+        # Return updated plugins UI
+        return await get_tool_plugins_ui(request, tool_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error toggling reverse post hooks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/tools/{tool_id}/plugins/{plugin_name}/priority", response_class=HTMLResponse)
+async def change_tool_plugin_priority(
+    request: Request,
+    tool_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (tool_pre_invoke or tool_post_invoke)"),
+    direction: str = Query(..., description="Direction to move: 'up' or 'down'"),
+    db: Session = Depends(get_db),
+):
+    """Change a plugin's priority (move up or down in execution order).
+
+    Moving 'up' decreases priority (runs earlier), 'down' increases priority (runs later).
+    After changing, returns the updated plugins UI.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Change priority
+        success = await route_service.change_plugin_priority(
+            entity_type="tool",
+            entity_name=tool.name,
+            plugin_name=plugin_name,
+            hook=hook,
+            direction=direction,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found or cannot be moved {direction}",
+            )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Changed priority of plugin {plugin_name} ({direction}) for tool {tool.name}")
+
+        # Return updated plugins UI
+        return await get_tool_plugins_ui(request, tool_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error changing tool plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.get("/tools/{tool_id}/plugins-ui", response_class=HTMLResponse)
+async def get_tool_plugins_ui(
+    request: Request,
+    tool_id: str,
+    db: Session = Depends(get_db),
+):
+    """Get the plugin management UI for a tool (returns HTML fragment for HTMX).
+
+    This endpoint returns an expandable row showing:
+    - Current pre-invoke and post-invoke plugins with execution order
+    - Form to add new plugins
+    - Buttons to remove plugins
+    """
+    try:
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get services
+        route_service = get_plugin_route_service()
+        hook_registry = get_hook_registry()
+
+        # Get pre and post hook types for tools using the registry
+        pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
+        post_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.POST)
+
+        # Get plugins for each hook type (resolver applies correct ordering)
+        pre_hooks = []
+        post_hooks = []
+
+        # Tool has many-to-many with servers, get first if available
+        first_server = tool.servers[0] if tool.servers else None
+
+        # Use first pre-hook type (typically tool_pre_invoke)
+        if pre_hook_types:
+            pre_hooks = await _get_plugins_for_entity_and_hook(
+                route_service,
+                entity_type="tool",
+                entity_name=tool.name,
+                entity_id=str(tool.id),
+                tags=tool.tags or [],
+                server_name=first_server.name if first_server else None,
+                server_id=str(first_server.id) if first_server else None,
+                hook_type=pre_hook_types[0],
+            )
+
+        # Use first post-hook type (typically tool_post_invoke)
+        if post_hook_types:
+            post_hooks = await _get_plugins_for_entity_and_hook(
+                route_service,
+                entity_type="tool",
+                entity_name=tool.name,
+                entity_id=str(tool.id),
+                tags=tool.tags or [],
+                server_name=first_server.name if first_server else None,
+                server_id=str(first_server.id) if first_server else None,
+                hook_type=post_hook_types[0],
+            )
+
+        # Get available plugins from plugin manager
+        plugin_manager = get_plugin_manager()
+        available_plugins = []
+        if plugin_manager:
+            available_plugins = [{"name": name} for name in plugin_manager.get_plugin_names()]
+
+        # Get reverse post-hooks state for this tool
+        reverse_post_hooks = route_service.get_reverse_post_hooks_state(
+            entity_type="tool",
+            entity_name=tool.name,
+        )
+
+        # Calculate next suggested priority (max existing + 1)
+        all_plugins = pre_hooks + post_hooks
+        max_priority = max((p.get("priority", 0) or 0 for p in all_plugins), default=0)
+        next_priority = max_priority + 1
+
+        # Get root_path for URL generation
+        root_path = request.scope.get("root_path", "")
+
+        context = {
+            "request": request,
+            "root_path": root_path,
+            "tool_id": tool.id,
+            "tool_name": tool.name,
+            "pre_hooks": pre_hooks,
+            "post_hooks": post_hooks,
+            "available_plugins": available_plugins,
+            "reverse_post_hooks": reverse_post_hooks,
+            "next_priority": next_priority,
+        }
+
+        return request.app.state.templates.TemplateResponse("tool_plugins_partial.html", context)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error loading tool plugins UI: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

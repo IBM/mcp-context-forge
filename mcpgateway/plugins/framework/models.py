@@ -19,6 +19,7 @@ from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar
 # Third-Party
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_serializer,
     field_validator,
@@ -566,6 +567,8 @@ class PluginConfig(BaseModel):
         mcp (Optional[MCPClientConfig]): Client-side MCP configuration (gateway connecting to plugin).
     """
 
+    model_config = ConfigDict(use_enum_values=True)
+
     name: str
     description: Optional[str] = None
     author: Optional[str] = None
@@ -873,10 +876,11 @@ class PluginAttachment(BaseModel):
         30
     """
 
+    model_config = ConfigDict(use_enum_values=True)
+
     name: str
     priority: Optional[int] = None  # If None, assigned based on list position
     post_priority: Optional[int] = None
-    scope: Optional[list[EntityType]] = None
     hooks: Optional[list[str]] = None
     when: Optional[str] = None  # Transferred from rule, not set in config
     apply_to: Optional[FieldSelection] = None
@@ -1019,6 +1023,7 @@ class PluginHookRule(BaseModel):
         True
     """
 
+    model_config = ConfigDict(use_enum_values=True)
     entities: Optional[list[EntityType]] = None  # None = HTTP-level
     name: Optional[str | list[str]] = None  # Exact match (fast path)
     tags: Optional[list[str]] = None  # Tag match (fast path)
@@ -1128,6 +1133,38 @@ class ConfigMetadata(BaseModel):
     custom: dict[str, Any] = Field(default_factory=dict)
 
 
+class PluginWithHookInfo(BaseModel):
+    """Plugin information enriched with hook phase details.
+
+    Used for UI display to show which hooks are pre/post for a given entity type.
+
+    Attributes:
+        name: Plugin name
+        description: Plugin description
+        pre_hooks: List of pre-phase hooks (e.g., tool_pre_invoke)
+        post_hooks: List of post-phase hooks (e.g., tool_post_invoke)
+        all_hooks: All hooks for the entity type
+
+    Examples:
+        >>> info = PluginWithHookInfo(
+        ...     name="TestPlugin",
+        ...     pre_hooks=["tool_pre_invoke"],
+        ...     post_hooks=["tool_post_invoke"],
+        ...     all_hooks=["tool_pre_invoke", "tool_post_invoke"]
+        ... )
+        >>> info.name
+        'TestPlugin'
+        >>> len(info.pre_hooks)
+        1
+    """
+
+    name: str
+    description: Optional[str] = None
+    pre_hooks: list[str] = Field(default_factory=list)
+    post_hooks: list[str] = Field(default_factory=list)
+    all_hooks: list[str] = Field(default_factory=list)
+
+
 class Config(BaseModel):
     """Configurations for plugins.
 
@@ -1139,6 +1176,8 @@ class Config(BaseModel):
         metadata (Optional[ConfigMetadata]): Config-wide metadata (tenant_id, environment, region, etc.).
         routes (list[PluginHookRule]): Flat rule-based plugin routing (NEW declarative approach).
     """
+
+    model_config = ConfigDict(use_enum_values=True)
 
     plugins: Optional[list[PluginConfig]] = []
     plugin_dirs: list[str] = []

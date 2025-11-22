@@ -524,6 +524,115 @@ class PluginManager:
         plugin_ref = self._registry.get_plugin(name)
         return plugin_ref.plugin if plugin_ref else None
 
+    def get_plugin_names(self) -> list[str]:
+        """Get list of all configured plugin names.
+
+        Returns:
+            List of plugin names from the configuration (includes disabled plugins).
+        """
+        if not self._config or not self._config.plugins:
+            return []
+        return [plugin.name for plugin in self._config.plugins]
+
+    def get_plugins_for_entity_type(self, entity_type: str) -> list:
+        """Get plugins that have hooks for the specified entity type.
+
+        Uses the hook registry to determine which hooks belong to the entity type.
+
+        Args:
+            entity_type: Entity type ('tool', 'prompt', 'resource', 'http', etc.)
+
+        Returns:
+            List of PluginConfig objects that have hooks for this entity type.
+        """
+        if not self._config or not self._config.plugins:
+            return []
+
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+
+        registry = get_hook_registry()
+        entity_hooks = set(registry.get_hooks_for_entity_type(entity_type))
+
+        if not entity_hooks:
+            return []
+
+        return [plugin for plugin in self._config.plugins if any(hook in entity_hooks for hook in plugin.hooks)]
+
+    def get_tool_plugins(self) -> list:
+        """Get all plugins that have tool hooks.
+
+        Returns:
+            List of PluginConfig objects with tool hooks.
+        """
+        return self.get_plugins_for_entity_type("tool")
+
+    def get_plugins_with_hook_info(self, entity_type: str) -> list:
+        """Get plugins for entity type with hook phase information.
+
+        Args:
+            entity_type: Entity type ('tool', 'prompt', 'resource', etc.)
+
+        Returns:
+            List of PluginWithHookInfo objects with hook details.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+        from mcpgateway.plugins.framework.models import PluginWithHookInfo
+
+        registry = get_hook_registry()
+        plugins = self.get_plugins_for_entity_type(entity_type)
+        entity_hooks = set(registry.get_hooks_for_entity_type(entity_type))
+
+        result = []
+        for plugin in plugins:
+            # Filter to only hooks for this entity type
+            plugin_entity_hooks = [h for h in plugin.hooks if h in entity_hooks]
+
+            pre_hooks = []
+            post_hooks = []
+            for hook in plugin_entity_hooks:
+                if registry.is_pre_hook(hook):
+                    pre_hooks.append(hook)
+                elif registry.is_post_hook(hook):
+                    post_hooks.append(hook)
+
+            result.append(PluginWithHookInfo(name=plugin.name, description=plugin.description, pre_hooks=pre_hooks, post_hooks=post_hooks, all_hooks=plugin_entity_hooks))
+
+        return result
+
+    def get_tool_plugins_with_hooks(self) -> list:
+        """Get tool plugins with hook phase information.
+
+        Returns:
+            List of PluginWithHookInfo objects for tools.
+        """
+        return self.get_plugins_with_hook_info("tool")
+
+    def get_prompt_plugins(self) -> list:
+        """Get all plugins that have prompt hooks.
+
+        Returns:
+            List of PluginConfig objects with prompt hooks.
+        """
+        return self.get_plugins_for_entity_type("prompt")
+
+    def get_resource_plugins(self) -> list:
+        """Get all plugins that have resource hooks.
+
+        Returns:
+            List of PluginConfig objects with resource hooks.
+        """
+        return self.get_plugins_for_entity_type("resource")
+
+    def get_http_plugins(self) -> list:
+        """Get all plugins that have HTTP-level hooks.
+
+        Returns:
+            List of PluginConfig objects with HTTP hooks.
+        """
+        return self.get_plugins_for_entity_type("http")
+
     async def initialize(self) -> None:
         """Initialize the plugin manager and load all configured plugins.
 

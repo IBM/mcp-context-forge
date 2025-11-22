@@ -5494,6 +5494,15 @@ function showTab(tabName) {
         const panel = safeGetElement(`${tabName}-panel`);
         if (panel) {
             panel.classList.remove("hidden");
+
+            // Initialize Alpine.js for the panel if it hasn't been initialized yet
+            if (typeof Alpine !== 'undefined' && panel.__x === undefined) {
+                // Remove x-ignore attribute if present so Alpine can initialize
+                if (panel.hasAttribute('x-ignore')) {
+                    panel.removeAttribute('x-ignore');
+                }
+                Alpine.initTree(panel);
+            }
         } else {
             console.error(`Panel ${tabName}-panel not found`);
             return;

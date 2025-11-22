@@ -48,6 +48,25 @@
     </script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
+    <!-- Alpine.js store for tools panel state -->
+    <script>
+      document.addEventListener('alpine:init', () => {
+        Alpine.store('toolsPanel', {
+          selectedTools: [],
+          selectAllTools: false,
+          showBulkPluginModal: false,
+          bulkPluginTab: 'add',
+          toggleAllTools() {
+            if (this.selectAllTools) {
+              const checkboxes = document.querySelectorAll('#tools-table tbody input[type=checkbox]');
+              this.selectedTools = Array.from(checkboxes).map(cb => cb.value);
+            } else {
+              this.selectedTools = [];
+            }
+          }
+        });
+      });
+    </script>
     <script
       src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
       defer
@@ -2354,6 +2373,25 @@
             </div>
           </div>
           <div class="flex items-center space-x-4">
+            <!-- Configure Plugins Button (shown when tools are selected) -->
+            <button
+              x-show="$store.toolsPanel.selectedTools.length > 0"
+              x-cloak
+              @click="$store.toolsPanel.showBulkPluginModal = true; $dispatch('plugin-modal-opened')"
+              class="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition-colors flex items-center space-x-2"
+              x-transition:enter="transition ease-out duration-200"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-150"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/>
+              </svg>
+              <span>Configure Plugins (<span x-text="$store.toolsPanel.selectedTools.length"></span>)</span>
+            </button>
+
             <input
               type="checkbox"
               id="show-inactive-tools"
@@ -6453,6 +6491,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
 
       <!-- Modals -->
+      <!-- Bulk Plugin Configuration Modal -->
+      {% include 'bulk_plugin_modal.html' %}
+
       <!-- Tool Detail Modal -->
       <div id="tool-modal" class="fixed z-10 inset-0 overflow-y-auto hidden">
         <div
