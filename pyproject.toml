@@ -176,6 +176,10 @@ mysql = [
     "pymysql>=1.1.2",
 ]
 
+mariadb = [
+    "mariadb>=1.1.4",
+]
+
 llmchat = [
     "langchain-core>=1.0.4",
     "langchain-mcp-adapters>=0.1.12",
