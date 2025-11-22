@@ -10549,6 +10549,13 @@ async function handleResourceFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+        }
+
+        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -11353,6 +11360,12 @@ async function handleEditResFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+        }
+        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
