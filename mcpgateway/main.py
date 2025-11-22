@@ -504,6 +504,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 async def shutdown_services(services_to_shutdown: list[Any]):
     """
     Awaits shutdown of services provided in a list
+
     Args:
         services_to_shutdown (list[Any]): list of services to shutdown
     """
@@ -599,7 +600,9 @@ def validate_security_configuration():
 def log_warnings(warnings: list[str]):
     """
     Log warnings from list of warnings provided
-    Args: warnings: List
+
+    Args:
+        warnings: List
     """
     if warnings:
         logger.warning("=" * 60)
@@ -615,7 +618,9 @@ def log_critical_issues(critical_issues: list[Any]):
         Log critical based on configuration settings
         If REQUIRE_STRONG_SECRETS set, this will output critical errors and exit the mcpgateway server.
 
-        Args: critical_issues: List
+        Args:
+            critical_issues: List
+
         Returns: None
         """
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
@@ -644,7 +649,9 @@ def log_security_recommendations(security_status: settings.SecurityStatus):
     """
     Log security recommendations based on configuration settings
 
-    Args: security_status: SecurityStatus
+    Args:
+        security_status (settings.SecurityStatus): The SecurityStatus object for checking and logging current security settings from MCPGateway.
+
     Returns: None
     """
     if not security_status["secure_secrets"] or not security_status["auth_enabled"]:
