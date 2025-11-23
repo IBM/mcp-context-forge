@@ -400,7 +400,7 @@ class TestTeamMembership:
     @pytest.mark.asyncio
     async def test_is_team_member_true(self, permission_service):
         """Test _is_team_member when user is a member."""
-        mock_member = MagicMock(spec=EmailTeamMember)
+        mock_member = MagicMock(spec=UserRole)
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_member
         permission_service.db.execute.return_value = mock_result
@@ -421,8 +421,12 @@ class TestTeamMembership:
     @pytest.mark.asyncio
     async def test_get_user_team_role_owner(self, permission_service):
         """Test _get_user_team_role returns owner role."""
-        mock_member = MagicMock(spec=EmailTeamMember)
-        mock_member.role = "team_owner"
+        mock_role = MagicMock()
+        mock_role.name = "team_owner"
+        
+        mock_member = MagicMock(spec=UserRole)
+        mock_member.role = mock_role
+        
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_member
         permission_service.db.execute.return_value = mock_result
