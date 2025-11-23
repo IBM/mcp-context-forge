@@ -21,7 +21,9 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
+# First-Party
 from mcpgateway.db import PermissionAuditLog, Permissions, Prompt, Resource, Role, Server, Tool, UserRole, utc_now
+from mcpgateway.services.role_service import RoleService
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,7 @@ class PermissionService:
             audit_enabled: Whether to enable permission auditing
         """
         self.db = db
+        self.role_service = RoleService(db)
         self.audit_enabled = audit_enabled
         self._permission_cache: Dict[str, Set[str]] = {}
         self._cache_timestamps: Dict[str, datetime] = {}
@@ -384,22 +387,7 @@ class PermissionService:
         Returns:
             List[UserRole]: List of active roles for the user
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
-
-        # Include global roles and team-specific roles
-        scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
-
-        if team_id:
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
-
-        query = query.where(or_(*scope_conditions))
-
-        # Filter out expired roles
-        now = utc_now()
-        query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
-
-        result = self.db.execute(query)
-        return result.scalars().all()
+        return await self.role_service.get_effective_user_roles(user_email, team_id)
 
     async def _log_permission_check(
         self,
@@ -538,8 +526,7 @@ class PermissionService:
         Returns:
             bool: True if user is a team member
         """
-        member = self.db.execute(select(UserRole).where(and_(UserRole.user_email == user_email, UserRole.scope_id == team_id, UserRole.is_active))).scalar_one_or_none()
-
+        member = await self.role_service.get_team_member_role(user_email, team_id)
         return member is not None
 
     async def _get_user_team_role(self, user_email: str, team_id: str) -> Optional[str]:
@@ -552,8 +539,7 @@ class PermissionService:
         Returns:
             Optional[str]: User's role in the team or None if not a member
         """
-        member = self.db.execute(select(UserRole).where(and_(UserRole.user_email == user_email, UserRole.scope_id == team_id, UserRole.is_active))).scalar_one_or_none()
-
+        member = await self.role_service.get_team_member_role(user_email, team_id)
         return member.role.name if member else None
 
     def get_required_permission(self, request_method: str, request_path: str) -> Optional[str]:
@@ -566,42 +552,11 @@ class PermissionService:
         Returns:
             Optional[str]: The required permission string, or None if no specific permission is required.
         """
-        # Map HTTP methods and paths to permission requirements
-        # Using canonical permissions from mcpgateway.db.Permissions
-        # Segment-aware patterns to avoid accidental early matches
-        permission_map = {
-            # Tools permissions
-            ("GET", r"^/tools(?:$|/)"): Permissions.TOOLS_READ,
-            ("POST", r"^/tools(?:$|/)"): Permissions.TOOLS_CREATE,
-            ("PUT", r"^/tools/[^/]+(?:$|/)"): Permissions.TOOLS_UPDATE,
-            ("DELETE", r"^/tools/[^/]+(?:$|/)"): Permissions.TOOLS_DELETE,
-            ("GET", r"^/servers/[^/]+/tools(?:$|/)"): Permissions.TOOLS_READ,
-            ("POST", r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"): Permissions.TOOLS_EXECUTE,
-            # Resources permissions
-            ("GET", r"^/resources(?:$|/)"): Permissions.RESOURCES_READ,
-            ("POST", r"^/resources(?:$|/)"): Permissions.RESOURCES_CREATE,
-            ("PUT", r"^/resources/[^/]+(?:$|/)"): Permissions.RESOURCES_UPDATE,
-            ("DELETE", r"^/resources/[^/]+(?:$|/)"): Permissions.RESOURCES_DELETE,
-            ("GET", r"^/servers/[^/]+/resources(?:$|/)"): Permissions.RESOURCES_READ,
-            # Prompts permissions
-            ("GET", r"^/prompts(?:$|/)"): Permissions.PROMPTS_READ,
-            ("POST", r"^/prompts(?:$|/)"): Permissions.PROMPTS_CREATE,
-            ("PUT", r"^/prompts/[^/]+(?:$|/)"): Permissions.PROMPTS_UPDATE,
-            ("DELETE", r"^/prompts/[^/]+(?:$|/)"): Permissions.PROMPTS_DELETE,
-            # Server management permissions
-            ("GET", r"^/servers(?:$|/)"): Permissions.SERVERS_READ,
-            ("POST", r"^/servers(?:$|/)"): Permissions.SERVERS_CREATE,
-            ("PUT", r"^/servers/[^/]+(?:$|/)"): Permissions.SERVERS_UPDATE,
-            ("DELETE", r"^/servers/[^/]+(?:$|/)"): Permissions.SERVERS_DELETE,
-            # Admin permissions
-            ("GET", r"^/admin(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("POST", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("PUT", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-            ("DELETE", r"^/admin/[^/]+(?:$|/)"): Permissions.ADMIN_USER_MANAGEMENT,
-        }
+        # First-Party
+        from mcpgateway.permissions_manager import PERMISSION_MAPPINGS  # pylint: disable=import-outside-toplevel
 
         # Check each permission mapping
-        for (method, path_pattern), required_permission in permission_map.items():
+        for (method, path_pattern), required_permission in PERMISSION_MAPPINGS.items():
             if request_method == method and re.match(path_pattern, request_path):
                 return required_permission
 

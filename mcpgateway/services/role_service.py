@@ -757,6 +757,50 @@ class RoleService:
         result = self.db.execute(query)
         return result.scalars().all()
 
+    async def get_effective_user_roles(self, user_email: str, team_id: Optional[str] = None) -> List[UserRole]:
+        """Get all effective roles for a user (Global + Personal + Team).
+
+        Args:
+            user_email: Email of the user
+            team_id: Optional team ID to include team-specific roles
+
+        Returns:
+            List[UserRole]: List of active roles for the user
+        """
+        # First-Party
+        from sqlalchemy import or_  # pylint: disable=import-outside-toplevel
+
+        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+
+        # Include global roles and team-specific roles
+        scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
+
+        if team_id:
+            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+
+        query = query.where(or_(*scope_conditions))
+
+        # Filter out expired roles
+        now = utc_now()
+        query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
+
+        result = self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_team_member_role(self, user_email: str, team_id: str) -> Optional[UserRole]:
+        """Get user's role in a specific team.
+
+        Args:
+            user_email: Email of the user
+            team_id: Team ID
+
+        Returns:
+            Optional[UserRole]: User's role in the team or None if not a member
+        """
+        query = select(UserRole).where(and_(UserRole.user_email == user_email, UserRole.scope_id == team_id, UserRole.is_active.is_(True)))
+        result = self.db.execute(query)
+        return result.scalar_one_or_none()
+
     async def revoke_scope_role_assignments(self, scope: str, scope_id: Optional[str] = None, revoked_by: Optional[str] = None) -> int:
         """Revoke all user role assignments within a specific scope.
 

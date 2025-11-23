@@ -469,6 +469,13 @@ class Permissions:
     SERVERS_DELETE = "servers.delete"
     SERVERS_MANAGE = "servers.manage"
 
+    # Agent permissions
+    AGENTS_CREATE = "agents.create"
+    AGENTS_READ = "agents.read"
+    AGENTS_UPDATE = "agents.update"
+    AGENTS_DELETE = "agents.delete"
+    AGENTS_EXECUTE = "agents.execute"
+
     # Token permissions
     TOKENS_CREATE = "tokens.create"
     TOKENS_READ = "tokens.read"

@@ -123,6 +123,8 @@ async def bootstrap_default_roles() -> None:
 
     try:
         # First-Party
+        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.permissions_manager import DEFAULT_ROLES  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
@@ -138,59 +140,7 @@ async def bootstrap_default_roles() -> None:
                 return
 
             # Default system roles to create
-            default_roles = [
-                {"name": "platform_admin", "description": "Platform administrator with all permissions", "scope": "global", "permissions": ["*"], "is_system_role": True},  # All permissions
-                {
-                    "name": "team_owner",
-                    "description": "Team owner with team management permissions",
-                    "scope": "team",
-                    "permissions": [
-                        "teams.create",
-                        "teams.read",
-                        "teams.update",
-                        "teams.join",
-                        "teams.manage_members",
-                        "gateways.create",
-                        "tools.read",
-                        "tools.execute",
-                        "resources.read",
-                        "prompts.read",
-                    ],
-                    "is_system_role": True,
-                },
-                {
-                    "name": "team_admin",
-                    "description": "Team administrator with team management permissions",
-                    "scope": "team",
-                    "permissions": [
-                        "teams.create",
-                        "teams.read",
-                        "teams.update",
-                        "teams.join",
-                        "teams.manage_members",
-                        "gateways.create",
-                        "tools.read",
-                        "tools.execute",
-                        "resources.read",
-                        "prompts.read",
-                    ],
-                    "is_system_role": True,
-                },
-                {
-                    "name": "team_member",
-                    "description": "Developer with tool and resource access",
-                    "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "tools.execute", "resources.read", "prompts.read"],
-                    "is_system_role": True,
-                },
-                {
-                    "name": "team_viewer",
-                    "description": "Read-only access to resources",
-                    "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "resources.read", "prompts.read"],
-                    "is_system_role": True,
-                },
-            ]
+            default_roles = DEFAULT_ROLES
 
             # Create default roles
             created_roles = []
