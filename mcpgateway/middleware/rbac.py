@@ -163,6 +163,7 @@ async def get_current_user_with_permissions(
             "ip_address": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
             "db": db,
+            "request": request,  # Include request for accessing cached permissions
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
@@ -303,7 +304,19 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                         detail=f"Insufficient permissions. Required: {permission}",
                     )
 
-            # No plugin handled it, fall through to standard RBAC check
+            # Check if permissions are already cached in request state (from TokenScopingMiddleware)
+            request = user_context.get("request")
+            if request and hasattr(request, "state") and hasattr(request.state, "user_permissions"):
+                # Use cached permissions
+                user_permissions = request.state.user_permissions
+                if permission in user_permissions:
+                    logger.debug(f"Permission granted from cache: user={user_context['email']}, permission={permission}")
+                    return await func(*args, **kwargs)
+                else:
+                    logger.warning(f"Permission denied from cache: user={user_context['email']}, permission={permission}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
+
+            # No plugin handled it, fall through to standard RBAC check (for non-token auth)
             granted = await permission_service.check_permission(
                 user_email=user_context["email"],
                 permission=permission,
