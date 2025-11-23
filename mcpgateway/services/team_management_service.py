@@ -77,6 +77,7 @@ class TeamManagementService:
             'TeamManagementService'
         """
         self.db = db
+        self.role_service = RoleService(db)
 
     async def create_team(self, name: str, description: Optional[str], created_by: str, visibility: Optional[str] = "public", max_members: Optional[int] = None) -> EmailTeam:
         """Create a new team.
@@ -159,8 +160,7 @@ class TeamManagementService:
             potential_slug = slugify(name)
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
 
-            role_service = RoleService(self.db)
-            role_for_team_owner: Optional[Role] = await role_service.get_role_by_name(settings.default_role_name_owner, "team")
+            role_for_team_owner: Optional[Role] = await self.role_service.get_role_by_name(settings.default_role_name_owner, "team")
             if role_for_team_owner:
                 role_id = role_for_team_owner.id
             else:
@@ -177,10 +177,10 @@ class TeamManagementService:
                 existing_inactive_team.updated_at = utc_now()
                 team = existing_inactive_team
 
-                user_role: Optional[UserRole] = await role_service.get_user_role_assignment(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id)
+                user_role: Optional[UserRole] = await self.role_service.get_user_role_assignment(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id)
 
                 if user_role and not user_role.is_active:
-                    await role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
+                    await self.role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
 
                 logger.info(f"Reactivated existing team with slug {potential_slug}")
             else:
@@ -191,7 +191,7 @@ class TeamManagementService:
                 self.db.flush()  # Get the team ID
 
                 # Add the creator as owner
-                await role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
+                await self.role_service.assign_role_to_user(user_email=created_by, role_id=role_id, scope="team", scope_id=team.id, granted_by=created_by)
 
             self.db.commit()
 
@@ -353,11 +353,10 @@ class TeamManagementService:
             team.is_active = False
             team.updated_at = utc_now()
 
-            role_service = RoleService(self.db)
-            scope_role_assignments: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
+            scope_role_assignments: List[UserRole] = await self.role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
 
             if scope_role_assignments:
-                await role_service.revoke_scope_role_assignments(scope="team", scope_id=team.id, revoked_by=deleted_by)
+                await self.role_service.revoke_scope_role_assignments(scope="team", scope_id=team.id, revoked_by=deleted_by)
 
             user_roles_stmt = delete(UserRole).where(UserRole.scope_id == team.id, UserRole.scope == "team")
             self.db.execute(user_roles_stmt)
@@ -414,13 +413,12 @@ class TeamManagementService:
                 logger.warning(f"User {user_email} not found")
                 return False
 
-            role_service = RoleService(self.db)
 
-            role_obj: Optional[Role] = await role_service.get_role_by_name(role, "team")
+            role_obj: Optional[Role] = await self.role_service.get_role_by_name(role, "team")
             if role_obj is None:
                 raise ValueError(f"Role '{role}' does not exist")
 
-            user_role: Optional[UserRole] = await role_service.get_user_role_assignment(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team_id)
+            user_role: Optional[UserRole] = await self.role_service.get_user_role_assignment(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team_id)
 
             if user_role and user_role.is_active:
                 logger.warning(f"User {user_email} is already a member of team {team_id}")
@@ -428,14 +426,14 @@ class TeamManagementService:
 
             # Check team member limit
             if team.max_members:
-                scope_role_assignments: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
+                scope_role_assignments: List[UserRole] = await self.role_service.list_scope_role_assignments(scope="team", scope_id=team.id)
                 current_member_count = len(scope_role_assignments)
 
                 if current_member_count >= team.max_members:
                     logger.warning(f"Team {team_id} has reached maximum member limit")
                     raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
 
-            await role_service.assign_role_to_user(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team.id, granted_by=invited_by if invited_by else "")
+            await self.role_service.assign_role_to_user(user_email=user_email, role_id=role_obj.id, scope="team", scope_id=team.id, granted_by=invited_by if invited_by else "")
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
             return True
@@ -474,8 +472,7 @@ class TeamManagementService:
                 return False
 
             # Find the membership
-            role_service = RoleService(self.db)
-            list_role_assignments: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
+            list_role_assignments: List[UserRole] = await self.role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
             if not list_role_assignments:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
@@ -483,7 +480,7 @@ class TeamManagementService:
 
             await asyncio.gather(
                 *[
-                    role_service.revoke_role_from_user(
+                    self.role_service.revoke_role_from_user(
                         user_email=user_email,
                         role_id=role_assignment.role_id,
                         scope="team",
@@ -534,27 +531,26 @@ class TeamManagementService:
                 logger.warning(f"Cannot update roles in personal team {team_id}")
                 return False
 
-            role_service = RoleService(self.db)
-            list_role_assignments: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
+            list_role_assignments: List[UserRole] = await self.role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
             if not list_role_assignments:
                 logger.warning(f"User {user_email} is not a member of team {team_id}")
                 return False
 
-            role: Optional[Role] = await role_service.get_role_by_name(new_role, "team")
+            role: Optional[Role] = await self.role_service.get_role_by_name(new_role, "team")
 
             if role is None:
                 raise ValueError(f"Role '{new_role}' does not exist")
 
             role_id: str = role.id
 
-            await role_service.assign_role_to_user(user_email=user_email, role_id=role_id, scope="team", scope_id=team.id, granted_by=updated_by if updated_by else "")
+            await self.role_service.assign_role_to_user(user_email=user_email, role_id=role_id, scope="team", scope_id=team.id, granted_by=updated_by if updated_by else "")
 
             # Revoke other roles
             roles_assignments_to_disable = [ra for ra in list_role_assignments if ra.role_id != role_id]
             await asyncio.gather(
                 *[
-                    role_service.revoke_role_from_user(
+                    self.role_service.revoke_role_from_user(
                         user_email=user_email,
                         role_id=role_assignment.role_id,
                         scope="team",
@@ -586,8 +582,7 @@ class TeamManagementService:
             User dashboard showing team memberships.
         """
         try:
-            role_service = RoleService(self.db)
-            team_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
+            team_roles: List[UserRole] = await self.role_service.list_user_roles(user_email=user_email, scope="team")
             team_ids: List[str] = list({tr.scope_id for tr in team_roles if tr.scope_id})
 
             query = self.db.query(EmailTeam)
@@ -668,8 +663,7 @@ class TeamManagementService:
             Team member management and role display.
         """
         try:
-            role_service = RoleService(self.db)
-            team_roles: List[UserRole] = await role_service.list_scope_role_assignments(scope="team", scope_id=team_id)
+            team_roles: List[UserRole] = await self.role_service.list_scope_role_assignments(scope="team", scope_id=team_id)
 
             return team_roles
 
@@ -691,8 +685,7 @@ class TeamManagementService:
             Access control and permission checking.
         """
         try:
-            role_service = RoleService(self.db)
-            user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
+            user_roles: List[UserRole] = await self.role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
             return user_roles[0].role.name if user_roles else None
 
@@ -780,8 +773,7 @@ class TeamManagementService:
                 raise ValueError("Can only request to join public teams")
 
             # Check if user is already a member
-            role_service = RoleService(self.db)
-            user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
+            user_roles: List[UserRole] = await self.role_service.list_user_roles(user_email=user_email, scope="team", scope_id=team_id)
 
             if user_roles:
                 raise ValueError("User is already a member of this team")
