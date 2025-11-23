@@ -22,10 +22,9 @@ from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer
 
 # First-Party
-from mcpgateway.db import UserRole, get_db
+from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.role_service import RoleService
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
@@ -198,69 +197,7 @@ class TokenScopingMiddleware:
 
         return True
 
-    def _check_server_restriction(self, request_path: str, server_id: Optional[str]) -> bool:
-        """Check if request path matches server restriction.
 
-        Args:
-            request_path: The request path/URL
-            server_id: Required server ID (None means no restriction)
-
-        Returns:
-            bool: True if request is allowed, False otherwise
-
-        Examples:
-            Match server paths:
-            >>> m = TokenScopingMiddleware()
-            >>> m._check_server_restriction('/servers/abc/tools', 'abc')
-            True
-            >>> m._check_server_restriction('/sse/xyz', 'xyz')
-            True
-            >>> m._check_server_restriction('/ws/xyz?x=1', 'xyz')
-            True
-
-            Mismatch denies:
-            >>> m._check_server_restriction('/servers/def', 'abc')
-            False
-
-            General endpoints allowed:
-            >>> m._check_server_restriction('/health', 'abc')
-            True
-            >>> m._check_server_restriction('/', 'abc')
-            True
-        """
-        if not server_id:
-            return True  # No server restriction
-
-        # Extract server ID from path patterns:
-        # /servers/{server_id}/...
-        # /sse/{server_id}
-        # /ws/{server_id}
-        # Using segment-aware patterns for precise matching
-        server_path_patterns = [
-            r"^/servers/([^/]+)(?:$|/)",
-            r"^/sse/([^/?]+)(?:$|\?)",
-            r"^/ws/([^/?]+)(?:$|\?)",
-        ]
-
-        for pattern in server_path_patterns:
-            match = re.search(pattern, request_path)
-            if match:
-                path_server_id = match.group(1)
-                return path_server_id == server_id
-
-        # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
-
-        # Check exact root path separately
-        if request_path == "/":
-            return True
-
-        for endpoint in general_endpoints:
-            if request_path.startswith(endpoint):
-                return True
-
-        # Default deny for unmatched paths with server restrictions
-        return False
 
     def _check_permission_restrictions(self, request_path: str, request_method: str, permissions: list, permission_service: PermissionService) -> bool:
         """Check if request is allowed by permission restrictions.
@@ -284,47 +221,26 @@ class TokenScopingMiddleware:
 
         return required_permission in permissions
 
-    async def _check_team_membership(self, payload: dict) -> bool:
+    async def _get_user_permissions(self, payload: dict, permission_service: PermissionService) -> List[str]:
         """
-        Check if user still belongs to teams in the token.
-
-        For public-only tokens (no teams), always returns True.
-        For team-scoped tokens, validates membership.
+        Retrieve all permissions for the user in the token.
 
         Args:
-            payload: Decoded JWT payload containing teams
+            payload: Decoded JWT payload containing user info
+            permission_service: PermissionService instance
 
         Returns:
-            bool: True if team membership is valid, False otherwise
+            List[str]: List of permission strings the user has
         """
-        teams = payload.get("teams", [])
         user_email = payload.get("sub")
-
-        # PUBLIC-ONLY TOKEN: No team validation needed
-        if not teams or len(teams) == 0:
-            logger.debug(f"Public-only token for user {user_email} - no team validation required")
-            return True
-
-        # TEAM-SCOPED TOKEN: Validate membership
+        
         if not user_email:
-            logger.warning("Token missing user email")
-            return False
-
-        # First-Party
-        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
-
-        db = next(get_db())
-
-        role_service = RoleService(db)
-        user_roles: List[UserRole] = await role_service.list_user_roles(user_email=user_email, scope="team")
-
-        if not user_roles:
-            logger.warning(f"User {user_email} has no team roles assigned")
-            db.close()
-            return False
-
-        db.close()
-        return True
+            return []
+        
+        # Get all permissions for the user
+        permissions = await permission_service.get_user_permissions(user_email)
+        
+        return permissions
 
     async def __call__(self, request: Request, call_next):
         """Middleware function to check token scoping including team-level validation.
@@ -371,10 +287,17 @@ class TokenScopingMiddleware:
             permission_service = PermissionService(db)
 
             try:
-                # TEAM VALIDATION: Check team membership
-                if not await self._check_team_membership(payload):
-                    logger.warning("Token rejected: User no longer member of associated team(s)")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
+                # PERMISSION RETRIEVAL: Get user permissions and cache them
+                user_permissions = await self._get_user_permissions(payload, permission_service)
+                
+                # Validate user has some permissions (replaces team membership check)
+                if not user_permissions:
+                    logger.warning("Token rejected: User has no permissions")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User has no permissions")
+                
+                # Cache permissions in request state for use by require_permission
+                request.state.user_permissions = user_permissions
+                request.state.user_email = payload.get("sub")
 
                 # TEAM VALIDATION: Check resource team ownership
                 token_teams = payload.get("teams", [])
@@ -384,12 +307,6 @@ class TokenScopingMiddleware:
 
                 # Extract scopes from payload
                 scopes = payload.get("scopes", {})
-
-                # Check server ID restriction
-                server_id = scopes.get("server_id")
-                if not self._check_server_restriction(request.url.path, server_id):
-                    logger.warning(f"Token not authorized for this server. Required: {server_id}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Token not authorized for this server. Required: {server_id}")
 
                 # Check IP restrictions
                 ip_restrictions = scopes.get("ip_restrictions", [])
