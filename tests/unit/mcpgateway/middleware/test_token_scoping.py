@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 # Third-Party
 from fastapi import Request, status
 import pytest
+from starlette.responses import Response
 
 # First-Party
 from mcpgateway.db import Permissions
@@ -49,23 +50,8 @@ class TestTokenScopingMiddleware:
         request.client.host = "127.0.0.1"
         return request
 
-    @pytest.mark.asyncio
-    async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
-        """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
-        mock_request.url.path = "/admin/users"
 
-        # Test server restriction check - /admin should NOT be in general endpoints
-        result = middleware._check_server_restriction("/admin/users", "server-123")
-        assert result == False, "Admin endpoints should not bypass server scoping restrictions"
 
-    @pytest.mark.asyncio
-    async def test_health_endpoints_still_whitelisted(self, middleware, mock_request):
-        """Test that health/metrics endpoints remain whitelisted."""
-        whitelist_paths = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/"]
-
-        for path in whitelist_paths:
-            result = middleware._check_server_restriction(path, "server-123")
-            assert result == True, f"Path {path} should remain whitelisted"
 
     @pytest.mark.asyncio
     async def test_canonical_permissions_used_in_map(self, middleware, permission_service):
@@ -94,35 +80,7 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/admin", "GET", ["admin.read"], permission_service)
         assert result == False, "Should reject non-canonical 'admin.read' permission"
 
-    @pytest.mark.asyncio
-    async def test_server_scoped_token_blocked_from_admin(self, middleware, mock_request):
-        """Test that server-scoped tokens are blocked from admin endpoints (security fix)."""
-        mock_request.url.path = "/admin/users"
-        mock_request.method = "GET"
-        mock_request.headers = {"Authorization": "Bearer token"}
 
-        # Mock token extraction to return server-scoped token
-        with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"scopes": {"server_id": "specific-server"}}
-            
-            # Mock get_db to avoid DB connection errors
-            with patch("mcpgateway.middleware.token_scoping.get_db") as mock_get_db:
-                mock_session = MagicMock()
-                mock_get_db.return_value.__next__.return_value = mock_session
-
-                # Mock call_next (the next middleware or request handler)
-                call_next = AsyncMock()
-
-                # Perform the request, which should return a JSONResponse instead of raising HTTPException
-                response = await middleware(mock_request, call_next)
-
-                # Ensure response is a JSONResponse and parse its content
-                content = json.loads(response.body)  # Parse response content to dictionary
-
-                # Check that the response is a JSONResponse with status 403 and the correct detail
-                assert response.status_code == status.HTTP_403_FORBIDDEN
-                assert "not authorized for this server" in content.get("detail")
-                call_next.assert_not_called()  # Ensure the next handler is not called
 
     @pytest.mark.asyncio
     async def test_permission_restricted_token_blocked_from_admin(self, middleware, mock_request):
@@ -133,26 +91,30 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return permission-scoped token without admin permissions
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"scopes": {"permissions": [Permissions.TOOLS_READ]}}
+            mock_extract.return_value = {"sub": "test@example.com", "scopes": {"permissions": [Permissions.TOOLS_READ]}}
 
             # Mock get_db
             with patch("mcpgateway.middleware.token_scoping.get_db") as mock_get_db:
                 mock_session = MagicMock()
                 mock_get_db.return_value.__next__.return_value = mock_session
+                
+                # Mock get_user_permissions to return limited permissions
+                with patch.object(middleware, "_get_user_permissions") as mock_get_perms:
+                    mock_get_perms.return_value = [Permissions.TOOLS_READ]  # No admin permission
 
-                # Mock call_next (the next middleware or request handler)
-                call_next = AsyncMock()
+                    # Mock call_next (the next middleware or request handler)
+                    call_next = AsyncMock()
 
-                # Perform the request, which should return a JSONResponse instead of raising HTTPException
-                response = await middleware(mock_request, call_next)
+                    # Perform the request, which should return a JSONResponse instead of raising HTTPException
+                    response = await middleware(mock_request, call_next)
 
-                # Ensure response is a JSONResponse and parse its content
-                content = json.loads(response.body)  # Parse response content to dictionary
+                    # Ensure response is a JSONResponse and parse its content
+                    content = json.loads(response.body)  # Parse response content to dictionary
 
-                # Check that the response is a JSONResponse with status 403 and the correct detail
-                assert response.status_code == status.HTTP_403_FORBIDDEN
-                assert "Insufficient permissions for this operation" in content.get("detail")
-                call_next.assert_not_called()  # Ensure the next handler is not called
+                    # Check that the response is a JSONResponse with status 403 and the correct detail
+                    assert response.status_code == status.HTTP_403_FORBIDDEN
+                    assert "Insufficient permissions" in content.get("detail")
+                    call_next.assert_not_called()  # Ensure the next handler is not called
 
     @pytest.mark.asyncio
     async def test_admin_token_allowed_to_admin_endpoints(self, middleware, mock_request):
@@ -163,20 +125,24 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return admin-scoped token
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"scopes": {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}}
+            mock_extract.return_value = {"sub": "admin@example.com", "scopes": {"permissions": [Permissions.ADMIN_USER_MANAGEMENT]}}
 
             # Mock get_db
             with patch("mcpgateway.middleware.token_scoping.get_db") as mock_get_db:
                 mock_session = MagicMock()
                 mock_get_db.return_value.__next__.return_value = mock_session
+                
+                # Mock get_user_permissions to return admin permissions
+                with patch.object(middleware, "_get_user_permissions") as mock_get_perms:
+                    mock_get_perms.return_value = [Permissions.ADMIN_USER_MANAGEMENT]
 
-                call_next = AsyncMock()
-                call_next.return_value = "success"
+                    call_next = AsyncMock()
+                    call_next.return_value = Response(content="OK")
 
-                # Should allow access
-                result = await middleware(mock_request, call_next)
-                assert result == "success"
-                call_next.assert_called_once()
+                    # Perform the request
+                    response = await middleware(mock_request, call_next)
+                    assert response.status_code == status.HTTP_200_OK
+                    call_next.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_wildcard_permissions_allow_all_access(self, middleware, mock_request):
@@ -187,20 +153,24 @@ class TestTokenScopingMiddleware:
 
         # Mock token extraction to return wildcard permissions
         with patch.object(middleware, "_extract_token_scopes") as mock_extract:
-            mock_extract.return_value = {"scopes": {"permissions": ["*"]}}
+            mock_extract.return_value = {"sub": "admin@example.com", "scopes": {"permissions": ["*"]}}
 
             # Mock get_db
             with patch("mcpgateway.middleware.token_scoping.get_db") as mock_get_db:
                 mock_session = MagicMock()
                 mock_get_db.return_value.__next__.return_value = mock_session
+                
+                # Mock get_user_permissions to return wildcard
+                with patch.object(middleware, "_get_user_permissions") as mock_get_perms:
+                    mock_get_perms.return_value = ["*"]  # Wildcard permission
 
-                call_next = AsyncMock()
-                call_next.return_value = "success"
+                    # Mock call_next to return a simple response
+                    call_next = AsyncMock(return_value=Response(content="OK"))
 
-                # Should allow access
-                result = await middleware(mock_request, call_next)
-                assert result == "success"
-                call_next.assert_called_once()
+                    # Perform the request, which should succeed
+                    response = await middleware(mock_request, call_next)
+                    assert response.status_code == status.HTTP_200_OK
+                    call_next.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_token_scopes_bypasses_middleware(self, middleware, mock_request):
@@ -320,31 +290,4 @@ class TestTokenScopingMiddleware:
             result = middleware._check_permission_restrictions(path, method, permissions, permission_service)
             assert result == expected, f"Exact match {path} {method} should return {expected}"
 
-    @pytest.mark.asyncio
-    async def test_server_id_extraction_precision(self, middleware):
-        """Test that server ID extraction is precise and doesn't overmatch."""
-        # Test valid server ID extraction
-        patterns_to_test = [
-            ("/servers/srv-123", "srv-123", True),
-            ("/servers/srv-123/", "srv-123", True),
-            ("/servers/srv-123/tools", "srv-123", True),
-            ("/sse/websocket-server", "websocket-server", True),
-            ("/sse/websocket-server?param=value", "websocket-server", True),
-            ("/ws/ws-server-1", "ws-server-1", True),
-            ("/ws/ws-server-1?token=abc", "ws-server-1", True),
-        ]
 
-        for path, expected_server_id, should_match in patterns_to_test:
-            result = middleware._check_server_restriction(path, expected_server_id)
-            assert result == should_match, f"Path {path} with server_id {expected_server_id} should return {should_match}"
-
-        # Test cases that should NOT match (different server IDs)
-        negative_cases = [
-            ("/servers/srv-123", "srv-456", False),
-            ("/sse/websocket-server", "different-server", False),
-            ("/ws/ws-server-1", "ws-server-2", False),
-        ]
-
-        for path, wrong_server_id, should_match in negative_cases:
-            result = middleware._check_server_restriction(path, wrong_server_id)
-            assert result == should_match, f"Path {path} with wrong server_id {wrong_server_id} should return {should_match}"

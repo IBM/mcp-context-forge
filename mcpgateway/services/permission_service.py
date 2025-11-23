@@ -562,6 +562,29 @@ class PermissionService:
 
         return None
 
+    async def validate_token_team_membership(self, user_email: str, token_teams: List[str]) -> bool:
+        """Validate that the user is still a member of the teams in their token.
+
+        Args:
+            user_email: Email of the user
+            token_teams: List of team IDs from the token
+
+        Returns:
+            bool: True if membership is valid (or not required), False otherwise
+        """
+        # PUBLIC-ONLY TOKEN: No team validation needed
+        if not token_teams:
+            return True
+
+        if not user_email:
+            return False
+
+        # Check if user has any active team roles
+        roles = await self.role_service.get_effective_user_roles(user_email)
+        has_team_roles = any(r.scope == "team" for r in roles)
+
+        return has_team_roles
+
     async def check_resource_access(self, request_path: str, token_teams: List[str]) -> bool:
         """Check if token has access to the requested resource.
 
