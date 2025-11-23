@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailTeam, EmailUser
 from mcpgateway.services.team_management_service import TeamManagementService
 
 
@@ -58,7 +58,7 @@ class TestTeamManagementService:
     @pytest.fixture
     def mock_membership(self):
         """Create mock team membership."""
-        membership = MagicMock(spec=EmailTeamMember)
+        membership = MagicMock(spec=UserRole)
         membership.team_id = "team123"
         membership.user_email = "user@example.com"
         membership.role = "team_member"
@@ -117,7 +117,7 @@ class TestTeamManagementService:
 
         with (
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
-            patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
+            patch("mcpgateway.services.team_management_service.UserRole") as MockMember,
             patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
         ):
             MockTeam.return_value = mock_team
@@ -161,7 +161,7 @@ class TestTeamManagementService:
         with (
             patch("mcpgateway.services.team_management_service.settings") as mock_settings,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
-            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+            patch("mcpgateway.services.team_management_service.UserRole"),
             patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
         ):
             mock_settings.max_members_per_team = 50
@@ -184,7 +184,7 @@ class TestTeamManagementService:
         mock_existing_team.is_active = False
 
         # Mock existing inactive membership
-        mock_existing_membership = MagicMock(spec=EmailTeamMember)
+        mock_existing_membership = MagicMock(spec=UserRole)
         mock_existing_membership.team_id = "existing_team_id"
         mock_existing_membership.user_email = "admin@example.com"
         mock_existing_membership.is_active = False
@@ -392,7 +392,7 @@ class TestTeamManagementService:
                 return mock_team_query
             elif model == EmailUser:
                 return mock_user_query
-            elif model == EmailTeamMember:
+            elif model == UserRole:
                 if not hasattr(side_effect, "call_count"):
                     side_effect.call_count = 0
                 side_effect.call_count += 1
@@ -446,7 +446,7 @@ class TestTeamManagementService:
             mock_query = MagicMock()
             if model == EmailUser:
                 mock_query.filter.return_value.first.return_value = mock_user
-            elif model == EmailTeamMember:
+            elif model == UserRole:
                 mock_query.filter.return_value.first.return_value = mock_membership
             return mock_query
 
@@ -467,7 +467,7 @@ class TestTeamManagementService:
             mock_query = MagicMock()
             if model == EmailUser:
                 mock_query.filter.return_value.first.return_value = mock_user
-            elif model == EmailTeamMember:
+            elif model == UserRole:
                 if not hasattr(query_side_effect, "call_count"):
                     query_side_effect.call_count = 0
                 query_side_effect.call_count += 1
@@ -610,7 +610,7 @@ class TestTeamManagementService:
     @pytest.mark.asyncio
     async def test_get_team_members(self, service, mock_db):
         """Test getting team members."""
-        mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=EmailTeamMember)) for _ in range(3)]
+        mock_members = [(MagicMock(spec=EmailUser), MagicMock(spec=UserRole)) for _ in range(3)]
 
         mock_query = MagicMock()
         mock_query.join.return_value.filter.return_value.all.return_value = mock_members
@@ -619,12 +619,12 @@ class TestTeamManagementService:
         result = await service.get_team_members("team123")
 
         assert result == mock_members
-        mock_db.query.assert_called_once_with(EmailUser, EmailTeamMember)
+        mock_db.query.assert_called_once_with(EmailUser, UserRole)
 
     @pytest.mark.asyncio
     async def test_get_user_role_in_team(self, service, mock_db):
         """Test getting user role in team."""
-        mock_membership = MagicMock(spec=EmailTeamMember)
+        mock_membership = MagicMock(spec=UserRole)
         mock_membership.role = "team_member"
 
         mock_query = MagicMock()
@@ -712,7 +712,7 @@ class TestTeamManagementService:
             mock_query = MagicMock()
             if model == EmailUser:
                 mock_query.filter.return_value.first.return_value = mock_user
-            elif model == EmailTeamMember:
+            elif model == UserRole:
                 if not hasattr(query_side_effect, "call_count"):
                     query_side_effect.call_count = 0
                 query_side_effect.call_count += 1
