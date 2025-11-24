@@ -38,6 +38,7 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.models import AppliedTo
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload, ResourcePostFetchPayload
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -390,6 +391,7 @@ class OPAPluginFilter(Plugin):
             if opa_post_tool_input and policy_modality:
                 result = dict.fromkeys(policy_modality, [])
 
+                # Handle result
                 if isinstance(payload.result, dict):
                     content = payload.result["content"] if "content" in payload.result else payload.result
                     for key in policy_modality:
