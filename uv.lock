@@ -2718,6 +2718,19 @@ wheels = [
 ]
 
 [[package]]
+name = "langchain-ibm"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "ibm-watsonx-ai" },
+    { name = "langchain-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3f/49/e83d41cab8bf5f8e804398c9d755aeaa90686778839b9f7cf81fa674d634/langchain_ibm-1.0.1.tar.gz", hash = "sha256:1418e65dd00f4ed5dc9afc565bd46ef60dffe2b06b3ef9fcd57a98df793c0f23", size = 60230, upload-time = "2025-11-13T13:34:39.982Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/6f/01aa98c144e19315e7aa374092c7b775aa1c2eb803d657581224f6d3f08b/langchain_ibm-1.0.1-py3-none-any.whl", hash = "sha256:5cb1e795e61174c1b62b9236c9a1f8f19f59c9d7f5912a1549e8c471970f33b1", size = 49665, upload-time = "2025-11-13T13:34:38.572Z" },
+]
+
+[[package]]
 name = "langchain-mcp-adapters"
 version = "0.1.12"
 source = { registry = "https://pypi.org/simple" }
@@ -3269,6 +3282,7 @@ toolops = [
     { name = "agent-lifecycle-toolkit" },
     { name = "fastmcp" },
     { name = "langchain-core" },
+    { name = "langchain-ibm" },
     { name = "langchain-mcp-adapters" },
     { name = "langchain-ollama" },
     { name = "langchain-openai" },
@@ -3374,6 +3388,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.25.1" },
     { name = "langchain-core", marker = "extra == 'llmchat'", specifier = ">=1.0.4" },
     { name = "langchain-core", marker = "extra == 'toolops'", specifier = ">=1.0.4" },
+    { name = "langchain-ibm", marker = "extra == 'toolops'", specifier = ">=1.0.1" },
     { name = "langchain-mcp-adapters", marker = "extra == 'llmchat'", specifier = ">=0.1.12" },
     { name = "langchain-mcp-adapters", marker = "extra == 'toolops'", specifier = ">=0.1.12" },
     { name = "langchain-ollama", marker = "extra == 'llmchat'", specifier = ">=1.0.0" },

@@ -75,7 +75,7 @@ except ImportError:
 
 try:
     # Third-Party
-    from langchain_ibm import WatsonxLLM,ChatWatsonx
+    from langchain_ibm import ChatWatsonx, WatsonxLLM
 
     _WATSONX_AVAILABLE = True
 except ImportError:
@@ -1292,12 +1292,15 @@ class WatsonxProvider:
         self.llm = None
         logger.info(f"Initializing IBM watsonx.ai provider with model {config.model_id}")
 
-    def get_llm(self, model_type = 'chat') -> Union[WatsonxLLM,ChatWatsonx]:
+    def get_llm(self, model_type="chat") -> Union[WatsonxLLM, ChatWatsonx]:
         """
         Get IBM watsonx.ai LLM instance with lazy initialization.
 
         Creates and caches the watsonx LLM instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             WatsonxLLM: Configured IBM watsonx.ai LLM model.
@@ -1329,7 +1332,7 @@ class WatsonxProvider:
                     params["top_k"] = self.config.top_k
                 if self.config.top_p is not None:
                     params["top_p"] = self.config.top_p
-                if model_type == 'completion':
+                if model_type == "completion":
                     # Initialize WatsonxLLM
                     self.llm = WatsonxLLM(
                         apikey=self.config.api_key,
@@ -1338,7 +1341,7 @@ class WatsonxProvider:
                         model_id=self.config.model_id,
                         params=params,
                     )
-                elif model_type == 'chat':
+                elif model_type == "chat":
                     # Initialize Chat WatsonxLLM
                     self.llm = ChatWatsonx(
                         apikey=self.config.api_key,

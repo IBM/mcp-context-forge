@@ -193,6 +193,7 @@ toolops = [
     "langchain-mcp-adapters>=0.1.12",
     "langchain-ollama>=1.0.0",
     "langchain-openai>=1.0.2",
+    "langchain-ibm>=1.0.1",
     "langgraph>=1.0.2",
     "agent-lifecycle-toolkit>=0.7.0",
     "fastmcp>=2.13.1",
