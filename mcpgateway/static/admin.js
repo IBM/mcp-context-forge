@@ -8965,17 +8965,17 @@ async function loadTools() {
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                        <button onclick="validateTool('${id}')"
-                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
-                        Validate
+                        <button onclick="enrichTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
+                        Enrich
                         </button>
                         <button onclick="generateToolTestCases('${id}')"
-                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:bg-purple-50">
+                        class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                         Generate Test Cases
                         </button>
-                        <button onclick="enrichTool('${id}')"
+                        <button onclick="validateTool('${id}')"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
-                        Enrich
+                        Validate
                         </button>
                         <button onclick="viewTool('${id}')"
                         class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
