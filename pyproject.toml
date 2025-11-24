@@ -109,6 +109,7 @@ dev = [
     "importchecker>=3.0",
     "interrogate>=1.7.0",
     "isort>=6.1.0",
+    "mcp-contextforge-gateway[playwright]",
     "mypy>=1.18.2",
     "pexpect>=4.9.0",
     "pip-licenses>=5.0.0",
@@ -685,3 +686,11 @@ quiet = false
 whitelist-regex = []
 color = true
 omit-covered-files = false
+
+[tool.uv.workspace]
+members = [
+    ".",
+]
+
+[tool.uv.sources]
+mcp-contextforge-gateway = { workspace = true }
