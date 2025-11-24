@@ -1103,12 +1103,16 @@ class ToolService:
 
                 db.commit()
                 db.refresh(tool)
-                if activate:
-                    await self._notify_tool_activated(tool)
-                else:
+                
+                if not tool.enabled:
+                    # Inactive
                     await self._notify_tool_deactivated(tool)
-
-                await self._notify_tool_status_changed(tool)
+                elif tool.enabled and not tool.reachable:
+                    # Offline
+                    await self._notify_tool_offline(tool)
+                else:
+                    # Active
+                    await self._notify_tool_activated(tool)
                 
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
@@ -1710,7 +1714,12 @@ class ToolService:
         """
         event = {
             "type": "tool_activated",
-            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled},
+            "data": {
+                "id": tool.id, 
+                "name": tool.name, 
+                "enabled": tool.enabled, 
+                "reachable": tool.reachable
+                },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1724,7 +1733,31 @@ class ToolService:
         """
         event = {
             "type": "tool_deactivated",
-            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled},
+            "data": {
+                "id": tool.id, 
+                "name": tool.name, 
+                "enabled": tool.enabled,
+                "reachable": tool.reachable
+                },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_tool_offline(self, tool: DbTool) -> None:
+        """
+        Notify subscribers that tool is offline.
+
+        Args:
+            tool: Tool database object
+        """
+        event = {
+            "type": "tool_offline",
+            "data": {
+                "id": tool.id,
+                "name": tool.name,
+                "enabled": True,
+                "reachable": False,
+            },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1743,25 +1776,6 @@ class ToolService:
         }
         await self._publish_event(event)
 
-    async def _notify_tool_status_changed(self, tool: DbTool) -> None:
-        """
-        Notify subscribers of tool status change (enabled/reachable).
-        
-        Args:
-            gateway: Tool database object
-        """
-        event = {
-            "type": "tool_status_changed",
-            "data": {
-                "id": tool.id,
-                "name": tool.name,
-                "url": tool.url,
-                "enabled": tool.enabled,
-                "reachable": tool.reachable,
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        await self._publish_event(event)
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to tool events via the EventService.

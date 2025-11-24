@@ -21028,18 +21028,16 @@ function initializeRealTimeMonitoring() {
     const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
 
     // --- Gateway Events ---
-    // Listen for comprehensive status changes
-    eventSource.addEventListener("gateway_status_changed", (e) => handleEntityEvent("gateway", e));
-    // Keep legacy listeners just in case backend sends them
+    // Handlers for specific states
     eventSource.addEventListener("gateway_activated", (e) => handleEntityEvent("gateway", e));
     eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_offline", (e) => handleEntityEvent("gateway", e));
 
     // --- Tool Events ---
-    // Listen for comprehensive status changes
-    eventSource.addEventListener("tool_status_changed", (e) => handleEntityEvent("tool", e));
-    // Keep legacy listeners
+    // Handlers for specific states
     eventSource.addEventListener("tool_activated", (e) => handleEntityEvent("tool", e));
     eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_offline", (e) => handleEntityEvent("tool", e));
 
     eventSource.onopen = () => console.log("✅ SSE Connected for Real-time Monitoring");
     eventSource.onerror = (err) => console.warn("⚠️ SSE Connection issue, retrying...", err);
@@ -21051,7 +21049,8 @@ function initializeRealTimeMonitoring() {
 function handleEntityEvent(type, event) {
     try {
         const data = JSON.parse(event.data);
-        console.log(`Received ${type} update:`, data);
+        // Log the specific event type for debugging
+        // console.log(`Received ${type} event [${event.type}]:`, data);
         updateEntityStatus(type, data);
     } catch (err) {
         console.error(`Error processing ${type} event:`, err);
@@ -21061,24 +21060,43 @@ function handleEntityEvent(type, event) {
 /**
  * Updates the status badge and action buttons for a row
  */
+
 function updateEntityStatus(type, data) {
     let row = null;
 
     if (type === 'gateway') {
-        // Gateways usually have explicit IDs: <tr id="gateway-row-123">
+        // Gateways usually have explicit IDs
         row = document.getElementById(`gateway-row-${data.id}`);
     } else if (type === 'tool') {
-        // Tools often lack IDs in HTMX partials. 
-        // FALLBACK: Find row by matching UUID in the first column.
-        const panel = document.getElementById('tools-panel');
-        if (panel) {
-            // The UUID is typically in the first <td> of the tbody rows
-            const rows = panel.querySelectorAll('table tbody tr');
-            for (const tr of rows) {
-                const firstCell = tr.querySelector('td:first-child');
-                if (firstCell && firstCell.textContent.trim() === data.id) {
-                    row = tr;
-                    break;
+        // 1. Try explicit ID (fastest)
+        row = document.getElementById(`tool-row-${data.id}`);
+        
+        // 2. Fallback: Search rows by looking for the ID in Action buttons
+        if (!row) {
+            const panel = document.getElementById('tools-panel');
+            if (panel) {
+                const rows = panel.querySelectorAll('table tbody tr');
+                for (const tr of rows) {
+                    // Check data attribute if present
+                    if (tr.dataset.toolId === data.id) {
+                        row = tr;
+                        break;
+                    }
+
+                    // Check innerHTML for the UUID in action attributes
+                    const html = tr.innerHTML;
+                    if (html.includes(data.id)) {
+                        // Verify it's likely an ID usage (in quotes or url path)
+                        if (html.includes(`'${data.id}'`) || 
+                            html.includes(`"${data.id}"`) || 
+                            html.includes(`/${data.id}/`)) {
+                            
+                            row = tr;
+                            // Optimization: Set ID on row for next time
+                            tr.id = `tool-row-${data.id}`;
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -21089,37 +21107,42 @@ function updateEntityStatus(type, data) {
         return;
     }
 
-    // Determine column indices based on type (from admin.html structure)
-    // Gateway: Status is 5th col (index 4), Actions is 10th col (index 9)
-    // Tool: Status is 6th col (index 5), Actions is 7th col (index 6)
-    let statusCell, actionCell;
+    // Dynamically find Status and Action columns
+    const table = row.closest('table');
+    let statusIndex = -1;
+    let actionIndex = -1;
 
-    if (type === 'gateway') {
-        statusCell = row.children[4];
-        actionCell = row.children[9]; 
-    } else if (type === 'tool') {
-        statusCell = row.children[5];
-        actionCell = row.children[6];
+    if (table) {
+        const headers = table.querySelectorAll('thead th');
+        headers.forEach((th, index) => {
+            const text = th.textContent.trim().toLowerCase();
+            if (text === 'status') statusIndex = index;
+            if (text === 'actions') actionIndex = index;
+        });
     }
+
+    // Fallback indices if headers aren't found
+    if (statusIndex === -1) statusIndex = type === 'gateway' ? 4 : 5;
+    if (actionIndex === -1) actionIndex = type === 'gateway' ? 9 : 6;
+
+    const statusCell = row.children[statusIndex];
+    const actionCell = row.children[actionIndex];
 
     // --- 1. Update Status Badge ---
     if (statusCell) {
-        // Normalize property names (backend might send 'enabled' or 'isActive')
         const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
-        
-        // Check for reachability. Default to true if missing (assumes legacy events implies reachable)
         const isReachable = data.reachable !== undefined ? data.reachable : true; 
         
         statusCell.innerHTML = generateStatusBadgeHtml(isEnabled, isReachable, type);
         
-        // Add a visual flash effect to indicate update
+        // Flash effect
         statusCell.classList.add('bg-blue-50', 'dark:bg-blue-900', 'transition-colors', 'duration-500');
         setTimeout(() => {
             statusCell.classList.remove('bg-blue-50', 'dark:bg-blue-900');
         }, 1000);
     }
 
-    // --- 2. Update Action Buttons (Activate/Deactivate) ---
+    // --- 2. Update Action Buttons ---
     if (actionCell) {
         const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
         updateEntityActionButtons(actionCell, type, data.id, isEnabled);
@@ -21168,17 +21191,17 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
 /**
  * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
  */
+
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
     const form = cell.querySelector('form[action*="/toggle"]');
     if (!form) return;
     
-    // Determine collection name for the URL (gateways or tools)
-    const collectionName = type + 's'; 
-
-    // Replace the inner HTML of the form to switch the button
+    // The HTML structure for the button
+    // Ensure we are flipping the button state correctly based on isEnabled
+    
     if (isEnabled) {
-        // Show Deactivate Button
+        // If Enabled -> Show Deactivate Button
         form.innerHTML = `
             <input type="hidden" name="activate" value="false" />
             <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this item'">
@@ -21186,7 +21209,7 @@ function updateEntityActionButtons(cell, type, id, isEnabled) {
             </button>
         `;
     } else {
-        // Show Activate Button
+        // If Disabled -> Show Activate Button
         form.innerHTML = `
             <input type="hidden" name="activate" value="true" />
             <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'💡Re-enable this item'">

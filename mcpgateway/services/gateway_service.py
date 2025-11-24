@@ -1675,8 +1675,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
-                # Notify status change
-                await self._notify_gateway_status_changed(gateway)
+                # Notify Subscribers
+                if not gateway.enabled:
+                    # Inactive
+                    await self._notify_gateway_deactivated(gateway)
+                elif gateway.enabled and not gateway.reachable:
+                    # Offline (Enabled but Unreachable)
+                    await self._notify_gateway_offline(gateway)
+                else:
+                    # Active (Enabled and Reachable)
+                    await self._notify_gateway_activated(gateway)
 
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
@@ -1687,12 +1695,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     for tool in tools:
                         await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
 
-                # Notify subscribers
-                if activate:
-                    await self._notify_gateway_activated(gateway)
-                else:
-                    await self._notify_gateway_deactivated(gateway)
-
+        
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
@@ -1719,46 +1722,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "url": gateway.url,
                 "description": gateway.description,
                 "enabled": gateway.enabled,
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        await self._publish_event(event)
-
-    async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway update.
-
-        Args:
-            gateway: Gateway to update
-        """
-        event = {
-            "type": "gateway_updated",
-            "data": {
-                "id": gateway.id,
-                "name": gateway.name,
-                "url": gateway.url,
-                "description": gateway.description,
-                "enabled": gateway.enabled,
-            },
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        }
-        await self._publish_event(event)
-
-    async def _notify_gateway_status_changed(self, gateway: DbGateway) -> None:
-        """
-        Notify subscribers of gateway status change (enabled/reachable).
-        
-        Args:
-            gateway: Gateway database object
-        """
-        event = {
-            "type": "gateway_status_changed",
-            "data": {
-                "id": gateway.id,
-                "name": gateway.name,
-                "url": gateway.url,
-                "enabled": gateway.enabled,
-                "reachable": gateway.reachable,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2821,6 +2784,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "name": gateway.name,
                 "url": gateway.url,
                 "enabled": gateway.enabled,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_gateway_offline(self, gateway: DbGateway) -> None:
+        """
+        Notify subscribers that gateway is offline (Enabled but Unreachable).
+
+        Args:
+            gateway: Gateway database object
+        """
+        event = {
+            "type": "gateway_offline",
+            "data": {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "enabled": True,
+                "reachable": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
