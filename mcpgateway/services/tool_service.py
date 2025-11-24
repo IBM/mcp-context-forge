@@ -67,6 +67,8 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.structured_logger import get_structured_logger, LogCategory
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -81,6 +83,10 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize performance tracker and structured logger for tool operations
+perf_tracker = get_performance_tracker()
+structured_logger = get_structured_logger("tool_service")
 
 
 def extract_using_jq(data, jq_filter=""):
@@ -1448,11 +1454,74 @@ class ToolService:
                         Returns:
                             ToolResult: Result of tool call
                         """
-                        async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                            async with ClientSession(*streams) as session:
-                                await session.initialize()
-                                tool_call_result = await session.call_tool(tool.original_name, arguments)
-                        return tool_call_result
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+                        
+                        # Add correlation ID to headers
+                        if correlation_id and headers:
+                            headers["X-Correlation-ID"] = correlation_id
+                        
+                        # Log MCP call start
+                        mcp_start_time = time.time()
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"MCP tool call started: {tool.original_name}",
+                            component="tool_service",
+                            correlation_id=correlation_id,
+                            metadata={
+                                "event": "mcp_call_started",
+                                "tool_name": tool.original_name,
+                                "tool_id": tool.id,
+                                "server_url": server_url,
+                                "transport": "sse"
+                            }
+                        )
+                        
+                        try:
+                            async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                                async with ClientSession(*streams) as session:
+                                    await session.initialize()
+                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+                            
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={
+                                    "event": "mcp_call_completed",
+                                    "tool_name": tool.original_name,
+                                    "tool_id": tool.id,
+                                    "transport": "sse",
+                                    "success": True
+                                }
+                            )
+                            
+                            return tool_call_result
+                        except Exception as e:
+                            # Log failed MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={
+                                    "error_type": type(e).__name__,
+                                    "error_message": str(e)
+                                },
+                                metadata={
+                                    "event": "mcp_call_failed",
+                                    "tool_name": tool.original_name,
+                                    "tool_id": tool.id,
+                                    "transport": "sse"
+                                }
+                            )
+                            raise
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -1464,11 +1533,74 @@ class ToolService:
                         Returns:
                             ToolResult: Result of tool call
                         """
-                        async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                await session.initialize()
-                                tool_call_result = await session.call_tool(tool.original_name, arguments)
-                        return tool_call_result
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+                        
+                        # Add correlation ID to headers
+                        if correlation_id and headers:
+                            headers["X-Correlation-ID"] = correlation_id
+                        
+                        # Log MCP call start
+                        mcp_start_time = time.time()
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"MCP tool call started: {tool.original_name}",
+                            component="tool_service",
+                            correlation_id=correlation_id,
+                            metadata={
+                                "event": "mcp_call_started",
+                                "tool_name": tool.original_name,
+                                "tool_id": tool.id,
+                                "server_url": server_url,
+                                "transport": "streamablehttp"
+                            }
+                        )
+                        
+                        try:
+                            async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+                            
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={
+                                    "event": "mcp_call_completed",
+                                    "tool_name": tool.original_name,
+                                    "tool_id": tool.id,
+                                    "transport": "streamablehttp",
+                                    "success": True
+                                }
+                            )
+                            
+                            return tool_call_result
+                        except Exception as e:
+                            # Log failed MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={
+                                    "error_type": type(e).__name__,
+                                    "error_message": str(e)
+                                },
+                                metadata={
+                                    "event": "mcp_call_failed",
+                                    "tool_name": tool.original_name,
+                                    "tool_id": tool.id,
+                                    "transport": "streamablehttp"
+                                }
+                            )
+                            raise
 
                     tool_gateway_id = tool.gateway_id
                     tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1548,11 +1680,51 @@ class ToolService:
                     span.set_attribute("error.message", str(e))
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
+                # Calculate duration
+                duration_ms = (time.monotonic() - start_time) * 1000
+                
                 # Add final span attributes
                 if span:
                     span.set_attribute("success", success)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    span.set_attribute("duration.ms", duration_ms)
+                
+                # Record tool metric
                 await self._record_tool_metric(db, tool, start_time, success, error_message)
+                
+                # Log structured message with performance tracking
+                if success:
+                    structured_logger.info(
+                        f"Tool '{name}' invoked successfully",
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=str(tool.id),
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={
+                            "tool_name": name,
+                            "integration_type": tool.integration_type,
+                            "arguments_count": len(arguments) if arguments else 0
+                        }
+                    )
+                else:
+                    structured_logger.error(
+                        f"Tool '{name}' invocation failed",
+                        error=Exception(error_message) if error_message else None,
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=str(tool.id),
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={
+                            "tool_name": name,
+                            "integration_type": tool.integration_type,
+                            "error_message": error_message
+                        }
+                    )
+                
+                # Track performance with threshold checking
+                with perf_tracker.track_operation("tool_invocation", name):
+                    pass  # Duration already captured above
 
     async def update_tool(
         self,

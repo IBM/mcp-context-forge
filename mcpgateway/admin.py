@@ -118,6 +118,8 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
@@ -12536,6 +12538,7 @@ async def list_plugins(
         HTTPException: If there's an error retrieving plugins
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin list")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12556,10 +12559,41 @@ async def list_plugins(
         enabled_count = sum(1 for p in plugins if p["status"] == "enabled")
         disabled_count = sum(1 for p in plugins if p["status"] == "disabled")
 
+        # Log plugin marketplace browsing activity
+        structured_logger.info(
+            f"User browsed plugin marketplace",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_list",
+            resource_action="browse",
+            custom_fields={
+                "search_query": search,
+                "filter_mode": mode,
+                "filter_hook": hook,
+                "filter_tag": tag,
+                "results_count": len(plugins),
+                "enabled_count": enabled_count,
+                "disabled_count": disabled_count,
+                "has_filters": any([search, mode, hook, tag])
+            },
+            db=db
+        )
+
         return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
+        structured_logger.error(
+            f"Failed to list plugins in marketplace",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            error=e,
+            component="plugin_marketplace",
+            category="business_logic",
+            db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12579,6 +12613,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         HTTPException: If there's an error getting plugin statistics
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin statistics")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12592,10 +12627,39 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Get statistics
         stats = plugin_service.get_plugin_statistics()
 
+        # Log marketplace analytics access
+        structured_logger.info(
+            f"User accessed plugin marketplace statistics",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_stats",
+            resource_action="view",
+            custom_fields={
+                "total_plugins": stats.get("total_plugins", 0),
+                "enabled_plugins": stats.get("enabled_plugins", 0),
+                "disabled_plugins": stats.get("disabled_plugins", 0),
+                "hooks_count": len(stats.get("plugins_by_hook", {})),
+                "tags_count": len(stats.get("plugins_by_tag", {})),
+                "authors_count": len(stats.get("plugins_by_author", {}))
+            },
+            db=db
+        )
+
         return PluginStatsResponse(**stats)
 
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
+        structured_logger.error(
+            f"Failed to get plugin marketplace statistics",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            error=e,
+            component="plugin_marketplace",
+            category="business_logic",
+            db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12616,6 +12680,8 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         HTTPException: If plugin not found
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for plugin {name}")
+    structured_logger = get_structured_logger()
+    audit_service = get_audit_trail_service()
 
     try:
         # Get plugin service
@@ -12630,7 +12696,49 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin = plugin_service.get_plugin_by_name(name)
 
         if not plugin:
+            structured_logger.warning(
+                f"Plugin '{name}' not found in marketplace",
+                user_id=str(user.id),
+                user_email=get_user_email(user),
+                component="plugin_marketplace",
+                category="business_logic",
+                custom_fields={"plugin_name": name, "action": "view_details"},
+                db=db
+            )
             raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+        # Log plugin view activity
+        structured_logger.info(
+            f"User viewed plugin details: '{name}'",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin",
+            resource_id=name,
+            resource_action="view_details",
+            custom_fields={
+                "plugin_name": name,
+                "plugin_version": plugin.get("version"),
+                "plugin_author": plugin.get("author"),
+                "plugin_status": plugin.get("status"),
+                "plugin_mode": plugin.get("mode"),
+                "plugin_hooks": plugin.get("hooks", []),
+                "plugin_tags": plugin.get("tags", [])
+            },
+            db=db
+        )
+
+        # Create audit trail for plugin access
+        audit_service.log_audit(
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            resource_type="plugin",
+            resource_id=name,
+            action="view",
+            description=f"Viewed plugin '{name}' details in marketplace",
+            db=db
+        )
 
         return PluginDetail(**plugin)
 
@@ -12638,6 +12746,15 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         raise
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
+        structured_logger.error(
+            f"Failed to get plugin details: '{name}'",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            error=e,
+            component="plugin_marketplace",
+            category="business_logic",
+            db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
