@@ -1172,11 +1172,11 @@ if plugin_manager:
     app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
     logger.info("🔌 HTTP authentication hooks enabled for plugins")
 
-# Add correlation ID middleware if enabled
-# Note: Registered AFTER HttpAuthMiddleware so it executes FIRST (middleware runs in LIFO order)
-if settings.correlation_id_enabled:
-    app.add_middleware(CorrelationIDMiddleware)
-    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
+# Add request logging middleware FIRST (always enabled for gateway boundary logging)
+# IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
+# Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
+# Detailed payload logging only runs if log_detailed_requests=True
+app.add_middleware(RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -1184,9 +1184,11 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Add request logging middleware if enabled
-if settings.log_requests:
-    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
+# Add correlation ID middleware if enabled
+# Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
+if settings.correlation_id_enabled:
+    app.add_middleware(CorrelationIDMiddleware)
+    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
@@ -4987,6 +4989,19 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+
+# Include log search router if structured logging is enabled
+if getattr(settings, "structured_logging_enabled", True):
+    try:
+        # First-Party
+        from mcpgateway.routers.log_search import router as log_search_router
+        
+        app.include_router(log_search_router)
+        logger.info("Log search router included - structured logging enabled")
+    except ImportError as e:
+        logger.warning(f"Failed to import log search router: {e}")
+else:
+    logger.info("Log search router not included - structured logging disabled")
 
 # Conditionally include observability router if enabled
 if settings.observability_enabled:
