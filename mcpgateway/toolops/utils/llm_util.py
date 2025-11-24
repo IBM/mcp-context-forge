@@ -29,7 +29,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     OpenAIConfig,
     OpenAIProvider,
     WatsonxConfig,
-    WatsonxProvider
+    WatsonxProvider,
 )
 
 logging_service = LoggingService()
@@ -38,7 +38,7 @@ logger = logging_service.get_logger(__name__)
 load_dotenv()
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
-TOOLOPS_TEMPERATURE = 0.1
+TOOLOPS_TEMPERATURE = 0.0
 
 
 def get_llm_instance(model_type="completion"):
@@ -145,14 +145,14 @@ def get_llm_instance(model_type="completion"):
             # ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
             ollama_temeperature = TOOLOPS_TEMPERATURE
             llm_config = OllamaConfig(base_url=ollama_url, model=ollama_model, temperature=ollama_temeperature, timeout=None, num_ctx=None)
-        elif llm_provider == 'watsonx':
+        elif llm_provider == "watsonx":
             wx_api_key = os.getenv("WATSONX_APIKEY", "")
             wx_base_url = os.getenv("WATSONX_URL", "")
             wx_model = os.getenv("WATSONX_MODEL_ID", "")
-            wx_project_id = os.getenv("WATSONX_PROJECT_ID","")
+            wx_project_id = os.getenv("WATSONX_PROJECT_ID", "")
             wx_temperature = TOOLOPS_TEMPERATURE
             wx_max_tokens = int(os.getenv("WATSONX_MAX_NEW_TOKENS", "1000"))
-            wx_decoding_method = os.getenv("WATSONX_DECODING_METHOD","greedy")
+            wx_decoding_method = os.getenv("WATSONX_DECODING_METHOD", "greedy")
             llm_config = WatsonxConfig(
                 api_key=wx_api_key,
                 url=wx_base_url,
@@ -197,5 +197,10 @@ def execute_prompt(prompt):
 
 
 if __name__ == "__main__":
-    print(execute_prompt("what is India capital city"))
-    print(chat_llm_instance.invoke("what is India capital city"))
+    prompt = "what is India capital city?"
+    print("Prompt : ", prompt)
+    print("Text completion output : ")
+    print(execute_prompt(prompt))
+    response = chat_llm_instance.invoke(prompt)
+    print("Chat completion output : ")
+    print(response.content)

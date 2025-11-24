@@ -100,11 +100,7 @@ class TimeOffRequest(BaseModel):
 
     user_id: str = Field(..., description="User ID in SAP SuccessFactors")
     start_date: str = Field(..., description="Start date in YYYY-MM-DD format", example="2024-01-01")
-    end_date: Optional[str] = Field(
-        None,
-        description="End date in YYYY-MM-DD format",
-        example="2024-01-05"
-    )
+    end_date: Optional[str] = Field(None, description="End date in YYYY-MM-DD format", example="2024-01-05")
     time_off_types: List[TimeOffTypes] = Field(..., description="List of time off types to retrieve")
 
     class Config:
