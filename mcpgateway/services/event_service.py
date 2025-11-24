@@ -26,18 +26,29 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 class EventService:
-    """
-    Generic Event Service handling Redis PubSub with Local Queue fallback.
-    Replicates the logic from GatewayService for use in other services.
+    """Generic Event Service handling Redis PubSub with Local Queue fallback.
+
+    Replicates the logic from GatewayService for use in other services. It attempts
+    to connect to Redis for a distributed event bus. If Redis is unavailable or
+    configured to perform locally, it falls back to asyncio.Queue for in-process
+    communication.
+
+    Attributes:
+        channel_name (str): The specific Redis/Queue channel identifier.
+        redis_url (Optional[str]): The URL for the Redis connection.
     """
 
     def __init__(self, channel_name: str) -> None:
-        """
-        Initialize the Event Service.
-        
+        """Initialize the Event Service.
+
         Args:
             channel_name: The specific Redis channel to use (e.g., 'mcpgateway:tool_events')
-                          to ensure separation of services.
+                to ensure separation of services.
+
+        Example:
+            >>> service = EventService("test:channel")
+            >>> service.channel_name
+            'test:channel'
         """
         self.channel_name = channel_name
         self._event_subscribers: List[asyncio.Queue] = []
@@ -55,8 +66,32 @@ class EventService:
                 self._redis_client = None
 
     async def publish_event(self, event: Dict[str, Any]) -> None:
-        """
-        Publish event to Redis or fallback to local subscribers.
+        """Publish event to Redis or fallback to local subscribers.
+
+        If a Redis client is active, the event is serialized to JSON and published
+        to the configured channel. If Redis fails or is inactive, the event is
+        pushed to all registered local asyncio queues.
+
+        Args:
+            event: A dictionary containing the event data to be published.
+
+        Returns:
+            None
+
+        Example:
+            >>> import asyncio
+            >>> async def test_pub():
+            ...     # Force local mode for test
+            ...     service = EventService("test:pub")
+            ...     service._redis_client = None 
+            ...     # Create a listener
+            ...     queue = asyncio.Queue()
+            ...     service._event_subscribers.append(queue)
+            ...     
+            ...     await service.publish_event({"type": "test", "data": 123})
+            ...     return await queue.get()
+            >>> asyncio.run(test_pub())
+            {'type': 'test', 'data': 123}
         """
         if self._redis_client:
             try:
@@ -72,8 +107,41 @@ class EventService:
                 await queue.put(event)
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """
-        Subscribe to events. Yields events as they are published.
+        """Subscribe to events. Yields events as they are published.
+
+        If Redis is available, this creates a dedicated async Redis connection
+        and yields messages from the PubSub channel. If Redis is not available,
+        it creates a local asyncio.Queue, adds it to the subscriber list, and
+        yields items put into that queue.
+
+        Yields:
+            Dict[str, Any]: The deserialized event data.
+
+        Raises:
+            asyncio.CancelledError: If the async task is cancelled.
+            Exception: For underlying Redis connection errors.
+
+        Example:
+            >>> import asyncio
+            >>> async def test_sub():
+            ...     service = EventService("test:sub")
+            ...     service._redis_client = None # Force local mode
+            ...
+            ...     # Producer task
+            ...     async def produce():
+            ...         await asyncio.sleep(0.1)
+            ...         await service.publish_event({"msg": "hello"})
+            ...
+            ...     # Consumer task
+            ...     async def consume():
+            ...         async for event in service.subscribe_events():
+            ...             return event
+            ...
+            ...     # Run both
+            ...     _, event = await asyncio.gather(produce(), consume())
+            ...     return event
+            >>> asyncio.run(test_sub())
+            {'msg': 'hello'}
         """
         # If Redis Available
         if self._redis_client:
@@ -124,7 +192,19 @@ class EventService:
                     self._event_subscribers.remove(queue)
 
     async def shutdown(self):
-        """Cleanup resources."""
+        """Cleanup resources.
+        
+        Closes the synchronous Redis client connection and clears local subscribers.
+
+        Example:
+            >>> import asyncio
+            >>> async def test_shutdown():
+            ...     service = EventService("test:shutdown")
+            ...     await service.shutdown()
+            ...     return len(service._event_subscribers) == 0
+            >>> asyncio.run(test_shutdown())
+            True
+        """
         if self._redis_client:
             # Sync client doesn't always need explicit close in this context, 
             # but good practice to clear references.
