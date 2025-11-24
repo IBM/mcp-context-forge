@@ -36,6 +36,7 @@ from typing import cast as typing_cast
 from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
+import asyncio
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -9772,6 +9773,46 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
+
+@admin_router.get("/events")
+async def admin_events(
+    request: Request,
+    _user=Depends(get_current_user_with_permissions)
+):
+    """Stream admin events via SSE."""
+
+    # Subscribe to live events here, these events are sent and consumed by the UI.
+    async def event_generator():
+        try:
+            # The service for updating the Gateway Status real-time for health checks
+            async for event in gateway_service.subscribe_events():
+                if await request.is_disconnected():
+                    LOGGER.debug("SSE Client disconnected")
+                    break
+                
+                # SSE format: 
+                # event: <type>
+                # data: <json_payload>
+                # \n
+                event_type = event.get("type", "message")
+                event_data = json.dumps(event.get("data", {}))
+
+                yield f"event: {event_type}\ndata: {event_data}\n\n"
+                
+        except asyncio.CancelledError:
+            LOGGER.debug("SSE Stream cancelled")
+        except Exception as e:
+            LOGGER.error(f"SSE Stream error: {e}")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no", 
+        }
+    )
 
 ####################
 # Admin Tag Routes #

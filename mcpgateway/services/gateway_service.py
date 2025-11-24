@@ -49,6 +49,7 @@ import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
+import json
 
 # Third-Party
 from filelock import FileLock, Timeout
@@ -322,6 +323,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self.tool_service = ToolService()
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self._redis_pubsub = None
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
@@ -413,6 +415,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             pong = self._redis_client.ping()
             if not pong:
                 raise ConnectionError("Redis ping failed.")
+
+            try:
+                self._redis_pubsub = self._redis_client.pubsub()
+                self._redis_pubsub.subscribe("mcpgateway:events")
+            except Exception as e:
+                logger.warning(f"Failed to setup Redis PubSub: {e}")
 
             is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
@@ -1667,6 +1675,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Notify status change
+                await self._notify_gateway_status_changed(gateway)
+
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
                 if only_update_reachable:
@@ -1708,6 +1719,46 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "url": gateway.url,
                 "description": gateway.description,
                 "enabled": gateway.enabled,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
+        """
+        Notify subscribers of gateway update.
+
+        Args:
+            gateway: Gateway to update
+        """
+        event = {
+            "type": "gateway_updated",
+            "data": {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "description": gateway.description,
+                "enabled": gateway.enabled,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_gateway_status_changed(self, gateway: DbGateway) -> None:
+        """
+        Notify subscribers of gateway status change (enabled/reachable).
+        
+        Args:
+            gateway: Gateway database object
+        """
+        event = {
+            "type": "gateway_status_changed",
+            "data": {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "enabled": gateway.enabled,
+                "reachable": gateway.reachable,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2403,14 +2454,52 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> asyncio.run(test_event())
             'test'
         """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+        # If Redis Available
+        if self._redis_client:
+            try:
+                # We import asyncio version of redis here to avoid top-level dependency issues
+                # if the environment is mixed.
+                import redis.asyncio as aioredis
+                
+                # Create a dedicated async connection for this subscription
+                client = aioredis.from_url(self.redis_url, decode_responses=True)
+                pubsub = client.pubsub()
+                
+                await pubsub.subscribe("mcpgateway:events")
+                
+                try:
+                    async for message in pubsub.listen():
+                        if message["type"] == "message":
+                            # Yield the data portion
+                            yield json.loads(message["data"])
+                except asyncio.CancelledError:
+                    # Handle client disconnection
+                    raise
+                except Exception as e:
+                    logger.error(f"Redis subscription error: {e}")
+                    # Fallback logic could go here, but usually we just stop
+                    raise
+                finally:
+                    # Cleanup
+                    await pubsub.unsubscribe("mcpgateway:events")
+                    await client.aclose()
+            except ImportError:
+                logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
+                # Fallthrough to queue mode if import fails
+        
+        # Local Queue (Redis not available or import failed)
+        if not (self.redis_url and REDIS_AVAILABLE):
+            queue: asyncio.Queue = asyncio.Queue()
+            self._event_subscribers.append(queue)
+            try:
+                while True:
+                    event = await queue.get()
+                    yield event
+            except asyncio.CancelledError:
+                raise
+            finally:
+                if queue in self._event_subscribers:
+                    self._event_subscribers.remove(queue)
 
     async def _initialize_gateway(
         self,
@@ -3049,8 +3138,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> asyncio.run(queue2.get())["type"]
             'multi_test'
         """
-        for queue in self._event_subscribers:
-            await queue.put(event)
+        
+        if self._redis_client:
+            try:
+                await asyncio.to_thread(self._redis_client.publish, "mcpgateway:events", json.dumps(event))
+            except Exception as e:
+                logger.error(f"Failed to publish event to Redis: {e}")
+                # Fallback: push to local queues if Redis fails
+                for queue in self._event_subscribers:
+                    await queue.put(event)
+        else:
+            # Local only (single worker or file-lock mode)
+            for queue in self._event_subscribers:
+                await queue.put(event)
 
     async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
