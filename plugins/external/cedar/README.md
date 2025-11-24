@@ -18,7 +18,10 @@ Role-based access control (RBAC) is an authorization model where permissions are
 
 This plugin supports two ways of defining policies in the configuration file, controlled by the `policy_lang` parameter.
 
-### Cedar Mode
+### Cedar Mode 
+
+`plugins/external/cedar/resources/config.yaml`
+
 When `policy_lang` is set to cedar, policies are written in the Cedar language under the policy key, using the following structure:
 
 ```yaml
@@ -39,6 +42,8 @@ When `policy_lang` is set to cedar, policies are written in the Cedar language u
 5. **resource** lists the servers, agents, prompts and resources that the actions can target.
 
 ### Custom DSL mode
+
+`plugins/external/cedar/examples/config-dsl.yaml`
 
 When `policy_lang` is set to `custom_dsl`, policies are written in a compact, human-readable mini-language as a YAML multiline string. This allows non-experts to define role, resource, and action in a single, easy-to-scan block.
 following syntax:
@@ -270,7 +275,7 @@ Here, `Resource` word used in policy, is if resource hooks are invoked. So, in t
 user with role `admin` is only allowed to view full output of uri `https://example.com/data`. Where, the user is of `employee` role, it can only see the redacted versionaaaaa of the resource output.
 
 
-### policy_output_keywords
+#### policy_output_keywords
 
 ```
         view_full: "view_full_output"
@@ -281,7 +286,46 @@ has been provided, so everytime a user defines a policy, if it wants to control 
 any of the tool, prompt, resource or agent in MCP gateway, it can provide the keyword, it's supposed to use in the policy in `policy_output_keywords`. CedarPolicyPlugin will internally use this mapping to redact or fully display the tool, prompt or resource response in post hooks.
 
 
-## Difference with OPAPlugin 
+
+
+3. Now, the policy and plugin configurations are defined in `resources/config.yaml` file, next step is build this as an external MCP server.
+
+* `make venv`: This will create a virtual environment to develop or build your plugin.
+* `make install && make install-dev`: To install all the required libraries in the environment.
+* `make build`:  This will build a docker image named `mcpgateway/cedarpolicyplugin`
+* `make start`: This will start the cedarpolicyplugin container.
+
+This confirms that your container is running fine:
+```
+WARNING:mcpgateway.observability:OpenTelemetry not installed. Proceeding with graceful fallbacks.
+INFO:     Started server process [9]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55196 - "GET /health HTTP/1.1" 200 OK
+
+```
+
+4. Now, you can add this external plugin configuration, in `plugins/config.yaml`:
+3. The next step is to enable the opa plugin which you can do by adding `PLUGINS_ENABLED=true` and the following blob in `plugins/config.yaml` file. This will indicate that OPA Plugin is running as an external MCP server.
+
+  ```yaml
+  - name: "CedarPolicyPlugin"
+    kind: "external"
+    priority: 10 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8000/mcp
+  ```
+
+## Testing
+
+There are set of test cases in the `cedar/tests` folder. The file named `test_cedarpolicyplugin.py` file which contains detailed test cases for RBAC policies enforced on tools, prompts and resources.
+run `make test` to run all the test cases.
+
+
+
+## Difference from OPAPlugin 
 
 The OPA plugin runs an OPA server to enforce policies, whereas the Cedar plugin uses the `cedarpy` library and performs policy enforcement locally without requiring an external service.
 OPA plugin requires to know `rego` to define policies by user while the `Cedar` plugin can be defined either in `cedar` or user friendly `custom_dsl` language.
