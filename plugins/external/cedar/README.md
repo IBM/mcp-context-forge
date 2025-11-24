@@ -272,7 +272,6 @@ user with role `admin` is only allowed to view full output of uri `https://examp
 
 ### policy_output_keywords
 
-Here,
 ```
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
@@ -282,9 +281,8 @@ has been provided, so everytime a user defines a policy, if it wants to control 
 any of the tool, prompt, resource or agent in MCP gateway, it can provide the keyword, it's supposed to use in the policy in `policy_output_keywords`. CedarPolicyPlugin will internally use this mapping to redact or fully display the tool, prompt or resource response in post hooks.
 
 
+## Difference with OPAPlugin 
 
-
-
-
-
-
+The OPA plugin runs an OPA server to enforce policies, whereas the Cedar plugin uses the `cedarpy` library and performs policy enforcement locally without requiring an external service.
+OPA plugin requires to know `rego` to define policies by user while the `Cedar` plugin can be defined either in `cedar` or user friendly `custom_dsl` language.
+Right now, the cedar plugin enforces RBAC policies and it could be extended to enforce ABAC policies using the same plugin.
