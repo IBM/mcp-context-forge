@@ -81,11 +81,15 @@ class LogEnricher:
             entry["timestamp"] = datetime.now(timezone.utc)
         
         # Add performance metrics if available
-        perf_tracker = get_performance_tracker()
-        if correlation_id and perf_tracker:
-            current_ops = perf_tracker.get_current_operations(correlation_id)
-            if current_ops:
-                entry["active_operations"] = len(current_ops)
+        try:
+            perf_tracker = get_performance_tracker()
+            if correlation_id and perf_tracker and hasattr(perf_tracker, 'get_current_operations'):
+                current_ops = perf_tracker.get_current_operations(correlation_id)
+                if current_ops:
+                    entry["active_operations"] = len(current_ops)
+        except Exception:
+            # Silently skip if performance tracker is unavailable or method doesn't exist
+            pass
         
         # Add OpenTelemetry trace context if available
         try:
@@ -257,7 +261,11 @@ class LogRouter:
             db.commit()
         
         except Exception as e:
-            logger.error(f"Failed to persist log entry to database: {e}")
+            logger.error(f"Failed to persist log entry to database: {e}", exc_info=True)
+            # Also print to console for immediate visibility
+            import traceback
+            print(f"ERROR persisting log to database: {e}")
+            traceback.print_exc()
             if db:
                 db.rollback()
         
