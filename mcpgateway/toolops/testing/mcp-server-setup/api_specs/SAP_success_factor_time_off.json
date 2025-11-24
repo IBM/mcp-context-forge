@@ -109,20 +109,16 @@
                 "properties": {
                     "user_id": {
                         "type": "string",
-                        "title": "User Id",
-                        "description": "User ID in SAP SuccessFactors"
+                        "title": "User Id"
                     },
                     "start_date": {
                         "type": "string",
                         "title": "Start Date",
-                        "description": "Start date in YYYY-MM-DD format",
                         "example": "2024-01-01"
                     },
                     "end_date": {
                         "type": "string",
-                        "title": "End Date",
-                        "description": "End date in YYYY-MM-DD format",
-                        "example": "2024-01-05"
+                        "title": "End Date"
                     },
                     "time_off_types": {
                         "items": {
@@ -132,8 +128,7 @@
                                 "PUBLIC_HOLIDAY",
                                 "NON_WORKING_DAY"
                             ],
-                            "title": "TimeOffTypes",
-                            "description": "Represents the time off event types in SAP SuccessFactors."
+                            "title": "TimeOffTypes"
                         },
                         "type": "array",
                         "title": "Time Off Types",
