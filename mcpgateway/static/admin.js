@@ -21012,93 +21012,186 @@ window.updateBodyLabel = updateBodyLabel;
 
 /**
  * ====================================================================
- * REAL-TIME GATEWAY HEALTH MONITORING (SSE)
+ * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
+ * Handles live updates for Gateways and Tools
  * ====================================================================
  */
 
 document.addEventListener("DOMContentLoaded", function () {
-    initializeGatewayHealthStream();
+    initializeRealTimeMonitoring();
 });
 
-function initializeGatewayHealthStream() {
+function initializeRealTimeMonitoring() {
     if (!window.EventSource) return;
 
     // Connect to the admin events endpoint
     const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
 
-    eventSource.addEventListener("gateway_status_changed", (event) => {
-        try {
-            const data = JSON.parse(event.data);
-            updateGatewayStatusBadge(data);
-        } catch (err) {
-            console.error("Error processing gateway update:", err);
-        }
-    });
+    // --- Gateway Events ---
+    // Listen for comprehensive status changes
+    eventSource.addEventListener("gateway_status_changed", (e) => handleEntityEvent("gateway", e));
+    // Keep legacy listeners just in case backend sends them
+    eventSource.addEventListener("gateway_activated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
 
-    // Also listen for activation/deactivation to keep UI consistent
-    // eventSource.addEventListener("gateway_activated", (e) => updateGatewayStatusBadge(JSON.parse(e.data)));
-    // eventSource.addEventListener("gateway_deactivated", (e) => updateGatewayStatusBadge(JSON.parse(e.data)));
+    // --- Tool Events ---
+    // Listen for comprehensive status changes
+    eventSource.addEventListener("tool_status_changed", (e) => handleEntityEvent("tool", e));
+    // Keep legacy listeners
+    eventSource.addEventListener("tool_activated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+
+    eventSource.onopen = () => console.log("✅ SSE Connected for Real-time Monitoring");
+    eventSource.onerror = (err) => console.warn("⚠️ SSE Connection issue, retrying...", err);
 }
 
 /**
- * Updates ONLY the status badge for a gateway row
+ * Generic handler for entity events
  */
-function updateGatewayStatusBadge(data) {
-    // Find the specific row by ID (added in admin.html)
-    const row = document.getElementById(`gateway-row-${data.id}`);
-    if (!row) return; 
-
-    // The Status column is index 4 (5th column) based on admin.html structure
-    const statusCell = row.children[4];
-    
-    if (statusCell) {
-        // Data comes from backend event: data.enabled (isActive) and data.reachable (health)
-        // Note: The backend event 'gateway_updated' typically sends: { id, name, url, description, enabled }
-        // We might need to ensure 'reachable' is sent in the event data.
-        // Assuming _notify_gateway_updated in python sends the full gateway object or we check if data.reachable exists.
-        
-        // If the event data relies on a specific structure, we generate the HTML accordingly.
-        // Logic: 
-        // 1. If !enabled -> Inactive (Red)
-        // 2. If enabled && !reachable -> Offline (Yellow)
-        // 3. If enabled && reachable -> Active (Green)
-
-        const isReachable = data.hasOwnProperty('reachable') ? data.reachable : data.enabled; 
-
-        statusCell.innerHTML = generateHealthBadgeHtml(data.enabled, isReachable);
+function handleEntityEvent(type, event) {
+    try {
+        const data = JSON.parse(event.data);
+        console.log(`Received ${type} update:`, data);
+        updateEntityStatus(type, data);
+    } catch (err) {
+        console.error(`Error processing ${type} event:`, err);
     }
 }
 
-function generateHealthBadgeHtml(enabled, reachable) {
+/**
+ * Updates the status badge and action buttons for a row
+ */
+function updateEntityStatus(type, data) {
+    let row = null;
+
+    if (type === 'gateway') {
+        // Gateways usually have explicit IDs: <tr id="gateway-row-123">
+        row = document.getElementById(`gateway-row-${data.id}`);
+    } else if (type === 'tool') {
+        // Tools often lack IDs in HTMX partials. 
+        // FALLBACK: Find row by matching UUID in the first column.
+        const panel = document.getElementById('tools-panel');
+        if (panel) {
+            // The UUID is typically in the first <td> of the tbody rows
+            const rows = panel.querySelectorAll('table tbody tr');
+            for (const tr of rows) {
+                const firstCell = tr.querySelector('td:first-child');
+                if (firstCell && firstCell.textContent.trim() === data.id) {
+                    row = tr;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!row) {
+        console.warn(`Could not find row for ${type} id: ${data.id}`);
+        return;
+    }
+
+    // Determine column indices based on type (from admin.html structure)
+    // Gateway: Status is 5th col (index 4), Actions is 10th col (index 9)
+    // Tool: Status is 6th col (index 5), Actions is 7th col (index 6)
+    let statusCell, actionCell;
+
+    if (type === 'gateway') {
+        statusCell = row.children[4];
+        actionCell = row.children[9]; 
+    } else if (type === 'tool') {
+        statusCell = row.children[5];
+        actionCell = row.children[6];
+    }
+
+    // --- 1. Update Status Badge ---
+    if (statusCell) {
+        // Normalize property names (backend might send 'enabled' or 'isActive')
+        const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
+        
+        // Check for reachability. Default to true if missing (assumes legacy events implies reachable)
+        const isReachable = data.reachable !== undefined ? data.reachable : true; 
+        
+        statusCell.innerHTML = generateStatusBadgeHtml(isEnabled, isReachable, type);
+        
+        // Add a visual flash effect to indicate update
+        statusCell.classList.add('bg-blue-50', 'dark:bg-blue-900', 'transition-colors', 'duration-500');
+        setTimeout(() => {
+            statusCell.classList.remove('bg-blue-50', 'dark:bg-blue-900');
+        }, 1000);
+    }
+
+    // --- 2. Update Action Buttons (Activate/Deactivate) ---
+    if (actionCell) {
+        const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
+        updateEntityActionButtons(actionCell, type, data.id, isEnabled);
+    }
+}
+
+/**
+ * Generates the HTML for the status badge (Active/Inactive/Offline)
+ */
+function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
+    const label = typeLabel ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1) : "Item";
+    
     if (!enabled) {
-        // Inactive
+        // CASE 1: Inactive (Manually disabled) -> RED
         return `
         <div class="relative group inline-block">
-            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
                 Inactive
-                <svg class="ml-1 h-4 w-4 text-red-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡Gateway is Manually Deactivated</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
     } else if (!reachable) {
-        // Offline (Enabled but Unreachable)
+        // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
         return `
         <div class="relative group inline-block">
-            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
                 Offline
-                <svg class="ml-1 h-4 w-4 text-yellow-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
+                <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡Gateway is Not Reachable</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
     } else {
-        // Active (Enabled and Reachable)
+        // CASE 3: Active (Enabled and Reachable) -> GREEN
         return `
         <div class="relative group inline-block">
-            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                 Active
-                <svg class="ml-1 h-4 w-4 text-green-600" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
+                <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
             </span>
-            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡Everything stable.</div>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
+    }
+}
+
+/**
+ * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
+ */
+function updateEntityActionButtons(cell, type, id, isEnabled) {
+    // We look for the form that toggles activation inside the cell
+    const form = cell.querySelector('form[action*="/toggle"]');
+    if (!form) return;
+    
+    // Determine collection name for the URL (gateways or tools)
+    const collectionName = type + 's'; 
+
+    // Replace the inner HTML of the form to switch the button
+    if (isEnabled) {
+        // Show Deactivate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="false" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this item'">
+                Deactivate
+            </button>
+        `;
+    } else {
+        // Show Activate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="true" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'💡Re-enable this item'">
+                Activate
+            </button>
+        `;
     }
 }

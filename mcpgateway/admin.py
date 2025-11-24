@@ -9779,30 +9779,77 @@ async def admin_events(
     request: Request,
     _user=Depends(get_current_user_with_permissions)
 ):
-    """Stream admin events via SSE."""
+    """Stream admin events from all services via SSE."""
 
-    # Subscribe to live events here, these events are sent and consumed by the UI.
-    async def event_generator():
+    # 1. Create a shared queue to aggregate events from all services
+    event_queue = asyncio.Queue()
+
+    # 2. Define a generic producer that feeds a specific stream into the queue
+    async def stream_to_queue(generator, source_name: str):
         try:
-            # The service for updating the Gateway Status real-time for health checks
-            async for event in gateway_service.subscribe_events():
-                if await request.is_disconnected():
-                    LOGGER.debug("SSE Client disconnected")
-                    break
-                
-                # SSE format: 
-                # event: <type>
-                # data: <json_payload>
-                # \n
-                event_type = event.get("type", "message")
-                event_data = json.dumps(event.get("data", {}))
-
-                yield f"event: {event_type}\ndata: {event_data}\n\n"
-                
+            async for event in generator:
+                # Optional: You can tag the event with the source if needed
+                # event["_source"] = source_name 
+                await event_queue.put(event)
         except asyncio.CancelledError:
-            LOGGER.debug("SSE Stream cancelled")
+            pass # Task cancelled normally
         except Exception as e:
-            LOGGER.error(f"SSE Stream error: {e}")
+            logger.error(f"Error in {source_name} event subscription: {e}")
+
+    async def event_generator():
+        # 3. Create background tasks for each service subscription
+        # This allows them to run concurrently
+        tasks = [
+            asyncio.create_task(
+                stream_to_queue(gateway_service.subscribe_events(), "gateway")
+            ),
+            asyncio.create_task(
+                stream_to_queue(tool_service.subscribe_events(), "tool")
+            )
+        ]
+
+        try:
+            while True:
+                # Check for client disconnection
+                if await request.is_disconnected():
+                    logger.debug("SSE Client disconnected")
+                    break
+
+                # 4. Wait for the next event from EITHER service
+                # We use asyncio.wait_for to allow checking request.is_disconnected periodically
+                # or simply rely on queue.get() which is efficient.
+                try:
+                    # Wait for an event
+                    event = await event_queue.get()
+                    
+                    # SSE format
+                    event_type = event.get("type", "message")
+                    event_data = json.dumps(event.get("data", {}))
+
+                    print("----------- SSE MESSAGE CREATED: -----------")
+                    print(f"event: {event_type}\ndata: {event_data}\n\n")
+
+                    yield f"event: {event_type}\ndata: {event_data}\n\n"
+                    
+                    # Mark task as done in queue (good practice)
+                    event_queue.task_done()
+                    
+                except asyncio.CancelledError:
+                    raise
+
+        except asyncio.CancelledError:
+            logger.debug("SSE Stream cancelled")
+        except Exception as e:
+            logger.error(f"SSE Stream error: {e}")
+        finally:
+            # 5. Cleanup: Cancel all background subscription tasks
+            # This is crucial to close Redis connections/listeners in the EventService
+            for task in tasks:
+                task.cancel()
+            
+            # Wait for tasks to clean up
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.debug("Background event subscription tasks cleaned up")
 
     return StreamingResponse(
         event_generator(),
@@ -9810,7 +9857,7 @@ async def admin_events(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no", 
+            "X-Accel-Buffering": "no",
         }
     )
 

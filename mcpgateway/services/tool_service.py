@@ -67,6 +67,7 @@ from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -249,7 +250,7 @@ class ToolService:
             >>> hasattr(service, '_http_client')
             True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
+        self._event_service = EventService(channel_name="mcpgateway:tool_events")
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         # Initialize plugin manager with env overrides to ease testing
         env_flag = os.getenv("PLUGINS_ENABLED")
@@ -286,6 +287,7 @@ class ToolService:
             >>> asyncio.run(service.shutdown())  # Should log "Tool service shutdown complete"
         """
         await self._http_client.aclose()
+        await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
     async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -1105,6 +1107,9 @@ class ToolService:
                     await self._notify_tool_activated(tool)
                 else:
                     await self._notify_tool_deactivated(tool)
+
+                await self._notify_tool_status_changed(tool)
+                
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
         except PermissionError as e:
@@ -1738,20 +1743,34 @@ class ToolService:
         }
         await self._publish_event(event)
 
+    async def _notify_tool_status_changed(self, tool: DbTool) -> None:
+        """
+        Notify subscribers of tool status change (enabled/reachable).
+        
+        Args:
+            gateway: Tool database object
+        """
+        event = {
+            "type": "tool_status_changed",
+            "data": {
+                "id": tool.id,
+                "name": tool.name,
+                "url": tool.url,
+                "enabled": tool.enabled,
+                "reachable": tool.reachable,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to tool events.
+        """Subscribe to tool events via the EventService.
 
         Yields:
             Tool event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     async def _notify_tool_added(self, tool: DbTool) -> None:
         """
@@ -1789,13 +1808,12 @@ class ToolService:
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """
-        Publish event to all subscribers.
+        Publish event to all subscribers via the EventService.
 
         Args:
             event: Event to publish
         """
-        for queue in self._event_subscribers:
-            await queue.put(event)
+        await self._event_service.publish_event(event)
 
     async def _validate_tool_url(self, url: str) -> None:
         """Validate tool URL is accessible.
