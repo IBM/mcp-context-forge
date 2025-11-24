@@ -88,3 +88,15 @@ plugins:
           action:
             - Action::"view_redacted_output"
           resource: Prompts::"judge_prompts" #Prompt::<prompt_name>
+
+# Plugin directories to scan
+plugin_dirs:
+  - "cedarpolicyplugin"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

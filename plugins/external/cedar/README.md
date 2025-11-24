@@ -1,7 +1,7 @@
 # CedarPolicyPlugin for Context Forge MCP Gateway
 
-A plugin that does policy decision and enforcement using cedar.
-
+Cedar is a language for defining permissions as policies, and a specification for evaluating those policies. Use Cedar to define who is authorized to do what within your application. Cedar is open source.
+For more, refer: https://www.cedarpolicy.com/en
 
 ## Installation
 
