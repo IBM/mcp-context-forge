@@ -28,8 +28,10 @@ from starlette.responses import Response
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.db import SessionLocal
+from mcpgateway.services.security_logger import get_security_logger
 
 logger = logging.getLogger(__name__)
+security_logger = get_security_logger()
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
@@ -88,10 +90,33 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Store user in request state for downstream use
             request.state.user = user
             logger.info(f"✓ Authenticated user for observability: {user.email}")
+            
+            # Log successful authentication
+            security_logger.log_authentication_attempt(
+                user_id=str(user.id),
+                user_email=user.email,
+                auth_method="bearer_token",
+                success=True,
+                client_ip=request.client.host if request.client else "unknown",
+                user_agent=request.headers.get("user-agent"),
+                db=db
+            )
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
+            
+            # Log failed authentication attempt
+            security_logger.log_authentication_attempt(
+                user_id="unknown",
+                user_email=None,
+                auth_method="bearer_token",
+                success=False,
+                client_ip=request.client.host if request.client else "unknown",
+                user_agent=request.headers.get("user-agent"),
+                failure_reason=str(e),
+                db=db if db else None
+            )
 
         finally:
             # Always close database session
