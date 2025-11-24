@@ -87,6 +87,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -313,7 +314,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> hasattr(service, '_instance_id') or True  # May not exist if no Redis
             True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
         self._health_check_task: Optional[asyncio.Task] = None
@@ -323,7 +323,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self.tool_service = ToolService()
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
-        self._redis_pubsub = None
+        self._event_service = EventService(channel_name="mcpgateway:gateway_events")
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
@@ -416,12 +416,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if not pong:
                 raise ConnectionError("Redis ping failed.")
 
-            try:
-                self._redis_pubsub = self._redis_client.pubsub()
-                self._redis_pubsub.subscribe("mcpgateway:events")
-            except Exception as e:
-                logger.warning(f"Failed to setup Redis PubSub: {e}")
-
             is_leader = self._redis_client.set(self._leader_key, self._instance_id, ex=self._leader_ttl, nx=True)
             if is_leader:
                 logger.info("Acquired Redis leadership. Starting health check task.")
@@ -452,7 +446,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 pass
 
         await self._http_client.aclose()
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
@@ -2417,52 +2411,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> asyncio.run(test_event())
             'test'
         """
-        # If Redis Available
-        if self._redis_client:
-            try:
-                # We import asyncio version of redis here to avoid top-level dependency issues
-                # if the environment is mixed.
-                import redis.asyncio as aioredis
-                
-                # Create a dedicated async connection for this subscription
-                client = aioredis.from_url(self.redis_url, decode_responses=True)
-                pubsub = client.pubsub()
-                
-                await pubsub.subscribe("mcpgateway:events")
-                
-                try:
-                    async for message in pubsub.listen():
-                        if message["type"] == "message":
-                            # Yield the data portion
-                            yield json.loads(message["data"])
-                except asyncio.CancelledError:
-                    # Handle client disconnection
-                    raise
-                except Exception as e:
-                    logger.error(f"Redis subscription error: {e}")
-                    # Fallback logic could go here, but usually we just stop
-                    raise
-                finally:
-                    # Cleanup
-                    await pubsub.unsubscribe("mcpgateway:events")
-                    await client.aclose()
-            except ImportError:
-                logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
-                # Fallthrough to queue mode if import fails
-        
-        # Local Queue (Redis not available or import failed)
-        if not (self.redis_url and REDIS_AVAILABLE):
-            queue: asyncio.Queue = asyncio.Queue()
-            self._event_subscribers.append(queue)
-            try:
-                while True:
-                    event = await queue.get()
-                    yield event
-            except asyncio.CancelledError:
-                raise
-            finally:
-                if queue in self._event_subscribers:
-                    self._event_subscribers.remove(queue)
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     async def _initialize_gateway(
         self,
@@ -3121,19 +3071,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> asyncio.run(queue2.get())["type"]
             'multi_test'
         """
-        
-        if self._redis_client:
-            try:
-                await asyncio.to_thread(self._redis_client.publish, "mcpgateway:events", json.dumps(event))
-            except Exception as e:
-                logger.error(f"Failed to publish event to Redis: {e}")
-                # Fallback: push to local queues if Redis fails
-                for queue in self._event_subscribers:
-                    await queue.put(event)
-        else:
-            # Local only (single worker or file-lock mode)
-            for queue in self._event_subscribers:
-                await queue.put(event)
+        await self._event_service.publish_event(event)
 
     async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
