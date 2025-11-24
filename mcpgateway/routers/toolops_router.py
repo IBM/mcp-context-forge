@@ -19,7 +19,7 @@ import json
 from typing import Any, Dict, List
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -104,7 +104,7 @@ async def generate_testcases_for_tool(
 
 
 @toolops_router.post("/validation/execute_tool_nl_testcases")
-async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, request: Request, db: Session = Depends(get_db)) -> List:
+async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Session = Depends(get_db)) -> List:
     """
     Execute test cases for a tool
 
@@ -128,7 +128,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, request
         # logger.debug(f"Authenticated user {user} is initializing the protocol.")
         tool_id = tool_nl_test_input.tool_id
         tool_nl_test_cases = tool_nl_test_input.tool_nl_test_cases
-        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db, request)
+        tool_nl_test_cases_output = await execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db)
         return tool_nl_test_cases_output
 
     except json.JSONDecodeError:

@@ -23,8 +23,6 @@ Structure:
 import json
 import os
 from typing import Any
-import uuid
-from urllib.parse import urlparse
 
 # Third-Party
 from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
@@ -35,15 +33,12 @@ from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_ca
 from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
 from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
 from sqlalchemy.orm import Session
-from fastapi import Request
 
 # First-Party
 from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatService, MCPClientConfig, MCPServerConfig
 from mcpgateway.services.tool_service import ToolService
-from mcpgateway.services.server_service import ServerService, ServerNameConflictError
-from mcpgateway.schemas import ServerCreate, ServerRead
 from mcpgateway.toolops.utils.db_util import populate_testcases_table, query_testcases_table
 from mcpgateway.toolops.utils.format_conversion import convert_to_toolops_spec, post_process_nl_test_cases
 from mcpgateway.toolops.utils.llm_util import chat_llm_instance, get_llm_instance
@@ -93,13 +88,8 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
     try:
         logger.info("LLM Inference call using MCP-CF LLM provider")
         # To suppress pylint errors creating dummy altk params and asserting
-        altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens}
+        altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens, "stop_sequences": stop_sequences}
         assert altk_dummy_params is not None
-
-        if stop_sequences is None:
-            stop_sequences = ["\n\n", "<|endoftext|>"]
-        # llm_response = completion_llm_instance.invoke(prompt, stop=stop_sequences)
-        # response = llm_response.replace("<|eom_id|>", "").strip()
         llm_response = chat_llm_instance.invoke(prompt)
         response = llm_response.content
         return response
@@ -174,34 +164,8 @@ async def validation_generate_test_cases(tool_id, tool_service: ToolService, db:
         populate_testcases_table(tool_id, test_cases, "failed", db)
     return test_cases
 
-async def create_virtual_server(tool_id, tool_name, tool_description, db, request):
-    server_id = str(uuid.uuid4())
-    mcp_server_url = None
-    virtual_server_id = None
-    try:
-        list_of_servers = await ServerService().list_servers(db)
-        for ex_server in list_of_servers:
-            if ex_server.name == tool_name:
-                virtual_server_id = ex_server.id
-        if virtual_server_id is None:
-            vserver_in = ServerCreate(id=server_id, name=tool_name, description=tool_description, associated_tools=[tool_id])
-            virtual_mcp_sever = await ServerService().register_server(db=db, server_in=vserver_in)
-            virtual_server_id=virtual_mcp_sever.id
-            logger.info("Successfully created virtual server for tool - "+tool_id)
-            location = urlparse(str(request.url))
-            mcp_server_url = f"{location.scheme}://{location.hostname}{f':{location.port}' if location.port not in ['80', '443', ''] else ''}/servers/{virtual_server_id}/mcp"
-    except Exception as e:
-        logger.error("Error in creating virtual server for the tool - "+tool_id+" , "+str(e))    
-    return mcp_server_url,virtual_server_id
 
-async def delete_virtual_server(server_id, db):
-    try:
-        ServerService().delete_server(db, server_id)
-        logger.info("Successfully deleted virtual server - "+server_id)
-    except:
-        logger.error("Error in deleting virtual server - "+server_id)
-
-async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: ToolService, db: Session , request:Request):
+async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: ToolService, db: Session):
     """
     Method for the service to execute tool nl test cases with MCP server using agent.
 
@@ -214,34 +178,25 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
     Returns:
         tool_test_case_outputs: list of tool outputs after tool test cases execution with agent.
     """
-    tool_test_case_outputs = []
     tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     mcp_cf_tool = tool_schema.to_dict(use_alias=True)
-    
-    # creating virtual server for the MCP tool
-    tool_name = mcp_cf_tool.get("name", "")
-    tool_description = mcp_cf_tool.get("description", "")
-    mcp_server_url,virtual_server_id = await create_virtual_server(tool_id, tool_name, tool_description, db, request)
-    if mcp_server_url is not None and virtual_server_id is not None:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=mcp_server_url, transport="streamable_http"), llm=toolops_llm_config)
-        service = MCPChatService(config)
-        await service.initialize()
-        logger.info("MCP tool server - " + str(mcp_server_url) + " is ready for tool validation")
+    tool_url = mcp_cf_tool.get("url")
+    mcp_server_url = tool_url.split("/sse")[0] + "/mcp"
+    config = MCPClientConfig(mcp_server=MCPServerConfig(url=mcp_server_url, transport="streamable_http"), llm=toolops_llm_config)
+    service = MCPChatService(config)
+    await service.initialize()
+    logger.info("MCP tool server - " + str(mcp_server_url) + " is ready for tool validation")
 
-        # we execute each nl test case and if there are any errors we add that to test case output
-        for nl_utterance in tool_nl_test_cases:
-            try:
-                tool_output = await service.chat(message=nl_utterance)
-                tool_test_case_outputs.append(tool_output)
-            except Exception as e:
-                logger.info("Error in executing tool validation test cases with MCP server - " + str(e))
-                tool_test_case_outputs.append(str(e))
-                continue
-        # delete virtual server after test case execution 
-        await delete_virtual_server(virtual_server_id, db)
-        
-    else:
-        tool_test_case_outputs=["Error - Problem in creating virtual server for the tool - "+tool_id]
+    tool_test_case_outputs = []
+    # we execute each nl test case and if there are any errors we add that to test case output
+    for nl_utterance in tool_nl_test_cases:
+        try:
+            tool_output = await service.chat(message=nl_utterance)
+            tool_test_case_outputs.append(tool_output)
+        except Exception as e:
+            logger.info("Error in executing tool validation test cases with MCP server - " + str(e))
+            tool_test_case_outputs.append(str(e))
+            continue
     return tool_test_case_outputs
 
 

@@ -38,7 +38,7 @@ logger = logging_service.get_logger(__name__)
 load_dotenv()
 
 # set LLM temperature for toolops modules as low to produce minimally variable model outputs.
-TOOLOPS_TEMPERATURE = 0.0
+TOOLOPS_TEMPERATURE = 0.1
 
 
 def get_llm_instance(model_type="completion"):
@@ -196,11 +196,11 @@ def execute_prompt(prompt):
         return ""
 
 
-if __name__ == "__main__":
-    prompt = "what is India capital city?"
-    print("Prompt : ", prompt)
-    print("Text completion output : ")
-    print(execute_prompt(prompt))
-    response = chat_llm_instance.invoke(prompt)
-    print("Chat completion output : ")
-    print(response.content)
+# if __name__ == "__main__":
+#     prompt = "what is India capital city?"
+#     print("Prompt : ", prompt)
+#     print("Text completion output : ")
+#     print(execute_prompt(prompt))
+#     response = chat_llm_instance.invoke(prompt)
+#     print("Chat completion output : ")
+#     print(response.content)
