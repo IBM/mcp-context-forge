@@ -28,6 +28,8 @@ from mcpgateway.services.mcp_client_chat_service import (
     OllamaProvider,
     OpenAIConfig,
     OpenAIProvider,
+    WatsonxConfig,
+    WatsonxProvider
 )
 
 logging_service = LoggingService()
@@ -60,6 +62,7 @@ def get_llm_instance(model_type="completion"):
             "anthropic": AnthropicProvider,
             "aws_bedrock": AWSBedrockProvider,
             "ollama": OllamaProvider,
+            "watsonx": WatsonxProvider,
         }
         provider_class = provider_map.get(llm_provider)
 
@@ -142,6 +145,23 @@ def get_llm_instance(model_type="completion"):
             # ollama_temeperature=float(os.getenv("OLLAMA_TEMPERATURE",0.7))
             ollama_temeperature = TOOLOPS_TEMPERATURE
             llm_config = OllamaConfig(base_url=ollama_url, model=ollama_model, temperature=ollama_temeperature, timeout=None, num_ctx=None)
+        elif llm_provider == 'watsonx':
+            wx_api_key = os.getenv("WATSONX_APIKEY", "")
+            wx_base_url = os.getenv("WATSONX_URL", "")
+            wx_model = os.getenv("WATSONX_MODEL_ID", "")
+            wx_project_id = os.getenv("WATSONX_PROJECT_ID","")
+            wx_temperature = TOOLOPS_TEMPERATURE
+            wx_max_tokens = int(os.getenv("WATSONX_MAX_NEW_TOKENS", "1000"))
+            wx_decoding_method = os.getenv("WATSONX_DECODING_METHOD","greedy")
+            llm_config = WatsonxConfig(
+                api_key=wx_api_key,
+                url=wx_base_url,
+                project_id=wx_project_id,
+                model_id=wx_model,
+                temperature=wx_temperature,
+                max_new_tokens=wx_max_tokens,
+                decoding_method=wx_decoding_method,
+            )
 
         llm_service = provider_class(llm_config)
         llm_instance = llm_service.get_llm(model_type=model_type)
@@ -176,6 +196,6 @@ def execute_prompt(prompt):
         return ""
 
 
-# if __name__ == "__main__":
-#     print(execute_prompt("what is India capital city"))
-#     print(chat_llm_instance.invoke("what is India capital city"))
+if __name__ == "__main__":
+    print(execute_prompt("what is India capital city"))
+    print(chat_llm_instance.invoke("what is India capital city"))

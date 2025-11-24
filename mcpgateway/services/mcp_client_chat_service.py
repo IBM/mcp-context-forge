@@ -75,12 +75,13 @@ except ImportError:
 
 try:
     # Third-Party
-    from langchain_ibm import WatsonxLLM
+    from langchain_ibm import WatsonxLLM,ChatWatsonx
 
     _WATSONX_AVAILABLE = True
 except ImportError:
     _WATSONX_AVAILABLE = False
     WatsonxLLM = None  # type: ignore
+    ChatWatsonx = None
 
 # Third-Party
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -1291,7 +1292,7 @@ class WatsonxProvider:
         self.llm = None
         logger.info(f"Initializing IBM watsonx.ai provider with model {config.model_id}")
 
-    def get_llm(self) -> WatsonxLLM:
+    def get_llm(self, model_type = 'chat') -> Union[WatsonxLLM,ChatWatsonx]:
         """
         Get IBM watsonx.ai LLM instance with lazy initialization.
 
@@ -1328,15 +1329,24 @@ class WatsonxProvider:
                     params["top_k"] = self.config.top_k
                 if self.config.top_p is not None:
                     params["top_p"] = self.config.top_p
-
-                # Initialize WatsonxLLM
-                self.llm = WatsonxLLM(
-                    apikey=self.config.api_key,
-                    url=self.config.url,
-                    project_id=self.config.project_id,
-                    model_id=self.config.model_id,
-                    params=params,
-                )
+                if model_type == 'completion':
+                    # Initialize WatsonxLLM
+                    self.llm = WatsonxLLM(
+                        apikey=self.config.api_key,
+                        url=self.config.url,
+                        project_id=self.config.project_id,
+                        model_id=self.config.model_id,
+                        params=params,
+                    )
+                elif model_type == 'chat':
+                    # Initialize Chat WatsonxLLM
+                    self.llm = ChatWatsonx(
+                        apikey=self.config.api_key,
+                        url=self.config.url,
+                        project_id=self.config.project_id,
+                        model_id=self.config.model_id,
+                        params=params,
+                    )
                 logger.info("IBM watsonx.ai LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create IBM watsonx.ai LLM: {e}")
