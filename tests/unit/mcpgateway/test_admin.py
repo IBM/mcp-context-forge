@@ -2591,7 +2591,7 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Test with toggle operations which use boolean parsing
-        with patch.object(ServerService, "toggle_server_status", new_callable=AsyncMock) as mock_toggle:
+        with patch.object(ServerService, "set_server_state", new_callable=AsyncMock) as mock_toggle:
             await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
 
             # Check how the value was parsed

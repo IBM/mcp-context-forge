@@ -391,7 +391,7 @@ class TestPromptService:
         test_db.commit = Mock(side_effect=Exception("fail"))
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.set_prompt_state(test_db, 1, activate=False)
-        assert "Failed to toggle prompt status" in str(exc_info.value)
+        assert "Failed to set prompt state" in str(exc_info.value)
 
     # ──────────────────────────────────────────────────────────────────
     #   delete_prompt
