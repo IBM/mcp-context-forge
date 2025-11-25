@@ -2098,7 +2098,7 @@ endif
 # =============================================================================
 
 # Auto-detect container runtime if not specified - DEFAULT TO DOCKER
-CONTAINER_RUNTIME = $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
+CONTAINER_RUNTIME ?= $(shell command -v docker >/dev/null 2>&1 && echo docker || echo podman)
 
 # Alternative: Always default to docker unless explicitly overridden
 # CONTAINER_RUNTIME ?= docker
