@@ -124,9 +124,6 @@ class EventService:
         Args:
             event: A dictionary containing the event data to be published.
 
-        Returns:
-            None
-
         Example:
             >>> import asyncio
             >>> async def test_pub():
@@ -241,6 +238,24 @@ class EventService:
                 if queue in self._event_subscribers:
                     self._event_subscribers.remove(queue)
 
+    async def event_generator(self) -> AsyncGenerator[str, None]:
+        """Generates Server-Sent Events (SSE) formatted strings.
+
+        This is a convenience wrapper around `subscribe_events` designed for 
+        direct use with streaming HTTP responses (e.g., FastAPI's StreamingResponse).
+
+        Yields:
+            str: A string formatted as an SSE message: 'data: {...}\\n\\n'
+        """
+        try:
+            async for event in self.subscribe_events():
+                # Serialize the dictionary to a JSON string and format as SSE
+                yield f"data: {json.dumps(event)}\n\n"
+        except asyncio.CancelledError:
+            # Handle client disconnection gracefully
+            logger.info(f"Client disconnected from event stream: {self.channel_name}")
+            raise
+            
     async def shutdown(self):
         """Cleanup resources.
 
