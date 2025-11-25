@@ -662,7 +662,7 @@ class RoleService:
             ...     asyncio.run(service.revoke_role_from_user('u','r','team','t'))
             True
         """
-        if user_email == settings.platform_admin_email:
+        if user_email == settings.platform_owner_email:
             raise ValueError("Cannot revoke roles from the platform admin")
 
         user_role = await self.get_user_role_assignment(user_email, role_id, scope, scope_id)

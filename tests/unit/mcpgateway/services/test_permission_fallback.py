@@ -106,12 +106,12 @@ class TestPermissionFallback:
             # Fallback should not be checked when RBAC grants permission
 
     @pytest.mark.asyncio
-    async def test_platform_admin_virtual_user_recognition(self, permission_service):
+    async def test_platform_owner_virtual_user_recognition(self, permission_service):
         """Test that platform admin virtual user is recognized by RBAC checks."""
         # First-Party
         from mcpgateway.config import settings
 
-        platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+        platform_owner_email = getattr(settings, "platform_owner_email", "admin@example.com")
 
         # Mock database query to return None (user not in database)
         with patch.object(permission_service.db, "execute") as mock_execute:
@@ -120,24 +120,24 @@ class TestPermissionFallback:
             mock_execute.return_value = mock_result
 
             # _is_user_admin should still return True for platform admin email
-            result = await permission_service._is_user_admin(platform_admin_email)
+            result = await permission_service._is_user_admin(platform_owner_email)
             assert result == True, "Platform admin should be recognized even when not in database"
 
     @pytest.mark.asyncio
-    async def test_platform_admin_check_admin_permission(self, permission_service):
+    async def test_platform_owner_check_admin_permission(self, permission_service):
         """Test that platform admin passes check_admin_permission even when virtual."""
         # First-Party
         from mcpgateway.config import settings
 
-        platform_admin_email = getattr(settings, "platform_admin_email", "admin@example.com")
+        platform_owner_email = getattr(settings, "platform_owner_email", "admin@example.com")
 
         # Mock _is_user_admin to return True (our fix working)
         with patch.object(permission_service, "_is_user_admin", return_value=True):
-            result = await permission_service.check_admin_permission(platform_admin_email)
+            result = await permission_service.check_admin_permission(platform_owner_email)
             assert result == True, "Platform admin should have admin permissions"
 
     @pytest.mark.asyncio
-    async def test_non_platform_admin_virtual_user_not_recognized(self, permission_service):
+    async def test_non_platform_owner_virtual_user_not_recognized(self, permission_service):
         """Test that non-platform admin users don't get virtual admin privileges."""
         # Mock database query to return None (user not in database)
         with patch.object(permission_service.db, "execute") as mock_execute:
@@ -150,8 +150,8 @@ class TestPermissionFallback:
             assert result == False, "Non-platform admin should not get virtual admin privileges"
 
     @pytest.mark.asyncio
-    async def test_platform_admin_edge_case_empty_setting(self, permission_service):
-        """Test behavior when platform_admin_email setting is empty."""
+    async def test_platform_owner_edge_case_empty_setting(self, permission_service):
+        """Test behavior when platform_owner_email setting is empty."""
         # Mock database query to return None
         with patch.object(permission_service.db, "execute") as mock_execute:
             mock_result = MagicMock()
@@ -161,4 +161,4 @@ class TestPermissionFallback:
             # Mock empty platform admin email setting
             with patch("mcpgateway.services.permission_service.getattr", return_value=""):
                 result = await permission_service._is_user_admin("admin@example.com")
-                assert result == False, "Should not grant admin privileges when platform_admin_email is empty"
+                assert result == False, "Should not grant admin privileges when platform_owner_email is empty"

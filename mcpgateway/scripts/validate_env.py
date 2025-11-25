@@ -51,7 +51,7 @@ def get_security_warnings(settings: Settings) -> list[str]:
         >>> mock_settings = Mock(spec=Settings)
         >>> mock_settings.port = 80
         >>> mock_settings.password_min_length = 8
-        >>> mock_settings.platform_admin_password = SecretStr("StrongP@ss123")
+        >>> mock_settings.platform_owner_password = SecretStr("StrongP@ss123")
         >>> mock_settings.basic_auth_password = SecretStr("Complex!Pass99")
         >>> mock_settings.jwt_secret_key = SecretStr("a" * 35)
         >>> mock_settings.auth_encryption_secret = SecretStr("b" * 35)
@@ -66,22 +66,22 @@ def get_security_warnings(settings: Settings) -> list[str]:
         True
 
         >>> mock_settings.port = 8080
-        >>> mock_settings.platform_admin_password = SecretStr("admin")
+        >>> mock_settings.platform_owner_password = SecretStr("admin")
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("Default admin password" in w for w in warnings)
         True
 
-        >>> mock_settings.platform_admin_password = SecretStr("short")
+        >>> mock_settings.platform_owner_password = SecretStr("short")
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("at least 8 characters" in w for w in warnings)
         True
 
-        >>> mock_settings.platform_admin_password = SecretStr("alllowercase")
+        >>> mock_settings.platform_owner_password = SecretStr("alllowercase")
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("low complexity" in w for w in warnings)
         True
 
-        >>> mock_settings.platform_admin_password = SecretStr("ValidP@ss123")
+        >>> mock_settings.platform_owner_password = SecretStr("ValidP@ss123")
         >>> mock_settings.basic_auth_password = SecretStr("changeme")
         >>> warnings = get_security_warnings(mock_settings)
         >>> any("Default BASIC_AUTH_PASSWORD" in w for w in warnings)
@@ -121,10 +121,10 @@ def get_security_warnings(settings: Settings) -> list[str]:
     if not (1 <= settings.port <= 65535):
         warnings.append(f"PORT: Out of allowed range (1-65535). Got: {settings.port}")
 
-    # --- PLATFORM_ADMIN_PASSWORD ---
-    pw = settings.platform_admin_password.get_secret_value() if isinstance(settings.platform_admin_password, SecretStr) else settings.platform_admin_password
+    # --- PLATFORM_OWNER_PASSWORD ---
+    pw = settings.platform_owner_password.get_secret_value() if isinstance(settings.platform_owner_password, SecretStr) else settings.platform_owner_password
     if not pw or pw.lower() in ("changeme", "admin", "password"):
-        warnings.append("Default admin password detected! Please change PLATFORM_ADMIN_PASSWORD immediately.")
+        warnings.append("Default admin password detected! Please change PLATFORM_OWNER_PASSWORD immediately.")
 
     min_length = settings.password_min_length
     if len(pw) < min_length:

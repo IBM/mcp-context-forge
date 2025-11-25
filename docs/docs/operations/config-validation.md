@@ -74,7 +74,7 @@ log_level
 ### Security Warnings
 ```bash
 $ python -m mcpgateway.scripts.validate_env .env.dev
-⚠️ Default admin password detected! Please change PLATFORM_ADMIN_PASSWORD immediately.
+⚠️ Default admin password detected! Please change PLATFORM_OWNER_PASSWORD immediately.
 ⚠️ JWT_SECRET_KEY: Default/weak secret detected! Please set a strong, unique value for production.
 ❌ Configuration has security warnings. Please address them for production use.
 ```

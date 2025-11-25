@@ -705,11 +705,11 @@ class TestEmailAuthServiceUserManagement:
             mock_db.rollback.assert_called_once()
 
     # =========================================================================
-    # Platform Admin Tests
+    # Platform Owner Tests
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_create_platform_admin_new(self, service, mock_db, mock_password_service):
+    async def test_create_platform_owner_new(self, service, mock_db, mock_password_service):
         """Test creating a new platform admin."""
         service.password_service = mock_password_service
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing admin
@@ -722,13 +722,13 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            result = await service.create_platform_admin(email="admin@example.com", password="AdminPass123!", full_name="Platform Admin")
+            result = await service.create_platform_owner(email="admin@example.com", password="AdminPass123!", full_name="Platform Owner")
 
             mock_db.add.assert_called()
             mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_create_platform_admin_existing_update_password(self, service, mock_db, mock_user, mock_password_service):
+    async def test_create_platform_owner_existing_update_password(self, service, mock_db, mock_user, mock_password_service):
         """Test updating existing admin's password."""
         service.password_service = mock_password_service
         mock_user.is_admin = True
@@ -739,7 +739,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.return_value = False
         mock_password_service.hash_password.return_value = "new_admin_hash"
 
-        result = await service.create_platform_admin(
+        result = await service.create_platform_owner(
             email="test@example.com",
             password="NewAdminPass123!",
             full_name="Admin",  # Same name
@@ -752,7 +752,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
-    async def test_create_platform_admin_existing_update_name(self, service, mock_db, mock_user, mock_password_service):
+    async def test_create_platform_owner_existing_update_name(self, service, mock_db, mock_user, mock_password_service):
         """Test updating existing admin's name."""
         service.password_service = mock_password_service
         mock_user.full_name = "Old Name"
@@ -761,7 +761,7 @@ class TestEmailAuthServiceUserManagement:
         # Password unchanged
         mock_password_service.verify_password.return_value = True
 
-        result = await service.create_platform_admin(email="test@example.com", password="SamePassword", full_name="New Admin Name")
+        result = await service.create_platform_owner(email="test@example.com", password="SamePassword", full_name="New Admin Name")
 
         assert result == mock_user
         assert mock_user.full_name == "New Admin Name"

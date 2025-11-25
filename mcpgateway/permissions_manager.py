@@ -13,10 +13,24 @@ from mcpgateway.db import Permissions
 
 DEFAULT_ROLES = [
     {
-        "name": "platform_admin",
-        "description": "Platform administrator with all permissions",
+        "name": "platform_owner",
+        "description": "Platform owner with all permissions",
         "scope": "global",
         "permissions": [Permissions.ALL_PERMISSIONS],
+        "is_system_role": True,
+    },
+    {
+        "name": "platform_owner",
+        "description": "Platform administrator with all permissions",
+        "scope": "global",
+        "permissions": [Permissions.ADMIN_SYSTEM_CONFIG, Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SECURITY_AUDIT],
+        "is_system_role": True,
+    },
+    {
+        "name": "global_member",
+        "description": "Global member with read-only permissions",
+        "scope": "global",
+        "permissions": [Permissions.USERS_READ],
         "is_system_role": True,
     },
     {
