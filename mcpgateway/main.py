@@ -1824,16 +1824,20 @@ async def set_server_state(
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
-    Toggles the status of a server (activate or deactivate).
+    Set the state of a server (activate or deactivate).
+
+    This endpoint updates the server's active/inactive state. Prefer the
+    language "set ... state" over "toggle" to avoid ambiguity; the
+    `activate` boolean explicitly controls the resulting state.
 
     Args:
-        server_id (str): The ID of the server to toggle.
-        activate (bool): Whether to activate or deactivate the server.
+        server_id (str): The ID of the server to modify.
+        activate (bool): Whether to activate (True) or deactivate (False) the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        ServerRead: The server object after the status change.
+        ServerRead: The server object after the state change.
 
     Raises:
         HTTPException: If the server is not found or there is an error.
@@ -2299,16 +2303,20 @@ async def set_a2a_agent_state(
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
-    Toggles the status of an A2A agent (activate or deactivate).
+    Set the state of an A2A agent (activate or deactivate).
+
+    This endpoint updates the agent's active/inactive state. Use "set ... state"
+    wording rather than "toggle"; the `activate` boolean explicitly controls the
+    resulting state.
 
     Args:
-        agent_id (str): The ID of the agent to toggle.
-        activate (bool): Whether to activate or deactivate the agent.
+        agent_id (str): The ID of the agent to modify.
+        activate (bool): Whether to activate (True) or deactivate (False) the agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        A2AAgentRead: The agent object after the status change.
+        A2AAgentRead: The agent object after the state change.
 
     Raises:
         HTTPException: If the agent is not found or there is an error.
