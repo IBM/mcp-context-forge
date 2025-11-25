@@ -1,25 +1,13 @@
 # -*- coding: utf-8 -*-
 
 """Location: ./tests/unit/mcpgateway/services/test_event_service.py
-
 Copyright 2025
-
 SPDX-License-Identifier: Apache-2.0
-
 Authors: Keval Mahajan
 
 Description:
 
 Comprehensive test suite for EventService with maximum code coverage.
-
-FINAL ROOT CAUSE IDENTIFIED:
-=============================
-The subscribe_events() method has an async generator inside another async generator.
-The finally block only executes when the INNER generator (pubsub.listen()) completes
-or raises an exception. Simply breaking from the outer loop doesn't trigger cleanup.
-
-The mock pubsub.listen() MUST complete naturally (return/StopAsyncIteration) for the
-finally block to execute. This is fundamental async generator behavior.
 
 """
 
@@ -762,6 +750,3 @@ class TestEventService:
         received_event, _ = await asyncio.gather(subscriber(), publisher())
 
         assert received_event == complex_event
-
-
-# Run tests with: pytest test_event_service.py -v --cov=mcpgateway.services.event_service --cov-report=html
