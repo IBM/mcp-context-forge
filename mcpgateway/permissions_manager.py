@@ -20,15 +20,15 @@ DEFAULT_ROLES = [
         "is_system_role": True,
     },
     {
-        "name": "platform_owner",
+        "name": "platform_admin",
         "description": "Platform administrator with all permissions",
         "scope": "global",
         "permissions": [Permissions.ADMIN_SYSTEM_CONFIG, Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SECURITY_AUDIT],
         "is_system_role": True,
     },
     {
-        "name": "global_member",
-        "description": "Global member with read-only permissions",
+        "name": "platform_member",
+        "description": "Platform member with read-only permissions",
         "scope": "global",
         "permissions": [Permissions.USERS_READ],
         "is_system_role": True,
