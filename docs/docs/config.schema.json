@@ -1609,7 +1609,7 @@
       "type": "string"
     },
     "validation_safe_uri_pattern": {
-      "default": "^[a-zA-Z0-9_\\-.:/?=&%]+$",
+      "default": "^[a-zA-Z0-9_\\-.:/?=&%{}]+$",
       "title": "Validation Safe Uri Pattern",
       "type": "string"
     },
