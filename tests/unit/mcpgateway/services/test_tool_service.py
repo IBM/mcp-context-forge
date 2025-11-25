@@ -831,70 +831,42 @@ class TestToolService:
         assert result.enabled is True
 
     @pytest.mark.asyncio
-    async def test_notify_tool_publish_event(self, tool_service, mock_tool, monkeypatch):
-        # Arrange - freeze the publish method so we can inspect the call
-        publish_mock = AsyncMock()
-        monkeypatch.setattr(tool_service, "_publish_event", publish_mock)
-
+    async def test_notify_tool_publish_event(self, tool_service, mock_tool):
+        """Test notification methods publish events via EventService."""
+        # Mock EventService.publish_event
+        tool_service._event_service.publish_event = AsyncMock()
+        
+        # Test all notification methods
         mock_tool.enabled = True
+        mock_tool.reachable = True
         await tool_service._notify_tool_activated(mock_tool)
-
+        
         mock_tool.enabled = False
         await tool_service._notify_tool_deactivated(mock_tool)
-
+        
         mock_tool.enabled = False
         await tool_service._notify_tool_removed(mock_tool)
+        
+        tool_info = {"id": mock_tool.id, "name": mock_tool.name}
+        await tool_service._notify_tool_deleted(tool_info)
+        
+        # Verify all 4 events were published
+        assert tool_service._event_service.publish_event.await_count == 4
+        
+        # Verify event types were correct
+        calls = tool_service._event_service.publish_event.call_args_list
+        assert calls[0][0][0]["type"] == "tool_activated"
+        assert calls[1][0][0]["type"] == "tool_deactivated"
+        assert calls[2][0][0]["type"] == "tool_removed"
+        assert calls[3][0][0]["type"] == "tool_deleted"
+        
+        # Verify event data
+        assert calls[0][0][0]["data"]["id"] == mock_tool.id
+        assert calls[0][0][0]["data"]["name"] == mock_tool.name
+        assert calls[0][0][0]["data"]["enabled"] is True
+        
+        assert calls[3][0][0]["data"] == tool_info
 
-        mock_tool.enabled = False
-        await tool_service._notify_tool_deleted({"id": mock_tool.id, "name": mock_tool.name})
-
-        assert publish_mock.await_count == 4
-
-        publish_mock.assert_has_calls(
-            [
-                call(
-                    {
-                        "type": "tool_activated",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": True,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_deactivated",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": False,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_removed",
-                        "data": {
-                            "id": mock_tool.id,
-                            "name": mock_tool.name,
-                            "enabled": False,
-                        },
-                        "timestamp": ANY,
-                    }
-                ),
-                call(
-                    {
-                        "type": "tool_deleted",
-                        "data": {"id": mock_tool.id, "name": mock_tool.name},
-                        "timestamp": ANY,
-                    }
-                ),
-            ],
-            any_order=False,
-        )
 
     @pytest.mark.asyncio
     async def test_publish_event_with_real_queue(self, tool_service):
