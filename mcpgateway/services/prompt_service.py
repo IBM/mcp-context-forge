@@ -1052,16 +1052,7 @@ class PromptService:
                     existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_update.name, DbPrompt.visibility == "team", DbPrompt.team_id == team_id)).scalar_one_or_none()
                     logger.info(f"Existing prompt check result: {existing_prompt}")
                     if existing_prompt:
-                        raise PromptNameConflictError(prompt_update.name, enabled=existing_prompt.enabled, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError("Only the owner can update this prompt")
+                        raise PromptNameConflictError(prompt_update.name, is_active=existing_prompt.is_active, prompt_id=existing_prompt.id, visibility=existing_prompt.visibility)
 
             if prompt_update.name is not None:
                 prompt.name = prompt_update.name
@@ -1440,15 +1431,6 @@ class PromptService:
             prompt = db.get(DbPrompt, prompt_id)
             if not prompt:
                 raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, prompt):
-                    raise PermissionError("Only the owner can delete this prompt")
 
             prompt_info = {"id": prompt.id, "name": prompt.name}
             prompt_name = prompt.name
