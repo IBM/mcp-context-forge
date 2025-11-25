@@ -211,8 +211,13 @@ def init_telemetry() -> Optional[Any]:
                 self.attributes_to_copy = attributes_to_copy or ["arize.project.name", "model_id"]
                 logger.info(f"ResourceAttributeSpanProcessor will copy: {self.attributes_to_copy}")
 
-            def on_start(self, span, parent_context=None): # pylint: disable=unused-argument
-                """Copy specified resource attributes to span attributes when span starts."""
+            def on_start(self, span, parent_context=None):  # pylint: disable=unused-argument
+                """Copy specified resource attributes to span attributes when span starts.
+
+                Args:
+                    span: The span being started.
+                    parent_context: The parent context (unused).
+                """
                 if not hasattr(span, "resource") or span.resource is None:
                     return
 
@@ -227,8 +232,14 @@ def init_telemetry() -> Optional[Any]:
                         logger.debug(f"Copied resource attribute to span: {attr}={value}")
 
             def on_end(self, span):
-                """Required by the SpanProcessor interface but not used."""
-                pass # pylint: disable=unnecessary-pass
+                """Handle span end event.
+
+                Required by the SpanProcessor interface but not used.
+
+                Args:
+                    span: The span being ended.
+                """
+                pass  # pylint: disable=unnecessary-pass
 
         # Add the custom span processor to copy resource attributes to spans
         if resource is not None:
