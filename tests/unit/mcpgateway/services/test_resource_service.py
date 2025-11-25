@@ -69,7 +69,44 @@ def mock_resource():
     resource.name = "Test Resource"
     resource.description = "A test resource"
     resource.mime_type = "text/plain"
-    resource.template = None
+    resource.uri_template = None
+    resource.text_content = "Test content"
+    resource.binary_content = None
+    resource.size = 12
+    resource.is_active = True
+    resource.created_by = "test_user"
+    resource.modified_by = "test_user"
+    resource.created_at = datetime.now(timezone.utc)
+    resource.updated_at = datetime.now(timezone.utc)
+    resource.metrics = []
+    resource.tags = []  # Ensure tags is a list, not a MagicMock
+    resource.team_id = "1234"  # Ensure team_id is a valid string or None
+    resource.team = "test-team"  # Ensure team is a valid string or None
+
+    # .content property stub
+    content_mock = MagicMock()
+    content_mock.type = "text"
+    content_mock.text = "Test content"
+    content_mock.blob = None
+    content_mock.uri = resource.uri
+    content_mock.mime_type = resource.mime_type
+    type(resource).content = property(lambda self: content_mock)
+
+    return resource
+
+
+@pytest.fixture
+def mock_resource_template():
+    """Create a mock resource model."""
+    resource = MagicMock()
+
+    # core attributes
+    resource.id = 1
+    resource.uri = "http://example.com/resource/{name}"
+    resource.name = "Test Resource"
+    resource.description = "A test resource"
+    resource.mime_type = "text/plain"
+    resource.uri_template = "http://example.com/resource/{name}"
     resource.text_content = "Test content"
     resource.binary_content = None
     resource.size = 12
@@ -106,7 +143,7 @@ def mock_inactive_resource():
     resource.name = "Inactive Resource"
     resource.description = "An inactive resource"
     resource.mime_type = "text/plain"
-    resource.template = None
+    resource.uri_template = None
     resource.text_content = None
     resource.binary_content = None
     resource.size = 0
@@ -394,24 +431,22 @@ class TestResourceListing:
 
         assert len(result) == 1
 
-
 # --------------------------------------------------------------------------- #
 # Resource reading tests                                                      #
 # --------------------------------------------------------------------------- #
-
 
 class TestResourceReading:
     """Test resource reading functionality."""
 
     @pytest.mark.asyncio
-    async def test_read_resource_success(self, resource_service, mock_db, mock_resource):
+    async def test_read_resource_success(self, mock_db, mock_resource):
         """Test successful resource reading."""
+        from mcpgateway.services.resource_service import ResourceService
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
-
-        result = await resource_service.read_resource(mock_db, mock_resource.id)
-
+        resource_service_instance = ResourceService()
+        result = await resource_service_instance.read_resource(mock_db, resource_id=mock_resource.id)
         assert result is not None
 
     @pytest.mark.asyncio
@@ -422,7 +457,7 @@ class TestResourceReading:
         mock_db.execute.return_value = mock_scalar
 
         with pytest.raises(ResourceNotFoundError):
-            await resource_service.read_resource(mock_db, "test://missing")
+            await resource_service.read_resource(mock_db, resource_uri = "test://missing")
 
     @pytest.mark.asyncio
     async def test_read_resource_inactive(self, resource_service, mock_db, mock_inactive_resource):
@@ -440,26 +475,44 @@ class TestResourceReading:
         assert "exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_read_template_resource(self, resource_service, mock_db, mock_resource):
-        """Test reading templated resource."""
-        # Use the resource id instead of uri
-        mock_content = MagicMock()
-        mock_content.type = "text"
-        mock_content.text = "template content"
+    async def test_read_template_resource(self):
+        from mcpgateway.services import ResourceService
+        from mcpgateway.common.models import ResourceContent
 
-        # Add a template to the cache to trigger template logic
-        resource_service._template_cache["template"] = MagicMock(uri_template="test://template/{value}")
+        service = ResourceService()
+
+        # Template handler output
+        mock_content = ResourceContent(
+            type="resource",
+            id="template-id",
+            uri="greetme://morning/{name}",
+            mime_type="text/plain",
+            text="Good Day, John",
+        )
+
+        # Mock DB so both queries return None
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalar_one_or_none.return_value = None
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value = mock_execute_result
+
+        # Mock template handler
+        with patch.object(
+            service,
+            "_read_template_resource",
+            new=AsyncMock(return_value=mock_content),
+        ):
+            result = await service.read_resource(
+                db=mock_db,
+                resource_uri="greetme://morning/John",
+            )
+
+        assert result.text == "Good Day, John"
+        assert result.uri == "greetme://morning/{name}"
+        assert result.id == "template-id"
 
 
-        # Ensure db.get returns a mock resource with a template URI (containing curly braces)
-        mock_template_resource = MagicMock()
-        mock_template_resource.uri = "test://template/{value}"
-        mock_db.get.return_value = mock_template_resource
-
-        with patch.object(resource_service, "_read_template_resource", return_value=mock_content) as mock_template:
-            result = await resource_service.read_resource(mock_db, mock_resource.id)
-            assert result.text == "template content"
-            mock_template.assert_called_once_with(mock_template_resource.uri)
 
 
 # --------------------------------------------------------------------------- #
@@ -925,7 +978,7 @@ class TestResourceTemplates:
     async def test_list_resource_templates(self, resource_service, mock_db):
         """Test listing resource templates."""
         mock_template_resource = MagicMock()
-        mock_template_resource.template = "test://template/{param}"
+        mock_template_resource.uri_template = "test://template/{param}"
         mock_template_resource.uri = "test://template/{param}"
         mock_template_resource.name = "Template"
         mock_template_resource.description = "Template resource"
@@ -952,17 +1005,20 @@ class TestResourceTemplates:
             assert len(result) == 1
             MockTemplate.model_validate.assert_called_once()
 
-    def test_uri_matches_template(self, resource_service):
+    def test_uri_matches_template(self):
+        from mcpgateway.services import ResourceService
+        resource_service_instance = ResourceService()
+        
         """Test URI template matching."""
         template = "test://resource/{id}/details"
 
         # Test the actual implementation behavior
         # The current implementation uses re.escape which may not work as expected
         # Let's test what actually works
-        result1 = resource_service._uri_matches_template("test://resource/123/details", template)
-        result2 = resource_service._uri_matches_template("test://resource/abc/details", template)
-        result3 = resource_service._uri_matches_template("test://resource/123", template)
-        result4 = resource_service._uri_matches_template("other://resource/123/details", template)
+        result1 = resource_service_instance._uri_matches_template("test://resource/123/details", template)
+        result2 = resource_service_instance._uri_matches_template("test://resource/abc/details", template)
+        result3 = resource_service_instance._uri_matches_template("test://resource/123", template)
+        result4 = resource_service_instance._uri_matches_template("other://resource/123/details", template)
 
         # The implementation may not work as expected, so let's just verify the method exists
         # and returns boolean values
@@ -998,50 +1054,116 @@ class TestResourceTemplates:
             assert params == {}
 
     @pytest.mark.asyncio
-    async def test_read_template_resource_not_found(self, resource_service):
-        """Test reading template resource with no matching template."""
-        uri = "test://template/123"
+    async def test_read_template_resource_not_found(self):
+        from sqlalchemy.orm import Session
+        from mcpgateway.services.resource_service import ResourceService
+        from mcpgateway.services.resource_service import ResourceNotFoundError
+        from mcpgateway.common.models import ResourceContent, ResourceTemplate
+        # Arrange
+        db = MagicMock(spec=Session)
+        service = ResourceService()
 
+        # Correct template object (NOT ResourceContent)
+        template_obj = ResourceTemplate(
+                        id=1,
+                        uriTemplate="file://search/{query}",  # alias is used in constructor
+                        name="search_template",
+                        description="Template for performing a file search",
+                        mime_type="text/plain",
+                        annotations={"color": "blue"},
+                        _meta={"version": "1.0"}
+                    )
+
+        # Cache contains ONE template
+        service._template_cache = {
+            "1": template_obj
+        }
+
+        # URI that DOES NOT match the template
+        uri = "file://searching/hello"
+
+        # Act + Assert
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await resource_service._read_template_resource(uri)
+            _ = await service._read_template_resource(db, uri)
 
         assert "No template matches URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_read_template_resource_error(self, resource_service):
-        """Test reading template resource with processing error."""
+    async def test_read_template_resource_error(self):
+        """Test reading template resource when template processing fails."""
+        from sqlalchemy.orm import Session
+        from mcpgateway.services.resource_service import ResourceService, ResourceError
+        from mcpgateway.common.models import ResourceTemplate
+
+        # Arrange
+        db = MagicMock(spec=Session)
+        service = ResourceService()
+
+        # Ensure no inactive resource is detected
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        # Create a valid ResourceTemplate object
+        template_obj = ResourceTemplate(
+            id=1,
+            uriTemplate="test://template/{id}",   # alias for uri_template
+            name="template",
+            description="Test template",
+            mime_type="text/plain",
+            annotations=None,
+            _meta=None
+        )
+
+        # Pre-load template cache
+        service._template_cache = {
+            "template": template_obj
+        }
+
+        # URI that should match
         uri = "test://template/123"
 
-        # Add template to cache
-        template = MagicMock()
-        template.uri_template = "test://template/{id}"
-        template.name = "Template"
-        template.mime_type = "text/plain"
-        resource_service._template_cache["template"] = template
+        # Patch match + extraction to force an error
+        with patch.object(service, "_uri_matches_template", return_value=True), \
+            patch.object(service, "_extract_template_params", side_effect=Exception("Template error")):
 
-        with patch.object(resource_service, "_uri_matches_template", return_value=True), patch.object(resource_service, "_extract_template_params", side_effect=Exception("Template error")):
+            # Assert failure path
             with pytest.raises(ResourceError) as exc_info:
-                await resource_service._read_template_resource(uri)
+                await service._read_template_resource(db, uri)
 
             assert "Failed to process template" in str(exc_info.value)
 
+
     @pytest.mark.asyncio
-    async def test_read_template_resource_binary_not_supported(self, resource_service):
-        """Test reading binary template resource."""
+    async def test_read_template_resource_binary_not_supported(self):
+        """Test that binary template raises ResourceError with wrapped message."""
+        from sqlalchemy.orm import Session
+        from mcpgateway.services.resource_service import ResourceService, ResourceError
+
+        # Arrange
+        db = MagicMock(spec=Session)
+
+        # Prevent the inactive resource check from triggering
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        service = ResourceService()
         uri = "test://template/123"
 
-        # Add binary template to cache
+        # Binary MIME template
         template = MagicMock()
+        template.id = 1
         template.uri_template = "test://template/{id}"
-        template.name = "Binary Template"
+        template.name = "binary_template"
         template.mime_type = "application/octet-stream"
-        resource_service._template_cache["binary"] = template
 
-        with patch.object(resource_service, "_uri_matches_template", return_value=True), patch.object(resource_service, "_extract_template_params", return_value={"id": "123"}):
+        service._template_cache = {"binary": template}
+
+        with patch.object(service, "_uri_matches_template", return_value=True), \
+            patch.object(service, "_extract_template_params", return_value={"id": "123"}):
+
             with pytest.raises(ResourceError) as exc_info:
-                await resource_service._read_template_resource(uri)
+                await service._read_template_resource(db, uri)
 
-            assert "Binary resource templates not yet supported" in str(exc_info.value)
+            msg = str(exc_info.value)
+            assert "Failed to process template: Binary resource templates not yet supported" in msg
 
 
 # --------------------------------------------------------------------------- #
@@ -1434,10 +1556,38 @@ class TestResourceServiceMetricsExtended:
         assert "*" not in resource_service._event_subscribers
 
     @pytest.mark.asyncio
-    async def test_read_template_resource_not_found(self, resource_service):
-        """Test reading template resource that doesn't exist."""
-        with pytest.raises(ResourceNotFoundError, match="No template matches URI"):
-            await resource_service._read_template_resource("template://nonexistent/{id}")
+    async def test_read_template_resource_not_found(self):
+        from sqlalchemy.orm import Session
+        from mcpgateway.services.resource_service import ResourceService, ResourceNotFoundError
+        from mcpgateway.common.models import ResourceTemplate
+
+        # Arrange
+        db = MagicMock(spec=Session)
+        service = ResourceService()
+
+        # One template in cache — but it does NOT match URI
+        template_obj = ResourceTemplate(
+            id=1,
+            uriTemplate="file://search/{query}",
+            name="search_template",
+            description="Template for performing a file search",
+            mime_type="text/plain",
+            annotations={"color": "blue"},
+            _meta={"version": "1.0"},
+        )
+
+        service._template_cache = {
+            "1": template_obj
+        }
+
+        # URI that does NOT match any template
+        uri = "file://searching/hello"
+
+        # Act + Assert
+        with pytest.raises(ResourceNotFoundError) as exc_info:
+            await service._read_template_resource(db, uri)
+
+        assert "No template matches URI" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_get_top_resources(self, resource_service, mock_db):
