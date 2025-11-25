@@ -1015,15 +1015,6 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError("Only the owner can delete this tool")
-
             tool_info = {"id": tool.id, "name": tool.name}
             db.delete(tool)
             db.commit()
@@ -1077,14 +1068,6 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError("Only the owner can activate the Tool" if activate else "Only the owner can deactivate the Tool")
 
             is_activated = is_reachable = False
             if tool.enabled != activate:
@@ -1580,15 +1563,6 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, tool):
-                    raise PermissionError("Only the owner can update this tool")
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:

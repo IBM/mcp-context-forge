@@ -998,14 +998,6 @@ class ResourceService:
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError("Only the owner can activate the Resource" if activate else "Only the owner can deactivate the Resource")
-
             # Update status if it's different
             if resource.is_active != activate:
                 resource.is_active = activate
@@ -1183,15 +1175,6 @@ class ResourceService:
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError("Only the owner can update this resource")
-
             # Update fields if provided
             if resource_update.uri is not None:
                 resource.uri = resource_update.uri
@@ -1294,15 +1277,6 @@ class ResourceService:
                 # If resource doesn't exist, rollback and re-raise a ResourceNotFoundError.
                 db.rollback()
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, resource):
-                    raise PermissionError("Only the owner can delete this resource")
 
             # Store resource info for notification before deletion.
             resource_info = {

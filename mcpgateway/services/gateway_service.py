@@ -1176,15 +1176,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, gateway):
-                    raise PermissionError("Only the owner can update this gateway")
-
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
                 if gateway_update.name is not None and gateway_update.name != gateway.name:
@@ -1572,14 +1563,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, gateway):
-                    raise PermissionError("Only the owner can activate the gateway" if activate else "Only the owner can deactivate the gateway")
-
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
                 gateway.enabled = activate
@@ -1754,15 +1737,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, gateway):
-                    raise PermissionError("Only the owner can delete this gateway")
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
