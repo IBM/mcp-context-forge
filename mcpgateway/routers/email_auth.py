@@ -584,7 +584,6 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
                 new_password=user_request.password,
                 ip_address="admin_update",
                 user_agent="admin_panel",
-                skip_old_password_check=True,
             )
 
         db.commit()
