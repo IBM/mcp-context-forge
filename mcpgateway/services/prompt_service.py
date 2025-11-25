@@ -1198,10 +1198,10 @@ class PromptService:
             raise PromptError(f"Failed to delete prompt: {str(e)}")
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to tool events via the EventService.
+        """Subscribe to Prompt events via the EventService.
 
         Yields:
-            Tool event messages.
+            Prompt event messages.
         """
         async for event in self._event_service.subscribe_events():
             yield event
