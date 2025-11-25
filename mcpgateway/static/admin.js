@@ -24025,7 +24025,7 @@ async function searchStructuredLogs() {
         }
     }
     if (levelFilter && levelFilter !== '') {
-        searchRequest.level = [levelFilter.toUpperCase()];
+        searchRequest.level = [levelFilter];
     }
     if (componentFilter && componentFilter !== '') {
         searchRequest.component = [componentFilter];

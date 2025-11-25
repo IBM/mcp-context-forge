@@ -27,7 +27,7 @@ Structure:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
@@ -114,6 +114,7 @@ from mcpgateway.services.import_service import ConflictStrategy, ImportConflictE
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -407,6 +408,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         Exception: Any unhandled error that occurs during service
             initialisation or shutdown is re-raised to the caller.
     """
+    aggregation_stop_event: Optional[asyncio.Event] = None
+    aggregation_loop_task: Optional[asyncio.Task] = None
+    aggregation_backfill_task: Optional[asyncio.Task] = None
+
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting MCP Gateway services")
@@ -462,6 +467,46 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
+        if settings.metrics_aggregation_enabled:
+            aggregation_stop_event = asyncio.Event()
+            log_aggregator = get_log_aggregator()
+
+            async def run_log_backfill() -> None:
+                hours = getattr(settings, "metrics_aggregation_backfill_hours", 0)
+                if hours <= 0:
+                    return
+                try:
+                    await asyncio.to_thread(log_aggregator.backfill, hours)
+                    logger.info("Log aggregation backfill completed for last %s hour(s)", hours)
+                except Exception as backfill_error:  # pragma: no cover - defensive logging
+                    logger.warning("Log aggregation backfill failed: %s", backfill_error)
+
+            async def run_log_aggregation_loop() -> None:
+                interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
+                logger.info(
+                    "Starting log aggregation loop (window=%s min)",
+                    log_aggregator.aggregation_window_minutes,
+                )
+                try:
+                    while not aggregation_stop_event.is_set():
+                        try:
+                            await asyncio.to_thread(log_aggregator.aggregate_all_components)
+                        except Exception as agg_error:  # pragma: no cover - defensive logging
+                            logger.warning("Log aggregation loop iteration failed: %s", agg_error)
+
+                        try:
+                            await asyncio.wait_for(aggregation_stop_event.wait(), timeout=interval_seconds)
+                        except asyncio.TimeoutError:
+                            continue
+                except asyncio.CancelledError:
+                    logger.debug("Log aggregation loop cancelled")
+                    raise
+                finally:
+                    logger.info("Log aggregation loop stopped")
+
+            aggregation_backfill_task = asyncio.create_task(run_log_backfill())
+            aggregation_loop_task = asyncio.create_task(run_log_aggregation_loop())
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -475,6 +520,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        if aggregation_stop_event is not None:
+            aggregation_stop_event.set()
+        for task in (aggregation_backfill_task, aggregation_loop_task):
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
         # Shutdown plugin manager
         if plugin_manager:
             try:
