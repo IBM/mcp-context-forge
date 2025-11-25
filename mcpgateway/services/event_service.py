@@ -6,33 +6,33 @@ SPDX-License-Identifier: Apache-2.0
 Authors: Keval Mahajan
 
 Description:
-    This module implements a Centralized Event Service designed to decouple event 
+    This module implements a Centralized Event Service designed to decouple event
     producers from consumers within the MCP Gateway architecture for various services
     such as gateway_service, tool_service, and more.
-    
-    - Primary Transport (Redis): Uses Redis Pub/Sub for distributed event 
-      broadcasting. This allows multiple Gateway instances (scaled horizontally) 
+
+    - Primary Transport (Redis): Uses Redis Pub/Sub for distributed event
+      broadcasting. This allows multiple Gateway instances (scaled horizontally)
       to share events.
-    - Fallback Transport (Local Queue): Uses `asyncio.Queue` for in-memory 
-      communication. This activates automatically if Redis is unavailable or 
-      misconfigured, ensuring the application remains functional in a single-node 
+    - Fallback Transport (Local Queue): Uses `asyncio.Queue` for in-memory
+      communication. This activates automatically if Redis is unavailable or
+      misconfigured, ensuring the application remains functional in a single-node
       development environment.
 
 Usage Guide:
 
     1. Initialization
        Instantiate the service with a unique channel name. This acts as the "Topic".
-       
+
        ```python
        from mcpgateway.services.event_service import EventService
-       
+
        # Create a service instance for tool execution events
        tool_events = EventService(channel_name="mcpgateway:tools")
        ```
 
     2. Publishing Events (Producer)
        Any part of the application can publish a dictionary to the channel.
-       
+
        ```python
        await tool_events.publish_event({
            "event": "tool_start",
@@ -42,9 +42,9 @@ Usage Guide:
        ```
 
     3. Subscribing to Events (Consumer)
-       Use an async for-loop to listen to the stream. This generator yields 
+       Use an async for-loop to listen to the stream. This generator yields
        events as they arrive.
-       
+
        ```python
        async for event in tool_events.subscribe_events():
            print(f"Received event: {event['event']}")
@@ -52,26 +52,30 @@ Usage Guide:
        ```
 """
 
+# Standard
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 import uuid
 
-# Third-Party
 try:
+    # Third-Party
     import redis
+
     REDIS_AVAILABLE = True
 except ImportError:
     REDIS_AVAILABLE = False
 
+# First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
 
 class EventService:
     """Generic Event Service handling Redis PubSub with Local Queue fallback.
@@ -100,7 +104,7 @@ class EventService:
         """
         self.channel_name = channel_name
         self._event_subscribers: List[asyncio.Queue] = []
-        
+
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
         self._redis_client: Optional[Any] = None
 
@@ -131,11 +135,11 @@ class EventService:
             >>> async def test_pub():
             ...     # Force local mode for test
             ...     service = EventService("test:pub")
-            ...     service._redis_client = None 
+            ...     service._redis_client = None
             ...     # Create a listener
             ...     queue = asyncio.Queue()
             ...     service._event_subscribers.append(queue)
-            ...     
+            ...
             ...     await service.publish_event({"type": "test", "data": 123})
             ...     return await queue.get()
             >>> asyncio.run(test_pub())
@@ -195,14 +199,15 @@ class EventService:
         if self._redis_client:
             try:
                 # Import asyncio version of redis here to avoid top-level dependency issues
+                # Third-Party
                 import redis.asyncio as aioredis
-                
+
                 # Create a dedicated async connection for this subscription
                 client = aioredis.from_url(self.redis_url, decode_responses=True)
                 pubsub = client.pubsub()
-                
+
                 await pubsub.subscribe(self.channel_name)
-                
+
                 try:
                     async for message in pubsub.listen():
                         if message["type"] == "message":
@@ -224,7 +229,7 @@ class EventService:
             except ImportError:
                 logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
                 # Fallthrough to queue mode if import fails
-        
+
         # Local Queue (Redis not available or import failed)
         if not (self.redis_url and REDIS_AVAILABLE):
             queue: asyncio.Queue = asyncio.Queue()
@@ -241,7 +246,7 @@ class EventService:
 
     async def shutdown(self):
         """Cleanup resources.
-        
+
         Closes the synchronous Redis client connection and clears local subscribers.
 
         Example:
@@ -254,7 +259,7 @@ class EventService:
             True
         """
         if self._redis_client:
-            # Sync client doesn't always need explicit close in this context, 
+            # Sync client doesn't always need explicit close in this context,
             # but good practice to clear references.
             self._redis_client.close()
         self._event_subscribers.clear()

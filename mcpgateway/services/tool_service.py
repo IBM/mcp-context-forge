@@ -64,10 +64,10 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -1103,7 +1103,7 @@ class ToolService:
 
                 db.commit()
                 db.refresh(tool)
-                
+
                 if not tool.enabled:
                     # Inactive
                     await self._notify_tool_deactivated(tool)
@@ -1113,7 +1113,7 @@ class ToolService:
                 else:
                     # Active
                     await self._notify_tool_activated(tool)
-                
+
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
         except PermissionError as e:
@@ -1714,12 +1714,7 @@ class ToolService:
         """
         event = {
             "type": "tool_activated",
-            "data": {
-                "id": tool.id, 
-                "name": tool.name, 
-                "enabled": tool.enabled, 
-                "reachable": tool.reachable
-                },
+            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled, "reachable": tool.reachable},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1733,12 +1728,7 @@ class ToolService:
         """
         event = {
             "type": "tool_deactivated",
-            "data": {
-                "id": tool.id, 
-                "name": tool.name, 
-                "enabled": tool.enabled,
-                "reachable": tool.reachable
-                },
+            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled, "reachable": tool.reachable},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1775,7 +1765,6 @@ class ToolService:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
-
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to tool events via the EventService.

@@ -40,6 +40,7 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
 import mimetypes
 import os
@@ -49,7 +50,6 @@ import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
 from urllib.parse import urlparse, urlunparse
 import uuid
-import json
 
 # Third-Party
 from filelock import FileLock, Timeout
@@ -81,13 +81,13 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.services.event_service import EventService
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
-from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -1689,7 +1689,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     for tool in tools:
                         await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
 
-        
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))

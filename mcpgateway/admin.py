@@ -18,6 +18,7 @@ underlying data.
 """
 
 # Standard
+import asyncio
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
@@ -36,7 +37,6 @@ from typing import cast as typing_cast
 from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
-import asyncio
 
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -9775,10 +9775,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
 
 
 @admin_router.get("/events")
-async def admin_events(
-    request: Request,
-    _user=Depends(get_current_user_with_permissions)
-):
+async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Stream admin events from all services via SSE."""
 
     # Create a shared queue to aggregate events from all services
@@ -9790,21 +9787,14 @@ async def admin_events(
             async for event in generator:
                 await event_queue.put(event)
         except asyncio.CancelledError:
-            pass # Task cancelled normally
+            pass  # Task cancelled normally
         except Exception as e:
             logger.error(f"Error in {source_name} event subscription: {e}")
 
     async def event_generator():
         # Create background tasks for each service subscription
         # This allows them to run concurrently
-        tasks = [
-            asyncio.create_task(
-                stream_to_queue(gateway_service.subscribe_events(), "gateway")
-            ),
-            asyncio.create_task(
-                stream_to_queue(tool_service.subscribe_events(), "tool")
-            )
-        ]
+        tasks = [asyncio.create_task(stream_to_queue(gateway_service.subscribe_events(), "gateway")), asyncio.create_task(stream_to_queue(tool_service.subscribe_events(), "tool"))]
 
         try:
             while True:
@@ -9819,7 +9809,7 @@ async def admin_events(
                 try:
                     # Wait for an event
                     event = await event_queue.get()
-                    
+
                     # SSE format
                     event_type = event.get("type", "message")
                     event_data = json.dumps(event.get("data", {}))
@@ -9828,10 +9818,10 @@ async def admin_events(
                     print(f"event: {event_type}\ndata: {event_data}\n\n")
 
                     yield f"event: {event_type}\ndata: {event_data}\n\n"
-                    
+
                     # Mark task as done in queue (good practice)
                     event_queue.task_done()
-                    
+
                 except asyncio.CancelledError:
                     raise
 
@@ -9844,7 +9834,7 @@ async def admin_events(
             # This is crucial to close Redis connections/listeners in the EventService
             for task in tasks:
                 task.cancel()
-            
+
             # Wait for tasks to clean up
             await asyncio.gather(*tasks, return_exceptions=True)
             logger.debug("Background event subscription tasks cleaned up")
@@ -9856,8 +9846,9 @@ async def admin_events(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )
+
 
 ####################
 # Admin Tag Routes #
