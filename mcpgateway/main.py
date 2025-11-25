@@ -1817,7 +1817,7 @@ async def update_server(
 
 @server_router.post("/{server_id}/state", response_model=ServerRead)
 @require_permission("servers.update")
-async def toggle_server_status(
+async def set_server_state(
     server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -1840,7 +1840,7 @@ async def toggle_server_status(
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {user} is setting server {server_id} to {'active' if activate else 'inactive'}")
         return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2292,7 +2292,7 @@ async def update_a2a_agent(
 
 @a2a_router.post("/{agent_id}/state", response_model=A2AAgentRead)
 @require_permission("a2a.update")
-async def toggle_a2a_agent_status(
+async def set_a2a_agent_state(
     agent_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -2315,7 +2315,7 @@ async def toggle_a2a_agent_status(
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {user} is setting A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
@@ -2691,7 +2691,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
 
 @tool_router.post("/{tool_id}/state")
 @require_permission("tools.update")
-async def toggle_tool_status(
+async def set_tool_state(
     tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -2713,7 +2713,7 @@ async def toggle_tool_status(
         HTTPException: If an error occurs during status toggling.
     """
     try:
-        logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {user} is setting tool with ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
@@ -2755,7 +2755,7 @@ async def list_resource_templates(
 
 @resource_router.post("/{resource_id}/state")
 @require_permission("resources.update")
-async def toggle_resource_status(
+async def set_resource_state(
     resource_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -2776,7 +2776,7 @@ async def toggle_resource_status(
     Raises:
         HTTPException: If toggling fails.
     """
-    logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
+    logger.debug(f"User {user} is setting resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
@@ -3103,7 +3103,7 @@ async def subscribe_resource(resource_id: str, user=Depends(get_current_user_wit
 ###############
 @prompt_router.post("/{prompt_id}/state")
 @require_permission("prompts.update")
-async def toggle_prompt_status(
+async def set_prompt_state(
     prompt_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -3124,7 +3124,7 @@ async def toggle_prompt_status(
     Raises:
         HTTPException: If the toggle fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
     """
-    logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
+    logger.debug(f"User: {user} requested set state for prompt {prompt_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
@@ -3462,7 +3462,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 ################
 @gateway_router.post("/{gateway_id}/state")
 @require_permission("gateways.update")
-async def toggle_gateway_status(
+async def set_gateway_state(
     gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -3483,7 +3483,7 @@ async def toggle_gateway_status(
     Raises:
         HTTPException: Returned with **400 Bad Request** if the toggle operation fails (e.g., the gateway does not exist or the database raises an unexpected error).
     """
-    logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
+    logger.debug(f"User '{user}' requested set state for gateway {gateway_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         gateway = await gateway_service.toggle_gateway_status(
