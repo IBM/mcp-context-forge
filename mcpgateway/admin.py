@@ -5083,7 +5083,7 @@ async def admin_tools_partial_html(
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
-
+    
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
@@ -5572,13 +5572,20 @@ async def admin_resources_partial_html(
     resources_data = []
     for r in resources_db:
         try:
+            # Ensure the resource has a resolved team name before conversion
+            try:
+                team_name = local_resource_service._get_team_name(db, getattr(r, "team_id", None))
+            except Exception:
+                team_name = None
+            r.team = team_name
             resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
 
     data = jsonable_encoder(resources_data)
-
+    LOGGER.info(f"resources_data: {resources_data}")
+    LOGGER.info(f"data: {data}")
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
