@@ -739,6 +739,21 @@ class A2AAgentService:
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
 
+        structured_logger.log(
+            level="INFO",
+            message=f"A2A agent {status}",
+            event_type="a2a_agent_status_changed",
+            component="a2a_service",
+            user_email=user_email,
+            resource_type="a2a_agent",
+            resource_id=str(agent.id),
+            custom_fields={
+                "agent_name": agent.name,
+                "enabled": agent.enabled,
+                "reachable": agent.reachable,
+            },
+        )
+
         return self._db_to_schema(db=db, db_agent=agent)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
@@ -774,11 +789,31 @@ class A2AAgentService:
             db.commit()
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+
+            structured_logger.log(
+                level="INFO",
+                message="A2A agent deleted",
+                event_type="a2a_agent_deleted",
+                component="a2a_service",
+                user_email=user_email,
+                resource_type="a2a_agent",
+                resource_id=str(agent_id),
+                custom_fields={"agent_name": agent_name},
+            )
         except PermissionError:
             db.rollback()
             raise
 
-    async def invoke_agent(self, db: Session, agent_name: str, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
+    async def invoke_agent(
+        self,
+        db: Session,
+        agent_name: str,
+        parameters: Dict[str, Any],
+        interaction_type: str = "query",
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Invoke an A2A agent.
 
         Args:
@@ -786,6 +821,8 @@ class A2AAgentService:
             agent_name: Name of the agent to invoke.
             parameters: Parameters for the interaction.
             interaction_type: Type of interaction.
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
 
         Returns:
             Agent response.
@@ -838,6 +875,8 @@ class A2AAgentService:
                     level="INFO",
                     message=f"A2A external call started: {agent_name}",
                     component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
                     correlation_id=correlation_id,
                     metadata={
                         "event": "a2a_call_started",
@@ -861,6 +900,8 @@ class A2AAgentService:
                         level="INFO",
                         message=f"A2A external call completed: {agent_name}",
                         component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
                         metadata={
@@ -879,6 +920,8 @@ class A2AAgentService:
                         level="ERROR",
                         message=f"A2A external call failed: {agent_name}",
                         component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
                         correlation_id=correlation_id,
                         duration_ms=call_duration_ms,
                         error_details={

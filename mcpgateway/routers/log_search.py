@@ -12,12 +12,12 @@ security events, audit trails, and performance metrics.
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, desc, select
+from sqlalchemy import and_, or_, desc, select, delete
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
@@ -36,6 +36,107 @@ from mcpgateway.services.log_aggregator import get_log_aggregator
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
+
+MIN_PERFORMANCE_RANGE_HOURS = 5.0 / 60.0
+_DEFAULT_AGGREGATION_KEY = "5m"
+_AGGREGATION_LEVELS: Dict[str, Dict[str, Any]] = {
+    "5m": {"minutes": 5, "label": "5-minute windows"},
+    "24h": {"minutes": 24 * 60, "label": "24-hour windows"},
+}
+
+
+def _align_to_window(dt: datetime, window_minutes: int) -> datetime:
+    """Align a datetime down to the nearest aggregation window boundary."""
+    timestamp = dt.astimezone(timezone.utc)
+    total_minutes = int(timestamp.timestamp() // 60)
+    aligned_minutes = (total_minutes // window_minutes) * window_minutes
+    return datetime.fromtimestamp(aligned_minutes * 60, tz=timezone.utc)
+
+
+def _deduplicate_metrics(metrics: List[PerformanceMetric]) -> List[PerformanceMetric]:
+    """Ensure a single metric per component/operation/window."""
+    if not metrics:
+        return []
+
+    deduped: Dict[Tuple[str, str, datetime], PerformanceMetric] = {}
+    for metric in metrics:
+        component = metric.component or ""
+        operation = metric.operation_type or ""
+        key = (component, operation, metric.window_start)
+        existing = deduped.get(key)
+        if existing is None or metric.timestamp > existing.timestamp:
+            deduped[key] = metric
+
+    return sorted(deduped.values(), key=lambda m: m.window_start, reverse=True)
+
+
+def _aggregate_custom_windows(
+    aggregator,
+    window_minutes: int,
+    db: Session,
+) -> None:
+    """Aggregate metrics using custom window duration."""
+    window_delta = timedelta(minutes=window_minutes)
+    window_duration_seconds = window_minutes * 60
+
+    sample_row = db.execute(
+        select(PerformanceMetric.window_start, PerformanceMetric.window_end)
+        .where(PerformanceMetric.window_duration_seconds == window_duration_seconds)
+        .order_by(desc(PerformanceMetric.window_start))
+        .limit(1)
+    ).first()
+
+    needs_rebuild = False
+    if sample_row:
+        sample_start, sample_end = sample_row
+        if sample_start is not None and sample_end is not None:
+            start_utc = sample_start if sample_start.tzinfo else sample_start.replace(tzinfo=timezone.utc)
+            end_utc = sample_end if sample_end.tzinfo else sample_end.replace(tzinfo=timezone.utc)
+            duration = int((end_utc - start_utc).total_seconds())
+            if duration != window_duration_seconds:
+                needs_rebuild = True
+            aligned_start = _align_to_window(start_utc, window_minutes)
+            if aligned_start != start_utc:
+                needs_rebuild = True
+
+    if needs_rebuild:
+        db.execute(
+            delete(PerformanceMetric).where(
+                PerformanceMetric.window_duration_seconds == window_duration_seconds
+            )
+        )
+        db.commit()
+        sample_row = None
+
+    max_existing = None
+    if not needs_rebuild:
+        max_existing = db.execute(
+            select(sa_func.max(PerformanceMetric.window_start)).where(
+                PerformanceMetric.window_duration_seconds == window_duration_seconds
+            )
+        ).scalar()
+
+    if max_existing:
+        current_start = max_existing if max_existing.tzinfo else max_existing.replace(tzinfo=timezone.utc)
+        current_start = current_start + window_delta
+    else:
+        earliest_log = db.execute(select(sa_func.min(StructuredLogEntry.timestamp))).scalar()
+        if not earliest_log:
+            return
+        if earliest_log.tzinfo is None:
+            earliest_log = earliest_log.replace(tzinfo=timezone.utc)
+        current_start = _align_to_window(earliest_log, window_minutes)
+
+    reference_end = datetime.now(timezone.utc)
+
+    while current_start < reference_end:
+        current_end = current_start + window_delta
+        aggregator.aggregate_all_components(
+            window_start=current_start,
+            window_end=current_end,
+            db=db,
+        )
+        current_start = current_end
 
 
 # Request/Response Models
@@ -549,7 +650,8 @@ async def get_audit_trails(
 async def get_performance_metrics(
     component: Optional[str] = Query(None),
     operation: Optional[str] = Query(None),
-    hours: int = Query(24, ge=1, le=1000),
+    hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
+    aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, regex="^(5m|24h)$", description="Aggregation level for metrics"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db)
 ) -> List[PerformanceMetricResponse]:
@@ -566,28 +668,38 @@ async def get_performance_metrics(
         List of performance metrics
     """
     try:
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
-        
+        aggregation_config = _AGGREGATION_LEVELS.get(aggregation, _AGGREGATION_LEVELS[_DEFAULT_AGGREGATION_KEY])
+        window_minutes = aggregation_config["minutes"]
+        window_duration_seconds = window_minutes * 60
+
+        if settings.metrics_aggregation_enabled:
+            try:
+                aggregator = get_log_aggregator()
+                if aggregation == "5m":
+                    aggregator.backfill(hours=hours, db=db)
+                else:
+                    _aggregate_custom_windows(
+                        aggregator=aggregator,
+                        window_minutes=window_minutes,
+                        db=db,
+                    )
+            except Exception as agg_error:  # pragma: no cover - defensive logging
+                logger.warning("On-demand metrics aggregation failed: %s", agg_error)
+
         stmt = select(PerformanceMetric).where(
-            PerformanceMetric.window_start >= since
+            PerformanceMetric.window_duration_seconds == window_duration_seconds
         )
         
         if component:
             stmt = stmt.where(PerformanceMetric.component == component)
         if operation:
             stmt = stmt.where(PerformanceMetric.operation_type == operation)
-        
-        stmt = stmt.order_by(desc(PerformanceMetric.window_start))
+
+        stmt = stmt.order_by(desc(PerformanceMetric.window_start), desc(PerformanceMetric.timestamp))
         
         metrics = db.execute(stmt).scalars().all()
 
-        if not metrics and settings.metrics_aggregation_enabled:
-            try:
-                aggregator = get_log_aggregator()
-                aggregator.backfill(hours=hours, db=db)
-                metrics = db.execute(stmt).scalars().all()
-            except Exception as agg_error:  # pragma: no cover - defensive logging
-                logger.warning("On-demand metrics aggregation failed: %s", agg_error)
+        metrics = _deduplicate_metrics(metrics)
         
         return [
             PerformanceMetricResponse(
