@@ -1567,6 +1567,7 @@ def sample_people():
         {"name": "Bob", "id": 2},
     ]
 
+
 def test_jsonpath_modifier_basic_match(sample_people):
     # First-Party
     from mcpgateway.main import jsonpath_modifier
@@ -1616,6 +1617,7 @@ class TestTransformDataWithMappings:
 
         with pytest.raises(HTTPException):
             transform_data_with_mappings(sample_people, {"bad": "$["})
+
 
 # ----------------------------------------------------- #
 # Plugin Exception Handler Tests                       #

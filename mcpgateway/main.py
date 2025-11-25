@@ -355,8 +355,7 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
             try:
                 mapping_matches = mapping_expr.find(item)
             except Exception as e:
-                raise HTTPException(status_code=400,
-                                    detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+                raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
 
             if not mapping_matches:
                 mapped_item[new_key] = None
@@ -615,14 +614,14 @@ def log_warnings(warnings: list[str]):
 
 def log_critical_issues(critical_issues: list[Any]):
     """
-        Log critical based on configuration settings
-        If REQUIRE_STRONG_SECRETS set, this will output critical errors and exit the mcpgateway server.
+    Log critical based on configuration settings
+    If REQUIRE_STRONG_SECRETS set, this will output critical errors and exit the mcpgateway server.
 
-        Args:
-            critical_issues: List
+    Args:
+        critical_issues: List
 
-        Returns: None
-        """
+    Returns: None
+    """
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
     if critical_issues:
         if settings.require_strong_secrets:
