@@ -30,6 +30,7 @@ class TestObservability:
             "OTEL_EXPORTER_OTLP_ENDPOINT",
             "OTEL_SERVICE_NAME",
             "OTEL_RESOURCE_ATTRIBUTES",
+            "OTEL_COPY_RESOURCE_ATTRS_TO_SPANS",
         ]
         for var in env_vars:
             os.environ.pop(var, None)
@@ -82,7 +83,8 @@ class TestObservability:
 
         # Verify provider was created and configured
         mock_provider.assert_called_once()
-        assert provider_instance.add_span_processor.call_count == 2
+        # Only 1 span processor (BatchSpanProcessor) since OTEL_COPY_RESOURCE_ATTRS_TO_SPANS is not set
+        provider_instance.add_span_processor.assert_called_once()
         assert result is not None
 
     @patch("mcpgateway.observability.ConsoleSpanExporter")
@@ -100,6 +102,25 @@ class TestObservability:
 
         # Verify console exporter was created
         mock_exporter.assert_called_once()
+        # Only 1 span processor (SimpleSpanProcessor) since OTEL_COPY_RESOURCE_ATTRS_TO_SPANS is not set
+        provider_instance.add_span_processor.assert_called_once()
+        assert result is not None
+
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_with_resource_attr_copy_enabled(self, mock_processor, mock_provider, mock_exporter):
+        """Test that ResourceAttributeSpanProcessor is added when OTEL_COPY_RESOURCE_ATTRS_TO_SPANS=true."""
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_COPY_RESOURCE_ATTRS_TO_SPANS"] = "true"
+
+        # Mock the provider instance
+        provider_instance = MagicMock()
+        mock_provider.return_value = provider_instance
+
+        result = init_telemetry()
+
+        # Verify 2 span processors: ResourceAttributeSpanProcessor + SimpleSpanProcessor
         assert provider_instance.add_span_processor.call_count == 2
         assert result is not None
 

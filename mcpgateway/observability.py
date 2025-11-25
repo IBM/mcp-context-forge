@@ -242,7 +242,10 @@ def init_telemetry() -> Optional[Any]:
                 pass  # pylint: disable=unnecessary-pass
 
         # Add the custom span processor to copy resource attributes to spans
-        if resource is not None:
+        # This is needed for Arize which requires certain attributes as span attributes
+        # Enable via OTEL_COPY_RESOURCE_ATTRS_TO_SPANS=true (disabled by default)
+        copy_resource_attrs = os.getenv("OTEL_COPY_RESOURCE_ATTRS_TO_SPANS", "false").lower() == "true"
+        if resource is not None and copy_resource_attrs:
             logger.info("Adding ResourceAttributeSpanProcessor to copy resource attributes to spans")
             provider.add_span_processor(ResourceAttributeSpanProcessor())
 
