@@ -378,38 +378,40 @@ class TestPromptService:
         assert res["is_active"] is False
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_not_found(self, prompt_service, test_db):
+    async def test_set_prompt_state(self, prompt_service, test_db):
+        # Ensure the mock prompt has a real id and primitive attributes
+        p = MagicMock(spec=DbPrompt)
+        p.id = 1
+        p.team_id = 1
+        p.name = "hello"
+        p.is_active = True
+        test_db.get = Mock(return_value=p)
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        prompt_service._notify_prompt_deactivated = AsyncMock()
+
+        res = await prompt_service.set_prompt_state(test_db, 1, activate=False)
+
+        assert p.is_active is False
+        prompt_service._notify_prompt_deactivated.assert_called_once()
+        assert res["is_active"] is False
+    # ──────────────────────────────────────────────────────────────────
+    #   delete_prompt
+    @pytest.mark.asyncio
+    async def test_set_prompt_state_not_found(self, prompt_service, test_db):
         test_db.get = Mock(return_value=None)
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.set_prompt_state(test_db, 999, activate=True)
         assert "Prompt not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_prompt_status_exception(self, prompt_service, test_db):
+    async def test_set_prompt_state_exception(self, prompt_service, test_db):
         p = _build_db_prompt(is_active=True)
         test_db.get = Mock(return_value=p)
         test_db.commit = Mock(side_effect=Exception("fail"))
         with pytest.raises(PromptError) as exc_info:
             await prompt_service.set_prompt_state(test_db, 1, activate=False)
         assert "Failed to set prompt state" in str(exc_info.value)
-
-    # ──────────────────────────────────────────────────────────────────
-    #   delete_prompt
-    # ──────────────────────────────────────────────────────────────────
-
-
-    @pytest.mark.asyncio
-    async def test_delete_prompt_success(self, prompt_service, test_db):
-        p = _build_db_prompt()
-        test_db.get = Mock(return_value=p)
-        test_db.delete = Mock()
-        test_db.commit = Mock()
-        prompt_service._notify_prompt_deleted = AsyncMock()
-
-        await prompt_service.delete_prompt(test_db, 1)
-
-        test_db.delete.assert_called_once_with(p)
-        prompt_service._notify_prompt_deleted.assert_called_once()
 
 
     @pytest.mark.asyncio

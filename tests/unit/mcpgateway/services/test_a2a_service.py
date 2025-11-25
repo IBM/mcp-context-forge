@@ -234,8 +234,8 @@ class TestA2AAgentService:
         with pytest.raises(A2AAgentNotFoundError):
             await service.update_agent(mock_db, "non-existent-id", update_data)
 
-    async def test_toggle_agent_status_success(self, service, mock_db, sample_db_agent):
-        """Test successful agent status toggle."""
+    async def test_set_a2a_agent_state_success(self, service, mock_db, sample_db_agent):
+        """Test successful agent state update."""
         # Mock database query
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
         mock_db.commit = MagicMock()

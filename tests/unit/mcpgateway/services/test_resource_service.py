@@ -524,7 +524,7 @@ class TestResourceManagement:
     """Test resource management operations."""
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_activate(self, resource_service, mock_db, mock_inactive_resource):
+    async def test_set_resource_state_activate(self, resource_service, mock_db, mock_inactive_resource):
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
@@ -558,7 +558,7 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
+    async def test_set_resource_state_deactivate(self, resource_service, mock_db, mock_resource):
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
@@ -592,8 +592,8 @@ class TestResourceManagement:
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
-        """Test toggling status of non-existent resource."""
+    async def test_set_resource_state_not_found(self, resource_service, mock_db):
+        """Test setting status of non-existent resource."""
         mock_db.get.return_value = None
 
         with pytest.raises(ResourceError) as exc_info:  # ResourceError, not ResourceNotFoundError
@@ -603,8 +603,8 @@ class TestResourceManagement:
         assert "999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_no_change(self, resource_service, mock_db, mock_resource):
-        """Test toggling status when no change needed."""
+    async def test_set_resource_state_no_change(self, resource_service, mock_db, mock_resource):
+        """Test setting status when no change needed."""
         mock_db.get.return_value = mock_resource
         mock_resource.is_active = True
 
@@ -1407,8 +1407,8 @@ class TestErrorHandling:
             mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_error(self, resource_service, mock_db, mock_resource):
-        """Test toggle status with error."""
+    async def test_set_resource_state_error(self, resource_service, mock_db, mock_resource):
+        """Test setting resource status with error."""
         mock_db.get.return_value = mock_resource
         mock_db.commit.side_effect = Exception("Database error")
 

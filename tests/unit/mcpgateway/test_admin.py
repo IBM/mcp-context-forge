@@ -328,9 +328,9 @@ class TestAdminServerRoutes:
         assert result.status_code in (200, 409, 422, 500)
 
     @patch.object(ServerService, "set_server_state")
-    async def test_admin_toggle_server_with_exception(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling server status with exception handling."""
-        mock_toggle_status.side_effect = Exception("Toggle operation failed")
+    async def test_admin_set_server_state_with_exception(self, mock_set_status, mock_request, mock_db):
+        """Test setting server state with exception handling."""
+        mock_set_status.side_effect = Exception("Toggle operation failed")
 
         # Should still return redirect
         result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
@@ -530,7 +530,7 @@ class TestAdminToolRoutes:
         assert tool_update.input_schema == {}
 
     @patch.object(ToolService, "set_tool_state")
-    async def test_admin_toggle_tool_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
+    async def test_admin_set_tool_state_various_activate_values(self, mock_set_status, mock_request, mock_db):
         """Test toggling tool with various activate values."""
         tool_id = "tool-1"
 
@@ -539,21 +539,21 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
 
 
 class TestAdminBulkImportRoutes:
@@ -874,15 +874,15 @@ class TestAdminResourceRoutes:
         assert mock_update_resource.call_args[0][1] == uri
 
     @patch.object(ResourceService, "set_resource_state")
-    async def test_admin_toggle_resource_numeric_id(self, mock_toggle_status, mock_request, mock_db):
+    async def test_admin_set_resource_state_numeric_id(self, mock_set_status, mock_request, mock_db):
         """Test toggling resource with numeric ID."""
         # Test with integer ID
         await admin_set_resource_state(123, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, 123, True, user_email="test-user")
 
         # Test with string number
         await admin_set_resource_state("456", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, "456", True, user_email="test-user")
 
 
 class TestAdminPromptRoutes:
@@ -1030,15 +1030,15 @@ class TestAdminPromptRoutes:
         assert mock_update_prompt.call_args[0][1] == "old-prompt-name"
 
     @patch.object(PromptService, "set_prompt_state")
-    async def test_admin_toggle_prompt_edge_cases(self, mock_toggle_status, mock_request, mock_db):
+    async def test_admin_set_prompt_state_edge_cases(self, mock_set_status, mock_request, mock_db):
         """Test toggling prompt with edge cases."""
         # Test with string ID that looks like number
         await admin_set_prompt_state("123", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, "123", True, user_email="test-user")
 
         # Test with negative number
         await admin_set_prompt_state(-1, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, -1, True, user_email="test-user")
 
 
 class TestAdminGatewayRoutes:
@@ -1183,7 +1183,7 @@ class TestAdminGatewayRoutes:
         assert body["success"] is False
 
     @patch.object(GatewayService, "set_gateway_state")
-    async def test_admin_toggle_gateway_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
+    async def test_admin_set_gateway_state_concurrent_calls(self, mock_set_status, mock_request, mock_db):
         """Test toggling gateway with simulated concurrent calls."""
         # Simulate race condition
         call_count = 0
@@ -1195,7 +1195,7 @@ class TestAdminGatewayRoutes:
                 raise Exception("Gateway is being modified by another process")
             return None
 
-        mock_toggle_status.side_effect = side_effect
+        mock_set_status.side_effect = side_effect
 
         # First call should fail
         result1 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, "test-user")
@@ -1864,7 +1864,7 @@ class TestA2AAgentManagement:
         assert "agent name already exists" in data["message"].lower()
 
     @patch.object(A2AAgentService, "set_a2a_agent_state")
-    async def test_admin_toggle_a2a_agent_success(self, mock_toggle_status, mock_request, mock_db):
+    async def test_admin_set_a2a_agent_state_success(self, mock_set_status, mock_request, mock_db):
         """Test toggling A2A agent status."""
         # First-Party
 
@@ -1877,7 +1877,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):

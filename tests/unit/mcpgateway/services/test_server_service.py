@@ -704,7 +704,7 @@ class TestServerService:
 
     # -------------------------- toggle --------------------------------- #
     @pytest.mark.asyncio
-    async def test_toggle_server_status(self, server_service, mock_server, test_db):
+    async def test_set_server_state(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()

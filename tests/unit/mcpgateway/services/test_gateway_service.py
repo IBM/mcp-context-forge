@@ -1041,8 +1041,8 @@ class TestGatewayService:
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_toggle_gateway_status(self, gateway_service, mock_gateway, test_db):
-        """Deactivating an active gateway triggers tool-status toggle + event."""
+    async def test_set_gateway_state(self, gateway_service, mock_gateway, test_db):
+        """Deactivating an active gateway triggers tool-state updates + event."""
         test_db.get = Mock(return_value=mock_gateway)
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -1076,7 +1076,7 @@ class TestGatewayService:
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
-    async def test_toggle_gateway_status_activate(self, gateway_service, mock_gateway, test_db):
+    async def test_set_gateway_state_activate(self, gateway_service, mock_gateway, test_db):
         """Test activating an inactive gateway."""
         mock_gateway.enabled = False
         test_db.get = Mock(return_value=mock_gateway)
@@ -1112,8 +1112,8 @@ class TestGatewayService:
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
-    async def test_toggle_gateway_status_not_found(self, gateway_service, test_db):
-        """Test toggling status of non-existent gateway."""
+    async def test_set_gateway_state_not_found(self, gateway_service, test_db):
+        """Test setting status of non-existent gateway."""
         test_db.get = Mock(return_value=None)
 
         with pytest.raises(GatewayError) as exc_info:
@@ -1122,8 +1122,8 @@ class TestGatewayService:
         assert "Gateway not found: 999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_gateway_status_with_tools_error(self, gateway_service, mock_gateway, test_db):
-        """Test toggling gateway status when tool toggle fails."""
+    async def test_set_gateway_state_with_tools_error(self, gateway_service, mock_gateway, test_db):
+        """Test setting gateway status when tool state update fails."""
         test_db.get = Mock(return_value=mock_gateway)
         test_db.commit = Mock()
         test_db.refresh = Mock()
