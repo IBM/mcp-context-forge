@@ -724,6 +724,18 @@
               "default": "team_owner"
             }
             ,
+            "DEFAULT_GLOBAL_ROLE_ADMIN": {
+              "type": "string",
+              "description": "Default platform role for admin users",
+              "default": "platform_admin"
+            }
+            ,
+            "DEFAULT_GLOBAL_ROLE_MEMBER": {
+              "type": "string",
+              "description": "Default platform role for member users",
+              "default": "platform_member"
+            }
+            ,
             "DEFAULT_ROLE_NAME_ADMIN": {
               "type": "string",
               "description": "Default role name for admin users",

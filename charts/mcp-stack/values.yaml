@@ -225,6 +225,8 @@ mcpContextForge:
     DEFAULT_ROOTS: "[]"                 # default roots configuration (JSON array)
 
     # ── Default roles for users ──
+    DEFAULT_GLOBAL_ROLE_ADMIN: "platform_admin"   # default platform role assigned to admin users
+    DEFAULT_GLOBAL_ROLE_MEMBER: "platform_member" # default platform role assigned to member users
     DEFAULT_ROLE_NAME_OWNER: "team_owner"   # default role assigned to owner users
     DEFAULT_ROLE_NAME_ADMIN: "team_admin"   # default role assigned to admin users
     DEFAULT_ROLE_NAME_USER: "team_member"     # default role assigned to regular users

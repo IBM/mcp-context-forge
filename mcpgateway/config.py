@@ -1603,9 +1603,11 @@ Disallow: /
         return self
 
     # Default roles for users
-    default_role_name_owner: str = Field(default="team_owner", description="Default role name for owner users")
-    default_role_name_admin: str = Field(default="team_admin", description="Default role name for admin users")
-    default_role_name_user: str = Field(default="team_member", description="Default role name for regular users")
+    default_global_role_admin: str = Field(default="platform_admin", description="Default platform role for admin users")
+    default_global_role_member: str = Field(default="platform_member", description="Default platform role for member users")
+    default_role_name_owner: str = Field(default="team_owner", description="Default team role name for owner users")
+    default_role_name_admin: str = Field(default="team_admin", description="Default team role name for admin users")
+    default_role_name_user: str = Field(default="team_member", description="Default team role name for regular users")
     default_user_scope: str = Field(default="team", description="Default scope for users")
     default_user_role_expiry_days: int = Field(default=30, description="Default number of days before user role expires")
 

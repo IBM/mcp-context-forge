@@ -1769,6 +1769,8 @@ MC4CAQAwBQYDK2VwBCIEIOld... (old key here)
 | ------- | ----------- | -------:| ------- |
 | `DEFAULT_ROLE_NAME_OWNER` | Default role name for owner users | `team_owner` | string |
 | `DEFAULT_ROLE_NAME_ADMIN` | Default role name for admin users | `team_admin` | string |
+| `DEFAULT_GLOBAL_ROLE_ADMIN` | Default platform role for admin users | `platform_admin` | string |
+| `DEFAULT_GLOBAL_ROLE_MEMBER` | Default platform role for member users | `platform_member` | string |
 | `DEFAULT_ROLE_NAME_USER` | Default role name for regular users | `developer` | string |
 | `DEFAULT_USER_SCOPE` | Default scope for users | `team` | string |
 | `DEFAULT_USER_ROLE_EXPIRY_DAYS` | Number of days before user role expires | `30` | int |
