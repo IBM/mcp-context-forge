@@ -1714,7 +1714,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{ "description":"Updated desc" }' \
      http://localhost:4444/tools/1
 
-# Toggle active status
+# Set active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/tools/1/state?activate=false
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
@@ -1776,7 +1776,7 @@ curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/a2a/agent-name/invoke
 
-# Toggle agent status
+# Set agent state
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/a2a/agent-id/state?activate=false
 
@@ -1826,7 +1826,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{"description":"New description"}' \
      http://localhost:4444/gateways/1
 
-# Toggle active status
+# Set active status
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/gateways/1/state?activate=false
 
@@ -1912,7 +1912,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{"template":"Hi, {{ user }}!"}' \
      http://localhost:4444/prompts/greet
 
-# Toggle active
+# Set active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/prompts/5/state?activate=false
 
@@ -1970,7 +1970,7 @@ curl -X PUT -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -d '{"description":"Updated"}' \
      http://localhost:4444/servers/UUID_OF_SERVER_1
 
-# Toggle active
+# Set active
 curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://localhost:4444/servers/UUID_OF_SERVER_1/state?activate=false
 ```

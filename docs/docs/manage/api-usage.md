@@ -162,7 +162,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Gateway
 
 ```bash
-# Toggle gateway enabled status
+# Set gateway state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/gateways/$GATEWAY_ID/state?activate=false | jq '.'
 ```
@@ -284,7 +284,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Tool
 
 ```bash
-# Toggle tool enabled status
+# Set tool state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/tools/$TOOL_ID/state?activate=false | jq '.'
 ```
@@ -407,7 +407,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Server
 
 ```bash
-# Toggle server enabled status
+# Set server state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/servers/$SERVER_ID/state?activate=false | jq '.'
 ```
@@ -499,7 +499,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Resource
 
 ```bash
-# Toggle resource enabled status
+# Set resource state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/resources/$RESOURCE_ID/state?activate=false | jq '.'
 ```
@@ -581,7 +581,7 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Prompt
 
 ```bash
-# Toggle prompt enabled status
+# Set prompt state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/prompts/$PROMPT_ID/state?activate=false | jq '.'
 ```
