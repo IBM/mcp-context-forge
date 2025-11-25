@@ -9773,7 +9773,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
-
+# Event Streaming via SSE to the Admin UI 
 @admin_router.get("/events")
 async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Stream admin events from all services via SSE."""
