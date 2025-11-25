@@ -211,12 +211,12 @@ def init_telemetry() -> Optional[Any]:
                 self.attributes_to_copy = attributes_to_copy or ["arize.project.name", "model_id"]
                 logger.info(f"ResourceAttributeSpanProcessor will copy: {self.attributes_to_copy}")
 
-            def on_start(self, span, parent_context=None):  # pylint: disable=unused-argument
+            def on_start(self, span, _parent_context=None):
                 """Copy specified resource attributes to span attributes when span starts.
 
                 Args:
                     span: The span being started.
-                    parent_context: The parent context (unused).
+                    _parent_context: The parent context (unused, required by interface).
                 """
                 if not hasattr(span, "resource") or span.resource is None:
                     return
