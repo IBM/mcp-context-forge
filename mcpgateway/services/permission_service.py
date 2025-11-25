@@ -113,6 +113,9 @@ class PermissionService:
             #     return True
 
             if not team_id:
+                permissions = await self.get_user_permissions(user_email)
+                if permission in permissions or Permissions.ALL_PERMISSIONS in permissions:
+                    return True
                 return permission in await self.get_user_permissions(user_email)
 
             # Get user's effective permissions from roles
