@@ -2161,7 +2161,7 @@ class Resource(Base):
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     size: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
+    uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
     is_active: Mapped[bool] = mapped_column(default=True)

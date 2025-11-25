@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Character validation patterns
     validation_name_pattern: str = r"^[a-zA-Z0-9_.\-\s]+$"  # Allow spaces for names
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
-    validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%]+$"
+    validation_safe_uri_pattern: str = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
     validation_unsafe_uri_pattern: str = r'[<>"\'\\]'
     validation_tool_name_pattern: str = r"^[a-zA-Z][a-zA-Z0-9._-]*$"  # MCP tool naming
     validation_tool_method_pattern: str = r"^[a-zA-Z][a-zA-Z0-9_\./-]*$"
