@@ -173,7 +173,7 @@
         - Resources
         - Prompts
         - Gateways
-    - [ ] Toggle active/inactive switches
+    - [ ] Set active/inactive states
     - [ ] JWT stored in `HttpOnly` cookie, no errors in DevTools Console
 
 ???+ check "Metrics"

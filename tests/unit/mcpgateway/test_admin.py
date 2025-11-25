@@ -531,7 +531,7 @@ class TestAdminToolRoutes:
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_various_activate_values(self, mock_set_status, mock_request, mock_db):
-        """Test toggling tool with various activate values."""
+        """Test setting tool state with various activate values."""
         tool_id = "tool-1"
 
         # Test with "false"
@@ -875,7 +875,7 @@ class TestAdminResourceRoutes:
 
     @patch.object(ResourceService, "set_resource_state")
     async def test_admin_set_resource_state_numeric_id(self, mock_set_status, mock_request, mock_db):
-        """Test toggling resource with numeric ID."""
+        """Test setting resource state with numeric ID."""
         # Test with integer ID
         await admin_set_resource_state(123, mock_request, mock_db, "test-user")
         mock_set_status.assert_called_with(mock_db, 123, True, user_email="test-user")
@@ -1031,7 +1031,7 @@ class TestAdminPromptRoutes:
 
     @patch.object(PromptService, "set_prompt_state")
     async def test_admin_set_prompt_state_edge_cases(self, mock_set_status, mock_request, mock_db):
-        """Test toggling prompt with edge cases."""
+        """Test setting prompt state with edge cases."""
         # Test with string ID that looks like number
         await admin_set_prompt_state("123", mock_request, mock_db, "test-user")
         mock_set_status.assert_called_with(mock_db, "123", True, user_email="test-user")
@@ -1184,7 +1184,7 @@ class TestAdminGatewayRoutes:
 
     @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_set_gateway_state_concurrent_calls(self, mock_set_status, mock_request, mock_db):
-        """Test toggling gateway with simulated concurrent calls."""
+        """Test setting gateway state with simulated concurrent calls."""
         # Simulate race condition
         call_count = 0
 
@@ -1865,7 +1865,7 @@ class TestA2AAgentManagement:
 
     @patch.object(A2AAgentService, "set_a2a_agent_state")
     async def test_admin_set_a2a_agent_state_success(self, mock_set_status, mock_request, mock_db):
-        """Test toggling A2A agent status."""
+        """Test setting A2A agent state."""
         # First-Party
 
         form_data = FakeForm({"activate": "true"})

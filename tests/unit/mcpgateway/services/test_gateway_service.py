@@ -1037,7 +1037,7 @@ class TestGatewayService:
         test_db.commit.assert_called_once()
 
     # ────────────────────────────────────────────────────────────────────
-    # TOGGLE ACTIVE / INACTIVE
+    # SET ACTIVE / INACTIVE
     # ────────────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -1047,7 +1047,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_state gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1083,7 +1083,7 @@ class TestGatewayService:
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_state gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1129,7 +1129,7 @@ class TestGatewayService:
         test_db.refresh = Mock()
         test_db.rollback = Mock()
 
-        # Return one tool so toggle_tool_status gets called
+        # Return one tool so set_tool_state gets called
         query_proxy = MagicMock()
         filter_proxy = MagicMock()
         filter_proxy.all.return_value = [MagicMock(id=101)]
@@ -1140,9 +1140,9 @@ class TestGatewayService:
         gateway_service._notify_gateway_deactivated = AsyncMock()
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
-        # Make tool toggle fail
+        # Make tool set_state fail
         tool_service_stub = MagicMock()
-        tool_service_stub.set_tool_state = AsyncMock(side_effect=Exception("Tool toggle failed"))
+        tool_service_stub.set_tool_state = AsyncMock(side_effect=Exception("Tool set_state failed"))
         gateway_service.tool_service = tool_service_stub
 
         # The toggle_gateway_status method will catch the exception and raise GatewayError
@@ -1150,7 +1150,7 @@ class TestGatewayService:
             await gateway_service.set_gateway_state(test_db, 1, activate=False)
 
         assert "Failed to set gateway state" in str(exc_info.value)
-        assert "Tool toggle failed" in str(exc_info.value)
+        assert "Tool set_state failed" in str(exc_info.value)
         test_db.rollback.assert_called_once()
 
     # ────────────────────────────────────────────────────────────────────
