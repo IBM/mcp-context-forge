@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/base.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
--Authors: Teryl Taylor, Mihai Criveti
+Authors: Teryl Taylor, Mihai Criveti
 
 Base plugin implementation.
 This module implements the base plugin object.
