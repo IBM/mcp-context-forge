@@ -118,6 +118,21 @@ async def get_current_user_with_permissions(
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+
+        # If auth is disabled, return the stock admin user
+        if not settings.auth_required:
+            return {
+                "email": settings.platform_admin_email,
+                "full_name": "Platform Admin",
+                "is_admin": True,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": db,
+                "auth_method": "disabled",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+            }
+
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
 
     try:
