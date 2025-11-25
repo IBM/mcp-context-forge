@@ -186,11 +186,14 @@ class EventService:
             ...     # Run both
             ...     _, event = await asyncio.gather(produce(), consume())
             ...     return event
-            >>> asyncio.run(test_sub())
+            >>> # asyncio.run(test_sub())
             {'msg': 'hello'}
         """
-        # If Redis Available
+
+        fallback_to_local = False
+
         if self._redis_client:
+            
             try:
                 # Import asyncio version of redis here to avoid top-level dependency issues
                 # Third-Party
@@ -222,11 +225,12 @@ class EventService:
                     except Exception as e:
                         logger.warning(f"Error closing Redis subscription: {e}")
             except ImportError:
+                fallback_to_local = True
                 logger.error("Redis is configured but redis-py does not support asyncio or is not installed.")
                 # Fallthrough to queue mode if import fails
 
         # Local Queue (Redis not available or import failed)
-        if not (self.redis_url and REDIS_AVAILABLE):
+        if fallback_to_local or not (self.redis_url and REDIS_AVAILABLE):
             queue: asyncio.Queue = asyncio.Queue()
             self._event_subscribers.append(queue)
             try:

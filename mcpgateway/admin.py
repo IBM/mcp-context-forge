@@ -9809,8 +9809,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
         >>> async def test_streaming_endpoint():
         ...     # Patch the global services used inside the function
         ...     # Note: Adjust the patch path 'mcpgateway.admin' to your actual module path
-        ...     with patch('mcpgateway.admin.gateway_service') as mock_gw_service, \
-        ...          patch('mcpgateway.admin.tool_service') as mock_tool_service:
+        ... 	with patch('mcpgateway.admin.gateway_service') as mock_gw_service, patch('mcpgateway.admin.tool_service') as mock_tool_service:
         ...
         ...         # Setup mocks to return our async generator
         ...         mock_gw_service.subscribe_events.side_effect = lambda: mock_service_stream("gateway")
@@ -9872,10 +9871,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                     # SSE format
                     event_type = event.get("type", "message")
                     event_data = json.dumps(event.get("data", {}))
-
-                    print("----------- SSE MESSAGE CREATED: -----------")
-                    print(f"event: {event_type}\ndata: {event_data}\n\n")
-
+                    
                     yield f"event: {event_type}\ndata: {event_data}\n\n"
 
                     # Mark task as done in queue (good practice)
