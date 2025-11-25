@@ -973,7 +973,7 @@ class ResourceService:
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_resource_status(db, 1, True))
+            >>> asyncio.run(service.set_resource_state(db, 1, True))
             'resource_read'
         """
         try:

@@ -2709,7 +2709,7 @@ async def set_tool_state(
     Activates or deactivates a tool.
 
     Args:
-        tool_id (str): The ID of the tool to toggle.
+        tool_id (str): The ID of the tool whose state to set.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -2718,7 +2718,7 @@ async def set_tool_state(
         Dict[str, Any]: The status, message, and updated tool data.
 
     Raises:
-        HTTPException: If an error occurs during status toggling.
+        HTTPException: If an error occurs during the state change.
     """
     try:
         logger.debug(f"User {user} is setting tool with ID {tool_id} to {'active' if activate else 'inactive'}")
@@ -3118,10 +3118,10 @@ async def set_prompt_state(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
-    Toggle the activation status of a prompt.
+    Set the activation state of a prompt.
 
     Args:
-        prompt_id: ID of the prompt to toggle.
+        prompt_id: ID of the prompt whose state to set.
         activate: True to activate, False to deactivate.
         db: Database session.
         user: Authenticated user.
@@ -3130,7 +3130,7 @@ async def set_prompt_state(
         Status message and updated prompt details.
 
     Raises:
-        HTTPException: If the toggle fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
+        HTTPException: If the state change fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
     """
     logger.debug(f"User: {user} requested set state for prompt {prompt_id}, activate={activate}")
     try:
@@ -3477,10 +3477,10 @@ async def set_gateway_state(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
-    Toggle the activation status of a gateway.
+    Set the activation state of a gateway.
 
     Args:
-        gateway_id (str): String ID of the gateway to toggle.
+        gateway_id (str): String ID of the gateway whose state to set.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
@@ -3489,7 +3489,7 @@ async def set_gateway_state(
         Dict[str, Any]: A dict containing the operation status, a message, and the updated gateway object.
 
     Raises:
-        HTTPException: Returned with **400 Bad Request** if the toggle operation fails (e.g., the gateway does not exist or the database raises an unexpected error).
+        HTTPException: Returned with **400 Bad Request** if the state change fails (e.g., the gateway does not exist or the database raises an unexpected error).
     """
     logger.debug(f"User '{user}' requested set state for gateway {gateway_id}, activate={activate}")
     try:

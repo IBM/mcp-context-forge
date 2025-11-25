@@ -1345,15 +1345,15 @@ async def admin_set_server_state(
     user=Depends(get_current_user_with_permissions),
 ) -> Response:
     """
-    Toggle a server's active status via the admin UI.
+    Set a server's active state via the admin UI.
 
     This endpoint processes a form request to activate or deactivate a server.
     It expects a form field 'activate' with value "true" to activate the server
     or "false" to deactivate it. The endpoint handles exceptions gracefully and
-    logs any errors that might occur during the status toggle operation.
+    logs any errors that might occur during the state change operation.
 
     Args:
-        server_id (str): The ID of the server whose status to toggle.
+        server_id (str): The ID of the server whose state to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -1371,7 +1371,7 @@ async def admin_set_server_state(
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>> server_id = "server-to-toggle"
+        >>> server_id = "server-to-set"
         >>>
         >>> # Happy path: Activate server
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
@@ -1399,7 +1399,7 @@ async def admin_set_server_state(
         >>> asyncio.run(test_admin_set_server_state_deactivate())
         True
         >>>
-        >>> # Edge case: Toggle with inactive checkbox checked
+        >>> # Edge case: Set state with inactive checkbox checked
         >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
@@ -1411,11 +1411,11 @@ async def admin_set_server_state(
         >>> asyncio.run(test_admin_set_server_state_inactive_checked())
         True
         >>>
-        >>> # Error path: Simulate an exception during toggle
+        >>> # Error path: Simulate an exception during state change
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> server_service.set_server_state = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> server_service.set_server_state = AsyncMock(side_effect=Exception("Set failed"))
         >>>
         >>> async def test_admin_set_server_state_exception():
         ...     result = await admin_set_server_state(server_id, mock_request_error, mock_db, mock_user)
@@ -1925,14 +1925,14 @@ async def admin_set_gateway_state(
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
-    Toggle the active status of a gateway via the admin UI.
+    Set the active state of a gateway via the admin UI.
 
-    This endpoint allows an admin to toggle the active status of a gateway.
+    This endpoint allows an admin to set the active state of a gateway.
     It expects a form field 'activate' with a value of "true" or "false" to
-    determine the new status of the gateway.
+    determine the new state of the gateway.
 
     Args:
-        gateway_id (str): The ID of the gateway to toggle.
+        gateway_id (str): The ID of the gateway whose state to set.
         request (Request): The FastAPI request object containing form data.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -1950,7 +1950,7 @@ async def admin_set_gateway_state(
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>> gateway_id = "gateway-to-toggle"
+        >>> gateway_id = "gateway-to-set"
         >>>
         >>> # Happy path: Activate gateway
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
@@ -1978,11 +1978,11 @@ async def admin_set_gateway_state(
         >>> asyncio.run(test_admin_set_gateway_state_deactivate())
         True
         >>>
-        >>> # Error path: Simulate an exception during toggle
+        >>> # Error path: Simulate an exception during state change
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> gateway_service.set_gateway_state = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> gateway_service.set_gateway_state = AsyncMock(side_effect=Exception("Set failed"))
         >>>
         >>> async def test_admin_set_gateway_state_exception():
         ...     result = await admin_set_gateway_state(gateway_id, mock_request_error, mock_db, mock_user)
@@ -6593,15 +6593,15 @@ async def admin_set_tool_state(
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
-    Toggle a tool's active status via the admin UI.
+    Set a tool's active state via the admin UI.
 
     This endpoint processes a form request to activate or deactivate a tool.
     It expects a form field 'activate' with value "true" to activate the tool
     or "false" to deactivate it. The endpoint handles exceptions gracefully and
-    logs any errors that might occur during the status toggle operation.
+    logs any errors that might occur during the state change operation.
 
     Args:
-        tool_id (str): The ID of the tool whose status to toggle.
+        tool_id (str): The ID of the tool whose state to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -6619,7 +6619,7 @@ async def admin_set_tool_state(
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>> tool_id = "tool-to-toggle"
+        >>> tool_id = "tool-to-set"
         >>>
         >>> # Happy path: Activate tool
         >>> form_data_activate = FormData([("activate", "true"), ("is_inactive_checked", "false")])
@@ -6647,7 +6647,7 @@ async def admin_set_tool_state(
         >>> asyncio.run(test_admin_set_tool_state_deactivate())
         True
         >>>
-        >>> # Edge case: Toggle with inactive checkbox checked
+        >>> # Edge case: Set state with inactive checkbox checked
         >>> form_data_inactive = FormData([("activate", "true"), ("is_inactive_checked", "true")])
         >>> mock_request_inactive = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_inactive.form = AsyncMock(return_value=form_data_inactive)
@@ -6659,11 +6659,11 @@ async def admin_set_tool_state(
         >>> asyncio.run(test_admin_set_tool_state_inactive_checked())
         True
         >>>
-        >>> # Error path: Simulate an exception during toggle
+        >>> # Error path: Simulate an exception during state change
         >>> form_data_error = FormData([("activate", "true")])
         >>> mock_request_error = MagicMock(spec=Request, scope={"root_path": ""})
         >>> mock_request_error.form = AsyncMock(return_value=form_data_error)
-        >>> tool_service.set_tool_state = AsyncMock(side_effect=Exception("Toggle failed"))
+        >>> tool_service.set_tool_state = AsyncMock(side_effect=Exception("Set failed"))
         >>>
         >>> async def test_admin_set_tool_state_exception():
         ...     result = await admin_set_tool_state(tool_id, mock_request_error, mock_db, mock_user)
@@ -7961,15 +7961,15 @@ async def admin_set_resource_state(
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
-    Toggle a resource's active status via the admin UI.
+    Set a resource's active state via the admin UI.
 
     This endpoint processes a form request to activate or deactivate a resource.
     It expects a form field 'activate' with value "true" to activate the resource
     or "false" to deactivate it. The endpoint handles exceptions gracefully and
-    logs any errors that might occur during the status toggle operation.
+    logs any errors that might occur during the state change operation.
 
     Args:
-        resource_id (int): The ID of the resource whose status to toggle.
+        resource_id (int): The ID of the resource whose state to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -8516,15 +8516,15 @@ async def admin_set_prompt_state(
     user=Depends(get_current_user_with_permissions),
 ) -> RedirectResponse:
     """
-    Toggle a prompt's active status via the admin UI.
+    Set a prompt's active state via the admin UI.
 
     This endpoint processes a form request to activate or deactivate a prompt.
     It expects a form field 'activate' with value "true" to activate the prompt
     or "false" to deactivate it. The endpoint handles exceptions gracefully and
-    logs any errors that might occur during the status toggle operation.
+    logs any errors that might occur during the state change operation.
 
     Args:
-        prompt_id (int): The ID of the prompt whose status to toggle.
+        prompt_id (int): The ID of the prompt whose state to set.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.

@@ -1034,7 +1034,7 @@ class ToolService:
             >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
+            >>> asyncio.run(service.set_tool_state(db, 'tool_id', True, True))
             'tool_read'
         """
         try:

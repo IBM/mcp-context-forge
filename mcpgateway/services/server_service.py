@@ -103,7 +103,7 @@ class ServerNameConflictError(ServerError):
 class ServerService:
     """Service for managing MCP Servers in the catalog.
 
-    Provides methods to create, list, retrieve, update, toggle status, and delete server records.
+    Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
 

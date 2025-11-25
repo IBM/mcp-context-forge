@@ -1046,7 +1046,7 @@ class PromptService:
             >>> service._convert_db_prompt = MagicMock(return_value={})
             >>> import asyncio
             >>> try:
-            ...     asyncio.run(service.toggle_prompt_status(db, 1, True))
+            ...     asyncio.run(service.set_prompt_state(db, 1, True))
             ... except Exception:
             ...     pass
         """

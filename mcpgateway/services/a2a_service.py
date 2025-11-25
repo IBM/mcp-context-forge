@@ -119,7 +119,7 @@ class A2AAgentNameConflictError(A2AAgentError):
 class A2AAgentService:
     """Service for managing A2A agents in the gateway.
 
-    Provides methods to create, list, retrieve, update, toggle status, and delete agent records.
+    Provides methods to create, list, retrieve, update, set state, and delete agent records.
     Also supports interactions with A2A-compatible agents.
     """
 
