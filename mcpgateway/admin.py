@@ -5753,6 +5753,69 @@ async def admin_get_all_resource_ids(
     return {"resource_ids": resource_ids, "count": len(resource_ids)}
 
 
+@admin_router.get("/resources/search", response_class=JSONResponse)
+async def admin_search_resources(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search resources by name or description for selector search.
+
+    Performs a case-insensitive search over resource names and descriptions
+    and returns a limited list of matching resources suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include resources that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "resources": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched resources returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"resources": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbResource.id, DbResource.name, DbResource.description)
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [func.lower(DbResource.name).contains(search_query), func.lower(coalesce(DbResource.description, "")).contains(search_query)]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbResource.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbResource.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    resources = []
+    for row in results:
+        resources.append({"id": row.id, "name": row.name, "description": row.description})
+
+    return {"resources": resources, "count": len(resources)}
+
+
 @admin_router.get("/prompts/search", response_class=JSONResponse)
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),

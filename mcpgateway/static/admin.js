@@ -5501,8 +5501,20 @@ async function editServer(serverId) {
         }
 
         openModal("server-edit-modal");
+        // Initialize the select handlers for gateways, resources and prompts in the edit modal
+        // so that gateway changes will trigger filtering of associated items while editing.
+        if (document.getElementById("associatedEditGateways")) {
+            initGatewaySelect(
+                "associatedEditGateways",
+                "selectedEditGatewayPills",
+                "selectedEditGatewayWarning",
+                12,
+                "selectAllEditGatewayBtn",
+                "clearAllEditGatewayBtn",
+                "searchEditGateways",
+            );
+        }
 
-        // Initialize the select handlers for resources and prompts in the edit modal
         initResourceSelect(
             "edit-server-resources",
             "selectedEditResourcesPills",
@@ -5528,10 +5540,14 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
-            // Set associated tools checkboxes
-            const toolCheckboxes = document.querySelectorAll(
-                'input[name="associatedTools"]',
-            );
+            // Set associated tools checkboxes (scope to edit modal container only)
+            const editToolContainer =
+                document.getElementById("edit-server-tools");
+            const toolCheckboxes = editToolContainer
+                ? editToolContainer.querySelectorAll(
+                      'input[name="associatedTools"]',
+                  )
+                : document.querySelectorAll('input[name="associatedTools"]');
 
             toolCheckboxes.forEach((checkbox) => {
                 let isChecked = false;
@@ -5547,10 +5563,17 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated resources checkboxes
-            const resourceCheckboxes = document.querySelectorAll(
-                'input[name="associatedResources"]',
+            // Set associated resources checkboxes (scope to edit modal container only)
+            const editResourceContainer = document.getElementById(
+                "edit-server-resources",
             );
+            const resourceCheckboxes = editResourceContainer
+                ? editResourceContainer.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  )
+                : document.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5560,10 +5583,15 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated prompts checkboxes
-            const promptCheckboxes = document.querySelectorAll(
-                'input[name="associatedPrompts"]',
+            // Set associated prompts checkboxes (scope to edit modal container only)
+            const editPromptContainer = document.getElementById(
+                "edit-server-prompts",
             );
+            const promptCheckboxes = editPromptContainer
+                ? editPromptContainer.querySelectorAll(
+                      'input[name="associatedPrompts"]',
+                  )
+                : document.querySelectorAll('input[name="associatedPrompts"]');
 
             promptCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5635,10 +5663,11 @@ async function editServer(serverId) {
 
 // Helper function to set edit server associations
 function setEditServerAssociations(server) {
-    // Set associated tools checkboxes
-    const toolCheckboxes = document.querySelectorAll(
-        'input[name="associatedTools"]',
-    );
+    // Set associated tools checkboxes (scope to edit modal container only)
+    const toolContainer = document.getElementById("edit-server-tools");
+    const toolCheckboxes = toolContainer
+        ? toolContainer.querySelectorAll('input[name="associatedTools"]')
+        : document.querySelectorAll('input[name="associatedTools"]');
 
     if (toolCheckboxes.length === 0) {
         return;
@@ -5657,10 +5686,13 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated resources checkboxes
-    const resourceCheckboxes = document.querySelectorAll(
-        'input[name="associatedResources"]',
-    );
+    // Set associated resources checkboxes (scope to edit modal container only)
+    const resourceContainer = document.getElementById("edit-server-resources");
+    const resourceCheckboxes = resourceContainer
+        ? resourceContainer.querySelectorAll(
+              'input[name="associatedResources"]',
+          )
+        : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -5670,10 +5702,11 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated prompts checkboxes
-    const promptCheckboxes = document.querySelectorAll(
-        'input[name="associatedPrompts"]',
-    );
+    // Set associated prompts checkboxes (scope to edit modal container only)
+    const promptContainer = document.getElementById("edit-server-prompts");
+    const promptCheckboxes = promptContainer
+        ? promptContainer.querySelectorAll('input[name="associatedPrompts"]')
+        : document.querySelectorAll('input[name="associatedPrompts"]');
 
     promptCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -7486,6 +7519,51 @@ function initResourceSelect(
                     }
                 }
 
+                // If we're in the edit-server-resources container, maintain the
+                // `data-server-resources` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-resources") {
+                    try {
+                        let serverResources = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-resources",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverResources = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-resources:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverResources.includes(idVal)) {
+                                    serverResources.push(idVal);
+                                }
+                            } else {
+                                serverResources = serverResources.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-resources",
+                                JSON.stringify(serverResources),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-resources:",
+                            err,
+                        );
+                    }
+                }
+
                 update();
             }
         });
@@ -7736,6 +7814,51 @@ function initPromptSelect(
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (err) {
                         console.error("Error updating allPromptIds:", err);
+                    }
+                }
+
+                // If we're in the edit-server-prompts container, maintain the
+                // `data-server-prompts` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-prompts") {
+                    try {
+                        let serverPrompts = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-prompts",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverPrompts = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-prompts:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverPrompts.includes(idVal)) {
+                                    serverPrompts.push(idVal);
+                                }
+                            } else {
+                                serverPrompts = serverPrompts.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-prompts",
+                                JSON.stringify(serverPrompts),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-prompts:",
+                            err,
+                        );
                     }
                 }
 
@@ -8033,7 +8156,14 @@ function initGatewaySelect(
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
                 // Log gateway_id when checkbox is clicked
-                const gatewayId = e.target.value;
+                // Normalize the special null-gateway checkbox to the literal string "null"
+                let gatewayId = e.target.value;
+                if (
+                    e.target.dataset &&
+                    e.target.dataset.gatewayNull === "true"
+                ) {
+                    gatewayId = "null";
+                }
                 const gatewayName =
                     e.target.nextElementSibling?.textContent?.trim() ||
                     "Unknown";
@@ -8100,12 +8230,38 @@ function initGatewaySelect(
  * @returns {string[]} Array of selected gateway IDs
  */
 function getSelectedGatewayIds() {
-    const container = document.getElementById("associatedGateways");
-    console.log("[Gateway Selection DEBUG] Container found:", !!container);
+    // Prefer the gateway selection belonging to the currently active form.
+    // If the edit-server modal is open, use the edit modal's gateway container
+    // (`associatedEditGateways`). Otherwise use the create form container
+    // (`associatedGateways`). This allows the same filtering logic to work
+    // for both Add and Edit flows.
+    let container = document.getElementById("associatedGateways");
+    const editContainer = document.getElementById("associatedEditGateways");
+
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+
+    if (isEditModalOpen && editContainer) {
+        container = editContainer;
+    } else if (
+        editContainer &&
+        editContainer.offsetParent !== null &&
+        !container
+    ) {
+        // If edit container is visible (e.g. modal rendered) and associatedGateways
+        // not present, prefer edit container.
+        container = editContainer;
+    }
+
+    console.log(
+        "[Gateway Selection DEBUG] Container used:",
+        container ? container.id : null,
+    );
 
     if (!container) {
         console.warn(
-            "[Gateway Selection DEBUG] associatedGateways container not found",
+            "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
         );
         return [];
     }
@@ -8182,19 +8338,46 @@ function reloadAssociatedItems() {
         selectedGatewayIds,
     );
 
+    // Determine whether to reload the 'create server' containers (associated*)
+    // or the 'edit server' containers (edit-server-*). Prefer the edit
+    // containers when the edit modal is open or the edit-gateway selector
+    // exists and is visible.
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+    const editGateways = document.getElementById("associatedEditGateways");
+
+    const useEditContainers =
+        isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
+
+    const toolsContainerId = useEditContainers
+        ? "edit-server-tools"
+        : "associatedTools";
+    const resourcesContainerId = useEditContainers
+        ? "edit-server-resources"
+        : "associatedResources";
+    const promptsContainerId = useEditContainers
+        ? "edit-server-prompts"
+        : "associatedPrompts";
+
     // Reload tools
-    const toolsContainer = document.getElementById("associatedTools");
+    const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
         const toolsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-        console.log("[Filter Update DEBUG] Tools URL:", toolsUrl);
+        console.log(
+            "[Filter Update DEBUG] Tools URL:",
+            toolsUrl,
+            "-> target:",
+            `#${toolsContainerId}`,
+        );
 
-        // Use HTMX to reload the content
+        // Use HTMX to reload the content into the chosen container
         if (window.htmx) {
             htmx.ajax("GET", toolsUrl, {
-                target: "#associatedTools",
+                target: `#${toolsContainerId}`,
                 swap: "innerHTML",
             })
                 .then(() => {
@@ -8202,13 +8385,26 @@ function reloadAssociatedItems() {
                         "[Filter Update DEBUG] Tools reloaded successfully",
                     );
                     // Re-initialize the tool select after content is loaded
+                    const pillsId = useEditContainers
+                        ? "selectedEditToolsPills"
+                        : "selectedToolsPills";
+                    const warnId = useEditContainers
+                        ? "selectedEditToolsWarning"
+                        : "selectedToolsWarning";
+                    const selectBtn = useEditContainers
+                        ? "selectAllEditToolsBtn"
+                        : "selectAllToolsBtn";
+                    const clearBtn = useEditContainers
+                        ? "clearAllEditToolsBtn"
+                        : "clearAllToolsBtn";
+
                     initToolSelect(
-                        "associatedTools",
-                        "selectedToolsPills",
-                        "selectedToolsWarning",
+                        toolsContainerId,
+                        pillsId,
+                        warnId,
                         6,
-                        "selectAllToolsBtn",
-                        "clearAllToolsBtn",
+                        selectBtn,
+                        clearBtn,
                     );
                 })
                 .catch((err) => {
@@ -8223,11 +8419,14 @@ function reloadAssociatedItems() {
             );
         }
     } else {
-        console.warn("[Filter Update DEBUG] Tools container not found");
+        console.warn(
+            "[Filter Update DEBUG] Tools container not found ->",
+            toolsContainerId,
+        );
     }
 
     // Reload resources - use fetch directly to avoid HTMX race conditions
-    const resourcesContainer = document.getElementById("associatedResources");
+    const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
         const resourcesUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8311,14 +8510,66 @@ function reloadAssociatedItems() {
                 }
 
                 // Re-initialize the resource select after content is loaded
+                const resPills = useEditContainers
+                    ? "selectedEditResourcesPills"
+                    : "selectedResourcesPills";
+                const resWarn = useEditContainers
+                    ? "selectedEditResourcesWarning"
+                    : "selectedResourcesWarning";
+                const resSelectBtn = useEditContainers
+                    ? "selectAllEditResourcesBtn"
+                    : "selectAllResourcesBtn";
+                const resClearBtn = useEditContainers
+                    ? "clearAllEditResourcesBtn"
+                    : "clearAllResourcesBtn";
+
                 initResourceSelect(
-                    "associatedResources",
-                    "selectedResourcesPills",
-                    "selectedResourcesWarning",
+                    resourcesContainerId,
+                    resPills,
+                    resWarn,
                     6,
-                    "selectAllResourcesBtn",
-                    "clearAllResourcesBtn",
+                    resSelectBtn,
+                    resClearBtn,
                 );
+                // Re-apply server-associated resource selections so selections
+                // persist across gateway-filtered reloads. The resources partial
+                // replaces checkbox inputs; use the container's
+                // `data-server-resources` attribute (set when opening edit modal)
+                // to restore checked state.
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const associated = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(associated) &&
+                            associated.length > 0
+                        ) {
+                            const resourceCheckboxes =
+                                resourcesContainer.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedResources"]',
+                                );
+                            resourceCheckboxes.forEach((cb) => {
+                                const val = parseInt(cb.value);
+                                if (
+                                    !Number.isNaN(val) &&
+                                    associated.includes(val)
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger change so pills and counts update
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            resourcesContainer.dispatchEvent(event);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Error restoring associated resources:", e);
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -8334,7 +8585,7 @@ function reloadAssociatedItems() {
     }
 
     // Reload prompts
-    const promptsContainer = document.getElementById("associatedPrompts");
+    const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
         const promptsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8342,17 +8593,30 @@ function reloadAssociatedItems() {
 
         if (window.htmx) {
             htmx.ajax("GET", promptsUrl, {
-                target: "#associatedPrompts",
+                target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
                 // Re-initialize the prompt select after content is loaded
+                const pPills = useEditContainers
+                    ? "selectedEditPromptsPills"
+                    : "selectedPromptsPills";
+                const pWarn = useEditContainers
+                    ? "selectedEditPromptsWarning"
+                    : "selectedPromptsWarning";
+                const pSelectBtn = useEditContainers
+                    ? "selectAllEditPromptsBtn"
+                    : "selectAllPromptsBtn";
+                const pClearBtn = useEditContainers
+                    ? "clearAllEditPromptsBtn"
+                    : "clearAllPromptsBtn";
+
                 initPromptSelect(
-                    "associatedPrompts",
-                    "selectedPromptsPills",
-                    "selectedPromptsWarning",
+                    promptsContainerId,
+                    pPills,
+                    pWarn,
                     6,
-                    "selectAllPromptsBtn",
-                    "clearAllPromptsBtn",
+                    pSelectBtn,
+                    pClearBtn,
                 );
             });
         }
@@ -12230,18 +12494,44 @@ function setupSelectorSearch() {
         });
     }
 
-    // Resources search
-    const searchResources = safeGetElement("searchResources", true);
-    if (searchResources) {
-        searchResources.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedResources",
-                ".resource-item",
-                "noResourcesMessage",
-                "searchResourcesQuery",
-            );
+    // Edit-server tools search (server-side, mirror of searchTools)
+    const searchEditTools = safeGetElement("searchEditTools", true);
+    if (searchEditTools) {
+        let editSearchTimeout;
+        searchEditTools.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditToolSearch(searchTerm);
+            }, 300);
         });
+
+        // If HTMX swaps/paginates the edit tools container, re-run server-side search
+        const editToolsContainer = document.getElementById("edit-server-tools");
+        if (editToolsContainer) {
+            editToolsContainer.addEventListener("htmx:afterSwap", function () {
+                try {
+                    const current = searchEditTools.value || "";
+                    if (current && current.trim() !== "") {
+                        serverSideEditToolSearch(current);
+                    } else {
+                        // No active search — ensure the selector is initialized
+                        initToolSelect(
+                            "edit-server-tools",
+                            "selectedEditToolsPills",
+                            "selectedEditToolsWarning",
+                            6,
+                            "selectAllEditToolsBtn",
+                            "clearAllEditToolsBtn",
+                        );
+                    }
+                } catch (err) {
+                    console.error("Error handling edit-tools afterSwap:", err);
+                }
+            });
+        }
     }
 
     // Prompts search (server-side)
@@ -12258,63 +12548,115 @@ function setupSelectorSearch() {
             }, 300);
         });
     }
-}
 
-/**
- * Generic function to filter items in multi-select dropdowns with no results message
- */
-function filterSelectorItems(
-    searchText,
-    containerSelector,
-    itemSelector,
-    noResultsId,
-    searchQueryId,
-) {
-    const container = document.querySelector(containerSelector);
-    if (!container) {
-        return;
-    }
-
-    const items = container.querySelectorAll(itemSelector);
-    const search = searchText.toLowerCase().trim();
-    let hasVisibleItems = false;
-
-    items.forEach((item) => {
-        let textContent = "";
-
-        // Get text from all text nodes within the item
-        const textElements = item.querySelectorAll(
-            "span, .text-xs, .font-medium",
-        );
-        textElements.forEach((el) => {
-            textContent += " " + el.textContent;
+    // Edit-server prompts search (server-side, mirror of searchPrompts)
+    const searchEditPrompts = safeGetElement("searchEditPrompts", true);
+    if (searchEditPrompts) {
+        let editSearchTimeout;
+        searchEditPrompts.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditPromptsSearch(searchTerm);
+            }, 300);
         });
 
-        // Also get direct text content
-        textContent += " " + item.textContent;
-
-        if (search === "" || textContent.toLowerCase().includes(search)) {
-            item.style.display = "";
-            hasVisibleItems = true;
-        } else {
-            item.style.display = "none";
+        // If HTMX swaps/paginates the edit prompts container, re-run server-side search
+        const editPromptsContainer = document.getElementById(
+            "edit-server-prompts",
+        );
+        if (editPromptsContainer) {
+            editPromptsContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditPrompts.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditPromptsSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initPromptSelect(
+                                "edit-server-prompts",
+                                "selectedEditPromptsPills",
+                                "selectedEditPromptsWarning",
+                                6,
+                                "selectAllEditPromptsBtn",
+                                "clearAllEditPromptsBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-prompts afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
-    });
+    }
 
-    // Handle no results message
-    const noResultsMessage = safeGetElement(noResultsId, true);
-    const searchQuerySpan = safeGetElement(searchQueryId, true);
+    // Resources search (server-side)
+    const searchResources = safeGetElement("searchResources", true);
+    if (searchResources) {
+        let resourceSearchTimeout;
+        searchResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (resourceSearchTimeout) {
+                clearTimeout(resourceSearchTimeout);
+            }
+            resourceSearchTimeout = setTimeout(() => {
+                serverSideResourceSearch(searchTerm);
+            }, 300);
+        });
+    }
 
-    if (search !== "" && !hasVisibleItems) {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "block";
-        }
-        if (searchQuerySpan) {
-            searchQuerySpan.textContent = searchText;
-        }
-    } else {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "none";
+    // Edit-server resources search (server-side, mirror of searchResources)
+    const searchEditResources = safeGetElement("searchEditResources", true);
+    if (searchEditResources) {
+        let editSearchTimeout;
+        searchEditResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditResourcesSearch(searchTerm);
+            }, 300);
+        });
+
+        // If HTMX swaps/paginates the edit resources container, re-run server-side search
+        const editResourcesContainer = document.getElementById(
+            "edit-server-resources",
+        );
+        if (editResourcesContainer) {
+            editResourcesContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditResources.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditResourcesSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initResourceSelect(
+                                "edit-server-resources",
+                                "selectedEditResourcesPills",
+                                "selectedEditResourcesWarning",
+                                6,
+                                "selectAllEditResourcesBtn",
+                                "clearAllEditResourcesBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-resources afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
     }
 }
@@ -19229,6 +19571,52 @@ function updateToolMapping(container) {
 }
 
 /**
+ * Update the prompt mapping with prompts in the given container
+ */
+function updatePromptMapping(container) {
+    if (!window.promptMapping) {
+        window.promptMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedPrompts"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const promptId = checkbox.value;
+        const promptName =
+            checkbox.getAttribute("data-prompt-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            promptId;
+        if (promptId && promptName) {
+            window.promptMapping[promptId] = promptName;
+        }
+    });
+}
+
+/**
+ * Update the resource mapping with resources in the given container
+ */
+function updateResourceMapping(container) {
+    if (!window.resourceMapping) {
+        window.resourceMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedResources"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const resourceId = checkbox.value;
+        const resourceName =
+            checkbox.getAttribute("data-resource-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            resourceId;
+        if (resourceId && resourceName) {
+            window.resourceMapping[resourceId] = resourceName;
+        }
+    });
+}
+
+/**
  * Perform server-side search for prompts and update the prompt list
  */
 async function serverSidePromptSearch(searchTerm) {
@@ -19347,6 +19735,853 @@ async function serverSidePromptSearch(searchTerm) {
         console.error("Error searching prompts:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources and update the resouces list
+ */
+async function serverSideResourceSearch(searchTerm) {
+    const container = document.getElementById("associatedResources");
+    const noResultsMessage = safeGetElement("noResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+
+    if (!container) {
+        console.error("associatedResources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-purple-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompt selector
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Initialize resource mapping if needed
+                initResourceSelect(
+                    "associatedResources",
+                    "selectedResourcesPills",
+                    "selectedResourcesWarning",
+                    6,
+                    "selectAllResourcesBtn",
+                    "clearAllResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const displayName = resource.name || resource.id;
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(displayName)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Initialize Resource select mapping
+            initResourceSelect(
+                "associatedResources",
+                "selectedResourcesPills",
+                "selectedResourcesWarning",
+                6,
+                "selectAllResourcesBtn",
+                "clearAllResourcesBtn",
+            );
+
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for tools in the edit-server selector and update the list
+ */
+async function serverSideEditToolSearch(searchTerm) {
+    const container = document.getElementById("edit-server-tools");
+    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+
+    if (!container) {
+        console.error("edit-server-tools container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching tools...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default tool selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update tool mapping
+                updateToolMapping(container);
+
+                // Restore checked state for any tools already associated with the server
+                try {
+                    const dataAttr =
+                        container.getAttribute("data-server-tools");
+                    if (dataAttr) {
+                        const serverTools = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverTools) &&
+                            serverTools.length > 0
+                        ) {
+                            // Normalize serverTools to a set of strings for robust comparison
+                            const serverToolSet = new Set(
+                                serverTools.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedTools"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const toolId = cb.value;
+                                const toolName =
+                                    cb.getAttribute("data-tool-name") ||
+                                    (window.toolMapping &&
+                                        window.toolMapping[cb.value]);
+                                if (
+                                    serverToolSet.has(toolId) ||
+                                    (toolName &&
+                                        serverToolSet.has(String(toolName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server tools checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container
+                initToolSelect(
+                    "edit-server-tools",
+                    "selectedEditToolsPills",
+                    "selectedEditToolsWarning",
+                    6,
+                    "selectAllEditToolsBtn",
+                    "clearAllEditToolsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
+            }
+        } catch (error) {
+            console.error("Error loading tools:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading tools</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.tools && data.tools.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.tools.forEach((tool) => {
+                const displayName =
+                    tool.display_name ||
+                    tool.custom_name ||
+                    tool.name ||
+                    tool.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                        data-tool-id="${escapeHtml(tool.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedTools"
+                            value="${escapeHtml(tool.id)}"
+                            data-tool-name="${escapeHtml(displayName)}"
+                            class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateToolMapping(container);
+
+            // Restore checked state for any tools already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-tools");
+                if (dataAttr) {
+                    const serverTools = JSON.parse(dataAttr);
+                    if (Array.isArray(serverTools) && serverTools.length > 0) {
+                        // Normalize serverTools to a set of strings for robust comparison
+                        const serverToolSet = new Set(
+                            serverTools.map((s) => String(s)),
+                        );
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const toolId = cb.value;
+                            const toolName =
+                                cb.getAttribute("data-tool-name") ||
+                                (window.toolMapping &&
+                                    window.toolMapping[cb.value]);
+                            if (
+                                serverToolSet.has(toolId) ||
+                                (toolName &&
+                                    serverToolSet.has(String(toolName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server tools checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initToolSelect(
+                "edit-server-tools",
+                "selectedEditToolsPills",
+                "selectedEditToolsWarning",
+                6,
+                "selectAllEditToolsBtn",
+                "clearAllEditToolsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching tools:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching tools</div>';
+
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for prompts in the edit-server selector and update the list
+ */
+async function serverSideEditPromptsSearch(searchTerm) {
+    const container = document.getElementById("edit-server-prompts");
+    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+
+    if (!container) {
+        console.error("edit-server-prompts container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching prompts...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompts selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update prompt mapping
+                updatePromptMapping(container);
+
+                // Restore checked state for any prompts already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-prompts",
+                    );
+                    if (dataAttr) {
+                        const serverPrompts = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverPrompts) &&
+                            serverPrompts.length > 0
+                        ) {
+                            // Normalize serverPrompts to a set of strings for robust comparison
+                            const serverPromptSet = new Set(
+                                serverPrompts.map((s) => String(s)),
+                            );
+
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedPrompts"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const promptId = cb.value;
+                                const promptName =
+                                    cb.getAttribute("data-prompt-name") ||
+                                    (window.promptMapping &&
+                                        window.promptMapping[cb.value]);
+
+                                // Check by id first (string), then by name as a fallback
+                                if (
+                                    serverPromptSet.has(promptId) ||
+                                    (promptName &&
+                                        serverPromptSet.has(String(promptName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server prompts checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (prompt-specific)
+                initPromptSelect(
+                    "edit-server-prompts",
+                    "selectedEditPromptsPills",
+                    "selectedEditPromptsWarning",
+                    6,
+                    "selectAllEditPromptsBtn",
+                    "clearAllEditPromptsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+            }
+        } catch (error) {
+            console.error("Error loading prompts:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.prompts && data.prompts.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.prompts.forEach((prompt) => {
+                const name = prompt.name || prompt.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 prompt-item"
+                        data-prompt-id="${escapeHtml(prompt.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="${escapeHtml(prompt.id)}"
+                            data-prompt-name="${escapeHtml(name)}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updatePromptMapping(container);
+
+            // Restore checked state for any prompts already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-prompts");
+                if (dataAttr) {
+                    const serverPrompts = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverPrompts) &&
+                        serverPrompts.length > 0
+                    ) {
+                        // Normalize serverPrompts to a set of strings for robust comparison
+                        const serverPromptSet = new Set(
+                            serverPrompts.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const promptId = cb.value;
+                            const promptName =
+                                cb.getAttribute("data-prompt-name") ||
+                                (window.promptMapping &&
+                                    window.promptMapping[cb.value]);
+
+                            if (
+                                serverPromptSet.has(promptId) ||
+                                (promptName &&
+                                    serverPromptSet.has(String(promptName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server prompts checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initPromptSelect(
+                "edit-server-prompts",
+                "selectedEditPromptsPills",
+                "selectedEditPromptsWarning",
+                6,
+                "selectAllEditPromptsBtn",
+                "clearAllEditPromptsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching prompts:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources in the edit-server selector and update the list
+ */
+async function serverSideEditResourcesSearch(searchTerm) {
+    const container = document.getElementById("edit-server-resources");
+    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+
+    if (!container) {
+        console.error("edit-server-resources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching Resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default resources selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update resource mapping
+                updateResourceMapping(container);
+                // Restore checked state for any resources already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const serverResources = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverResources) &&
+                            serverResources.length > 0
+                        ) {
+                            // Normalize serverResources to a set of strings for robust comparison
+                            const serverResourceSet = new Set(
+                                serverResources.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedResources"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const resourceId = cb.value;
+                                const resourceName =
+                                    cb.getAttribute("data-resource-name") ||
+                                    (window.resourceMapping &&
+                                        window.resourceMapping[cb.value]);
+                                if (
+                                    serverResourceSet.has(resourceId) ||
+                                    (resourceName &&
+                                        serverResourceSet.has(
+                                            String(resourceName),
+                                        ))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server resources checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (resource-specific)
+                initResourceSelect(
+                    "edit-server-resources",
+                    "selectedEditResourcesPills",
+                    "selectedEditResourcesWarning",
+                    6,
+                    "selectAllEditResourcesBtn",
+                    "clearAllEditResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const name = resource.name || resource.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(name)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateResourceMapping(container);
+
+            // Restore checked state for any resources already associated with the server
+            try {
+                const dataAttr = container.getAttribute(
+                    "data-server-resources",
+                );
+                if (dataAttr) {
+                    const serverResources = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverResources) &&
+                        serverResources.length > 0
+                    ) {
+                        // Normalize serverResources to a set of strings for robust comparison
+                        const serverResourceSet = new Set(
+                            serverResources.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const resourceId = cb.value;
+                            const resourceName =
+                                cb.getAttribute("data-resource-name") ||
+                                (window.resourceMapping &&
+                                    window.resourceMapping[cb.value]);
+                            // Check by id first (string), then by name as a fallback
+                            if (
+                                serverResourceSet.has(resourceId) ||
+                                (resourceName &&
+                                    serverResourceSet.has(String(resourceName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server resources checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initResourceSelect(
+                "edit-server-resources",
+                "selectedEditResourcesPills",
+                "selectedEditResourcesWarning",
+                6,
+                "selectAllEditResourcesBtn",
+                "clearAllEditResourcesBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
