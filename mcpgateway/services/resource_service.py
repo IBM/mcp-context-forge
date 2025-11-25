@@ -25,7 +25,6 @@ Examples:
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import mimetypes
 import os
@@ -50,9 +49,9 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -1455,7 +1454,7 @@ class ResourceService:
         }
         await self._publish_event(event)
 
-    async def subscribe_events(self, uri: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
         """Subscribe to Resource events via the EventService.
 
         Yields:
@@ -1652,7 +1651,7 @@ class ResourceService:
         }
         await self._publish_event(event)
 
-    async def _publish_event(self, uri: str, event: Dict[str, Any]) -> None:
+    async def _publish_event(self, event: Dict[str, Any]) -> None:
         """
         Publish event to all subscribers via the EventService.
 

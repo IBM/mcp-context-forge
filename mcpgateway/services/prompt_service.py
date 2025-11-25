@@ -15,7 +15,6 @@ It handles:
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import os
 from string import Formatter
@@ -38,9 +37,9 @@ from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.event_service import EventService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr

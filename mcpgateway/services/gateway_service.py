@@ -40,7 +40,6 @@ Examples:
 # Standard
 import asyncio
 from datetime import datetime, timezone
-import json
 import logging
 import mimetypes
 import os

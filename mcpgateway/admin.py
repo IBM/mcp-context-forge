@@ -9773,11 +9773,70 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         latency_ms = int((time.monotonic() - start_time) * 1000)
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
-# Event Streaming via SSE to the Admin UI 
+
+# Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
 async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions)):
-    """Stream admin events from all services via SSE."""
+    """
+    Stream admin events from all services via SSE (Server-Sent Events).
 
+    This endpoint establishes a persistent connection to stream real-time updates
+    from the gateway service and tool service to the frontend. It aggregates
+    multiple event streams into a single asyncio queue for unified delivery.
+
+    Args:
+        request (Request): The FastAPI request object, used to detect client disconnection.
+        _user (Any): Authenticated user dependency (ensures admin permissions).
+
+    Returns:
+        StreamingResponse: An async generator yielding SSE-formatted strings
+        (media_type="text/event-stream").
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock, patch
+        >>> from fastapi import Request
+        >>>
+        >>> # Mock the request to simulate connection status
+        >>> mock_request = MagicMock(spec=Request)
+        >>> # Return False (connected) twice, then True (disconnected) to exit the loop
+        >>> mock_request.is_disconnected = AsyncMock(side_effect=[False, False, True])
+        >>>
+        >>> # Define a mock event generator for services
+        >>> async def mock_service_stream(service_name):
+        ...     yield {"type": "update", "data": {"service": service_name, "status": "active"}}
+        >>>
+        >>> async def test_streaming_endpoint():
+        ...     # Patch the global services used inside the function
+        ...     # Note: Adjust the patch path 'mcpgateway.admin' to your actual module path
+        ...     with patch('mcpgateway.admin.gateway_service') as mock_gw_service, \
+        ...          patch('mcpgateway.admin.tool_service') as mock_tool_service:
+        ...
+        ...         # Setup mocks to return our async generator
+        ...         mock_gw_service.subscribe_events.side_effect = lambda: mock_service_stream("gateway")
+        ...         mock_tool_service.subscribe_events.side_effect = lambda: mock_service_stream("tool")
+        ...
+        ...         # Call the endpoint
+        ...         response = await admin_events(mock_request, _user="admin_user")
+        ...
+        ...         # Consume the StreamingResponse body iterator
+        ...         results = []
+        ...         async for chunk in response.body_iterator:
+        ...             results.append(chunk)
+        ...
+        ...         return results
+        >>>
+        >>> # Run the test
+        >>> events = asyncio.run(test_streaming_endpoint())
+        >>>
+        >>> # Verify SSE formatting
+        >>> first_event = events[0]
+        >>> assert "event: update" in first_event
+        >>> assert "data:" in first_event
+        >>> assert "gateway" in first_event or "tool" in first_event
+        >>> print("SSE Stream Test Passed")
+        SSE Stream Test Passed
+    """
     # Create a shared queue to aggregate events from all services
     event_queue = asyncio.Queue()
 
@@ -9789,7 +9848,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
         except asyncio.CancelledError:
             pass  # Task cancelled normally
         except Exception as e:
-            logger.error(f"Error in {source_name} event subscription: {e}")
+            LOGGER.error(f"Error in {source_name} event subscription: {e}")
 
     async def event_generator():
         # Create background tasks for each service subscription
@@ -9800,7 +9859,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
             while True:
                 # Check for client disconnection
                 if await request.is_disconnected():
-                    logger.debug("SSE Client disconnected")
+                    LOGGER.debug("SSE Client disconnected")
                     break
 
                 # Wait for the next event from EITHER service
@@ -9826,9 +9885,9 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                     raise
 
         except asyncio.CancelledError:
-            logger.debug("SSE Stream cancelled")
+            LOGGER.debug("SSE Stream cancelled")
         except Exception as e:
-            logger.error(f"SSE Stream error: {e}")
+            LOGGER.error(f"SSE Stream error: {e}")
         finally:
             # Cleanup: Cancel all background subscription tasks
             # This is crucial to close Redis connections/listeners in the EventService
@@ -9837,7 +9896,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
             # Wait for tasks to clean up
             await asyncio.gather(*tasks, return_exceptions=True)
-            logger.debug("Background event subscription tasks cleaned up")
+            LOGGER.debug("Background event subscription tasks cleaned up")
 
     return StreamingResponse(
         event_generator(),
