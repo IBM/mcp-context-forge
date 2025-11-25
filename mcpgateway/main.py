@@ -315,30 +315,57 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     results = [match.value for match in main_matches]
 
     if mappings:
-        mapped_results = []
-        for item in results:
-            mapped_item = {}
-            for new_key, mapping_expr_str in mappings.items():
-                try:
-                    mapping_expr = parse(mapping_expr_str)
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
-                try:
-                    mapping_matches = mapping_expr.find(item)
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
-                if not mapping_matches:
-                    mapped_item[new_key] = None
-                elif len(mapping_matches) == 1:
-                    mapped_item[new_key] = mapping_matches[0].value
-                else:
-                    mapped_item[new_key] = [m.value for m in mapping_matches]
-            mapped_results.append(mapped_item)
-        results = mapped_results
+        results = transform_data_with_mappings(results, mappings)
 
     if len(results) == 1 and isinstance(results[0], dict):
         return results[0]
+
     return results
+
+
+def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
+    """
+    Applies the given JSONPath expression and mappings to the data.
+    Only return data that is required by the user dynamically.
+
+    Args:
+        data: The set of data to apply mappings to.
+        mappings: dictionary of mappings where keys are new field names
+
+    Returns:
+        list[Any]: A list (or mapped list) of re-mapped data
+
+    Raises:
+        HTTPException: If there's an error parsing or executing the JSONPath expressions.
+
+    Examples:
+        >>> transform_data_with_mappings([{'first_name': "Bruce", 'second_name': "Wayne"},{'first_name': "Diana", 'second_name': "Prince"}], {"n": "$.first_name"})
+        [{'n': 'Bruce'}, {'n': 'Diana'}]
+    """
+
+    mapped_results = []
+    for item in data:
+        mapped_item = {}
+        for new_key, mapping_expr_str in mappings.items():
+            try:
+                mapping_expr = parse(mapping_expr_str)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+
+            try:
+                mapping_matches = mapping_expr.find(item)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+
+            if not mapping_matches:
+                mapped_item[new_key] = None
+            elif len(mapping_matches) == 1:
+                mapped_item[new_key] = mapping_matches[0].value
+            else:
+                mapped_item[new_key] = [m.value for m in mapping_matches]
+        mapped_results.append(mapped_item)
+
+    return mapped_results
 
 
 ####################
@@ -374,24 +401,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     try:
         # Validate security configuration
-        await validate_security_configuration()
+        validate_security_configuration()
 
         if plugin_manager:
             await plugin_manager.initialize()
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
 
         if settings.enable_header_passthrough:
-            logger.info(f"🔄 Header Passthrough: ENABLED (default headers: {settings.default_passthrough_headers})")
-            if settings.enable_overwrite_base_headers:
-                logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
-            else:
-                logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
-            db_gen = get_db()
-            db = next(db_gen)  # pylint: disable=stop-iteration-return
-            try:
-                await set_global_passthrough_headers(db)
-            finally:
-                db.close()
+            await setup_passthrough_headers()
         else:
             logger.info("🔒 Header Passthrough: DISABLED")
 
@@ -422,14 +439,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
-            try:
-                # First-Party
-                from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
-
-                bootstrap_sso_providers()
-                logger.info("SSO providers bootstrapped successfully")
-            except Exception as e:
-                logger.warning(f"Failed to bootstrap SSO providers: {e}")
+            attempt_to_bootstrap_sso_providers()
 
         logger.info("All services initialized successfully")
 
@@ -485,12 +495,54 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
 
-        for service in services_to_shutdown:
-            try:
-                await service.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
+        await shutdown_services(services_to_shutdown)
+
         logger.info("Shutdown complete")
+
+
+async def shutdown_services(services_to_shutdown: list[Any]):
+    """
+    Awaits shutdown of services provided in a list
+
+    Args:
+        services_to_shutdown (list[Any]): list of services to shutdown
+    """
+    for service in services_to_shutdown:
+        try:
+            await service.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
+
+
+async def setup_passthrough_headers():
+    """
+    Enables configuration and logs active settings as needed for when passthrough headers are enabled.
+    """
+    logger.info(f"🔄 Header Passthrough: ENABLED (default headers: {settings.default_passthrough_headers})")
+    if settings.enable_overwrite_base_headers:
+        logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
+    else:
+        logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
+    db_gen = get_db()
+    db = next(db_gen)  # pylint: disable=stop-iteration-return
+    try:
+        await set_global_passthrough_headers(db)
+    finally:
+        db.close()
+
+
+def attempt_to_bootstrap_sso_providers():
+    """
+    Try to bootstrap SSO provider services based on settings.
+    """
+    try:
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+        bootstrap_sso_providers()
+        logger.info("SSO providers bootstrapped successfully")
+    except Exception as e:
+        logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
 
 # Initialize FastAPI app with orjson for 2-3x faster JSON serialization
@@ -507,22 +559,25 @@ app = FastAPI(
 setup_metrics(app)
 
 
-async def validate_security_configuration():
-    """Validate security configuration on startup."""
+def validate_security_configuration():
+    """
+    Validate security configuration on startup.
+    This function encapsulates:
+     - verifying the configuration,
+     - logging the output for warnings,
+     - critical issues
+     - security recommendations
+
+     Args: None
+     Raises: Passthrough Errors/Exceptions but doesn't raise any of its own.
+    """
     logger.info("🔒 Validating security configuration...")
 
     # Get security status
-    security_status = settings.get_security_status()
+    security_status: settings.SecurityStatus = settings.get_security_status()
     warnings = security_status["warnings"]
 
-    # Log warnings
-    if warnings:
-        logger.warning("=" * 60)
-        logger.warning("🚨 SECURITY WARNINGS DETECTED:")
-        logger.warning("=" * 60)
-        for warning in warnings:
-            logger.warning(f"  {warning}")
-        logger.warning("=" * 60)
+    log_warnings(warnings)
 
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
@@ -536,6 +591,37 @@ async def validate_security_configuration():
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
         critical_issues.append("Federation enabled without authentication in non-dev mode. This is a critical security risk!")
 
+    log_critical_issues(critical_issues)
+
+    log_security_recommendations(security_status)
+
+
+def log_warnings(warnings: list[str]):
+    """
+    Log warnings from list of warnings provided
+
+    Args:
+        warnings: List
+    """
+    if warnings:
+        logger.warning("=" * 60)
+        logger.warning("🚨 SECURITY WARNINGS DETECTED:")
+        logger.warning("=" * 60)
+        for warning in warnings:
+            logger.warning(f"  {warning}")
+        logger.warning("=" * 60)
+
+
+def log_critical_issues(critical_issues: list[Any]):
+    """
+    Log critical based on configuration settings
+    If REQUIRE_STRONG_SECRETS set, this will output critical errors and exit the mcpgateway server.
+
+    Args:
+        critical_issues: List
+
+    Returns: None
+    """
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
     if critical_issues:
         if settings.require_strong_secrets:
@@ -557,7 +643,16 @@ async def validate_security_configuration():
                 logger.warning(f"  • {issue}")
             logger.warning("=" * 60)
 
-    # Log security recommendations
+
+def log_security_recommendations(security_status: settings.SecurityStatus):
+    """
+    Log security recommendations based on configuration settings
+
+    Args:
+        security_status (settings.SecurityStatus): The SecurityStatus object for checking and logging current security settings from MCPGateway.
+
+    Returns: None
+    """
     if not security_status["secure_secrets"] or not security_status["auth_enabled"]:
         logger.info("=" * 60)
         logger.info("📋 SECURITY RECOMMENDATIONS:")
