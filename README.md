@@ -251,9 +251,9 @@ ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-ga
 BASIC_AUTH_PASSWORD=pass \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
-PLATFORM_ADMIN_EMAIL=admin@example.com \
-PLATFORM_ADMIN_PASSWORD=changeme \
-PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+PLATFORM_OWNER_EMAIL=admin@example.com \
+PLATFORM_OWNER_PASSWORD=changeme \
+PLATFORM_OWNER_FULL_NAME="Platform Owner" \
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
 # Or better: use the provided .env.example
@@ -288,9 +288,9 @@ cp .env.example .env
 # Or set environment variables directly:
 export MCPGATEWAY_UI_ENABLED=true
 export MCPGATEWAY_ADMIN_API_ENABLED=true
-export PLATFORM_ADMIN_EMAIL=admin@example.com
-export PLATFORM_ADMIN_PASSWORD=changeme
-export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
+export PLATFORM_OWNER_EMAIL=admin@example.com
+export PLATFORM_OWNER_PASSWORD=changeme
+export PLATFORM_OWNER_FULL_NAME="Platform Owner"
 
 BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key \
   mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
@@ -324,9 +324,9 @@ $Env:MCPGATEWAY_UI_ENABLED        = "true"
 $Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
 $Env:BASIC_AUTH_PASSWORD          = "changeme"      # admin/changeme
 $Env:JWT_SECRET_KEY               = "my-test-key"
-$Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
-$Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
-$Env:PLATFORM_ADMIN_FULL_NAME     = "Platform Administrator"
+$Env:PLATFORM_OWNER_EMAIL         = "admin@example.com"
+$Env:PLATFORM_OWNER_PASSWORD      = "changeme"
+$Env:PLATFORM_OWNER_FULL_NAME     = "Platform Owner"
 
 # 3️⃣  Launch the gateway
 mcpgateway.exe --host 0.0.0.0 --port 4444
@@ -579,9 +579,9 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e PLATFORM_OWNER_EMAIL=admin@example.com \
+  -e PLATFORM_OWNER_PASSWORD=changeme \
+  -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
@@ -620,9 +620,9 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e PLATFORM_OWNER_EMAIL=admin@example.com \
+  -e PLATFORM_OWNER_PASSWORD=changeme \
+  -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
 
@@ -646,9 +646,9 @@ docker run -d --name mcpgateway \
   -e HOST=0.0.0.0 \
   -e PORT=4444 \
   -e DATABASE_URL=sqlite:////data/mcp.db \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e PLATFORM_OWNER_EMAIL=admin@example.com \
+  -e PLATFORM_OWNER_PASSWORD=changeme \
+  -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
   -v $(pwd)/data:/data \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
 ```
@@ -1184,7 +1184,7 @@ curl -u admin:changeme "http://localhost:4444/admin/export/configuration" \
 ```
 
 ### Migration Process
-1. **Update `.env`** - Copy new settings: `cp .env.example .env` then configure `PLATFORM_ADMIN_EMAIL` and other required multi-tenancy settings
+1. **Update `.env`** - Copy new settings: `cp .env.example .env` then configure `PLATFORM_OWNER_EMAIL` and other required multi-tenancy settings
 2. **Run migration** - Database schema updates automatically: `python3 -m mcpgateway.bootstrap_db`
 3. **Verify migration** - Use verification script: `python3 scripts/verify_multitenancy_0_7_0_migration.py`
 
@@ -1234,7 +1234,7 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
 | `BASIC_AUTH_USER`           | Username for Admin UI login and HTTP Basic authentication                    | `admin`             | string      |
 | `BASIC_AUTH_PASSWORD`       | Password for Admin UI login and HTTP Basic authentication                    | `changeme`          | string      |
-| `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
+| `PLATFORM_OWNER_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges) | `admin@example.com` | string      |
 | `AUTH_REQUIRED`             | Require authentication for all API routes                                    | `true`              | bool        |
 | `JWT_ALGORITHM`             | Algorithm used to sign the JWTs (`HS256` is default, HMAC-based)             | `HS256`             | PyJWT algs  |
 | `JWT_SECRET_KEY`            | Secret key used to **sign JWT tokens** for API access                        | `my-test-key`       | string      |
@@ -1473,9 +1473,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | Setting                        | Description                                      | Default               | Options |
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
-| `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
-| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
-| `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
+| `PLATFORM_OWNER_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
+| `PLATFORM_OWNER_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_OWNER_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Owner`      | string |
 | `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
 | `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
 | `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |

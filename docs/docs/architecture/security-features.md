@@ -28,7 +28,7 @@
 - **Argon2id password hashing.** `EmailAuthService` hashes credentials with configurable `ARGON2ID_TIME_COST`, `ARGON2ID_MEMORY_COST`, and `ARGON2ID_PARALLELISM`.
 - **Password policy controls.** Minimum length and complexity are driven by `PASSWORD_MIN_LENGTH` and related flags. Attempts that fail policy raise `PasswordValidationError`.
 - **Account lockout & auditing.** `MAX_FAILED_LOGIN_ATTEMPTS` and `ACCOUNT_LOCKOUT_DURATION_MINUTES` enforce lockouts at the ORM layer (`EmailUser.increment_failed_attempts`). Every login, registration, or password change emits an `EmailAuthEvent` with IP and user-agent metadata for investigation.
-- **Admin bootstrap.** The first superuser is provisioned from `PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD`, enabling secure initial access even when SSO is not configured.
+- **Admin bootstrap.** The first superuser is provisioned from `PLATFORM_OWNER_EMAIL`/`PLATFORM_OWNER_PASSWORD`, enabling secure initial access even when SSO is not configured.
 
 ### Token Catalog & API Keys
 
@@ -88,7 +88,7 @@
 ## Production Hardening Checklist
 
 - [ ] **Set production posture.** Run with `ENVIRONMENT=production`, configure `APP_DOMAIN` and explicit `ALLOWED_ORIGINS`, and leave `SKIP_SSL_VERIFY=false`.
-- [ ] **Harden secrets.** Rotate `BASIC_AUTH_PASSWORD`, `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_ADMIN_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
+- [ ] **Harden secrets.** Rotate `BASIC_AUTH_PASSWORD`, `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, `PLATFORM_OWNER_PASSWORD`, and database credentials; enable `REQUIRE_STRONG_SECRETS=true` so weak values stop startup.
 - [ ] **Keep auth mandatory.** Maintain `AUTH_REQUIRED=true`, `MCP_CLIENT_AUTH_ENABLED=true`, and only enable `TRUST_PROXY_AUTH` behind a trusted authentication proxy.
 - [ ] **Disable unused surfaces.** Leave `MCPGATEWAY_UI_ENABLED=false`, `MCPGATEWAY_ADMIN_API_ENABLED=false`, `MCPGATEWAY_BULK_IMPORT_ENABLED=false`, `MCPGATEWAY_A2A_ENABLED=false`, and `MCPGATEWAY_CATALOG_ENABLED=false` unless you actively use them.
 - [ ] **Leave header passthrough off.** `ENABLE_HEADER_PASSTHROUGH=false` (default) should only change after reviewing downstream requirements and allowlists.

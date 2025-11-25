@@ -399,10 +399,7 @@ def require_admin_permission():
             if not user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Create permission service and check admin permissions
-            permission_service = PermissionService(user_context["db"])
-
-            has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+            has_admin_permission = await self.permission_service.check_admin_permission(user_context["email"])
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")

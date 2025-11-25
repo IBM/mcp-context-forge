@@ -506,7 +506,7 @@ class EmailAuthService:
 
         return success
 
-    async def create_platform_admin(self, email: str, password: str, full_name: Optional[str] = None) -> EmailUser:
+    async def create_platform_owner(self, email: str, password: str, full_name: Optional[str] = None) -> EmailUser:
         """Create or update the platform administrator user.
 
         This method is used during system bootstrap to create the initial
@@ -521,10 +521,10 @@ class EmailAuthService:
             EmailUser: The admin user
 
         Examples:
-            # admin = await service.create_platform_admin(
+            # admin = await service.create_platform_owner(
             #     "admin@example.com",
             #     "admin_password",
-            #     "Platform Administrator"
+            #     "Platform Owner"
             # )
             # admin.is_admin       # Returns: True
         """

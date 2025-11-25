@@ -252,8 +252,8 @@ BASIC_AUTH_PASSWORD=changeme
 
 # Email-based Auth
 EMAIL_AUTH_ENABLED=true
-PLATFORM_ADMIN_EMAIL=admin@example.com
-PLATFORM_ADMIN_PASSWORD=changeme
+PLATFORM_OWNER_EMAIL=admin@example.com
+PLATFORM_OWNER_PASSWORD=changeme
 
 # Security Features
 AUTH_REQUIRED=true

@@ -112,6 +112,9 @@ class PermissionService:
             # if await self._is_user_admin(user_email):
             #     return True
 
+            if not team_id:
+                return permission in await self.get_user_permissions(user_email)
+
             # Get user's effective permissions from roles
             user_permissions = await self.get_user_permissions(user_email, team_id)
 
@@ -474,7 +477,7 @@ class PermissionService:
         from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
         # Special case for platform admin (virtual user)
-        if user_email == getattr(settings, "platform_admin_email", ""):
+        if user_email == getattr(settings, "platform_owner_email", ""):
             return True
 
         user = self.db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()

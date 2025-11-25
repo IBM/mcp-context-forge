@@ -86,8 +86,8 @@ services:
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
       - EMAIL_AUTH_ENABLED=true
-      - PLATFORM_ADMIN_EMAIL=admin@example.com
-      - PLATFORM_ADMIN_PASSWORD=changeme
+      - PLATFORM_OWNER_EMAIL=admin@example.com
+      - PLATFORM_OWNER_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true

@@ -63,9 +63,9 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-      -e PLATFORM_ADMIN_PASSWORD=changeme \
-      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+      -e PLATFORM_OWNER_EMAIL=admin@example.com \
+      -e PLATFORM_OWNER_PASSWORD=changeme \
+      -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
       ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
     ```
 
@@ -83,9 +83,9 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-      -e PLATFORM_ADMIN_PASSWORD=changeme \
-      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+      -e PLATFORM_OWNER_EMAIL=admin@example.com \
+      -e PLATFORM_OWNER_PASSWORD=changeme \
+      -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
       ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
     ```
 
@@ -100,9 +100,9 @@ And is readily available as open source, published a container image and as a Py
     mcpgateway --host 0.0.0.0 --port 4444
 
     # Option 2: Set environment variables directly
-    PLATFORM_ADMIN_EMAIL=admin@example.com \
-    PLATFORM_ADMIN_PASSWORD=changeme \
-    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+    PLATFORM_OWNER_EMAIL=admin@example.com \
+    PLATFORM_OWNER_PASSWORD=changeme \
+    PLATFORM_OWNER_FULL_NAME="Platform Owner" \
     mcpgateway --host 0.0.0.0 --port 4444
     ```
 
@@ -124,9 +124,9 @@ And is readily available as open source, published a container image and as a Py
     docker run -d --name mcpgateway \
       -p 4444:4444 \
       -e JWT_SECRET_KEY=YOUR_KEY \
-      -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-      -e PLATFORM_ADMIN_PASSWORD=changeme \
-      -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+      -e PLATFORM_OWNER_EMAIL=admin@example.com \
+      -e PLATFORM_OWNER_PASSWORD=changeme \
+      -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
       ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
     ```
 
@@ -142,9 +142,9 @@ And is readily available as open source, published a container image and as a Py
     mcpgateway --host 0.0.0.0 --port 4444
 
     # Option 2: Set environment variables directly
-    PLATFORM_ADMIN_EMAIL=admin@example.com \
-    PLATFORM_ADMIN_PASSWORD=changeme \
-    PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+    PLATFORM_OWNER_EMAIL=admin@example.com \
+    PLATFORM_OWNER_PASSWORD=changeme \
+    PLATFORM_OWNER_FULL_NAME="Platform Owner" \
     mcpgateway --host 0.0.0.0 --port 4444
     ```
 

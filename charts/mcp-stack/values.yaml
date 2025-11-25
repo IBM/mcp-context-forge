@@ -433,9 +433,9 @@ mcpContextForge:
 
     # ─ Email-Based Authentication ─
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
-    PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
-    PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
-    PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
+    PLATFORM_OWNER_EMAIL: admin@example.com # email for bootstrap platform owner user
+    PLATFORM_OWNER_PASSWORD: changeme     # password for bootstrap platform owner user
+    PLATFORM_OWNER_FULL_NAME: Platform Owner # full name for bootstrap platform owner
 
     # ─ Password Hashing & Security ─
     ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)

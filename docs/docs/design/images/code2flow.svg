@@ -5921,7 +5921,7 @@
 <g id="node250" class="node">
 <title>node_8eaaf653</title>
 <path fill="#966f33" stroke="black" d="M1683.5,-23698C1683.5,-23698 1512.5,-23698 1512.5,-23698 1506.5,-23698 1500.5,-23692 1500.5,-23686 1500.5,-23686 1500.5,-23674 1500.5,-23674 1500.5,-23668 1506.5,-23662 1512.5,-23662 1512.5,-23662 1683.5,-23662 1683.5,-23662 1689.5,-23662 1695.5,-23668 1695.5,-23674 1695.5,-23674 1695.5,-23686 1695.5,-23686 1695.5,-23692 1689.5,-23698 1683.5,-23698"/>
-<text text-anchor="middle" x="1598" y="-23676.3" font-family="Arial" font-size="14.00">500: create_platform_admin()</text>
+<text text-anchor="middle" x="1598" y="-23676.3" font-family="Arial" font-size="14.00">500: create_platform_owner()</text>
 </g>
 <!-- node_8eaaf653&#45;&gt;node_82e4834e -->
 <g id="edge504" class="edge">

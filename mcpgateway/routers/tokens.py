@@ -446,8 +446,8 @@ async def admin_revoke_token(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
 
     service = TokenCatalogService(db)
-    admin_email = current_user["email"]
-    reason = request.reason if request else f"Revoked by admin {admin_email}"
+    owner_email = current_user["email"]
+    reason = request.reason if request else f"Revoked by admin {owner_email}"
 
     success = await service.revoke_token(token_id=token_id, revoked_by=current_user["email"], reason=reason)
 

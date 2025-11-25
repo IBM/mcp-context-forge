@@ -18,9 +18,9 @@ docker run -d --name mcpgateway \
   -e BASIC_AUTH_USER=admin \
   -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
-  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e PLATFORM_OWNER_EMAIL=admin@example.com \
+  -e PLATFORM_OWNER_PASSWORD=changeme \
+  -e PLATFORM_OWNER_FULL_NAME="Platform Owner" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   --network=host \
   ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1

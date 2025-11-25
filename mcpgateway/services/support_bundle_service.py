@@ -290,7 +290,7 @@ class SupportBundleService:
             "basic_auth_password",
             "jwt_secret_key",
             "auth_encryption_secret",
-            "platform_admin_password",
+            "platform_owner_password",
             "sso_github_client_secret",
             "sso_google_client_secret",
             "sso_ibm_verify_client_secret",

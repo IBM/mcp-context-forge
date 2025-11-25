@@ -417,7 +417,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         db_gen: Generator = get_db()
         db: Session = next(db_gen)
 
-        user_email = settings.platform_admin_email
+        user_email = settings.platform_owner_email
 
         if self._redis_client:
             # Check if Redis is available

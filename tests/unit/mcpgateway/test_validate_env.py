@@ -21,7 +21,7 @@ def valid_env(tmp_path: Path) -> Path:
         "APP_DOMAIN=http://localhost:8000\n"
         "PORT=8080\n"
         "LOG_LEVEL=info\n"
-        "PLATFORM_ADMIN_PASSWORD=V7g!3Rf$Tz9&Lp2@Kq1Xh5Jm8Nc0YsR4\n"
+        "PLATFORM_OWNER_PASSWORD=V7g!3Rf$Tz9&Lp2@Kq1Xh5Jm8Nc0YsR4\n"
         "BASIC_AUTH_USER=admin\n"
         "BASIC_AUTH_PASSWORD=V9r$2Tx!Bf8&kZq@3LpC#7Jm6Nh1UoR0\n"
         "JWT_SECRET_KEY=Z9x!3Tp#Rk8&Vm4Yq$2Lf6Jb0Nw1AoS5DdGh7KuCvBzPmY\n"
@@ -48,7 +48,7 @@ def test_validate_env_success_direct(valid_env: Path) -> None:
     get_settings.cache_clear()
 
     # Clear environment variables that might interfere
-    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_ADMIN_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
+    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_OWNER_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
 
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:
@@ -68,7 +68,7 @@ def test_validate_env_failure_direct(invalid_env: Path) -> None:
     get_settings.cache_clear()
 
     # Clear environment variables that might interfere
-    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_ADMIN_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
+    env_vars_to_clear = ["APP_DOMAIN", "PORT", "LOG_LEVEL", "PLATFORM_OWNER_PASSWORD", "BASIC_AUTH_PASSWORD", "JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"]
 
     with patch.dict(os.environ, {}, clear=False):
         for var in env_vars_to_clear:

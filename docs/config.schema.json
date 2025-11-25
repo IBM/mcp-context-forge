@@ -686,22 +686,22 @@
       "title": "Email Auth Enabled",
       "type": "boolean"
     },
-    "platform_admin_email": {
+    "platform_owner_email": {
       "default": "admin@example.com",
       "description": "Platform administrator email address",
-      "title": "Platform Admin Email",
+      "title": "Platform Owner Email",
       "type": "string"
     },
-    "platform_admin_password": {
+    "platform_owner_password": {
       "default": "changeme",
       "description": "Platform administrator password",
-      "title": "Platform Admin Password",
+      "title": "Platform Owner Password",
       "type": "string"
     },
-    "platform_admin_full_name": {
-      "default": "Platform Administrator",
+    "platform_owner_full_name": {
+      "default": "Platform Owneristrator",
       "description": "Platform administrator full name",
-      "title": "Platform Admin Full Name",
+      "title": "Platform Owner Full Name",
       "type": "string"
     },
     "argon2id_time_cost": {

@@ -30,9 +30,9 @@ def mock_settings():
     """Create mock settings."""
     settings = Mock()
     settings.email_auth_enabled = True
-    settings.platform_admin_email = "admin@example.com"
-    settings.platform_admin_password = SecretStr("secure_password")
-    settings.platform_admin_full_name = "Platform Admin"
+    settings.platform_owner_email = "admin@example.com"
+    settings.platform_owner_password = SecretStr("secure_password")
+    settings.platform_owner_full_name = "Platform Owner"
     settings.auto_create_personal_teams = True
     settings.database_url = "sqlite:///:memory:"
     return settings
@@ -115,9 +115,9 @@ class TestBootstrapAdminUser:
                     with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                         await bootstrap_admin_user()
 
-                        mock_email_auth_service.get_user_by_email.assert_called_once_with(mock_settings.platform_admin_email)
+                        mock_email_auth_service.get_user_by_email.assert_called_once_with(mock_settings.platform_owner_email)
                         mock_email_auth_service.create_user.assert_not_called()
-                        mock_logger.info.assert_called_with(f"Admin user {mock_settings.platform_admin_email} already exists - skipping creation")
+                        mock_logger.info.assert_called_with(f"Admin user {mock_settings.platform_owner_email} already exists - skipping creation")
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_success(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user):
@@ -135,12 +135,15 @@ class TestBootstrapAdminUser:
             mock_utc_now.return_value = "2024-01-01T00:00:00Z"
             await bootstrap_admin_user()
 
-            mock_email_auth_service.create_platform_admin.assert_called_once_with(
-                email=mock_settings.platform_admin_email,
-                password=mock_settings.platform_admin_password.get_secret_value(),
-                full_name=mock_settings.platform_admin_full_name,
+            mock_email_auth_service.create_user.assert_called_once_with(
+                email=mock_settings.platform_owner_email,
+                password=mock_settings.platform_owner_password.get_secret_value(),
+                full_name=mock_settings.platform_owner_full_name,
+                is_admin=True,
             )
-            mock_logger.info.assert_any_call(f"Creating platform admin user: {mock_settings.platform_admin_email}")
+            assert mock_admin_user.email_verified_at == "2024-01-01T00:00:00Z"
+            assert mock_db_session.commit.call_count == 2
+            mock_logger.info.assert_any_call(f"Platform admin user created successfully: {mock_settings.platform_owner_email}")
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_with_personal_team(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user):
@@ -210,11 +213,11 @@ class TestBootstrapDefaultRoles:
         mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
         mock_role_service.get_role_by_name.return_value = None  # No existing roles
 
-        platform_admin_role = Mock()
-        platform_admin_role.id = "role-admin"
-        platform_admin_role.name = "platform_admin"
+        platform_owner_role = Mock()
+        platform_owner_role.id = "role-admin"
+        platform_owner_role.name = "platform_owner"
 
-        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.create_role.return_value = platform_owner_role
         mock_role_service.get_user_role_assignment.return_value = None
 
         with patch("mcpgateway.bootstrap_db.settings", mock_settings):
@@ -233,10 +236,10 @@ class TestBootstrapDefaultRoles:
 
                             # Check that admin role was assigned
                             mock_role_service.assign_role_to_user.assert_called_once_with(
-                                user_email=mock_admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
+                                user_email=mock_admin_user.email, role_id=platform_owner_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
                             )
 
-                            mock_logger.info.assert_any_call(f"Assigned platform_admin role to {mock_admin_user.email}")
+                            mock_logger.info.assert_any_call(f"Assigned platform_owner role to {mock_admin_user.email}")
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_already_exist(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user):
@@ -245,7 +248,7 @@ class TestBootstrapDefaultRoles:
 
         existing_role = Mock()
         existing_role.id = "role-admin"
-        existing_role.name = "platform_admin"
+        existing_role.name = "platform_owner"
         mock_role_service.get_role_by_name.return_value = existing_role
 
         existing_assignment = Mock()
@@ -265,7 +268,7 @@ class TestBootstrapDefaultRoles:
 
                             mock_role_service.create_role.assert_not_called()
                             mock_role_service.assign_role_to_user.assert_not_called()
-                            mock_logger.info.assert_any_call("Admin user already has platform_admin role")
+                            mock_logger.info.assert_any_call("Admin user already has platform_owner role")
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_exception_handling(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user):
@@ -285,7 +288,7 @@ class TestBootstrapDefaultRoles:
                         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                             await bootstrap_default_roles()
 
-                            mock_logger.error.assert_any_call("Failed to create role platform_admin: Role creation failed")
+                            mock_logger.error.assert_any_call("Failed to create role platform_owner: Role creation failed")
 
 
 class TestNormalizeTeamVisibility:

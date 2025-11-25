@@ -153,7 +153,7 @@ curl -s -X GET "http://localhost:4444/auth/email/me" \
 # Expected output:
 # {
 #   "email": "admin@example.com",
-#   "full_name": "Platform Administrator",
+#   "full_name": "Platform Owner",
 #   "is_admin": true,
 #   "auth_provider": "local",
 #   "created_at": "2025-10-10T09:23:25.943945Z"

@@ -476,7 +476,7 @@ class TestGetCurrentUser:
                 assert exc_info.value.detail == "User not found"
 
     @pytest.mark.asyncio
-    async def test_platform_admin_virtual_user_creation(self):
+    async def test_platform_owner_virtual_user_creation(self):
         """Test that platform admin gets a virtual user object if not in database."""
         mock_db = MagicMock(spec=Session)
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
@@ -489,12 +489,12 @@ class TestGetCurrentUser:
                 mock_auth_service.get_user_by_email = AsyncMock(return_value=None)  # User not in DB
                 mock_auth_service_class.return_value = mock_auth_service
 
-                with patch("mcpgateway.config.settings.platform_admin_email", "admin@example.com"):
-                    with patch("mcpgateway.config.settings.platform_admin_full_name", "Platform Administrator"):
+                with patch("mcpgateway.config.settings.platform_owner_email", "admin@example.com"):
+                    with patch("mcpgateway.config.settings.platform_owner_full_name", "Platform Owner"):
                         user = await get_current_user(credentials=credentials, db=mock_db)
 
                         assert user.email == "admin@example.com"
-                        assert user.full_name == "Platform Administrator"
+                        assert user.full_name == "Platform Owner"
                         assert user.is_admin is True
                         assert user.is_active is True
                         assert user.is_email_verified() is True

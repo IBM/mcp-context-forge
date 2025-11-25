@@ -1464,28 +1464,28 @@ class PendingUserApproval(Base):
 
         return now > expires_at
 
-    def approve(self, admin_email: str, notes: Optional[str] = None) -> None:
+    def approve(self, owner_email: str, notes: Optional[str] = None) -> None:
         """Approve the user registration.
 
         Args:
-            admin_email: Email of the admin approving the request
+            owner_email: Email of the admin approving the request
             notes: Optional admin notes
         """
         self.status = "approved"
-        self.approved_by = admin_email
+        self.approved_by = owner_email
         self.approved_at = utc_now()
         self.admin_notes = notes
 
-    def reject(self, admin_email: str, reason: str, notes: Optional[str] = None) -> None:
+    def reject(self, owner_email: str, reason: str, notes: Optional[str] = None) -> None:
         """Reject the user registration.
 
         Args:
-            admin_email: Email of the admin rejecting the request
+            owner_email: Email of the admin rejecting the request
             reason: Reason for rejection
             notes: Optional admin notes
         """
         self.status = "rejected"
-        self.approved_by = admin_email
+        self.approved_by = owner_email
         self.approved_at = utc_now()
         self.rejection_reason = reason
         self.admin_notes = notes

@@ -201,7 +201,7 @@ Discoverable; membership by invite/request"]
   - Access and use team resources; can create resources by default unless policies restrict it.
   - Cannot manage team membership or team‑level settings.
 
-**Platform Admin** is a global RBAC role (not a team membership level) with system‑wide oversight.
+**Platform Owner** is a global RBAC role (not a team membership level) with system‑wide oversight.
 
 ### Team Invitation Workflow
 
@@ -266,7 +266,7 @@ This section clarifies what Private and Public mean for teams, and what Private/
   - Membership: Still requires an invitation or explicit approval of a join request.
   - API/UI: Limited metadata may be visible without membership; all management and resource operations still require membership.
 
-Note: Platform Admin is a global role and is not a team role. Admins can view/manage teams for operational purposes irrespective of team visibility.
+Note: Platform Owner is a global role and is not a team role. Admins can view/manage teams for operational purposes irrespective of team visibility.
 
 ### Resource Visibility (Design)
 
@@ -275,15 +275,15 @@ Applies to Tools, Servers, Resources, Prompts, and A2A Agents. All resources are
 - Private:
   - Who sees it: Only the resource owner (owner_email).
   - Team members cannot see or use it unless they are the owner.
-  - Mutations: Owner and Platform Admin can update/delete; team owners may be allowed by policy (see Enhancements).
+  - Mutations: Owner and Platform Owner can update/delete; team owners may be allowed by policy (see Enhancements).
 
 - Team:
   - Who sees it: All members of the owning team (owners and members).
-  - Mutations: Owner can update/delete; team owners can administratively manage; Platform Admin can override.
+  - Mutations: Owner can update/delete; team owners can administratively manage; Platform Owner can override.
 
 - Public:
   - Who sees it: All authenticated users across the platform (cross‑team visibility).
-  - Mutations: Only the resource owner, team owners, or Platform Admins can modify/delete.
+  - Mutations: Only the resource owner, team owners, or Platform Owner/Admins can modify/delete.
 
 Enforcement summary:
 
@@ -428,7 +428,7 @@ The MCP Gateway implements a comprehensive RBAC system with four built-in roles 
 
 The following roles are created automatically when the system starts:
 
-#### 1. Platform Admin (Global Scope)
+#### 1. Platform Owner (Global Scope)
 - **Permissions**: `*` (all permissions)
 - **Scope**: Global
 - **Description**: Platform administrator with all system-wide permissions
@@ -498,7 +498,7 @@ The RBAC system defines permissions across multiple resource categories:
 
 Roles are assigned to users within specific scopes:
 
-- **Global Scope**: Platform-wide permissions (platform_admin only)
+- **Global Scope**: Platform-wide permissions (platform_owner only)
 - **Team Scope**: Team-specific permissions (team_admin, developer, viewer)
 - **Personal Scope**: Individual user permissions (future use)
 
@@ -507,7 +507,7 @@ Roles are assigned to users within specific scopes:
 ```mermaid
 flowchart TD
     subgraph "RBAC Roles"
-        A["Platform Admin
+        A["Platform Owner
 
 - All permissions (*)
 - Global scope
@@ -543,7 +543,7 @@ Platform admin approval"]
     B --> F
 
     subgraph "Access Hierarchy"
-        H[Platform Admin] --> I[All Teams & Resources]
+        H[Platform Owner] --> I[All Teams & Resources]
         J[Team Admin] --> K[Team Resources & Members]
         L[Developer] --> M[Team Resources Only]
         N[Viewer] --> O[Read-Only Access]
@@ -563,7 +563,7 @@ sequenceDiagram
     participant G as Gateway
     participant SSO as SSO Provider
     participant DB as Database
-    participant A as Platform Admin
+    participant A as Platform Owner
 
     Note over U,A: SSO Registration with Domain Check
     U->>G: SSO Login (user@company.com)
@@ -598,7 +598,7 @@ sequenceDiagram
 
 ## Password Management
 
-### Changing Platform Admin Password
+### Changing Platform Owner Password
 
 The platform admin password can be changed using several methods:
 
@@ -636,7 +636,7 @@ curl -X POST "http://localhost:4444/auth/email/change-password" \
 ```
 
 #### Method 3: Environment Variable + Migration
-1. Update `PLATFORM_ADMIN_PASSWORD` in your `.env` file
+1. Update `PLATFORM_OWNER_PASSWORD` in your `.env` file
 2. Run database migration to apply the change:
    ```bash
    alembic upgrade head
@@ -678,7 +678,7 @@ with SessionLocal() as db:
 
 The user interface adapts based on the user's assigned roles:
 
-#### Platform Admin Experience
+#### Platform Owner Experience
 - **Full System Access**: Can view and manage all teams, users, and resources across the platform
 - **Global Configuration**: Access to system-wide settings, SSO configuration, and platform management
 - **Cross-Team Management**: Can manage resources in any team regardless of membership
@@ -1042,9 +1042,9 @@ REQUIRE_EMAIL_VERIFICATION_FOR_INVITES=true
 # Allowed visibility values: private | team | public
 
 # Platform Administration
-PLATFORM_ADMIN_EMAIL=admin@company.com
-PLATFORM_ADMIN_PASSWORD=changeme
-PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
+PLATFORM_OWNER_EMAIL=admin@company.com
+PLATFORM_OWNER_PASSWORD=changeme
+PLATFORM_OWNER_FULL_NAME="Platform Owner"
 
 # SSO (enable + trust and admin mapping)
 SSO_ENABLED=true
@@ -1162,7 +1162,7 @@ flowchart TD
 3. **Owner Permissions**: Only team owners can manage members and settings
 4. **Personal Team Protection**: Personal teams cannot be deleted or transferred
 5. **Invitation Security**: Invitation tokens with expiration and single-use
-6. **Platform Admin Isolation**: Platform admin access separate from team access
+6. **Platform Owner Isolation**: Platform owner access separate from team access
 7. **Cross-Team Access**: Public resources accessible across team boundaries
 8. **Audit Trail**: Permission checks and auth events audited; extended operation audit planned
 

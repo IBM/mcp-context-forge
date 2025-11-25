@@ -794,9 +794,9 @@ async def get_configuration_settings(
         },
         "Email Authentication": {
             "email_auth_enabled": settings.email_auth_enabled,
-            "platform_admin_email": settings.platform_admin_email,
-            "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
-            "platform_admin_full_name": settings.platform_admin_full_name,
+            "platform_owner_email": settings.platform_owner_email,
+            "platform_owner_password": mask_sensitive(settings.platform_owner_password, "password"),
+            "platform_owner_full_name": settings.platform_owner_full_name,
         },
         "Database & Cache": {
             "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
@@ -2827,21 +2827,21 @@ async def admin_ui(
             # JWT library is imported at top level as jwt
 
             # Determine the admin user email
-            admin_email = get_user_email(user)
+            owner_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
             # Generate a comprehensive JWT token that matches the email auth format
             now = datetime.now(timezone.utc)
             payload = {
-                "sub": admin_email,
+                "sub": owner_email,
                 "iss": settings.jwt_issuer,
                 "aud": settings.jwt_audience,
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
-                "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
+                "user": {"email": owner_email, "full_name": getattr(settings, "platform_owner_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
                 "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{admin_email}", "public"],
+                "namespaces": [f"user:{owner_email}", "public"],
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
@@ -2858,7 +2858,7 @@ async def admin_ui(
                 max_age=settings.token_expiry * 60,  # Convert minutes to seconds
                 path=settings.app_root_path or "/",  # Make cookie available for all paths
             )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
+            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {owner_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
