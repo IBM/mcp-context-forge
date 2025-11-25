@@ -4865,6 +4865,7 @@ class EmailUserResponse(BaseModel):
     created_at: datetime = Field(..., description="Account creation timestamp")
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -4885,6 +4886,7 @@ class EmailUserResponse(BaseModel):
             created_at=user.created_at,
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
+            password_change_required=user.password_change_required,
         )
 
 

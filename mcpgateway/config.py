@@ -290,6 +290,7 @@ class Settings(BaseSettings):
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
+    default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
     platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
 
     # Argon2id Password Hashing Configuration
