@@ -12,11 +12,12 @@ into time-windowed statistics for analysis and monitoring.
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
+import math
 import statistics
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -36,8 +37,8 @@ class LogAggregator:
     
     def aggregate_performance_metrics(
         self,
-        component: str,
-        operation: str,
+        component: Optional[str],
+        operation_type: Optional[str],
         window_start: Optional[datetime] = None,
         window_end: Optional[datetime] = None,
         db: Optional[Session] = None
@@ -56,12 +57,10 @@ class LogAggregator:
         """
         if not self.enabled:
             return None
+        if not component or not operation_type:
+            return None
         
-        # Default time window
-        if window_end is None:
-            window_end = datetime.now(timezone.utc)
-        if window_start is None:
-            window_start = window_end - timedelta(minutes=self.aggregation_window_minutes)
+        window_start, window_end = self._resolve_window_bounds(window_start, window_end)
         
         should_close = False
         if db is None:
@@ -73,10 +72,9 @@ class LogAggregator:
             stmt = select(StructuredLogEntry).where(
                 and_(
                     StructuredLogEntry.component == component,
-                    StructuredLogEntry.category == "performance",
-                    StructuredLogEntry.resource_action == operation,
+                    StructuredLogEntry.operation_type == operation_type,
                     StructuredLogEntry.timestamp >= window_start,
-                    StructuredLogEntry.timestamp <= window_end,
+                    StructuredLogEntry.timestamp < window_end,
                     StructuredLogEntry.duration_ms.isnot(None)
                 )
             )
@@ -87,74 +85,49 @@ class LogAggregator:
                 return None
             
             # Extract durations
-            durations = [r.duration_ms for r in results if r.duration_ms is not None]
+            durations = sorted(r.duration_ms for r in results if r.duration_ms is not None)
             
             if not durations:
                 return None
             
             # Calculate statistics
             count = len(durations)
-            total_duration = sum(durations)
-            avg_duration = statistics.mean(durations)
-            min_duration = min(durations)
-            max_duration = max(durations)
+            avg_duration = statistics.fmean(durations) if hasattr(statistics, "fmean") else statistics.mean(durations)
+            min_duration = durations[0]
+            max_duration = durations[-1]
             
             # Calculate percentiles
-            sorted_durations = sorted(durations)
-            p50 = self._percentile(sorted_durations, 0.50)
-            p95 = self._percentile(sorted_durations, 0.95)
-            p99 = self._percentile(sorted_durations, 0.99)
+            p50 = self._percentile(durations, 0.50)
+            p95 = self._percentile(durations, 0.95)
+            p99 = self._percentile(durations, 0.99)
             
             # Count errors
-            error_count = sum(1 for r in results if r.error_message is not None)
+            error_count = self._calculate_error_count(results)
             error_rate = error_count / count if count > 0 else 0.0
             
-            # Aggregate database metrics
-            db_queries = [r.database_query_count for r in results if r.database_query_count is not None]
-            total_db_queries = sum(db_queries) if db_queries else 0
-            avg_db_queries = statistics.mean(db_queries) if db_queries else 0.0
-            
-            db_durations = [r.database_query_duration_ms for r in results if r.database_query_duration_ms is not None]
-            total_db_duration = sum(db_durations) if db_durations else 0.0
-            avg_db_duration = statistics.mean(db_durations) if db_durations else 0.0
-            
-            # Aggregate cache metrics
-            cache_hits = sum(r.cache_hits for r in results if r.cache_hits is not None)
-            cache_misses = sum(r.cache_misses for r in results if r.cache_misses is not None)
-            cache_total = cache_hits + cache_misses
-            cache_hit_rate = cache_hits / cache_total if cache_total > 0 else 0.0
-            
-            # Create performance metric
-            metric = PerformanceMetric(
+            metric = self._upsert_metric(
                 component=component,
-                operation=operation,
+                operation_type=operation_type,
                 window_start=window_start,
                 window_end=window_end,
                 request_count=count,
                 error_count=error_count,
                 error_rate=error_rate,
-                total_duration_ms=total_duration,
                 avg_duration_ms=avg_duration,
                 min_duration_ms=min_duration,
                 max_duration_ms=max_duration,
                 p50_duration_ms=p50,
                 p95_duration_ms=p95,
                 p99_duration_ms=p99,
-                total_database_queries=total_db_queries,
-                avg_database_queries=avg_db_queries,
-                total_database_duration_ms=total_db_duration,
-                avg_database_duration_ms=avg_db_duration,
-                cache_hits=cache_hits,
-                cache_misses=cache_misses,
-                cache_hit_rate=cache_hit_rate,
+                metric_metadata={
+                    "sample_size": count,
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                db=db,
             )
             
-            db.add(metric)
-            db.commit()
-            db.refresh(metric)
-            
             logger.info(
-                f"Aggregated performance metrics for {component}.{operation}: "
+                f"Aggregated performance metrics for {component}.{operation_type}: "
                 f"{count} requests, {avg_duration:.2f}ms avg, {error_rate:.2%} error rate"
             )
             
@@ -195,21 +168,17 @@ class LogAggregator:
             should_close = True
         
         try:
-            # Get unique component/operation pairs
-            if window_end is None:
-                window_end = datetime.now(timezone.utc)
-            if window_start is None:
-                window_start = window_end - timedelta(minutes=self.aggregation_window_minutes)
-            
+            window_start, window_end = self._resolve_window_bounds(window_start, window_end)
+
             stmt = select(
                 StructuredLogEntry.component,
-                StructuredLogEntry.resource_action
+                StructuredLogEntry.operation_type
             ).where(
                 and_(
-                    StructuredLogEntry.category == "performance",
                     StructuredLogEntry.timestamp >= window_start,
-                    StructuredLogEntry.timestamp <= window_end,
-                    StructuredLogEntry.duration_ms.isnot(None)
+                    StructuredLogEntry.timestamp < window_end,
+                    StructuredLogEntry.duration_ms.isnot(None),
+                    StructuredLogEntry.operation_type.isnot(None)
                 )
             ).distinct()
             
@@ -220,7 +189,7 @@ class LogAggregator:
                 if component and operation:
                     metric = self.aggregate_performance_metrics(
                         component=component,
-                        operation=operation,
+                        operation_type=operation,
                         window_start=window_start,
                         window_end=window_end,
                         db=db
@@ -267,7 +236,7 @@ class LogAggregator:
             if component:
                 stmt = stmt.where(PerformanceMetric.component == component)
             if operation:
-                stmt = stmt.where(PerformanceMetric.operation == operation)
+                stmt = stmt.where(PerformanceMetric.operation_type == operation)
             
             stmt = stmt.order_by(PerformanceMetric.window_start.desc())
             
@@ -282,7 +251,7 @@ class LogAggregator:
         threshold_multiplier: float = 1.5,
         hours: int = 24,
         db: Optional[Session] = None
-    ) -> List[Dict[str, any]]:
+    ) -> List[Dict[str, Any]]:
         """Identify performance degradations by comparing recent vs baseline.
         
         Args:
@@ -305,7 +274,7 @@ class LogAggregator:
             # Get unique component/operation pairs
             stmt = select(
                 PerformanceMetric.component,
-                PerformanceMetric.operation
+                PerformanceMetric.operation_type
             ).distinct()
             
             pairs = db.execute(stmt).all()
@@ -316,7 +285,7 @@ class LogAggregator:
                 recent_stmt = select(PerformanceMetric).where(
                     and_(
                         PerformanceMetric.component == component,
-                        PerformanceMetric.operation == operation,
+                        PerformanceMetric.operation_type == operation,
                         PerformanceMetric.window_start >= recent_cutoff
                     )
                 )
@@ -326,7 +295,7 @@ class LogAggregator:
                 baseline_stmt = select(PerformanceMetric).where(
                     and_(
                         PerformanceMetric.component == component,
-                        PerformanceMetric.operation == operation,
+                        PerformanceMetric.operation_type == operation,
                         PerformanceMetric.window_start >= baseline_cutoff,
                         PerformanceMetric.window_start < recent_cutoff
                     )
@@ -356,31 +325,161 @@ class LogAggregator:
             if should_close:
                 db.close()
     
+    def backfill(self, hours: int, db: Optional[Session] = None) -> int:
+        """Backfill metrics for a historical time range.
+
+        Args:
+            hours: Number of hours of history to aggregate
+            db: Optional shared database session
+
+        Returns:
+            Count of performance metric windows processed
+        """
+        if not self.enabled or hours <= 0:
+            return 0
+
+        window_minutes = self.aggregation_window_minutes
+        window_delta = timedelta(minutes=window_minutes)
+        total_windows = max(1, math.ceil((hours * 60) / window_minutes))
+
+        should_close = False
+        if db is None:
+            db = SessionLocal()
+            should_close = True
+
+        try:
+            _, latest_end = self._resolve_window_bounds(None, None)
+            current_start = latest_end - (window_delta * total_windows)
+            processed = 0
+
+            while current_start < latest_end:
+                current_end = current_start + window_delta
+                created = self.aggregate_all_components(
+                    window_start=current_start,
+                    window_end=current_end,
+                    db=db,
+                )
+                if created:
+                    processed += 1
+                current_start = current_end
+
+            return processed
+
+        finally:
+            if should_close:
+                db.close()
+
     @staticmethod
     def _percentile(sorted_values: List[float], percentile: float) -> float:
-        """Calculate percentile from sorted values.
-        
-        Args:
-            sorted_values: Sorted list of values
-            percentile: Percentile to calculate (0.0 to 1.0)
-            
-        Returns:
-            Percentile value
-        """
+        """Calculate percentile from sorted values."""
         if not sorted_values:
             return 0.0
-        
+
+        if len(sorted_values) == 1:
+            return float(sorted_values[0])
+
         k = (len(sorted_values) - 1) * percentile
-        f = int(k)
-        c = f + 1
-        
-        if c >= len(sorted_values):
-            return sorted_values[-1]
-        
+        f = math.floor(k)
+        c = math.ceil(k)
+
+        if f == c:
+            return float(sorted_values[int(k)])
+
         d0 = sorted_values[f] * (c - k)
         d1 = sorted_values[c] * (k - f)
-        
-        return d0 + d1
+        return float(d0 + d1)
+
+    @staticmethod
+    def _calculate_error_count(entries: List[StructuredLogEntry]) -> int:
+        """Calculate error occurrences for a batch of log entries."""
+        error_levels = {"ERROR", "CRITICAL"}
+        return sum(1 for entry in entries if (entry.level and entry.level.upper() in error_levels) or entry.error_details)
+
+    def _resolve_window_bounds(
+        self,
+        window_start: Optional[datetime],
+        window_end: Optional[datetime],
+    ) -> Tuple[datetime, datetime]:
+        """Resolve and normalize aggregation window bounds."""
+        window_delta = timedelta(minutes=self.aggregation_window_minutes)
+
+        if window_end is None:
+            reference = datetime.now(timezone.utc)
+        else:
+            reference = window_end.astimezone(timezone.utc)
+
+        reference = reference.replace(second=0, microsecond=0)
+        minutes_offset = reference.minute % self.aggregation_window_minutes
+        if window_end is None and minutes_offset:
+            reference = reference - timedelta(minutes=minutes_offset)
+
+        resolved_end = reference if window_end is None else reference
+
+        if window_start is None:
+            resolved_start = resolved_end - window_delta
+        else:
+            resolved_start = window_start.astimezone(timezone.utc)
+
+        if resolved_end <= resolved_start:
+            resolved_start = resolved_end - window_delta
+
+        return resolved_start, resolved_end
+
+    def _upsert_metric(
+        self,
+        component: str,
+        operation_type: str,
+        window_start: datetime,
+        window_end: datetime,
+        request_count: int,
+        error_count: int,
+        error_rate: float,
+        avg_duration_ms: float,
+        min_duration_ms: float,
+        max_duration_ms: float,
+        p50_duration_ms: float,
+        p95_duration_ms: float,
+        p99_duration_ms: float,
+        metric_metadata: Optional[Dict[str, Any]],
+        db: Session,
+    ) -> PerformanceMetric:
+        """Create or update a performance metric window."""
+
+        existing_stmt = select(PerformanceMetric).where(
+            and_(
+                PerformanceMetric.component == component,
+                PerformanceMetric.operation_type == operation_type,
+                PerformanceMetric.window_start == window_start,
+                PerformanceMetric.window_end == window_end,
+            )
+        )
+
+        metric = db.execute(existing_stmt).scalar_one_or_none()
+
+        if metric is None:
+            metric = PerformanceMetric(
+                component=component,
+                operation_type=operation_type,
+                window_start=window_start,
+                window_end=window_end,
+                window_duration_seconds=int((window_end - window_start).total_seconds()),
+            )
+            db.add(metric)
+
+        metric.request_count = request_count
+        metric.error_count = error_count
+        metric.error_rate = error_rate
+        metric.avg_duration_ms = avg_duration_ms
+        metric.min_duration_ms = min_duration_ms
+        metric.max_duration_ms = max_duration_ms
+        metric.p50_duration_ms = p50_duration_ms
+        metric.p95_duration_ms = p95_duration_ms
+        metric.p99_duration_ms = p99_duration_ms
+        metric.metric_metadata = metric_metadata
+
+        db.commit()
+        db.refresh(metric)
+        return metric
 
 
 # Global log aggregator instance

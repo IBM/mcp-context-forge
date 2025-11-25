@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import (
     AuditTrail,
     PerformanceMetric,
@@ -30,6 +31,7 @@ from mcpgateway.db import (
     get_db,
 )
 from mcpgateway.middleware.rbac import require_permission, get_current_user_with_permissions
+from mcpgateway.services.log_aggregator import get_log_aggregator
 
 logger = logging.getLogger(__name__)
 
@@ -578,6 +580,14 @@ async def get_performance_metrics(
         stmt = stmt.order_by(desc(PerformanceMetric.window_start))
         
         metrics = db.execute(stmt).scalars().all()
+
+        if not metrics and settings.metrics_aggregation_enabled:
+            try:
+                aggregator = get_log_aggregator()
+                aggregator.backfill(hours=hours, db=db)
+                metrics = db.execute(stmt).scalars().all()
+            except Exception as agg_error:  # pragma: no cover - defensive logging
+                logger.warning("On-demand metrics aggregation failed: %s", agg_error)
         
         return [
             PerformanceMetricResponse(
