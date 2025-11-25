@@ -9781,15 +9781,13 @@ async def admin_events(
 ):
     """Stream admin events from all services via SSE."""
 
-    # 1. Create a shared queue to aggregate events from all services
+    # Create a shared queue to aggregate events from all services
     event_queue = asyncio.Queue()
 
-    # 2. Define a generic producer that feeds a specific stream into the queue
+    # Define a generic producer that feeds a specific stream into the queue
     async def stream_to_queue(generator, source_name: str):
         try:
             async for event in generator:
-                # Optional: You can tag the event with the source if needed
-                # event["_source"] = source_name 
                 await event_queue.put(event)
         except asyncio.CancelledError:
             pass # Task cancelled normally
@@ -9797,7 +9795,7 @@ async def admin_events(
             logger.error(f"Error in {source_name} event subscription: {e}")
 
     async def event_generator():
-        # 3. Create background tasks for each service subscription
+        # Create background tasks for each service subscription
         # This allows them to run concurrently
         tasks = [
             asyncio.create_task(
@@ -9815,7 +9813,7 @@ async def admin_events(
                     logger.debug("SSE Client disconnected")
                     break
 
-                # 4. Wait for the next event from EITHER service
+                # Wait for the next event from EITHER service
                 # We use asyncio.wait_for to allow checking request.is_disconnected periodically
                 # or simply rely on queue.get() which is efficient.
                 try:
@@ -9842,7 +9840,7 @@ async def admin_events(
         except Exception as e:
             logger.error(f"SSE Stream error: {e}")
         finally:
-            # 5. Cleanup: Cancel all background subscription tasks
+            # Cleanup: Cancel all background subscription tasks
             # This is crucial to close Redis connections/listeners in the EventService
             for task in tasks:
                 task.cancel()

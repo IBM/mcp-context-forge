@@ -2,6 +2,54 @@
 """Location: ./mcpgateway/services/event_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+
+Authors: Keval Mahajan
+
+Description:
+    This module implements a Centralized Event Service designed to decouple event 
+    producers from consumers within the MCP Gateway architecture for various services
+    such as gateway_service, tool_service, and more.
+    
+    - Primary Transport (Redis): Uses Redis Pub/Sub for distributed event 
+      broadcasting. This allows multiple Gateway instances (scaled horizontally) 
+      to share events.
+    - Fallback Transport (Local Queue): Uses `asyncio.Queue` for in-memory 
+      communication. This activates automatically if Redis is unavailable or 
+      misconfigured, ensuring the application remains functional in a single-node 
+      development environment.
+
+Usage Guide:
+
+    1. Initialization
+       Instantiate the service with a unique channel name. This acts as the "Topic".
+       
+       ```python
+       from mcpgateway.services.event_service import EventService
+       
+       # Create a service instance for tool execution events
+       tool_events = EventService(channel_name="mcpgateway:tools")
+       ```
+
+    2. Publishing Events (Producer)
+       Any part of the application can publish a dictionary to the channel.
+       
+       ```python
+       await tool_events.publish_event({
+           "event": "tool_start",
+           "tool_name": "calculator",
+           "timestamp": datetime.now().isoformat()
+       })
+       ```
+
+    3. Subscribing to Events (Consumer)
+       Use an async for-loop to listen to the stream. This generator yields 
+       events as they arrive.
+       
+       ```python
+       async for event in tool_events.subscribe_events():
+           print(f"Received event: {event['event']}")
+           # Process event...
+       ```
 """
 
 import asyncio
