@@ -284,8 +284,8 @@
 
     ```bash
     EMAIL_AUTH_ENABLED=true
-    PLATFORM_ADMIN_EMAIL=admin@example.com
-    PLATFORM_ADMIN_PASSWORD=changeme
+    PLATFORM_OWNER_EMAIL=admin@example.com
+    PLATFORM_OWNER_PASSWORD=changeme
     AUTO_CREATE_PERSONAL_TEAMS=true
     ```
 

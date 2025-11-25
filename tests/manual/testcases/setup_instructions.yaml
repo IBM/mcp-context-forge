@@ -69,11 +69,11 @@ tests:
     expected: "Configuration file opened in vi editor"
     troubleshooting: "Use :wq to save and quit vi editor"
     required: true
-    notes: "Set PLATFORM_ADMIN_EMAIL=<your-test-email>"
+    notes: "Set PLATFORM_OWNER_EMAIL=<your-test-email>"
 
   - step: "6"
     action: "Configure Admin Email"
-    command: "Set PLATFORM_ADMIN_EMAIL=<your-test-email>"
+    command: "Set PLATFORM_OWNER_EMAIL=<your-test-email>"
     expected: "Admin email configured in .env"
     troubleshooting: "Use a real email address you control"
     required: true
@@ -81,7 +81,7 @@ tests:
 
   - step: "7"
     action: "Configure Admin Password"
-    command: "Set PLATFORM_ADMIN_PASSWORD=<strong-password>"
+    command: "Set PLATFORM_OWNER_PASSWORD=<strong-password>"
     expected: "Admin password configured in .env"
     troubleshooting: "Use 12+ character password for security"
     required: true
@@ -97,7 +97,7 @@ tests:
 
   - step: "9"
     action: "Verify Configuration"
-    command: 'python3 -c "from mcpgateway.config import settings; print(f\"Admin: {settings.platform_admin_email}\")"'
+    command: 'python3 -c "from mcpgateway.config import settings; print(f\"Admin: {settings.platform_owner_email}\")"'
     expected: "Shows your configured admin email address"
     troubleshooting: "If error, check .env file syntax and save"
     required: true

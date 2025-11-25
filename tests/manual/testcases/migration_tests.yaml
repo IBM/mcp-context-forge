@@ -29,7 +29,7 @@ tests:
     description: "Verify platform admin user was created during migration"
     steps: |
       1. Check expected admin email from configuration:
-         python3 -c "from mcpgateway.config import settings; print(f'Expected admin: {settings.platform_admin_email}')"
+         python3 -c "from mcpgateway.config import settings; print(f'Expected admin: {settings.platform_owner_email}')"
       2. Check actual admin user in database:
          python3 -c "from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.is_admin==True).first(); print(f'Found admin: {admin.email if admin else None}, is_admin: {admin.is_admin if admin else False}'); db.close()"
       3. Compare expected vs actual results
@@ -37,7 +37,7 @@ tests:
     expected: "Expected admin email matches found admin email, is_admin=True"
     sqlite_support: true
     postgresql_support: true
-    validation_command: 'python3 -c "from mcpgateway.config import settings; from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.email==settings.platform_admin_email, EmailUser.is_admin==True).first(); result = \"PASS\" if admin else \"FAIL\"; print(f\"Result: {result}\"); db.close()"'
+    validation_command: 'python3 -c "from mcpgateway.config import settings; from mcpgateway.db import SessionLocal, EmailUser; db=SessionLocal(); admin=db.query(EmailUser).filter(EmailUser.email==settings.platform_owner_email, EmailUser.is_admin==True).first(); result = \"PASS\" if admin else \"FAIL\"; print(f\"Result: {result}\"); db.close()"'
 
   - test_id: "MIG-002"
     priority: "CRITICAL"

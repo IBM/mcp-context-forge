@@ -37,8 +37,8 @@ BASIC_AUTH_USER=custom-username       # Change from default
 BASIC_AUTH_PASSWORD=strong-password-here  # Use secrets manager
 
 # Platform admin user (auto-created during bootstrap)
-PLATFORM_ADMIN_EMAIL=admin@yourcompany.com  # Change from default
-PLATFORM_ADMIN_PASSWORD=secure-admin-password  # Use secrets manager
+PLATFORM_OWNER_EMAIL=admin@yourcompany.com  # Change from default
+PLATFORM_OWNER_PASSWORD=secure-admin-password  # Use secrets manager
 
 # JWT Configuration - Choose based on deployment architecture
 JWT_ALGORITHM=RS256                        # Recommended for production (asymmetric)
@@ -61,9 +61,9 @@ COOKIE_SAMESITE=strict
 CORS_ALLOW_CREDENTIALS=true
 ```
 
-#### Platform Admin Security Notes
+#### Platform Owner Security Notes
 
-The platform admin user (`PLATFORM_ADMIN_EMAIL`) is automatically created during database bootstrap with full administrative privileges. This user:
+The platform owner user (`PLATFORM_OWNER_EMAIL`) is automatically created during database bootstrap with full administrative privileges. This user:
 
 - Has access to all RBAC-protected endpoints
 - Can manage users, teams, and system configuration

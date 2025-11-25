@@ -556,17 +556,17 @@ async def handle_approval_request(
         db.commit()
         raise HTTPException(status_code=400, detail="Approval request has expired")
 
-    admin_email = user["email"]
+    owner_email = user["email"]
 
     if request.action == "approve":
-        approval.approve(admin_email, request.notes)
+        approval.approve(owner_email, request.notes)
         db.commit()
         return {"message": f"User {approval.email} approved successfully"}
 
     elif request.action == "reject":
         if not request.reason:
             raise HTTPException(status_code=400, detail="Rejection reason is required")
-        approval.reject(admin_email, request.reason, request.notes)
+        approval.reject(owner_email, request.reason, request.notes)
         db.commit()
         return {"message": f"User {approval.email} rejected"}
 

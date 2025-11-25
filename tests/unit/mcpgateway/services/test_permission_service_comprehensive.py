@@ -286,7 +286,7 @@ class TestAdminPermissions:
     """Test admin permission checking."""
 
     @pytest.mark.asyncio
-    async def test_check_admin_permission_platform_admin(self, permission_service):
+    async def test_check_admin_permission_platform_owner(self, permission_service):
         """Test check_admin_permission for platform admin."""
         with patch.object(permission_service, "_is_user_admin", return_value=True):
             result = await permission_service.check_admin_permission("admin@example.com")
