@@ -803,6 +803,7 @@ class Settings(BaseSettings):
 
     # Metrics Aggregation Configuration
     metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
+    metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
     metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
 
     # Log Search Configuration
