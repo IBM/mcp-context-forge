@@ -1671,10 +1671,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                        await self.tool_service.set_tool_state(db, tool.id, tool.enabled, reachable)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
+                        await self.tool_service.set_tool_state(db, tool.id, activate, reachable)
 
                 # Notify subscribers
                 if activate:

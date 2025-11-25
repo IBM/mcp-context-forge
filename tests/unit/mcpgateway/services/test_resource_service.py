@@ -1413,7 +1413,7 @@ class TestErrorHandling:
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.toggle_resource_status(mock_db, 1, activate=False)
+            await resource_service.set_resource_state(mock_db, 1, activate=False)
 
         mock_db.rollback.assert_called_once()
 

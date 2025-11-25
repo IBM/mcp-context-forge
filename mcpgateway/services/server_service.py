@@ -911,7 +911,7 @@ class ServerService:
             >>> service._convert_server_to_read = MagicMock(return_value='server_read')
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_server_status(db, 'server_id', True))
+            >>> asyncio.run(service.set_server_state(db, 'server_id', True))
             'server_read'
         """
         try:
@@ -959,8 +959,8 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to set server state: {str(e)}")
 
-        # Backwards-compatible alias
-        toggle_server_status = set_server_state
+    # Backwards-compatible alias
+    toggle_server_status = set_server_state
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
         """Permanently delete a server.

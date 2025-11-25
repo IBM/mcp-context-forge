@@ -1060,7 +1060,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock()
+        tool_service_stub.set_tool_state = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
         # Patch model_validate to return a mock with .masked()
@@ -1072,7 +1072,7 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
-        assert tool_service_stub.toggle_tool_status.called
+        assert tool_service_stub.set_tool_state.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
@@ -1096,7 +1096,7 @@ class TestGatewayService:
         gateway_service._initialize_gateway = AsyncMock(return_value=({"prompts": {}}, [], [], []))
 
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock()
+        tool_service_stub.set_tool_state = AsyncMock()
         gateway_service.tool_service = tool_service_stub
 
         # Patch model_validate to return a mock with .masked()
@@ -1108,7 +1108,7 @@ class TestGatewayService:
 
         assert mock_gateway.enabled is True
         gateway_service._notify_gateway_activated.assert_called_once()
-        assert tool_service_stub.toggle_tool_status.called
+        assert tool_service_stub.set_tool_state.called
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
@@ -1142,7 +1142,7 @@ class TestGatewayService:
 
         # Make tool toggle fail
         tool_service_stub = MagicMock()
-        tool_service_stub.toggle_tool_status = AsyncMock(side_effect=Exception("Tool toggle failed"))
+        tool_service_stub.set_tool_state = AsyncMock(side_effect=Exception("Tool toggle failed"))
         gateway_service.tool_service = tool_service_stub
 
         # The toggle_gateway_status method will catch the exception and raise GatewayError
