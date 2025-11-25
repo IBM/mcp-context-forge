@@ -332,7 +332,7 @@ class EmailAuthService:
             platform_member_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_member, "global")
             platform_admin_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_admin, "global")
             
-            if user.user_email != settings.platform_owner_email:
+            if email != settings.platform_owner_email:
                 if user.is_admin:
                     await role_service.assign_role_to_user(user_email=user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=user.email, expires_at=None)
                 else:
