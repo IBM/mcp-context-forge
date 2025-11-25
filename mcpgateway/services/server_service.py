@@ -794,15 +794,6 @@ class ServerService:
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError("Only the owner can update this server")
-
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
                 visibility = server_update.visibility or server.visibility
@@ -996,14 +987,6 @@ class ServerService:
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError("Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
-
             if server.is_active != activate:
                 server.is_active = activate
                 server.updated_at = datetime.now(timezone.utc)
@@ -1066,15 +1049,6 @@ class ServerService:
             server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, server):
-                    raise PermissionError("Only the owner can delete this server")
 
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)

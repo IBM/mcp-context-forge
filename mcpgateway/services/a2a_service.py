@@ -593,14 +593,6 @@ class A2AAgentService:
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, agent):
-                    raise PermissionError("Only the owner can update this agent")
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
                 new_slug = slugify(agent_data.name)
@@ -698,14 +690,6 @@ class A2AAgentService:
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
-        if user_email:
-            # First-Party
-            from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-            permission_service = PermissionService(db)
-            if not await permission_service.check_resource_ownership(user_email, agent):
-                raise PermissionError("Only the owner can activate the Agent" if activate else "Only the owner can deactivate the Agent")
-
         agent.enabled = activate
         if reachable is not None:
             agent.reachable = reachable
@@ -736,15 +720,6 @@ class A2AAgentService:
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
-
-            # Check ownership if user_email provided
-            if user_email:
-                # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
-
-                permission_service = PermissionService(db)
-                if not await permission_service.check_resource_ownership(user_email, agent):
-                    raise PermissionError("Only the owner can delete this agent")
 
             agent_name = agent.name
             db.delete(agent)
