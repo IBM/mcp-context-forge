@@ -1602,6 +1602,24 @@ def test_jsonpath_modifier_invalid_expressions(sample_people):
 
 
 # ----------------------------------------------------- #
+# Transform data with mappings
+# ----------------------------------------------------- #
+class TestTransformDataWithMappings:
+    def test_transform_data_with_mappings_valid_mapping(self, sample_people):
+        from mcpgateway.main import transform_data_with_mappings
+
+        mapping = {"n": "$.name"}
+        result = transform_data_with_mappings(sample_people, mapping)
+        assert result == [{"n": "Ada"}, {"n": "Bob"}]
+
+    def test_transform_data_with_mappings_invalid_mapping(self, sample_people):
+        from mcpgateway.main import transform_data_with_mappings
+
+        with pytest.raises(HTTPException):
+            transform_data_with_mappings(sample_people, {"bad": "$["})
+
+
+# ----------------------------------------------------- #
 # Plugin Exception Handler Tests                       #
 # ----------------------------------------------------- #
 class TestPluginExceptionHandlers:
