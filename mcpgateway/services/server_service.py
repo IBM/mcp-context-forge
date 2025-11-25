@@ -133,7 +133,7 @@ class ServerService:
         """
         self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = httpx.AsyncClient(timeout=settings.federation_timeout, verify=not settings.skip_ssl_verify)
-        self._structured_logger = get_structured_logger()
+        self._structured_logger = get_structured_logger("server_service")
         self._audit_trail = get_audit_trail_service()
         self._performance_tracker = get_performance_tracker()
 
@@ -498,7 +498,7 @@ class ServerService:
             logger.info(f"Registered server: {server_in.name}")
             
             # Structured logging: Audit trail for server creation
-            await self._audit_trail.log_action(
+            self._audit_trail.log_action(
                 user_id=created_by or "system",
                 action="create_server",
                 resource_type="server",
@@ -520,8 +520,8 @@ class ServerService:
             )
             
             # Structured logging: Log successful server creation
-            await self._structured_logger.log(
-                level="info",
+            self._structured_logger.log(
+                level="INFO",
                 message="Server created successfully",
                 event_type="server_created",
                 component="server_service",
@@ -529,6 +529,7 @@ class ServerService:
                 server_name=db_server.name,
                 visibility=visibility,
                 created_by=created_by,
+                user_email=created_by,
             )
             
             db_server.team = self._get_team_name(db, db_server.team_id)
@@ -538,8 +539,8 @@ class ServerService:
             logger.error(f"IntegrityErrors in group: {ie}")
             
             # Structured logging: Log database integrity error
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server creation failed due to database integrity error",
                 event_type="server_creation_failed",
                 component="server_service",
@@ -547,28 +548,30 @@ class ServerService:
                 error_type="IntegrityError",
                 error_message=str(ie),
                 created_by=created_by,
+                user_email=created_by,
             )
             raise ie
         except ServerNameConflictError as se:
             db.rollback()
             
             # Structured logging: Log name conflict error
-            await self._structured_logger.log(
-                level="warning",
+            self._structured_logger.log(
+                level="WARNING",
                 message="Server creation failed due to name conflict",
                 event_type="server_name_conflict",
                 component="server_service",
                 server_name=server_in.name,
                 visibility=visibility,
                 created_by=created_by,
+                user_email=created_by,
             )
             raise se
         except Exception as ex:
             db.rollback()
             
             # Structured logging: Log generic server creation failure
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server creation failed",
                 event_type="server_creation_failed",
                 component="server_service",
@@ -576,6 +579,7 @@ class ServerService:
                 error_type=type(ex).__name__,
                 error_message=str(ex),
                 created_by=created_by,
+                user_email=created_by,
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
@@ -734,7 +738,39 @@ class ServerService:
         }
         logger.debug(f"Server Data: {server_data}")
         server.team = self._get_team_name(db, server.team_id) if server else None
-        return self._convert_server_to_read(server)
+        server_read = self._convert_server_to_read(server)
+
+        self._structured_logger.log(
+            level="INFO",
+            message="Server retrieved successfully",
+            event_type="server_viewed",
+            component="server_service",
+            server_id=server.id,
+            server_name=server.name,
+            team_id=getattr(server, "team_id", None),
+            resource_type="server",
+            resource_id=server.id,
+            custom_fields={
+                "is_active": server.is_active,
+                "tool_count": len(getattr(server, "tools", []) or []),
+                "resource_count": len(getattr(server, "resources", []) or []),
+                "prompt_count": len(getattr(server, "prompts", []) or []),
+            },
+            db=db,
+        )
+
+        self._audit_trail.log_action(
+            action="view_server",
+            resource_type="server",
+            resource_id=server.id,
+            resource_name=server.name,
+            user_id="system",
+            team_id=getattr(server, "team_id", None),
+            context={"is_active": server.is_active},
+            db=db,
+        )
+
+        return server_read
 
     async def update_server(
         self,
@@ -936,7 +972,7 @@ class ServerService:
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
             
-            await self._audit_trail.log_action(
+            self._audit_trail.log_action(
                 user_id=user_email or "system",
                 action="update_server",
                 resource_type="server",
@@ -954,14 +990,15 @@ class ServerService:
             )
             
             # Structured logging: Log successful server update
-            await self._structured_logger.log(
-                level="info",
+            self._structured_logger.log(
+                level="INFO",
                 message="Server updated successfully",
                 event_type="server_updated",
                 component="server_service",
                 server_id=server.id,
                 server_name=server.name,
                 modified_by=user_email,
+                user_email=user_email,
             )
 
             # Build a dictionary with associated IDs
@@ -985,8 +1022,8 @@ class ServerService:
             logger.error(f"IntegrityErrors in group: {ie}")
             
             # Structured logging: Log database integrity error
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server update failed due to database integrity error",
                 event_type="server_update_failed",
                 component="server_service",
@@ -994,6 +1031,7 @@ class ServerService:
                 error_type="IntegrityError",
                 error_message=str(ie),
                 modified_by=user_email,
+                user_email=user_email,
             )
             raise ie
         except ServerNameConflictError as snce:
@@ -1001,21 +1039,22 @@ class ServerService:
             logger.error(f"Server name conflict: {snce}")
             
             # Structured logging: Log name conflict error
-            await self._structured_logger.log(
-                level="warning",
+            self._structured_logger.log(
+                level="WARNING",
                 message="Server update failed due to name conflict",
                 event_type="server_name_conflict",
                 component="server_service",
                 server_id=server_id,
                 modified_by=user_email,
+                user_email=user_email,
             )
             raise snce
         except Exception as e:
             db.rollback()
             
             # Structured logging: Log generic server update failure
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server update failed",
                 event_type="server_update_failed",
                 component="server_service",
@@ -1023,6 +1062,7 @@ class ServerService:
                 error_type=type(e).__name__,
                 error_message=str(e),
                 modified_by=user_email,
+                user_email=user_email,
             )
             raise ServerError(f"Failed to update server: {str(e)}")
 
@@ -1086,7 +1126,7 @@ class ServerService:
                 logger.info(f"Server {server.name} {'activated' if activate else 'deactivated'}")
                 
                 # Structured logging: Audit trail for server status toggle
-                await self._audit_trail.log_action(
+                self._audit_trail.log_action(
                     user_id=user_email or "system",
                     action="activate_server" if activate else "deactivate_server",
                     resource_type="server",
@@ -1098,8 +1138,8 @@ class ServerService:
                 )
                 
                 # Structured logging: Log server status change
-                await self._structured_logger.log(
-                    level="info",
+                self._structured_logger.log(
+                    level="INFO",
                     message=f"Server {'activated' if activate else 'deactivated'}",
                     event_type="server_status_changed",
                     component="server_service",
@@ -1107,6 +1147,7 @@ class ServerService:
                     server_name=server.name,
                     new_status="active" if activate else "inactive",
                     changed_by=user_email,
+                    user_email=user_email,
                 )
 
             server_data = {
@@ -1126,8 +1167,8 @@ class ServerService:
             return self._convert_server_to_read(server)
         except PermissionError as e:
             # Structured logging: Log permission error
-            await self._structured_logger.log(
-                level="warning",
+            self._structured_logger.log(
+                level="WARNING",
                 message="Server status toggle failed due to insufficient permissions",
                 event_type="server_status_toggle_permission_denied",
                 component="server_service",
@@ -1139,8 +1180,8 @@ class ServerService:
             db.rollback()
             
             # Structured logging: Log generic server status toggle failure
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server status toggle failed",
                 event_type="server_status_toggle_failed",
                 component="server_service",
@@ -1199,7 +1240,7 @@ class ServerService:
             logger.info(f"Deleted server: {server_info['name']}")
             
             # Structured logging: Audit trail for server deletion
-            await self._audit_trail.log_action(
+            self._audit_trail.log_action(
                 user_id=user_email or "system",
                 action="delete_server",
                 resource_type="server",
@@ -1210,21 +1251,22 @@ class ServerService:
             )
             
             # Structured logging: Log successful server deletion
-            await self._structured_logger.log(
-                level="info",
+            self._structured_logger.log(
+                level="INFO",
                 message="Server deleted successfully",
                 event_type="server_deleted",
                 component="server_service",
                 server_id=server_info["id"],
                 server_name=server_info["name"],
                 deleted_by=user_email,
+                user_email=user_email,
             )
         except PermissionError as pe:
             db.rollback()
             
             # Structured logging: Log permission error
-            await self._structured_logger.log(
-                level="warning",
+            self._structured_logger.log(
+                level="WARNING",
                 message="Server deletion failed due to insufficient permissions",
                 event_type="server_deletion_permission_denied",
                 component="server_service",
@@ -1236,8 +1278,8 @@ class ServerService:
             db.rollback()
             
             # Structured logging: Log generic server deletion failure
-            await self._structured_logger.log(
-                level="error",
+            self._structured_logger.log(
+                level="ERROR",
                 message="Server deletion failed",
                 event_type="server_deletion_failed",
                 component="server_service",

@@ -325,11 +325,11 @@ class LogAggregator:
             if should_close:
                 db.close()
     
-    def backfill(self, hours: int, db: Optional[Session] = None) -> int:
+    def backfill(self, hours: float, db: Optional[Session] = None) -> int:
         """Backfill metrics for a historical time range.
 
         Args:
-            hours: Number of hours of history to aggregate
+            hours: Number of hours of history to aggregate (supports fractional hours)
             db: Optional shared database session
 
         Returns:
@@ -403,6 +403,13 @@ class LogAggregator:
         """Resolve and normalize aggregation window bounds."""
         window_delta = timedelta(minutes=self.aggregation_window_minutes)
 
+        if window_start is not None and window_end is not None:
+            resolved_start = window_start.astimezone(timezone.utc)
+            resolved_end = window_end.astimezone(timezone.utc)
+            if resolved_end <= resolved_start:
+                resolved_end = resolved_start + window_delta
+            return resolved_start, resolved_end
+
         if window_end is None:
             reference = datetime.now(timezone.utc)
         else:
@@ -454,7 +461,20 @@ class LogAggregator:
             )
         )
 
-        metric = db.execute(existing_stmt).scalar_one_or_none()
+        existing_metrics = db.execute(existing_stmt).scalars().all()
+        metric = existing_metrics[0] if existing_metrics else None
+
+        if len(existing_metrics) > 1:
+            logger.warning(
+                "Found %s duplicate performance metric rows for %s.%s window %s-%s; pruning extras",
+                len(existing_metrics),
+                component,
+                operation_type,
+                window_start.isoformat(),
+                window_end.isoformat(),
+            )
+            for duplicate in existing_metrics[1:]:
+                db.delete(duplicate)
 
         if metric is None:
             metric = PerformanceMetric(

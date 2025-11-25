@@ -21192,11 +21192,65 @@ function updateEntityStatus(type, data) {
 let currentLogPage = 0;
 let currentLogLimit = 50;
 let currentLogFilters = {};
+const PERFORMANCE_HISTORY_HOURS = 24;
+const PERFORMANCE_AGGREGATION_OPTIONS = {
+    '5m': { label: '5-minute aggregation', query: '5m' },
+    '24h': { label: '24-hour aggregation', query: '24h' }
+};
+let currentPerformanceAggregationKey = '5m';
+
+function getPerformanceAggregationConfig(rangeKey = currentPerformanceAggregationKey) {
+    return PERFORMANCE_AGGREGATION_OPTIONS[rangeKey] || PERFORMANCE_AGGREGATION_OPTIONS['5m'];
+}
+
+function getPerformanceAggregationLabel(rangeKey = currentPerformanceAggregationKey) {
+    return getPerformanceAggregationConfig(rangeKey).label;
+}
+
+function getPerformanceAggregationQuery(rangeKey = currentPerformanceAggregationKey) {
+    return getPerformanceAggregationConfig(rangeKey).query;
+}
+
+function syncPerformanceAggregationSelect() {
+    const select = document.getElementById('performance-aggregation-select');
+    if (select && select.value !== currentPerformanceAggregationKey) {
+        select.value = currentPerformanceAggregationKey;
+    }
+}
+
+function setPerformanceAggregationVisibility(shouldShow) {
+    const controls = document.getElementById('performance-aggregation-controls');
+    if (!controls) return;
+    if (shouldShow) {
+        controls.classList.remove('hidden');
+    } else {
+        controls.classList.add('hidden');
+    }
+}
+
+function setLogFiltersVisibility(shouldShow) {
+    const filters = document.getElementById('log-filters');
+    if (!filters) return;
+    if (shouldShow) {
+        filters.classList.remove('hidden');
+    } else {
+        filters.classList.add('hidden');
+    }
+}
+
+function handlePerformanceAggregationChange(event) {
+    const selectedKey = event?.target?.value;
+    if (selectedKey && PERFORMANCE_AGGREGATION_OPTIONS[selectedKey]) {
+        showPerformanceMetrics(selectedKey);
+    }
+}
 
 /**
  * Search structured logs with filters
  */
 async function searchStructuredLogs() {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(true);
     const levelFilter = document.getElementById('log-level-filter')?.value;
     const componentFilter = document.getElementById('log-component-filter')?.value;
     const searchQuery = document.getElementById('log-search')?.value;
@@ -21430,6 +21484,8 @@ function restoreLogTableHeaders() {
  * Trace all logs for a correlation ID
  */
 async function showCorrelationTrace(correlationId) {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(true);
     if (!correlationId) {
         const searchInput = document.getElementById('log-search');
         correlationId = prompt('Enter Correlation ID to trace:', searchInput?.value || '');
@@ -21780,6 +21836,7 @@ function displayCorrelationTrace(trace) {
  * Show security events
  */
 async function showSecurityEvents() {
+    setPerformanceAggregationVisibility(false);
     try {
         const response = await fetch(`${getRootPath()}/api/logs/security-events?limit=50&resolved=false`, {
             method: 'GET',
@@ -21915,6 +21972,8 @@ function getSeverityClass(severity) {
  * Show audit trail
  */
 async function showAuditTrail() {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(false);
     try {
         const response = await fetch(`${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`, {
             method: 'GET',
@@ -22050,9 +22109,24 @@ function displayAuditTrail(trails) {
 /**
  * Show performance metrics
  */
-async function showPerformanceMetrics() {
+async function showPerformanceMetrics(rangeKey) {
+    if (rangeKey && PERFORMANCE_AGGREGATION_OPTIONS[rangeKey]) {
+        currentPerformanceAggregationKey = rangeKey;
+    } else {
+        const select = document.getElementById('performance-aggregation-select');
+        if (select?.value && PERFORMANCE_AGGREGATION_OPTIONS[select.value]) {
+            currentPerformanceAggregationKey = select.value;
+        }
+    }
+
+    syncPerformanceAggregationSelect();
+    setPerformanceAggregationVisibility(true);
+    setLogFiltersVisibility(false);
+    const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
+    const aggregationParam = encodeURIComponent(getPerformanceAggregationQuery());
+
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/performance-metrics?hours=24`, {
+        const response = await fetch(`${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`, {
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${getAuthToken()}`
@@ -22079,6 +22153,7 @@ function displayPerformanceMetrics(metrics) {
     const thead = document.getElementById('logs-thead');
     const logCount = document.getElementById('log-count');
     const logStats = document.getElementById('log-stats');
+    const aggregationLabel = getPerformanceAggregationLabel();
     
     // Update table headers for performance metrics
     if (thead) {
@@ -22112,14 +22187,14 @@ function displayPerformanceMetrics(metrics) {
     logCount.textContent = `${metrics.length} metrics`;
     logStats.innerHTML = `
         <span class="text-sm text-green-600 dark:text-green-400">
-            ⚡ Performance Metrics (Last 24 Hours)
+            ⚡ Performance Metrics (${aggregationLabel})
         </span>
     `;
     
     if (metrics.length === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
-                📊 No performance metrics available
+                📊 No performance metrics available for ${aggregationLabel.toLowerCase()}
             </td></tr>
         `;
         return;
@@ -22243,6 +22318,7 @@ window.showCorrelationTrace = showCorrelationTrace;
 window.showSecurityEvents = showSecurityEvents;
 window.showAuditTrail = showAuditTrail;
 window.showPerformanceMetrics = showPerformanceMetrics;
+window.handlePerformanceAggregationChange = handlePerformanceAggregationChange;
 window.previousLogPage = previousLogPage;
 window.nextLogPage = nextLogPage;
 window.showLogDetails = showLogDetails;
