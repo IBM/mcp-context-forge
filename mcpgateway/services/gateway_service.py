@@ -281,11 +281,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """Initialize the gateway service.
 
         Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> from mcpgateway.services.event_service import EventService
             >>> service = GatewayService()
-            >>> isinstance(service._event_subscribers, list)
+            >>> isinstance(service._event_service, EventService)
             True
-            >>> len(service._event_subscribers)
-            0
             >>> isinstance(service._http_client, ResilientHttpClient)
             True
             >>> service._health_check_interval == GW_HEALTH_CHECK_INTERVAL
@@ -309,8 +309,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> len(service._gateway_failure_counts)
             0
             >>> hasattr(service, 'redis_url')
-            True
-            >>> hasattr(service, '_instance_id') or True  # May not exist if no Redis
             True
         """
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
@@ -428,12 +426,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> service = GatewayService()
-            >>> service._event_subscribers = ['test']
+            >>> # Mock internal components
+            >>> from unittest.mock import AsyncMock
+            >>> service._event_service = AsyncMock()
             >>> service._active_gateways = {'test_gw'}
             >>> import asyncio
             >>> asyncio.run(service.shutdown())
-            >>> len(service._event_subscribers)
-            0
+            >>> # Verify event service shutdown was called
+            >>> service._event_service.shutdown.assert_awaited_once()
             >>> len(service._active_gateways)
             0
         """
@@ -2393,21 +2393,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> service = GatewayService()
-            >>> len(service._event_subscribers)
-            0
-            >>> async_gen = service.subscribe_events()
-            >>> hasattr(async_gen, '__aiter__')
-            True
-            >>> # Test event publishing works
             >>> import asyncio
-            >>> async def test_event():
-            ...     queue = asyncio.Queue()
-            ...     service._event_subscribers.append(queue)
-            ...     await service._publish_event({"type": "test"})
-            ...     event = await queue.get()
-            ...     return event["type"]
-            >>> asyncio.run(test_event())
-            'test'
+            >>> from unittest.mock import MagicMock
+            >>> # Create a mock async generator for the event service
+            >>> async def mock_event_gen():
+            ...     yield {"type": "test_event", "data": "payload"}
+            >>>
+            >>> # Mock the event service to return our generator
+            >>> service._event_service = MagicMock()
+            >>> service._event_service.subscribe_events.return_value = mock_event_gen()
+            >>>
+            >>> # Test the subscription
+            >>> async def test_sub():
+            ...     async for event in service.subscribe_events():
+            ...         return event
+            >>>
+            >>> result = asyncio.run(test_sub())
+            >>> result
+            {'type': 'test_event', 'data': 'payload'}
         """
         async for event in self._event_service.subscribe_events():
             yield event
@@ -3049,25 +3052,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> import asyncio
+            >>> from unittest.mock import AsyncMock
             >>> service = GatewayService()
-            >>> test_queue = asyncio.Queue()
-            >>> service._event_subscribers = [test_queue]
+            >>> # Mock the underlying event service
+            >>> service._event_service = AsyncMock()
             >>> test_event = {"type": "test", "data": {}}
+            >>>
             >>> asyncio.run(service._publish_event(test_event))
-            >>> # Verify event was published
-            >>> asyncio.run(test_queue.get()) == test_event
-            True
-
-            >>> # Test with multiple subscribers
-            >>> queue1 = asyncio.Queue()
-            >>> queue2 = asyncio.Queue()
-            >>> service._event_subscribers = [queue1, queue2]
-            >>> event = {"type": "multi_test"}
-            >>> asyncio.run(service._publish_event(event))
-            >>> asyncio.run(queue1.get())["type"]
-            'multi_test'
-            >>> asyncio.run(queue2.get())["type"]
-            'multi_test'
+            >>>
+            >>> # Verify the event was passed to the event service
+            >>> service._event_service.publish_event.assert_awaited_with(test_event)
         """
         await self._event_service.publish_event(event)
 

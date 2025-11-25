@@ -120,8 +120,8 @@ class PromptService:
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
             >>> service = PromptService()
-            >>> service._event_subscribers
-            []
+            >>> isinstance(service._event_service, EventService)
+            True
             >>> service._jinja_env is not None
             True
         """
@@ -146,12 +146,13 @@ class PromptService:
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import AsyncMock
             >>> import asyncio
             >>> service = PromptService()
-            >>> service._event_subscribers.append("test_subscriber")
+            >>> service._event_service = AsyncMock()
             >>> asyncio.run(service.shutdown())
-            >>> service._event_subscribers
-            []
+            >>> # Verify event service shutdown was called
+            >>> service._event_service.shutdown.assert_awaited_once()
         """
         await self._event_service.shutdown()
         logger.info("Prompt service shutdown complete")

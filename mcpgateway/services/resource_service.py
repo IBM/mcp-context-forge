@@ -16,11 +16,7 @@ It handles:
 Examples:
     >>> from mcpgateway.services.resource_service import ResourceService, ResourceError
     >>> service = ResourceService()
-    >>> hasattr(service, '_event_subscribers')
-    True
-    >>> hasattr(service, '_template_cache')
-    True
-    >>> isinstance(service._event_subscribers, dict)
+    >>> isinstance(service._event_service, EventService)
     True
 """
 

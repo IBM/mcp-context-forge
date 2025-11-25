@@ -242,10 +242,8 @@ class ToolService:
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
             >>> service = ToolService()
-            >>> isinstance(service._event_subscribers, list)
+            >>> isinstance(service._event_service, EventService)
             True
-            >>> len(service._event_subscribers)
-            0
             >>> hasattr(service, '_http_client')
             True
         """
