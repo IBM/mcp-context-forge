@@ -2865,7 +2865,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, resource_id, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(db, resource_id=resource_id, request_id=request_id, user=user, server_id=server_id)
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

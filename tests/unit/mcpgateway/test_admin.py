@@ -822,17 +822,16 @@ class TestAdminResourceRoutes:
         # Use a valid MIME type
         form_data = FakeForm(
             {
-                "uri": "/template/resource",
-                "name": "Template-Resource",  # Valid resource name
-                "mimeType": "text/plain",  # Valid MIME type
-                "template": "Hello {{name}}!",
-                "content": "Default content",
+                        "uri": "greetme://morning/{name}", 
+                        "name": "test_doc", 
+                        "content": "Test content", 
+                        "mimeType": "text/plain"
             }
         )
+        
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_resource(mock_request, mock_db, "test-user")
-
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200
@@ -840,7 +839,7 @@ class TestAdminResourceRoutes:
         # Verify template was passed
         call_args = mock_register_resource.call_args[0]
         resource_create = call_args[1]
-        assert resource_create.template == "Hello {{name}}!"
+        assert resource_create.uri_template == "greetme://morning/{name}"
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_database_errors(self, mock_register_resource, mock_request, mock_db):
