@@ -3102,7 +3102,6 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:

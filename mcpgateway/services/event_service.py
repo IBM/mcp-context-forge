@@ -194,7 +194,7 @@ class EventService:
             try:
                 # Import asyncio version of redis here to avoid top-level dependency issues
                 # Third-Party
-                import redis.asyncio as aioredis
+                import redis.asyncio as aioredis  # pylint: disable=import-outside-toplevel
 
                 # Create a dedicated async connection for this subscription
                 client = aioredis.from_url(self.redis_url, decode_responses=True)
@@ -209,6 +209,7 @@ class EventService:
                             yield json.loads(message["data"])
                 except asyncio.CancelledError:
                     # Handle client disconnection
+                    logger.error(f"Client disconnected from Redis subscription: {self.channel_name}")
                     raise
                 except Exception as e:
                     logger.error(f"Redis subscription error on {self.channel_name}: {e}")
@@ -233,6 +234,7 @@ class EventService:
                     event = await queue.get()
                     yield event
             except asyncio.CancelledError:
+                logger.error(f"Client disconnected from local event subscription: {self.channel_name}")
                 raise
             finally:
                 if queue in self._event_subscribers:
@@ -241,11 +243,15 @@ class EventService:
     async def event_generator(self) -> AsyncGenerator[str, None]:
         """Generates Server-Sent Events (SSE) formatted strings.
 
-        This is a convenience wrapper around `subscribe_events` designed for 
+        This is a convenience wrapper around `subscribe_events` designed for
         direct use with streaming HTTP responses (e.g., FastAPI's StreamingResponse).
 
         Yields:
             str: A string formatted as an SSE message: 'data: {...}\\n\\n'
+
+        Raises:
+            asyncio.CancelledError: If the client disconnects and the streaming
+                task is cancelled.
         """
         try:
             async for event in self.subscribe_events():
@@ -255,7 +261,7 @@ class EventService:
             # Handle client disconnection gracefully
             logger.info(f"Client disconnected from event stream: {self.channel_name}")
             raise
-            
+
     async def shutdown(self):
         """Cleanup resources.
 

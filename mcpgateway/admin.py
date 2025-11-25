@@ -9882,6 +9882,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                     event_queue.task_done()
 
                 except asyncio.CancelledError:
+                    LOGGER.debug("SSE Event generator task cancelled")
                     raise
 
         except asyncio.CancelledError:

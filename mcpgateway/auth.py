@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
-from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme

@@ -15,7 +15,6 @@ It handles:
 """
 
 # Standard
-import asyncio
 import base64
 from datetime import datetime, timezone
 import json
@@ -1848,20 +1847,20 @@ class ToolService:
         except Exception:
             return False
 
-    async def event_generator(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Generate tool events for SSE.
+    # async def event_generator(self) -> AsyncGenerator[Dict[str, Any], None]:
+    #     """Generate tool events for SSE.
 
-        Yields:
-            Tool events.
-        """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+    #     Yields:
+    #         Tool events.
+    #     """
+    #     queue: asyncio.Queue = asyncio.Queue()
+    #     self._event_subscribers.append(queue)
+    #     try:
+    #         while True:
+    #             event = await queue.get()
+    #             yield event
+    #     finally:
+    #         self._event_subscribers.remove(queue)
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
