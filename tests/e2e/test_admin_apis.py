@@ -249,7 +249,7 @@ class TestAdminServerAPIs:
         response = await client.post(f"/admin/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
-        # Toggle server status
+        # Set server state
         response = await client.post(f"/admin/servers/{server_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 

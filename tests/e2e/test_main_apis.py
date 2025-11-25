@@ -583,7 +583,7 @@ class TestServerAPIs:
         assert result["description"] == update_data["description"]
         assert result["icon"] == update_data["icon"]
 
-    async def test_toggle_server_status(self, client: AsyncClient, mock_auth):
+    async def test_set_server_state(self, client: AsyncClient, mock_auth):
         """Test POST /servers/{server_id}/state."""
         # Create a server
         server_data = {"server": {"name": "toggle_test_server"}, "team_id": None, "visibility": "private"}

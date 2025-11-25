@@ -39,7 +39,7 @@ It provides tabbed access to:
 | Bulk import tools | Use API endpoint `/admin/tools/import` (see [Bulk Import](../manage/bulk-import.md)) |
 | View prompt output | Go to Prompts → click View |
 | **View entity metadata** | Click "View" on any entity → scroll to "Metadata" section |
-| Toggle server activity | Use the "Activate/Deactivate" buttons in Servers tab |
+| Set server activity | Use the "Activate/Deactivate" buttons in Servers tab |
 | Delete a resource | Navigate to Resources → click Delete (after confirming) |
 
 All actions are reflected in the live API via `/tools`, `/prompts`, etc.

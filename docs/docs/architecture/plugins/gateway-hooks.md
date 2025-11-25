@@ -884,7 +884,7 @@ async def server_post_delete(self, payload: ServerPostOperationPayload,
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | **Hook Name** | `server_pre_status_change` | Hook identifier for configuration |
-| **Execution Point** | Before server status toggle | When MCP server is about to be activated or deactivated |
+| **Execution Point** | Before server status change | When MCP server is about to be activated or deactivated |
 | **Purpose** | Access control, dependency validation, impact assessment | Validate status change permissions and assess operational impact |
 
 **Payload Attributes (`ServerPreOperationPayload`)** - Same structure as other pre-hooks:
