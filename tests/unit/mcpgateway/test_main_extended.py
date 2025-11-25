@@ -278,7 +278,7 @@ class TestUtilityFunctions:
 
     def test_server_toggle_edge_cases(self, test_client, auth_headers):
         """Test server toggle endpoint edge cases."""
-        with patch("mcpgateway.main.server_service.toggle_server_status") as mock_toggle:
+        with patch("mcpgateway.main.server_service.set_server_state") as mock_toggle:
             # Create a proper ServerRead model response
             # First-Party
             from mcpgateway.schemas import ServerRead

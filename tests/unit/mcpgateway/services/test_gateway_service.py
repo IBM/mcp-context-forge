@@ -1068,7 +1068,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.toggle_gateway_status(test_db, 1, activate=False)
+            result = await gateway_service.set_gateway_state(test_db, 1, activate=False)
 
         assert mock_gateway.enabled is False
         gateway_service._notify_gateway_deactivated.assert_called_once()
@@ -1104,7 +1104,7 @@ class TestGatewayService:
         mock_gateway_read.masked.return_value = mock_gateway_read
 
         with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
-            result = await gateway_service.toggle_gateway_status(test_db, 1, activate=True)
+            result = await gateway_service.set_gateway_state(test_db, 1, activate=True)
 
         assert mock_gateway.enabled is True
         gateway_service._notify_gateway_activated.assert_called_once()
@@ -1117,7 +1117,7 @@ class TestGatewayService:
         test_db.get = Mock(return_value=None)
 
         with pytest.raises(GatewayError) as exc_info:
-            await gateway_service.toggle_gateway_status(test_db, 999, activate=True)
+            await gateway_service.set_gateway_state(test_db, 999, activate=True)
 
         assert "Gateway not found: 999" in str(exc_info.value)
 
@@ -1147,9 +1147,9 @@ class TestGatewayService:
 
         # The toggle_gateway_status method will catch the exception and raise GatewayError
         with pytest.raises(GatewayError) as exc_info:
-            await gateway_service.toggle_gateway_status(test_db, 1, activate=False)
+            await gateway_service.set_gateway_state(test_db, 1, activate=False)
 
-        assert "Failed to toggle gateway status" in str(exc_info.value)
+        assert "Failed to set gateway state" in str(exc_info.value)
         assert "Tool toggle failed" in str(exc_info.value)
         test_db.rollback.assert_called_once()
 

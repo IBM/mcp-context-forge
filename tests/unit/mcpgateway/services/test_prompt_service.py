@@ -371,7 +371,7 @@ class TestPromptService:
         test_db.refresh = Mock()
         prompt_service._notify_prompt_deactivated = AsyncMock()
 
-        res = await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
+        res = await prompt_service.set_prompt_state(test_db, 1, activate=False)
 
         assert p.is_active is False
         prompt_service._notify_prompt_deactivated.assert_called_once()
@@ -381,7 +381,7 @@ class TestPromptService:
     async def test_toggle_prompt_status_not_found(self, prompt_service, test_db):
         test_db.get = Mock(return_value=None)
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.toggle_prompt_status(test_db, 999, activate=True)
+            await prompt_service.set_prompt_state(test_db, 999, activate=True)
         assert "Prompt not found" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -390,7 +390,7 @@ class TestPromptService:
         test_db.get = Mock(return_value=p)
         test_db.commit = Mock(side_effect=Exception("fail"))
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
+            await prompt_service.set_prompt_state(test_db, 1, activate=False)
         assert "Failed to toggle prompt status" in str(exc_info.value)
 
     # ──────────────────────────────────────────────────────────────────

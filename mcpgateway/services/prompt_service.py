@@ -1014,9 +1014,9 @@ class PromptService:
             db.rollback()
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
-    async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
+    async def set_prompt_state(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
         """
-        Toggle the activation status of a prompt.
+        Set the activation state of a prompt.
 
         Args:
             db: Database session
@@ -1079,7 +1079,10 @@ class PromptService:
             raise e
         except Exception as e:
             db.rollback()
-            raise PromptError(f"Failed to toggle prompt status: {str(e)}")
+            raise PromptError(f"Failed to set prompt state: {str(e)}")
+
+    # Backwards-compatible alias
+    toggle_prompt_status = set_prompt_state
 
     # Get prompt details for admin ui
     async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument

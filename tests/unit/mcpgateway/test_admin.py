@@ -327,7 +327,7 @@ class TestAdminServerRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
 
-    @patch.object(ServerService, "toggle_server_status")
+    @patch.object(ServerService, "set_server_state")
     async def test_admin_toggle_server_with_exception(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling server status with exception handling."""
         mock_toggle_status.side_effect = Exception("Toggle operation failed")
@@ -529,7 +529,7 @@ class TestAdminToolRoutes:
         assert tool_update.headers == {}
         assert tool_update.input_schema == {}
 
-    @patch.object(ToolService, "toggle_tool_status")
+    @patch.object(ToolService, "set_tool_state")
     async def test_admin_toggle_tool_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling tool with various activate values."""
         tool_id = "tool-1"
@@ -873,7 +873,7 @@ class TestAdminResourceRoutes:
         mock_update_resource.assert_called_once()
         assert mock_update_resource.call_args[0][1] == uri
 
-    @patch.object(ResourceService, "toggle_resource_status")
+    @patch.object(ResourceService, "set_resource_state")
     async def test_admin_toggle_resource_numeric_id(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling resource with numeric ID."""
         # Test with integer ID
@@ -1029,7 +1029,7 @@ class TestAdminPromptRoutes:
         mock_update_prompt.assert_called_once()
         assert mock_update_prompt.call_args[0][1] == "old-prompt-name"
 
-    @patch.object(PromptService, "toggle_prompt_status")
+    @patch.object(PromptService, "set_prompt_state")
     async def test_admin_toggle_prompt_edge_cases(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling prompt with edge cases."""
         # Test with string ID that looks like number
@@ -1182,7 +1182,7 @@ class TestAdminGatewayRoutes:
         assert result.status_code in (400, 422)
         assert body["success"] is False
 
-    @patch.object(GatewayService, "toggle_gateway_status")
+    @patch.object(GatewayService, "set_gateway_state")
     async def test_admin_toggle_gateway_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling gateway with simulated concurrent calls."""
         # Simulate race condition
@@ -1863,7 +1863,7 @@ class TestA2AAgentManagement:
         assert data["success"] is False
         assert "agent name already exists" in data["message"].lower()
 
-    @patch.object(A2AAgentService, "toggle_agent_status")
+    @patch.object(A2AAgentService, "set_a2a_agent_state")
     async def test_admin_toggle_a2a_agent_success(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling A2A agent status."""
         # First-Party

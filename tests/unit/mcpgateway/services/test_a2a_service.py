@@ -243,7 +243,7 @@ class TestA2AAgentService:
         service._db_to_schema = MagicMock(return_value=MagicMock())
 
         # Execute
-        result = await service.toggle_agent_status(mock_db, sample_db_agent.id, False)
+        result = await service.set_a2a_agent_state(mock_db, sample_db_agent.id, False)
 
         # Verify
         assert sample_db_agent.enabled == False

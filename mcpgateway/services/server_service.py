@@ -879,8 +879,8 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
-        """Toggle the activation status of a server.
+    async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+        """Set the activation state of a server.
 
         Args:
             db: Database session.
@@ -957,7 +957,10 @@ class ServerService:
             raise e
         except Exception as e:
             db.rollback()
-            raise ServerError(f"Failed to toggle server status: {str(e)}")
+            raise ServerError(f"Failed to set server state: {str(e)}")
+
+            # Backwards-compatible alias
+            toggle_server_status = set_server_state
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
         """Permanently delete a server.

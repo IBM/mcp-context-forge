@@ -675,8 +675,8 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
-        """Toggle the activation status of an A2A agent.
+    async def set_a2a_agent_state(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+        """Set the activation state of an A2A agent.
 
         Args:
             db: Database session.
@@ -717,6 +717,9 @@ class A2AAgentService:
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
 
         return self._db_to_schema(db=db, db_agent=agent)
+
+    # Backwards-compatible alias
+    toggle_agent_status = set_a2a_agent_state
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
         """Delete an A2A agent.

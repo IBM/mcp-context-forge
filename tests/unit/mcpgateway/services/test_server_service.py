@@ -737,7 +737,7 @@ class TestServerService:
             )
         )
 
-        result = await server_service.toggle_server_status(test_db, 1, activate=False)
+        result = await server_service.set_server_state(test_db, 1, activate=False)
 
         test_db.get.assert_called_once_with(DbServer, 1)
         test_db.commit.assert_called_once()
