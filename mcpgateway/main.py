@@ -467,7 +467,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
-        if settings.metrics_aggregation_enabled:
+        if settings.metrics_aggregation_enabled and settings.metrics_aggregation_auto_start:
             aggregation_stop_event = asyncio.Event()
             log_aggregator = get_log_aggregator()
 
@@ -506,6 +506,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
             aggregation_backfill_task = asyncio.create_task(run_log_backfill())
             aggregation_loop_task = asyncio.create_task(run_log_aggregation_loop())
+        elif settings.metrics_aggregation_enabled:
+            logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
         yield
     except Exception as e:
@@ -1243,9 +1245,21 @@ if settings.correlation_id_enabled:
     app.add_middleware(CorrelationIDMiddleware)
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
+# Add authentication context middleware if security logging is enabled
+# This middleware extracts user context and logs security events (authentication attempts)
+# Note: This is independent of observability - security logging is always important
+if settings.security_logging_enabled:
+    # First-Party
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+
+    app.add_middleware(AuthContextMiddleware)
+    logger.info("🔐 Authentication context middleware enabled - logging security events")
+else:
+    logger.info("🔐 Security event logging disabled")
+
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
-# We add ObservabilityMiddleware first so it wraps AuthContextMiddleware
+# If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 if settings.observability_enabled:
     # First-Party
@@ -1253,13 +1267,6 @@ if settings.observability_enabled:
 
     app.add_middleware(ObservabilityMiddleware, enabled=True)
     logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
-
-    # Add authentication context middleware (runs BEFORE observability in execution)
-    # First-Party
-    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
-
-    app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - extracting user info for observability")
 else:
     logger.info("🔍 Observability middleware disabled")
 
@@ -2465,7 +2472,20 @@ async def invoke_a2a_agent(
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.invoke_agent(db, agent_name, parameters, interaction_type)
+        user_email = get_user_email(user)
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+        return await a2a_service.invoke_agent(
+            db,
+            agent_name,
+            parameters,
+            interaction_type,
+            user_id=user_id,
+            user_email=user_email,
+        )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:

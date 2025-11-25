@@ -19,10 +19,14 @@ import time
 from typing import Callable
 
 # Third-Party
-from fastapi import Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
+from starlette.requests import Request
+from starlette.responses import Response
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
+from mcpgateway.auth import get_current_user
+from mcpgateway.db import SessionLocal
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
@@ -127,6 +131,44 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.log_detailed_requests = log_detailed_requests
         self.log_level = log_level.upper()
         self.max_body_size = max_body_size  # Expected to be in bytes
+        
+    async def _resolve_user_identity(self, request: Request):
+        """Best-effort extraction of user identity for request logs."""
+        # Prefer context injected by upstream middleware
+        if hasattr(request.state, "user") and request.state.user is not None:
+            raw_user_id = getattr(request.state.user, "id", None)
+            user_email = getattr(request.state.user, "email", None)
+            return (str(raw_user_id) if raw_user_id is not None else None, user_email)
+
+        # Fallback: try to authenticate using cookies/headers (matches AuthContextMiddleware)
+        token = None
+        if request.cookies:
+            token = request.cookies.get("jwt_token") or request.cookies.get("access_token") or request.cookies.get("token")
+
+        if not token:
+            auth_header = request.headers.get("authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+
+        if not token:
+            return (None, None)
+
+        db = None
+        try:
+            db = SessionLocal()
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+            user = await get_current_user(credentials, db)
+            raw_user_id = getattr(user, "id", None)
+            user_email = getattr(user, "email", None)
+            return (str(raw_user_id) if raw_user_id is not None else None, user_email)
+        except Exception:
+            return (None, None)
+        finally:
+            if db:
+                try:
+                    db.close()
+                except Exception:
+                    pass
 
     async def dispatch(self, request: Request, call_next: Callable):
         """Process incoming request and log details with sensitive data masked.
@@ -147,6 +189,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         method = request.method
         user_agent = request.headers.get("user-agent", "unknown")
         client_ip = request.client.host if request.client else "unknown"
+        user_id, user_email = await self._resolve_user_identity(request)
         
         # Skip boundary logging for health checks and static assets
         skip_paths = ["/health", "/healthz", "/static", "/favicon.ico"]
@@ -160,6 +203,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     message=f"Request started: {method} {path}",
                     component="gateway",
                     correlation_id=correlation_id,
+                    user_email=user_email,
+                    user_id=user_id,
                     operation_type="http_request",
                     request_method=method,
                     request_path=path,
@@ -187,6 +232,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         message=f"Request completed: {method} {path} - {response.status_code}",
                         component="gateway",
                         correlation_id=correlation_id,
+                        user_email=user_email,
+                        user_id=user_id,
                         operation_type="http_request",
                         request_method=method,
                         request_path=path,
@@ -295,6 +342,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         message=f"Request failed: {method} {path}",
                         component="gateway",
                         correlation_id=correlation_id,
+                        user_email=user_email,
+                        user_id=user_id,
                         operation_type="http_request",
                         request_method=method,
                         request_path=path,
@@ -324,6 +373,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     message=f"Request completed: {method} {path} - {status_code}",
                     component="gateway",
                     correlation_id=correlation_id,
+                    user_email=user_email,
+                    user_id=user_id,
                     operation_type="http_request",
                     request_method=method,
                     request_path=path,

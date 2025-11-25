@@ -627,8 +627,28 @@
                 </button>
               </div>
 
+              <!-- Performance Aggregation Controls (toggle visibility via JS) -->
+              <div id="performance-aggregation-controls" class="mb-4 hidden">
+                <label
+                  for="performance-aggregation-select"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Performance aggregation level
+                </label>
+                <div class="mt-1 max-w-xs">
+                  <select
+                    id="performance-aggregation-select"
+                    class="px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    onchange="handlePerformanceAggregationChange(event)"
+                  >
+                    <option value="5m">Aggregate by 5-minute windows</option>
+                    <option value="24h">Aggregate by 24-hour windows</option>
+                  </select>
+                </div>
+              </div>
+
               <!-- Log Filters -->
-              <div class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div id="log-filters" class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -661,6 +681,9 @@
                     <option value="">All Components</option>
                     <option value="gateway">Gateway Service</option>
                     <option value="tool_service">Tool Service</option>
+                    <option value="resource_service">Resource Service</option>
+                    <option value="prompt_service">Prompt Service</option>
+                    <option value="server_service">Server Service</option>
                     <option value="a2a_service">A2A Service</option>
                     <option value="auth">Authentication</option>
                   </select>

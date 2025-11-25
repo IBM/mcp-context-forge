@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import AuditTrail, SessionLocal
-from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.correlation_id import get_or_generate_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,16 @@ class DataClassification(str, Enum):
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
     RESTRICTED = "restricted"
+
+
+REVIEW_REQUIRED_ACTIONS = {
+    "delete_server",
+    "delete_tool",
+    "delete_resource",
+    "delete_gateway",
+    "update_sensitive_config",
+    "bulk_delete",
+}
 
 
 class AuditTrailService:
@@ -74,10 +84,12 @@ class AuditTrailService:
         new_values: Optional[Dict[str, Any]] = None,
         changes: Optional[Dict[str, Any]] = None,
         data_classification: Optional[str] = None,
-        requires_review: bool = False,
+        requires_review: Optional[bool] = None,
         success: bool = True,
         error_message: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
+        details: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
         db: Optional[Session] = None
     ) -> Optional[AuditTrail]:
         """Log an audit trail entry.
@@ -98,16 +110,18 @@ class AuditTrailService:
             new_values: New values after change
             changes: Specific changes made
             data_classification: Data classification level
-            requires_review: Whether this action requires review
+            requires_review: Whether this action requires review (None = auto)
             success: Whether the action succeeded
             error_message: Error message if failed
             context: Additional context
+            details: Extra key/value payload (stored under context.details)
+            metadata: Extra metadata payload (stored under context.metadata)
             db: Optional database session
             
         Returns:
             Created AuditTrail entry or None if logging disabled
         """
-        correlation_id = get_correlation_id()
+        correlation_id = get_or_generate_correlation_id()
         
         # Use provided session or create new one
         close_db = False
@@ -116,6 +130,19 @@ class AuditTrailService:
             close_db = True
         
         try:
+            context_payload: Dict[str, Any] = dict(context) if context else {}
+            if details:
+                context_payload["details"] = details
+            if metadata:
+                context_payload["metadata"] = metadata
+            context_value = context_payload if context_payload else None
+
+            requires_review_flag = self._determine_requires_review(
+                action=action,
+                data_classification=data_classification,
+                requires_review_param=requires_review,
+            )
+
             # Create audit trail entry
             audit_entry = AuditTrail(
                 timestamp=datetime.now(timezone.utc),
@@ -135,10 +162,10 @@ class AuditTrailService:
                 new_values=new_values,
                 changes=changes,
                 data_classification=data_classification,
-                requires_review=requires_review,
+                requires_review=requires_review_flag,
                 success=success,
                 error_message=error_message,
-                context=context
+                context=context_value
             )
             
             db.add(audit_entry)
@@ -178,6 +205,25 @@ class AuditTrailService:
             if close_db:
                 db.close()
     
+    def _determine_requires_review(
+        self,
+        action: Optional[str],
+        data_classification: Optional[str],
+        requires_review_param: Optional[bool],
+    ) -> bool:
+        """Resolve whether an audit entry should require review."""
+        if requires_review_param is not None:
+            return requires_review_param
+
+        if data_classification in {DataClassification.CONFIDENTIAL.value, DataClassification.RESTRICTED.value}:
+            return True
+
+        normalized_action = (action or "").lower()
+        if normalized_action in REVIEW_REQUIRED_ACTIONS:
+            return True
+
+        return False
+
     def log_crud_operation(
         self,
         operation: str,

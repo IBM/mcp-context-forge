@@ -8589,7 +8589,11 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
+        await resource_service.delete_resource(
+            user["db"] if isinstance(user, dict) else db,
+            resource_id,
+            user_email=user_email,
+        )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
@@ -11898,6 +11902,7 @@ async def admin_test_a2a_agent(
         return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
     try:
+        user_email = get_user_email(user)
         # Get the agent by ID
         agent = await a2a_service.get_agent(db, agent_id)
 
@@ -11913,7 +11918,14 @@ async def admin_test_a2a_agent(
             test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
 
         # Invoke the agent
-        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+        result = await a2a_service.invoke_agent(
+            db,
+            agent.name,
+            test_params,
+            "admin_test",
+            user_email=user_email,
+            user_id=user_email,
+        )
 
         return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
