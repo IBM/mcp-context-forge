@@ -1337,7 +1337,7 @@ async def admin_edit_server(
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
-@admin_router.post("/servers/{server_id}/toggle")
+@admin_router.post("/servers/{server_id}/state")
 async def admin_toggle_server(
     server_id: str,
     request: Request,
@@ -1917,7 +1917,7 @@ async def admin_list_gateway_ids(
     return {"gateway_ids": ids}
 
 
-@admin_router.post("/gateways/{gateway_id}/toggle")
+@admin_router.post("/gateways/{gateway_id}/state")
 async def admin_toggle_gateway(
     gateway_id: str,
     request: Request,
@@ -6585,7 +6585,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
-@admin_router.post("/tools/{tool_id}/toggle")
+@admin_router.post("/tools/{tool_id}/state")
 async def admin_toggle_tool(
     tool_id: str,
     request: Request,
@@ -7953,7 +7953,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
 
 
-@admin_router.post("/resources/{resource_id}/toggle")
+@admin_router.post("/resources/{resource_id}/state")
 async def admin_toggle_resource(
     resource_id: int,
     request: Request,
@@ -8508,7 +8508,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
-@admin_router.post("/prompts/{prompt_id}/toggle")
+@admin_router.post("/prompts/{prompt_id}/state")
 async def admin_toggle_prompt(
     prompt_id: int,
     request: Request,
@@ -10869,7 +10869,7 @@ async def admin_edit_a2a_agent(
         return JSONResponse({"message": str(e), "success": False}, status_code=500)
 
 
-@admin_router.post("/a2a/{agent_id}/toggle")
+@admin_router.post("/a2a/{agent_id}/state")
 async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
@@ -11162,7 +11162,7 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@admin_router.post("/grpc/{service_id}/toggle")
+@admin_router.post("/grpc/{service_id}/state")
 async def admin_toggle_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),

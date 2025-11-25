@@ -507,7 +507,7 @@ class TestServerEndpoints:
         updated_server = MOCK_SERVER_READ.copy()
         updated_server["is_active"] = False
         mock_toggle.return_value = ServerRead(**updated_server)
-        response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         mock_toggle.assert_called_once()
 
@@ -626,7 +626,7 @@ class TestToolEndpoints:
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = {"id": 1, "name": "test", "is_active": False}
         mock_toggle.return_value = mock_tool
-        response = test_client.post("/tools/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/tools/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -742,7 +742,7 @@ class TestResourceEndpoints:
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"id": 1, "is_active": False}
         mock_toggle.return_value = mock_resource
-        response = test_client.post("/resources/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/resources/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -822,7 +822,7 @@ class TestPromptEndpoints:
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
         mock_toggle.return_value = mock_prompt
-        response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/prompts/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_toggle.assert_called_once()
@@ -899,7 +899,7 @@ class TestPromptEndpoints:
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
         mock_toggle.return_value = mock_prompt
-        response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/prompts/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -976,7 +976,7 @@ class TestGatewayEndpoints:
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}
         mock_toggle.return_value = mock_gateway
-        response = test_client.post("/gateways/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_toggle.assert_called_once()
@@ -1036,7 +1036,7 @@ class TestGatewayEndpoints:
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}
         mock_toggle.return_value = mock_gateway
-        response = test_client.post("/gateways/1/toggle?activate=false", headers=auth_headers)
+        response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -1389,7 +1389,7 @@ class TestMetricsEndpoints:
 #        """Test toggling A2A agent status."""
 #        mock_toggle.return_value = {"id": "test-id", "enabled": False}
 #
-#        response = test_client.post("/a2a/test-id/toggle?activate=false", headers=auth_headers)
+#        response = test_client.post("/a2a/test-id/state?activate=false", headers=auth_headers)
 #        assert response.status_code == 200
 #        mock_toggle.assert_called_once()
 #

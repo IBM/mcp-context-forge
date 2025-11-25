@@ -250,7 +250,7 @@ class TestAdminServerAPIs:
         assert response.status_code == 200
 
         # Toggle server status
-        response = await client.post(f"/admin/servers/{server_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/servers/{server_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete server
@@ -324,7 +324,7 @@ class TestAdminToolAPIs:
     #     assert response.status_code == 303
 
     #     # Toggle tool status
-    #     response = await client.post(f"/admin/tools/{tool_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/admin/tools/{tool_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     #     # Delete tool
@@ -520,7 +520,7 @@ class TestAdminPromptAPIs:
         assert response.status_code == 200
 
         # Toggle prompt status
-        response = await client.post(f"/admin/prompts/{prompt_id}/toggle", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/admin/prompts/{prompt_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete prompt (use updated name)
@@ -699,7 +699,7 @@ class TestAdminIncludeInactive:
     #         "is_inactive_checked": "true",
     #     }
 
-    #     response = await client.post(f"/admin/servers/{server_id}/toggle", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/admin/servers/{server_id}/state", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
 
     #     assert response.status_code == 303
     #     assert "include_inactive=true" in response.headers["location"]

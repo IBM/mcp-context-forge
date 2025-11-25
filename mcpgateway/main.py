@@ -1815,7 +1815,7 @@ async def update_server(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@server_router.post("/{server_id}/toggle", response_model=ServerRead)
+@server_router.post("/{server_id}/state", response_model=ServerRead)
 @require_permission("servers.update")
 async def toggle_server_status(
     server_id: str,
@@ -2290,7 +2290,7 @@ async def update_a2a_agent(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead)
+@a2a_router.post("/{agent_id}/state", response_model=A2AAgentRead)
 @require_permission("a2a.update")
 async def toggle_a2a_agent_status(
     agent_id: str,
@@ -2689,7 +2689,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@tool_router.post("/{tool_id}/toggle")
+@tool_router.post("/{tool_id}/state")
 @require_permission("tools.update")
 async def toggle_tool_status(
     tool_id: str,
@@ -2753,7 +2753,7 @@ async def list_resource_templates(
     return ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
 
 
-@resource_router.post("/{resource_id}/toggle")
+@resource_router.post("/{resource_id}/state")
 @require_permission("resources.update")
 async def toggle_resource_status(
     resource_id: int,
@@ -3101,7 +3101,7 @@ async def subscribe_resource(resource_id: str, user=Depends(get_current_user_wit
 ###############
 # Prompt APIs #
 ###############
-@prompt_router.post("/{prompt_id}/toggle")
+@prompt_router.post("/{prompt_id}/state")
 @require_permission("prompts.update")
 async def toggle_prompt_status(
     prompt_id: int,
@@ -3460,7 +3460,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 ################
 # Gateway APIs #
 ################
-@gateway_router.post("/{gateway_id}/toggle")
+@gateway_router.post("/{gateway_id}/state")
 @require_permission("gateways.update")
 async def toggle_gateway_status(
     gateway_id: str,

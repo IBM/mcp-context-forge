@@ -222,7 +222,7 @@
           {% if tool.enabled %}
           <form
             method="POST"
-            action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
+            action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
             class="contents"
             onsubmit="return handleToggleSubmit(event, 'tools')"
           >
@@ -238,7 +238,7 @@
           {% else %}
           <form
             method="POST"
-            action="{{ root_path }}/admin/tools/{{ tool.id }}/toggle"
+            action="{{ root_path }}/admin/tools/{{ tool.id }}/state"
             class="contents"
             onsubmit="return handleToggleSubmit(event, 'tools')"
           >

@@ -309,13 +309,13 @@ class TestUtilityFunctions:
             mock_toggle.return_value = ServerRead(**mock_server_data)
 
             # Test activate=true
-            response = test_client.post("/servers/1/toggle?activate=true", headers=auth_headers)
+            response = test_client.post("/servers/1/state?activate=true", headers=auth_headers)
             assert response.status_code == 200
 
             # Test activate=false
             mock_server_data["is_active"] = False
             mock_toggle.return_value = ServerRead(**mock_server_data)
-            response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
+            response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
             assert response.status_code == 200
 
 
