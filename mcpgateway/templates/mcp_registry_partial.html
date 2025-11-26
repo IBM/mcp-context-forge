@@ -473,15 +473,16 @@
       {% if server.tags %}
       <div class="flex flex-wrap gap-1 mb-4">
         {% for tag in server.tags[:3] %}
-        <span
-          class="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded dark:bg-gray-700 dark:text-gray-300"
-        >
-          {{ tag }}
+        <span class="px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded dark:bg-gray-700 dark:text-gray-300">
+          {% if tag is mapping %}
+            {{ tag.id }}
+          {% else %}
+            {{ tag }}
+          {% endif %}
         </span>
-        {% endfor %} {% if server.tags|length > 3 %}
-        <span class="px-2 py-1 text-gray-500 text-xs">
-          +{{ server.tags|length - 3 }} more
-        </span>
+        {% endfor %}
+        {% if server.tags|length > 3 %}
+        <span class="px-2 py-1 text-gray-500 text-xs">+{{ server.tags|length - 3 }} more</span>
         {% endif %}
       </div>
       {% endif %}
