@@ -21022,7 +21022,9 @@ document.addEventListener("DOMContentLoaded", function () {
 });
 
 function initializeRealTimeMonitoring() {
-    if (!window.EventSource) return;
+    if (!window.EventSource) {
+        return;
+    }
 
     // Connect to the admin events endpoint
     const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
@@ -21031,17 +21033,23 @@ function initializeRealTimeMonitoring() {
     // Handlers for specific states
     // eventSource.addEventListener("gateway_activated", (e) => handleEntityEvent("gateway", e));
     // eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
-    eventSource.addEventListener("gateway_offline", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_offline", (e) =>
+        handleEntityEvent("gateway", e),
+    );
 
     // --- Tool Events ---
     // Handlers for specific states
 
     // eventSource.addEventListener("tool_activated", (e) => handleEntityEvent("tool", e));
     // eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
-    eventSource.addEventListener("tool_offline", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_offline", (e) =>
+        handleEntityEvent("tool", e),
+    );
 
-    eventSource.onopen = () => console.log("✅ SSE Connected for Real-time Monitoring");
-    eventSource.onerror = (err) => console.warn("⚠️ SSE Connection issue, retrying...", err);
+    eventSource.onopen = () =>
+        console.log("✅ SSE Connected for Real-time Monitoring");
+    eventSource.onerror = (err) =>
+        console.warn("⚠️ SSE Connection issue, retrying...", err);
 }
 
 /**
@@ -21065,18 +21073,18 @@ function handleEntityEvent(type, event) {
 function updateEntityStatus(type, data) {
     let row = null;
 
-    if (type === 'gateway') {
+    if (type === "gateway") {
         // Gateways usually have explicit IDs
         row = document.getElementById(`gateway-row-${data.id}`);
-    } else if (type === 'tool') {
+    } else if (type === "tool") {
         // 1. Try explicit ID (fastest)
         row = document.getElementById(`tool-row-${data.id}`);
-        
+
         // 2. Fallback: Search rows by looking for the ID in Action buttons
         if (!row) {
-            const panel = document.getElementById('tools-panel');
+            const panel = document.getElementById("tools-panel");
             if (panel) {
-                const rows = panel.querySelectorAll('table tbody tr');
+                const rows = panel.querySelectorAll("table tbody tr");
                 for (const tr of rows) {
                     // Check data attribute if present
                     if (tr.dataset.toolId === data.id) {
@@ -21088,10 +21096,11 @@ function updateEntityStatus(type, data) {
                     const html = tr.innerHTML;
                     if (html.includes(data.id)) {
                         // Verify it's likely an ID usage (in quotes or url path)
-                        if (html.includes(`'${data.id}'`) || 
-                            html.includes(`"${data.id}"`) || 
-                            html.includes(`/${data.id}/`)) {
-                            
+                        if (
+                            html.includes(`'${data.id}'`) ||
+                            html.includes(`"${data.id}"`) ||
+                            html.includes(`/${data.id}/`)
+                        ) {
                             row = tr;
                             // Optimization: Set ID on row for next time
                             tr.id = `tool-row-${data.id}`;
@@ -21109,43 +21118,63 @@ function updateEntityStatus(type, data) {
     }
 
     // Dynamically find Status and Action columns
-    const table = row.closest('table');
+    const table = row.closest("table");
     let statusIndex = -1;
     let actionIndex = -1;
 
     if (table) {
-        const headers = table.querySelectorAll('thead th');
+        const headers = table.querySelectorAll("thead th");
         headers.forEach((th, index) => {
             const text = th.textContent.trim().toLowerCase();
-            if (text === 'status') statusIndex = index;
-            if (text === 'actions') actionIndex = index;
+            if (text === "status") {
+                statusIndex = index;
+            }
+            if (text === "actions") {
+                actionIndex = index;
+            }
         });
     }
 
     // Fallback indices if headers aren't found
-    if (statusIndex === -1) statusIndex = type === 'gateway' ? 4 : 5;
-    if (actionIndex === -1) actionIndex = type === 'gateway' ? 9 : 6;
+    if (statusIndex === -1) {
+        statusIndex = type === "gateway" ? 4 : 5;
+    }
+    if (actionIndex === -1) {
+        actionIndex = type === "gateway" ? 9 : 6;
+    }
 
     const statusCell = row.children[statusIndex];
     const actionCell = row.children[actionIndex];
 
     // --- 1. Update Status Badge ---
     if (statusCell) {
-        const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
-        const isReachable = data.reachable !== undefined ? data.reachable : true; 
-        
-        statusCell.innerHTML = generateStatusBadgeHtml(isEnabled, isReachable, type);
-        
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
+        const isReachable =
+            data.reachable !== undefined ? data.reachable : true;
+
+        statusCell.innerHTML = generateStatusBadgeHtml(
+            isEnabled,
+            isReachable,
+            type,
+        );
+
         // Flash effect
-        statusCell.classList.add('bg-blue-50', 'dark:bg-blue-900', 'transition-colors', 'duration-500');
+        statusCell.classList.add(
+            "bg-blue-50",
+            "dark:bg-blue-900",
+            "transition-colors",
+            "duration-500",
+        );
         setTimeout(() => {
-            statusCell.classList.remove('bg-blue-50', 'dark:bg-blue-900');
+            statusCell.classList.remove("bg-blue-50", "dark:bg-blue-900");
         }, 1000);
     }
 
     // --- 2. Update Action Buttons ---
     if (actionCell) {
-        const isEnabled = data.enabled !== undefined ? data.enabled : data.isActive;
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
         updateEntityActionButtons(actionCell, type, data.id, isEnabled);
     }
 }
@@ -21154,8 +21183,10 @@ function updateEntityStatus(type, data) {
  * Generates the HTML for the status badge (Active/Inactive/Offline)
  */
 function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
-    const label = typeLabel ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1) : "Item";
-    
+    const label = typeLabel
+        ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
+        : "Item";
+
     if (!enabled) {
         // CASE 1: Inactive (Manually disabled) -> RED
         return `
@@ -21196,11 +21227,13 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
     const form = cell.querySelector('form[action*="/toggle"]');
-    if (!form) return;
-    
+    if (!form) {
+        return;
+    }
+
     // The HTML structure for the button
     // Ensure we are flipping the button state correctly based on isEnabled
-    
+
     if (isEnabled) {
         // If Enabled -> Show Deactivate Button
         form.innerHTML = `
