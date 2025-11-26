@@ -1231,7 +1231,9 @@ if plugin_manager:
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
 # Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
 # Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
+app.add_middleware(
+    RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024
+)  # Convert MB to bytes
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -5068,7 +5070,7 @@ if getattr(settings, "structured_logging_enabled", True):
     try:
         # First-Party
         from mcpgateway.routers.log_search import router as log_search_router
-        
+
         app.include_router(log_search_router)
         logger.info("Log search router included - structured logging enabled")
     except ImportError as e:

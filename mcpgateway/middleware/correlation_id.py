@@ -68,9 +68,9 @@ class CorrelationIDMiddleware(BaseHTTPMiddleware):
             app: The FastAPI application instance
         """
         super().__init__(app)
-        self.header_name = getattr(settings, 'correlation_id_header', 'X-Correlation-ID')
-        self.preserve_incoming = getattr(settings, 'correlation_id_preserve', True)
-        self.add_to_response = getattr(settings, 'correlation_id_response_header', True)
+        self.header_name = getattr(settings, "correlation_id_header", "X-Correlation-ID")
+        self.preserve_incoming = getattr(settings, "correlation_id_preserve", True)
+        self.add_to_response = getattr(settings, "correlation_id_response_header", True)
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process the request and manage request ID (correlation ID) lifecycle.
@@ -89,10 +89,7 @@ class CorrelationIDMiddleware(BaseHTTPMiddleware):
         # Extract correlation ID from incoming request headers
         correlation_id = None
         if self.preserve_incoming:
-            correlation_id = extract_correlation_id_from_headers(
-                dict(request.headers),
-                self.header_name
-            )
+            correlation_id = extract_correlation_id_from_headers(dict(request.headers), self.header_name)
 
         # Generate new correlation ID if none was provided
         if not correlation_id:

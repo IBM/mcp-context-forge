@@ -414,7 +414,7 @@ class ResourceService:
             await self._notify_resource_added(db_resource)
 
             logger.info(f"Registered resource: {resource.uri}")
-            
+
             # Structured logging: Audit trail for resource creation
             audit_trail.log_action(
                 user_id=created_by or "system",
@@ -439,7 +439,7 @@ class ResourceService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful resource creation
             structured_logger.log(
                 level="INFO",
@@ -458,12 +458,12 @@ class ResourceService:
                 },
                 db=db,
             )
-            
+
             db_resource.team = self._get_team_name(db, db_resource.team_id)
             return self._convert_resource_to_read(db_resource)
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             # Structured logging: Log database integrity error
             structured_logger.log(
                 level="ERROR",
@@ -481,7 +481,7 @@ class ResourceService:
             raise ie
         except ResourceURIConflictError as rce:
             logger.error(f"ResourceURIConflictError in group: {resource.uri}")
-            
+
             # Structured logging: Log URI conflict error
             structured_logger.log(
                 level="WARNING",
@@ -499,7 +499,7 @@ class ResourceService:
             raise rce
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic resource creation failure
             structured_logger.log(
                 level="ERROR",
@@ -1569,7 +1569,7 @@ class ResourceService:
                     await self._notify_resource_deactivated(resource)
 
                 logger.info(f"Resource {resource.uri} {'activated' if activate else 'deactivated'}")
-                
+
                 # Structured logging: Audit trail for resource status toggle
                 audit_trail.log_action(
                     user_id=user_email or "system",
@@ -1587,7 +1587,7 @@ class ResourceService:
                     },
                     db=db,
                 )
-                
+
                 # Structured logging: Log successful resource status toggle
                 structured_logger.log(
                     level="INFO",
@@ -1623,7 +1623,7 @@ class ResourceService:
             raise e
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic resource status toggle failure
             structured_logger.log(
                 level="ERROR",
@@ -1851,7 +1851,7 @@ class ResourceService:
             await self._notify_resource_updated(resource)
 
             logger.info(f"Updated resource: {resource.uri}")
-            
+
             # Structured logging: Audit trail for resource update
             changes = []
             if resource_update.uri:
@@ -1860,7 +1860,7 @@ class ResourceService:
                 changes.append(f"visibility: {resource_update.visibility}")
             if resource_update.description:
                 changes.append("description updated")
-            
+
             audit_trail.log_action(
                 user_id=user_email or modified_by or "system",
                 action="update_resource",
@@ -1882,7 +1882,7 @@ class ResourceService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful resource update
             structured_logger.log(
                 level="INFO",
@@ -1900,11 +1900,11 @@ class ResourceService:
                 },
                 db=db,
             )
-            
+
             return self._convert_resource_to_read(resource)
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -1921,7 +1921,7 @@ class ResourceService:
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             # Structured logging: Log database integrity error
             structured_logger.log(
                 level="ERROR",
@@ -1938,7 +1938,7 @@ class ResourceService:
             raise ie
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
-            
+
             # Structured logging: Log URI conflict error
             structured_logger.log(
                 level="WARNING",
@@ -1969,7 +1969,7 @@ class ResourceService:
                     db=db,
                 )
                 raise e
-            
+
             # Structured logging: Log generic resource update failure
             structured_logger.log(
                 level="ERROR",
@@ -2044,7 +2044,7 @@ class ResourceService:
             resource_uri = resource.uri
             resource_name = resource.name
             resource_team_id = resource.team_id
-            
+
             db.delete(resource)
             db.commit()
 
@@ -2052,7 +2052,7 @@ class ResourceService:
             await self._notify_resource_deleted(resource_info)
 
             logger.info(f"Permanently deleted resource: {resource.uri}")
-            
+
             # Structured logging: Audit trail for resource deletion
             audit_trail.log_action(
                 user_id=user_email or "system",
@@ -2068,7 +2068,7 @@ class ResourceService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful resource deletion
             structured_logger.log(
                 level="INFO",
@@ -2087,7 +2087,7 @@ class ResourceService:
 
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -2118,7 +2118,7 @@ class ResourceService:
             raise
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic resource deletion failure
             structured_logger.log(
                 level="ERROR",

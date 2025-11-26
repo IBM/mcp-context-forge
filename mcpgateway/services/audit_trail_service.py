@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class AuditAction(str, Enum):
     """Audit trail action types."""
+
     CREATE = "CREATE"
     READ = "READ"
     UPDATE = "UPDATE"
@@ -40,6 +41,7 @@ class AuditAction(str, Enum):
 
 class DataClassification(str, Enum):
     """Data classification levels."""
+
     PUBLIC = "public"
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
@@ -58,15 +60,14 @@ REVIEW_REQUIRED_ACTIONS = {
 
 class AuditTrailService:
     """Service for managing audit trails and compliance logging.
-    
+
     Provides comprehensive audit trail management with data classification,
     change tracking, and compliance reporting capabilities.
     """
-    
+
     def __init__(self):
         """Initialize audit trail service."""
-        pass
-    
+
     def log_action(
         self,
         action: str,
@@ -90,10 +91,10 @@ class AuditTrailService:
         context: Optional[Dict[str, Any]] = None,
         details: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[AuditTrail]:
         """Log an audit trail entry.
-        
+
         Args:
             action: Action performed (CREATE, READ, UPDATE, DELETE, etc.)
             resource_type: Type of resource (tool, server, prompt, etc.)
@@ -117,18 +118,18 @@ class AuditTrailService:
             details: Extra key/value payload (stored under context.details)
             metadata: Extra metadata payload (stored under context.metadata)
             db: Optional database session
-            
+
         Returns:
             Created AuditTrail entry or None if logging disabled
         """
         correlation_id = get_or_generate_correlation_id()
-        
+
         # Use provided session or create new one
         close_db = False
         if db is None:
             db = SessionLocal()
             close_db = True
-        
+
         try:
             context_payload: Dict[str, Any] = dict(context) if context else {}
             if details:
@@ -165,46 +166,30 @@ class AuditTrailService:
                 requires_review=requires_review_flag,
                 success=success,
                 error_message=error_message,
-                context=context_value
+                context=context_value,
             )
-            
+
             db.add(audit_entry)
             db.commit()
             db.refresh(audit_entry)
-            
+
             logger.debug(
                 f"Audit trail logged: {action} {resource_type}/{resource_id} by {user_id}",
-                extra={
-                    "correlation_id": correlation_id,
-                    "action": action,
-                    "resource_type": resource_type,
-                    "resource_id": resource_id,
-                    "user_id": user_id,
-                    "success": success
-                }
+                extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id, "user_id": user_id, "success": success},
             )
-            
+
             return audit_entry
-            
+
         except Exception as e:
-            logger.error(
-                f"Failed to log audit trail: {e}",
-                exc_info=True,
-                extra={
-                    "correlation_id": correlation_id,
-                    "action": action,
-                    "resource_type": resource_type,
-                    "resource_id": resource_id
-                }
-            )
+            logger.error(f"Failed to log audit trail: {e}", exc_info=True, extra={"correlation_id": correlation_id, "action": action, "resource_type": resource_type, "resource_id": resource_id})
             if close_db:
                 db.rollback()
             return None
-            
+
         finally:
             if close_db:
                 db.close()
-    
+
     def _determine_requires_review(
         self,
         action: Optional[str],
@@ -238,10 +223,10 @@ class AuditTrailService:
         success: bool = True,
         error_message: Optional[str] = None,
         db: Optional[Session] = None,
-        **kwargs
+        **kwargs,
     ) -> Optional[AuditTrail]:
         """Log a CRUD operation with change tracking.
-        
+
         Args:
             operation: CRUD operation (CREATE, READ, UPDATE, DELETE)
             resource_type: Type of resource
@@ -256,7 +241,7 @@ class AuditTrailService:
             error_message: Error message if failed
             db: Optional database session
             **kwargs: Additional arguments passed to log_action
-            
+
         Returns:
             Created AuditTrail entry
         """
@@ -269,21 +254,21 @@ class AuditTrailService:
                 new_val = new_values.get(key)
                 if old_val != new_val:
                     changes[key] = {"old": old_val, "new": new_val}
-        
+
         # Determine data classification based on resource type
         data_classification = None
         if resource_type in ["user", "team", "token", "credential"]:
             data_classification = DataClassification.CONFIDENTIAL.value
         elif resource_type in ["tool", "server", "prompt", "resource"]:
             data_classification = DataClassification.INTERNAL.value
-        
+
         # Determine if review is required
         requires_review = False
         if data_classification == DataClassification.CONFIDENTIAL.value:
             requires_review = True
         if operation == "DELETE" and resource_type in ["tool", "server", "gateway"]:
             requires_review = True
-        
+
         return self.log_action(
             action=operation,
             resource_type=resource_type,
@@ -300,9 +285,9 @@ class AuditTrailService:
             success=success,
             error_message=error_message,
             db=db,
-            **kwargs
+            **kwargs,
         )
-    
+
     def log_data_access(
         self,
         resource_type: str,
@@ -314,10 +299,10 @@ class AuditTrailService:
         resource_name: Optional[str] = None,
         data_classification: Optional[str] = None,
         db: Optional[Session] = None,
-        **kwargs
+        **kwargs,
     ) -> Optional[AuditTrail]:
         """Log data access for compliance tracking.
-        
+
         Args:
             resource_type: Type of resource accessed
             resource_id: ID of the resource
@@ -329,15 +314,12 @@ class AuditTrailService:
             data_classification: Data classification level
             db: Optional database session
             **kwargs: Additional arguments passed to log_action
-            
+
         Returns:
             Created AuditTrail entry
         """
-        requires_review = data_classification in [
-            DataClassification.CONFIDENTIAL.value,
-            DataClassification.RESTRICTED.value
-        ]
-        
+        requires_review = data_classification in [DataClassification.CONFIDENTIAL.value, DataClassification.RESTRICTED.value]
+
         return self.log_action(
             action=access_type,
             resource_type=resource_type,
@@ -350,22 +332,14 @@ class AuditTrailService:
             requires_review=requires_review,
             success=True,
             db=db,
-            **kwargs
+            **kwargs,
         )
-    
+
     def log_audit(
-        self,
-        user_id: str,
-        resource_type: str,
-        resource_id: str,
-        action: str,
-        user_email: Optional[str] = None,
-        description: Optional[str] = None,
-        db: Optional[Session] = None,
-        **kwargs
+        self, user_id: str, resource_type: str, resource_id: str, action: str, user_email: Optional[str] = None, description: Optional[str] = None, db: Optional[Session] = None, **kwargs
     ) -> Optional[AuditTrail]:
         """Convenience method for simple audit logging.
-        
+
         Args:
             user_id: User who performed the action
             resource_type: Type of resource
@@ -375,7 +349,7 @@ class AuditTrailService:
             description: Description of the action
             db: Optional database session
             **kwargs: Additional arguments passed to log_action
-            
+
         Returns:
             Created AuditTrail entry
         """
@@ -383,18 +357,9 @@ class AuditTrailService:
         context = kwargs.pop("context", {})
         if description:
             context["description"] = description
-        
-        return self.log_action(
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            user_id=user_id,
-            user_email=user_email,
-            context=context if context else None,
-            db=db,
-            **kwargs
-        )
-    
+
+        return self.log_action(action=action, resource_type=resource_type, resource_id=resource_id, user_id=user_id, user_email=user_email, context=context if context else None, db=db, **kwargs)
+
     def get_audit_trail(
         self,
         resource_type: Optional[str] = None,
@@ -405,10 +370,10 @@ class AuditTrailService:
         end_time: Optional[datetime] = None,
         limit: int = 100,
         offset: int = 0,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> list[AuditTrail]:
         """Query audit trail entries.
-        
+
         Args:
             resource_type: Filter by resource type
             resource_id: Filter by resource ID
@@ -419,7 +384,7 @@ class AuditTrailService:
             limit: Maximum number of results
             offset: Offset for pagination
             db: Optional database session
-            
+
         Returns:
             List of AuditTrail entries
         """
@@ -427,10 +392,10 @@ class AuditTrailService:
         if db is None:
             db = SessionLocal()
             close_db = True
-        
+
         try:
             query = select(AuditTrail)
-            
+
             if resource_type:
                 query = query.where(AuditTrail.resource_type == resource_type)
             if resource_id:
@@ -443,13 +408,13 @@ class AuditTrailService:
                 query = query.where(AuditTrail.timestamp >= start_time)
             if end_time:
                 query = query.where(AuditTrail.timestamp <= end_time)
-            
+
             query = query.order_by(AuditTrail.timestamp.desc())
             query = query.limit(limit).offset(offset)
-            
+
             result = db.execute(query)
             return list(result.scalars().all())
-            
+
         finally:
             if close_db:
                 db.close()
@@ -461,7 +426,7 @@ _audit_trail_service: Optional[AuditTrailService] = None
 
 def get_audit_trail_service() -> AuditTrailService:
     """Get or create the singleton audit trail service instance.
-    
+
     Returns:
         AuditTrailService instance
     """

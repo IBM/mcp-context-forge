@@ -100,21 +100,13 @@ def _aggregate_custom_windows(
                 needs_rebuild = True
 
     if needs_rebuild:
-        db.execute(
-            delete(PerformanceMetric).where(
-                PerformanceMetric.window_duration_seconds == window_duration_seconds
-            )
-        )
+        db.execute(delete(PerformanceMetric).where(PerformanceMetric.window_duration_seconds == window_duration_seconds))
         db.commit()
         sample_row = None
 
     max_existing = None
     if not needs_rebuild:
-        max_existing = db.execute(
-            select(sa_func.max(PerformanceMetric.window_start)).where(
-                PerformanceMetric.window_duration_seconds == window_duration_seconds
-            )
-        ).scalar()
+        max_existing = db.execute(select(sa_func.max(PerformanceMetric.window_start)).where(PerformanceMetric.window_duration_seconds == window_duration_seconds)).scalar()
 
     if max_existing:
         current_start = max_existing if max_existing.tzinfo else max_existing.replace(tzinfo=timezone.utc)
@@ -142,6 +134,7 @@ def _aggregate_custom_windows(
 # Request/Response Models
 class LogSearchRequest(BaseModel):
     """Log search request parameters."""
+
     search_text: Optional[str] = Field(None, description="Text search query")
     level: Optional[List[str]] = Field(None, description="Log levels to filter")
     component: Optional[List[str]] = Field(None, description="Components to filter")
@@ -161,6 +154,7 @@ class LogSearchRequest(BaseModel):
 
 class LogEntry(BaseModel):
     """Log entry response model."""
+
     id: str
     timestamp: datetime
     level: str
@@ -175,24 +169,27 @@ class LogEntry(BaseModel):
     request_method: Optional[str] = None
     is_security_event: bool = False
     error_details: Optional[Dict[str, Any]] = None
-    
+
     class Config:
         from_attributes = True
 
 
 class LogSearchResponse(BaseModel):
     """Log search response."""
+
     total: int
     results: List[LogEntry]
 
 
 class CorrelationTraceRequest(BaseModel):
     """Correlation trace request."""
+
     correlation_id: str
 
 
 class CorrelationTraceResponse(BaseModel):
     """Correlation trace response with all related logs."""
+
     correlation_id: str
     total_duration_ms: Optional[float]
     log_count: int
@@ -205,6 +202,7 @@ class CorrelationTraceResponse(BaseModel):
 
 class SecurityEventResponse(BaseModel):
     """Security event response model."""
+
     id: str
     timestamp: datetime
     event_type: str
@@ -216,13 +214,14 @@ class SecurityEventResponse(BaseModel):
     threat_score: float
     action_taken: Optional[str]
     resolved: bool
-    
+
     class Config:
         from_attributes = True
 
 
 class AuditTrailResponse(BaseModel):
     """Audit trail response model."""
+
     id: str
     timestamp: datetime
     correlation_id: Optional[str] = None
@@ -235,13 +234,14 @@ class AuditTrailResponse(BaseModel):
     success: bool
     requires_review: bool
     data_classification: Optional[str]
-    
+
     class Config:
         from_attributes = True
 
 
 class PerformanceMetricResponse(BaseModel):
     """Performance metric response model."""
+
     id: str
     timestamp: datetime
     component: str
@@ -257,7 +257,7 @@ class PerformanceMetricResponse(BaseModel):
     p50_duration_ms: float
     p95_duration_ms: float
     p99_duration_ms: float
-    
+
     class Config:
         from_attributes = True
 
@@ -265,90 +265,81 @@ class PerformanceMetricResponse(BaseModel):
 # API Endpoints
 @router.post("/search", response_model=LogSearchResponse)
 @require_permission("logs:read")
-async def search_logs(
-    request: LogSearchRequest,
-    user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db)
-) -> LogSearchResponse:
+async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
     """Search structured logs with filters and pagination.
-    
+
     Args:
         request: Search parameters
         db: Database session
         _: Permission check dependency
-        
+
     Returns:
         Search results with pagination
     """
     try:
         # Build base query
         stmt = select(StructuredLogEntry)
-        
+
         # Apply filters
         conditions = []
-        
+
         if request.search_text:
-            conditions.append(
-                or_(
-                    StructuredLogEntry.message.ilike(f"%{request.search_text}%"),
-                    StructuredLogEntry.component.ilike(f"%{request.search_text}%")
-                )
-            )
-        
+            conditions.append(or_(StructuredLogEntry.message.ilike(f"%{request.search_text}%"), StructuredLogEntry.component.ilike(f"%{request.search_text}%")))
+
         if request.level:
             conditions.append(StructuredLogEntry.level.in_(request.level))
-        
+
         if request.component:
             conditions.append(StructuredLogEntry.component.in_(request.component))
-        
+
         # Note: category field doesn't exist in StructuredLogEntry
         # if request.category:
         #     conditions.append(StructuredLogEntry.category.in_(request.category))
-        
+
         if request.correlation_id:
             conditions.append(StructuredLogEntry.correlation_id == request.correlation_id)
-        
+
         if request.user_id:
             conditions.append(StructuredLogEntry.user_id == request.user_id)
-        
+
         if request.start_time:
             conditions.append(StructuredLogEntry.timestamp >= request.start_time)
-        
+
         if request.end_time:
             conditions.append(StructuredLogEntry.timestamp <= request.end_time)
-        
+
         if request.min_duration_ms is not None:
             conditions.append(StructuredLogEntry.duration_ms >= request.min_duration_ms)
-        
+
         if request.max_duration_ms is not None:
             conditions.append(StructuredLogEntry.duration_ms <= request.max_duration_ms)
-        
+
         if request.has_error is not None:
             if request.has_error:
                 conditions.append(StructuredLogEntry.error_details.isnot(None))
             else:
                 conditions.append(StructuredLogEntry.error_details.is_(None))
-        
+
         if conditions:
             stmt = stmt.where(and_(*conditions))
-        
+
         # Get total count
         count_stmt = select(sa_func.count()).select_from(stmt.subquery())
         total = db.execute(count_stmt).scalar() or 0
-        
+
         # Apply sorting
         sort_column = getattr(StructuredLogEntry, request.sort_by, StructuredLogEntry.timestamp)
         if request.sort_order == "desc":
             stmt = stmt.order_by(desc(sort_column))
         else:
             stmt = stmt.order_by(sort_column)
-        
+
         # Apply pagination
         stmt = stmt.limit(request.limit).offset(request.offset)
-        
+
         # Execute query
         results = db.execute(stmt).scalars().all()
-        
+
         # Convert to response models
         log_entries = [
             LogEntry(
@@ -369,12 +360,9 @@ async def search_logs(
             )
             for log in results
         ]
-        
-        return LogSearchResponse(
-            total=total,
-            results=log_entries
-        )
-    
+
+        return LogSearchResponse(total=total, results=log_entries)
+
     except Exception as e:
         logger.error(f"Log search failed: {e}")
         raise HTTPException(status_code=500, detail="Log search failed")
@@ -382,61 +370,51 @@ async def search_logs(
 
 @router.get("/trace/{correlation_id}", response_model=CorrelationTraceResponse)
 @require_permission("logs:read")
-async def trace_correlation_id(
-    correlation_id: str,
-    user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db)
-) -> CorrelationTraceResponse:
+async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> CorrelationTraceResponse:
     """Get all logs and events for a correlation ID.
-    
+
     Args:
         correlation_id: Correlation ID to trace
         db: Database session
         _: Permission check dependency
-        
+
     Returns:
         Complete trace of all related logs and events
     """
     try:
         # Get structured logs
-        log_stmt = select(StructuredLogEntry).where(
-            StructuredLogEntry.correlation_id == correlation_id
-        ).order_by(StructuredLogEntry.timestamp)
-        
+        log_stmt = select(StructuredLogEntry).where(StructuredLogEntry.correlation_id == correlation_id).order_by(StructuredLogEntry.timestamp)
+
         logs = db.execute(log_stmt).scalars().all()
-        
+
         # Get security events
-        security_stmt = select(SecurityEvent).where(
-            SecurityEvent.correlation_id == correlation_id
-        ).order_by(SecurityEvent.timestamp)
-        
+        security_stmt = select(SecurityEvent).where(SecurityEvent.correlation_id == correlation_id).order_by(SecurityEvent.timestamp)
+
         security_events = db.execute(security_stmt).scalars().all()
-        
+
         # Get audit trails
-        audit_stmt = select(AuditTrail).where(
-            AuditTrail.correlation_id == correlation_id
-        ).order_by(AuditTrail.timestamp)
-        
+        audit_stmt = select(AuditTrail).where(AuditTrail.correlation_id == correlation_id).order_by(AuditTrail.timestamp)
+
         audit_trails = db.execute(audit_stmt).scalars().all()
-        
+
         # Calculate metrics
         durations = [log.duration_ms for log in logs if log.duration_ms is not None]
         total_duration = sum(durations) if durations else None
         error_count = sum(1 for log in logs if log.error_details)
-        
+
         # Get performance metrics (if any aggregations exist)
         perf_metrics = None
         if logs:
             component = logs[0].component
             operation = logs[0].operation_type
             if component and operation:
-                perf_stmt = select(PerformanceMetric).where(
-                    and_(
-                        PerformanceMetric.component == component,
-                        PerformanceMetric.operation_type == operation
-                    )
-                ).order_by(desc(PerformanceMetric.window_start)).limit(1)
-                
+                perf_stmt = (
+                    select(PerformanceMetric)
+                    .where(and_(PerformanceMetric.component == component, PerformanceMetric.operation_type == operation))
+                    .order_by(desc(PerformanceMetric.window_start))
+                    .limit(1)
+                )
+
                 perf = db.execute(perf_stmt).scalar_one_or_none()
                 if perf:
                     perf_metrics = {
@@ -445,7 +423,7 @@ async def trace_correlation_id(
                         "p99_duration_ms": perf.p99_duration_ms,
                         "error_rate": perf.error_rate,
                     }
-        
+
         return CorrelationTraceResponse(
             correlation_id=correlation_id,
             total_duration_ms=total_duration,
@@ -494,7 +472,7 @@ async def trace_correlation_id(
             ],
             performance_metrics=perf_metrics,
         )
-    
+
     except Exception as e:
         logger.error(f"Correlation trace failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Correlation trace failed: {str(e)}")
@@ -511,10 +489,10 @@ async def get_security_events(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> List[SecurityEventResponse]:
     """Get security events with filters.
-    
+
     Args:
         severity: Filter by severity levels
         event_type: Filter by event types
@@ -525,13 +503,13 @@ async def get_security_events(
         offset: Result offset
         db: Database session
         _: Permission check dependency
-        
+
     Returns:
         List of security events
     """
     try:
         stmt = select(SecurityEvent)
-        
+
         conditions = []
         if severity:
             conditions.append(SecurityEvent.severity.in_(severity))
@@ -543,14 +521,14 @@ async def get_security_events(
             conditions.append(SecurityEvent.timestamp >= start_time)
         if end_time:
             conditions.append(SecurityEvent.timestamp <= end_time)
-        
+
         if conditions:
             stmt = stmt.where(and_(*conditions))
-        
+
         stmt = stmt.order_by(desc(SecurityEvent.timestamp)).limit(limit).offset(offset)
-        
+
         events = db.execute(stmt).scalars().all()
-        
+
         return [
             SecurityEventResponse(
                 id=str(event.id),
@@ -567,7 +545,7 @@ async def get_security_events(
             )
             for event in events
         ]
-    
+
     except Exception as e:
         logger.error(f"Security events query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Security events query failed: {str(e)}")
@@ -585,10 +563,10 @@ async def get_audit_trails(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> List[AuditTrailResponse]:
     """Get audit trails with filters.
-    
+
     Args:
         action: Filter by actions
         resource_type: Filter by resource types
@@ -600,13 +578,13 @@ async def get_audit_trails(
         offset: Result offset
         db: Database session
         _: Permission check dependency
-        
+
     Returns:
         List of audit trail entries
     """
     try:
         stmt = select(AuditTrail)
-        
+
         conditions = []
         if action:
             conditions.append(AuditTrail.action.in_(action))
@@ -620,14 +598,14 @@ async def get_audit_trails(
             conditions.append(AuditTrail.timestamp >= start_time)
         if end_time:
             conditions.append(AuditTrail.timestamp <= end_time)
-        
+
         if conditions:
             stmt = stmt.where(and_(*conditions))
-        
+
         stmt = stmt.order_by(desc(AuditTrail.timestamp)).limit(limit).offset(offset)
-        
+
         trails = db.execute(stmt).scalars().all()
-        
+
         return [
             AuditTrailResponse(
                 id=str(trail.id),
@@ -645,7 +623,7 @@ async def get_audit_trails(
             )
             for trail in trails
         ]
-    
+
     except Exception as e:
         logger.error(f"Audit trails query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Audit trails query failed: {str(e)}")
@@ -659,17 +637,17 @@ async def get_performance_metrics(
     hours: float = Query(24.0, ge=MIN_PERFORMANCE_RANGE_HOURS, le=1000.0, description="Historical window to display"),
     aggregation: str = Query(_DEFAULT_AGGREGATION_KEY, regex="^(5m|24h)$", description="Aggregation level for metrics"),
     user=Depends(get_current_user_with_permissions),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ) -> List[PerformanceMetricResponse]:
     """Get performance metrics.
-    
+
     Args:
         component: Filter by component
         operation: Filter by operation
         hours: Hours of history
         db: Database session
         _: Permission check dependency
-        
+
     Returns:
         List of performance metrics
     """
@@ -692,21 +670,19 @@ async def get_performance_metrics(
             except Exception as agg_error:  # pragma: no cover - defensive logging
                 logger.warning("On-demand metrics aggregation failed: %s", agg_error)
 
-        stmt = select(PerformanceMetric).where(
-            PerformanceMetric.window_duration_seconds == window_duration_seconds
-        )
-        
+        stmt = select(PerformanceMetric).where(PerformanceMetric.window_duration_seconds == window_duration_seconds)
+
         if component:
             stmt = stmt.where(PerformanceMetric.component == component)
         if operation:
             stmt = stmt.where(PerformanceMetric.operation_type == operation)
 
         stmt = stmt.order_by(desc(PerformanceMetric.window_start), desc(PerformanceMetric.timestamp))
-        
+
         metrics = db.execute(stmt).scalars().all()
 
         metrics = _deduplicate_metrics(metrics)
-        
+
         return [
             PerformanceMetricResponse(
                 id=str(metric.id),
@@ -727,7 +703,7 @@ async def get_performance_metrics(
             )
             for metric in metrics
         ]
-    
+
     except Exception as e:
         logger.error(f"Performance metrics query failed: {e}")
         raise HTTPException(status_code=500, detail="Performance metrics query failed")

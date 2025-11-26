@@ -43,7 +43,7 @@ def _log_auth_event(
     auth_success: bool = False,
     security_event: Optional[str] = None,
     security_severity: str = "low",
-    **extra_context
+    **extra_context,
 ) -> None:
     """Log authentication event with structured context and request_id.
 
@@ -66,17 +66,17 @@ def _log_auth_event(
 
     # Build structured log record
     extra = {
-        'request_id': request_id,
-        'entity_type': 'auth',
-        'auth_success': auth_success,
-        'security_event': security_event or 'authentication',
-        'security_severity': security_severity,
+        "request_id": request_id,
+        "entity_type": "auth",
+        "auth_success": auth_success,
+        "security_event": security_event or "authentication",
+        "security_severity": security_severity,
     }
 
     if user_id:
-        extra['user_id'] = user_id
+        extra["user_id"] = user_id
     if auth_method:
-        extra['auth_method'] = auth_method
+        extra["auth_method"] = auth_method
 
     # Add any additional context
     extra.update(extra_context)

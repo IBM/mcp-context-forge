@@ -407,7 +407,7 @@ class PromptService:
             await self._notify_prompt_added(db_prompt)
 
             logger.info(f"Registered prompt: {prompt.name}")
-            
+
             # Structured logging: Audit trail for prompt creation
             audit_trail.log_action(
                 user_id=created_by or "system",
@@ -430,7 +430,7 @@ class PromptService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful prompt creation
             structured_logger.log(
                 level="INFO",
@@ -448,14 +448,14 @@ class PromptService:
                 },
                 db=db,
             )
-            
+
             db_prompt.team = self._get_team_name(db, db_prompt.team_id)
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
 
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt creation failed due to database integrity error",
@@ -470,7 +470,7 @@ class PromptService:
             raise ie
         except PromptNameConflictError as se:
             db.rollback()
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Prompt creation failed due to name conflict",
@@ -484,7 +484,7 @@ class PromptService:
             raise se
         except Exception as e:
             db.rollback()
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt creation failed",
@@ -1110,7 +1110,7 @@ class PromptService:
             db.refresh(prompt)
 
             await self._notify_prompt_updated(prompt)
-            
+
             # Structured logging: Audit trail for prompt update
             audit_trail.log_action(
                 user_id=user_email or modified_by or "system",
@@ -1126,7 +1126,7 @@ class PromptService:
                 context={"modified_via": modified_via},
                 db=db,
             )
-            
+
             structured_logger.log(
                 level="INFO",
                 message="Prompt updated successfully",
@@ -1140,13 +1140,13 @@ class PromptService:
                 custom_fields={"prompt_name": prompt.name, "version": prompt.version},
                 db=db,
             )
-            
+
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
         except PermissionError as pe:
             db.rollback()
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Prompt update failed due to permission error",
@@ -1162,7 +1162,7 @@ class PromptService:
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt update failed due to database integrity error",
@@ -1178,7 +1178,7 @@ class PromptService:
         except PromptNotFoundError as e:
             db.rollback()
             logger.error(f"Prompt not found: {e}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt update failed - prompt not found",
@@ -1194,7 +1194,7 @@ class PromptService:
         except PromptNameConflictError as pnce:
             db.rollback()
             logger.error(f"Prompt name conflict: {pnce}")
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Prompt update failed due to name conflict",
@@ -1209,7 +1209,7 @@ class PromptService:
             raise pnce
         except Exception as e:
             db.rollback()
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt update failed",
@@ -1282,7 +1282,7 @@ class PromptService:
                 else:
                     await self._notify_prompt_deactivated(prompt)
                 logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
-                
+
                 # Structured logging: Audit trail for prompt status toggle
                 audit_trail.log_action(
                     user_id=user_email or "system",
@@ -1296,7 +1296,7 @@ class PromptService:
                     context={"action": "activate" if activate else "deactivate"},
                     db=db,
                 )
-                
+
                 structured_logger.log(
                     level="INFO",
                     message=f"Prompt {'activated' if activate else 'deactivated'} successfully",
@@ -1309,7 +1309,7 @@ class PromptService:
                     custom_fields={"prompt_name": prompt.name, "is_active": prompt.is_active},
                     db=db,
                 )
-            
+
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
         except PermissionError as e:
@@ -1327,7 +1327,7 @@ class PromptService:
             raise e
         except Exception as e:
             db.rollback()
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Prompt status toggle failed",
@@ -1453,12 +1453,12 @@ class PromptService:
             prompt_info = {"id": prompt.id, "name": prompt.name}
             prompt_name = prompt.name
             prompt_team_id = prompt.team_id
-            
+
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
             logger.info(f"Deleted prompt: {prompt_info['name']}")
-            
+
             # Structured logging: Audit trail for prompt deletion
             audit_trail.log_action(
                 user_id=user_email or "system",
@@ -1471,7 +1471,7 @@ class PromptService:
                 old_values={"name": prompt_name},
                 db=db,
             )
-            
+
             # Structured logging: Log successful prompt deletion
             structured_logger.log(
                 level="INFO",
@@ -1487,7 +1487,7 @@ class PromptService:
             )
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -1517,7 +1517,7 @@ class PromptService:
                     db=db,
                 )
                 raise e
-            
+
             # Structured logging: Log generic prompt deletion failure
             structured_logger.log(
                 level="ERROR",

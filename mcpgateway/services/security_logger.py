@@ -22,12 +22,14 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import SecurityEvent, AuditTrail, SessionLocal
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class SecuritySeverity(str, Enum):
     """Security event severity levels."""
+
     LOW = "LOW"
     MEDIUM = "MEDIUM"
     HIGH = "HIGH"
@@ -36,6 +38,7 @@ class SecuritySeverity(str, Enum):
 
 class SecurityEventType(str, Enum):
     """Types of security events."""
+
     AUTHENTICATION_FAILURE = "authentication_failure"
     AUTHENTICATION_SUCCESS = "authentication_success"
     AUTHORIZATION_FAILURE = "authorization_failure"
@@ -51,17 +54,17 @@ class SecurityEventType(str, Enum):
 
 class SecurityLogger:
     """Specialized logger for security events and audit trails.
-    
+
     Provides threat detection, security event logging, and audit trail
     management with automated analysis and alerting capabilities.
     """
-    
+
     def __init__(self):
         """Initialize security logger."""
         self.failed_auth_threshold = getattr(settings, "security_failed_auth_threshold", 5)
         self.threat_score_alert_threshold = getattr(settings, "security_threat_score_alert", 0.7)
         self.rate_limit_window_minutes = getattr(settings, "security_rate_limit_window", 5)
-    
+
     def log_authentication_attempt(
         self,
         user_id: str,
@@ -72,10 +75,10 @@ class SecurityLogger:
         user_agent: Optional[str] = None,
         failure_reason: Optional[str] = None,
         additional_context: Optional[Dict[str, Any]] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[SecurityEvent]:
         """Log authentication attempts with security analysis.
-        
+
         Args:
             user_id: User identifier
             user_email: User email address
@@ -86,26 +89,18 @@ class SecurityLogger:
             failure_reason: Reason for failure if applicable
             additional_context: Additional event context
             db: Optional database session
-            
+
         Returns:
             Created SecurityEvent or None if logging disabled
         """
         correlation_id = get_correlation_id()
-        
+
         # Count recent failed attempts
-        failed_attempts = self._count_recent_failures(
-            user_id=user_id,
-            client_ip=client_ip,
-            db=db
-        )
-        
+        failed_attempts = self._count_recent_failures(user_id=user_id, client_ip=client_ip, db=db)
+
         # Calculate threat score
-        threat_score = self._calculate_auth_threat_score(
-            success=success,
-            failed_attempts=failed_attempts,
-            auth_method=auth_method
-        )
-        
+        threat_score = self._calculate_auth_threat_score(success=success, failed_attempts=failed_attempts, auth_method=auth_method)
+
         # Determine severity
         if not success:
             if failed_attempts >= self.failed_auth_threshold:
@@ -116,20 +111,15 @@ class SecurityLogger:
                 severity = SecuritySeverity.LOW
         else:
             severity = SecuritySeverity.LOW
-        
+
         # Build event description
         description = f"Authentication {'successful' if success else 'failed'} for user {user_id}"
         if not success and failure_reason:
             description += f": {failure_reason}"
-        
+
         # Build context
-        context = {
-            "auth_method": auth_method,
-            "failed_attempts_recent": failed_attempts,
-            "user_agent": user_agent,
-            **(additional_context or {})
-        }
-        
+        context = {"auth_method": auth_method, "failed_attempts_recent": failed_attempts, "user_agent": user_agent, **(additional_context or {})}
+
         # Create security event
         event = self._create_security_event(
             event_type=SecurityEventType.AUTHENTICATION_SUCCESS if success else SecurityEventType.AUTHENTICATION_FAILURE,
@@ -145,9 +135,9 @@ class SecurityLogger:
             context=context,
             action_taken="allowed" if success else "denied",
             correlation_id=correlation_id,
-            db=db
+            db=db,
         )
-        
+
         # Log to standard logger as well
         log_level = logging.WARNING if not success else logging.INFO
         logger.log(
@@ -159,11 +149,11 @@ class SecurityLogger:
                 "severity": severity.value,
                 "threat_score": threat_score,
                 "correlation_id": correlation_id,
-            }
+            },
         )
-        
+
         return event
-    
+
     def log_data_access(
         self,
         action: str,
@@ -181,10 +171,10 @@ class SecurityLogger:
         new_values: Optional[Dict[str, Any]] = None,
         error_message: Optional[str] = None,
         additional_context: Optional[Dict[str, Any]] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[AuditTrail]:
         """Log data access for audit trails.
-        
+
         Args:
             action: Action performed (create, read, update, delete, execute)
             resource_type: Type of resource accessed
@@ -202,29 +192,20 @@ class SecurityLogger:
             error_message: Error message if failed
             additional_context: Additional context
             db: Optional database session
-            
+
         Returns:
             Created AuditTrail entry or None
         """
         correlation_id = get_correlation_id()
-        
+
         # Determine if audit requires review
-        requires_review = self._requires_audit_review(
-            action=action,
-            resource_type=resource_type,
-            data_classification=data_classification,
-            success=success
-        )
-        
+        requires_review = self._requires_audit_review(action=action, resource_type=resource_type, data_classification=data_classification, success=success)
+
         # Calculate changes
         changes = None
         if old_values and new_values:
-            changes = {
-                k: {"old": old_values.get(k), "new": new_values.get(k)}
-                for k in set(old_values.keys()) | set(new_values.keys())
-                if old_values.get(k) != new_values.get(k)
-            }
-        
+            changes = {k: {"old": old_values.get(k), "new": new_values.get(k)} for k in set(old_values.keys()) | set(new_values.keys()) if old_values.get(k) != new_values.get(k)}
+
         # Create audit trail
         audit = self._create_audit_trail(
             action=action,
@@ -245,9 +226,9 @@ class SecurityLogger:
             error_message=error_message,
             context=additional_context,
             correlation_id=correlation_id,
-            db=db
+            db=db,
         )
-        
+
         # Log sensitive data access as security event
         if data_classification in ["confidential", "restricted", "sensitive"]:
             self._create_security_event(
@@ -267,11 +248,11 @@ class SecurityLogger:
                     "data_classification": data_classification,
                 },
                 correlation_id=correlation_id,
-                db=db
+                db=db,
             )
-        
+
         return audit
-    
+
     def log_suspicious_activity(
         self,
         activity_type: str,
@@ -285,10 +266,10 @@ class SecurityLogger:
         threat_indicators: Dict[str, Any],
         action_taken: str,
         additional_context: Optional[Dict[str, Any]] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[SecurityEvent]:
         """Log suspicious activity with threat analysis.
-        
+
         Args:
             activity_type: Type of suspicious activity
             description: Event description
@@ -302,12 +283,12 @@ class SecurityLogger:
             action_taken: Action taken in response
             additional_context: Additional context
             db: Optional database session
-            
+
         Returns:
             Created SecurityEvent or None
         """
         correlation_id = get_correlation_id()
-        
+
         event = self._create_security_event(
             event_type=SecurityEventType.SUSPICIOUS_ACTIVITY,
             severity=severity,
@@ -322,9 +303,9 @@ class SecurityLogger:
             action_taken=action_taken,
             context=additional_context,
             correlation_id=correlation_id,
-            db=db
+            db=db,
         )
-        
+
         logger.warning(
             f"Suspicious activity detected: {description}",
             extra={
@@ -334,80 +315,66 @@ class SecurityLogger:
                 "threat_score": threat_score,
                 "action_taken": action_taken,
                 "correlation_id": correlation_id,
-            }
+            },
         )
-        
+
         return event
-    
-    def _count_recent_failures(
-        self,
-        user_id: Optional[str] = None,
-        client_ip: Optional[str] = None,
-        minutes: Optional[int] = None,
-        db: Optional[Session] = None
-    ) -> int:
+
+    def _count_recent_failures(self, user_id: Optional[str] = None, client_ip: Optional[str] = None, minutes: Optional[int] = None, db: Optional[Session] = None) -> int:
         """Count recent authentication failures.
-        
+
         Args:
             user_id: User identifier
             client_ip: Client IP address
             minutes: Time window in minutes
             db: Optional database session
-            
+
         Returns:
             Count of recent failures
         """
         if not user_id and not client_ip:
             return 0
-        
+
         window_minutes = minutes or self.rate_limit_window_minutes
         since = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
-        
+
         should_close = False
         if db is None:
             db = SessionLocal()
             should_close = True
-        
+
         try:
-            stmt = select(func.count(SecurityEvent.id)).where(
-                SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE,
-                SecurityEvent.timestamp >= since
-            )
-            
+            stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)
+
             if user_id:
                 stmt = stmt.where(SecurityEvent.user_id == user_id)
             if client_ip:
                 stmt = stmt.where(SecurityEvent.client_ip == client_ip)
-            
+
             result = db.execute(stmt).scalar()
             return result or 0
-        
+
         finally:
             if should_close:
                 db.close()
-    
-    def _calculate_auth_threat_score(
-        self,
-        success: bool,
-        failed_attempts: int,
-        auth_method: str
-    ) -> float:
+
+    def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:
         """Calculate threat score for authentication attempt.
-        
+
         Args:
             success: Whether authentication succeeded
             failed_attempts: Count of recent failures
             auth_method: Authentication method used
-            
+
         Returns:
             Threat score from 0.0 to 1.0
         """
         if success:
             return 0.0
-        
+
         # Base score for failure
         score = 0.3
-        
+
         # Increase based on failed attempts
         if failed_attempts >= 10:
             score += 0.5
@@ -415,42 +382,36 @@ class SecurityLogger:
             score += 0.3
         elif failed_attempts >= 3:
             score += 0.2
-        
+
         # Cap at 1.0
         return min(score, 1.0)
-    
-    def _requires_audit_review(
-        self,
-        action: str,
-        resource_type: str,
-        data_classification: Optional[str],
-        success: bool
-    ) -> bool:
+
+    def _requires_audit_review(self, action: str, resource_type: str, data_classification: Optional[str], success: bool) -> bool:
         """Determine if audit entry requires manual review.
-        
+
         Args:
             action: Action performed
             resource_type: Resource type
             data_classification: Data classification
             success: Whether action succeeded
-            
+
         Returns:
             True if review required
         """
         # Failed actions on sensitive data require review
         if not success and data_classification in ["confidential", "restricted"]:
             return True
-        
+
         # Deletions of sensitive data require review
         if action == "delete" and data_classification in ["confidential", "restricted"]:
             return True
-        
+
         # Privilege modifications require review
         if resource_type in ["role", "permission", "team_member"]:
             return True
-        
+
         return False
-    
+
     def _create_security_event(
         self,
         event_type: str,
@@ -467,10 +428,10 @@ class SecurityLogger:
         threat_indicators: Optional[Dict[str, Any]] = None,
         context: Optional[Dict[str, Any]] = None,
         correlation_id: Optional[str] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[SecurityEvent]:
         """Create a security event record.
-        
+
         Args:
             event_type: Type of security event
             severity: Event severity
@@ -487,7 +448,7 @@ class SecurityLogger:
             context: Additional context
             correlation_id: Correlation ID
             db: Optional database session
-            
+
         Returns:
             Created SecurityEvent or None
         """
@@ -495,7 +456,7 @@ class SecurityLogger:
         if db is None:
             db = SessionLocal()
             should_close = True
-        
+
         try:
             event = SecurityEvent(
                 event_type=event_type,
@@ -513,22 +474,22 @@ class SecurityLogger:
                 context=context,
                 correlation_id=correlation_id,
             )
-            
+
             db.add(event)
             db.commit()
             db.refresh(event)
-            
+
             return event
-        
+
         except Exception as e:
             logger.error(f"Failed to create security event: {e}")
             db.rollback()
             return None
-        
+
         finally:
             if should_close:
                 db.close()
-    
+
     def _create_audit_trail(
         self,
         action: str,
@@ -549,10 +510,10 @@ class SecurityLogger:
         error_message: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         correlation_id: Optional[str] = None,
-        db: Optional[Session] = None
+        db: Optional[Session] = None,
     ) -> Optional[AuditTrail]:
         """Create an audit trail record.
-        
+
         Args:
             action: Action performed
             resource_type: Resource type
@@ -573,7 +534,7 @@ class SecurityLogger:
             context: Additional context
             correlation_id: Correlation ID
             db: Optional database session
-            
+
         Returns:
             Created AuditTrail or None
         """
@@ -581,7 +542,7 @@ class SecurityLogger:
         if db is None:
             db = SessionLocal()
             should_close = True
-        
+
         try:
             audit = AuditTrail(
                 action=action,
@@ -603,18 +564,18 @@ class SecurityLogger:
                 context=context,
                 correlation_id=correlation_id,
             )
-            
+
             db.add(audit)
             db.commit()
             db.refresh(audit)
-            
+
             return audit
-        
+
         except Exception as e:
             logger.error(f"Failed to create audit trail: {e}")
             db.rollback()
             return None
-        
+
         finally:
             if should_close:
                 db.close()
@@ -626,7 +587,7 @@ _security_logger: Optional[SecurityLogger] = None
 
 def get_security_logger() -> SecurityLogger:
     """Get or create the global security logger instance.
-    
+
     Returns:
         Global SecurityLogger instance
     """
@@ -634,7 +595,3 @@ def get_security_logger() -> SecurityLogger:
     if _security_logger is None:
         _security_logger = SecurityLogger()
     return _security_logger
-
-
-# Import settings here to avoid circular imports
-from mcpgateway.config import settings

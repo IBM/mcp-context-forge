@@ -92,15 +92,15 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Note: EmailUser uses 'email' as primary key, not 'id'
             user_email = user.email
             user_id = user_email  # For EmailUser, email IS the ID
-            
+
             # Expunge the user from the session so it can be used after session closes
             # This makes the object detached but with all attributes already loaded
             db.expunge(user)
-            
+
             # Store user in request state for downstream use
             request.state.user = user
             logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
-            
+
             # Log successful authentication
             security_logger.log_authentication_attempt(
                 user_id=user_id,
@@ -109,13 +109,13 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 success=True,
                 client_ip=request.client.host if request.client else "unknown",
                 user_agent=request.headers.get("user-agent"),
-                db=db
+                db=db,
             )
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
             logger.info(f"✗ Auth context extraction failed (continuing as anonymous): {e}")
-            
+
             # Log failed authentication attempt
             security_logger.log_authentication_attempt(
                 user_id="unknown",
@@ -125,7 +125,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 client_ip=request.client.host if request.client else "unknown",
                 user_agent=request.headers.get("user-agent"),
                 failure_reason=str(e),
-                db=db if db else None
+                db=db if db else None,
             )
 
         finally:
