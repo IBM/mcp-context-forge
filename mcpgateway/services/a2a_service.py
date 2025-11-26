@@ -29,6 +29,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
@@ -864,8 +865,6 @@ class A2AAgentService:
                         headers["Authorization"] = f"Bearer {token_value}"
 
                 # Add correlation ID to outbound headers for distributed tracing
-                from mcpgateway.utils.correlation_id import get_correlation_id
-
                 correlation_id = get_correlation_id()
                 if correlation_id:
                     headers["X-Correlation-ID"] = correlation_id

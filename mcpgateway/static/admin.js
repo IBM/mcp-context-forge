@@ -21550,43 +21550,12 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
             </span>
             <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
- * Restore default log table headers
- */
-function restoreLogTableHeaders() {
-    const thead = document.getElementById('logs-thead');
-    if (thead) {
-        thead.innerHTML = `
-            <tr>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Time
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Level
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Component
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Message
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    User
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Duration
-                </th>
-                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
-                    Correlation ID
-                </th>
-            </tr>
-        `;
     }
 }
 
 /**
  * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
  */
-
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
     const form = cell.querySelector('form[action*="/toggle"]');
@@ -21615,6 +21584,8 @@ function updateEntityActionButtons(cell, type, id, isEnabled) {
         `;
     }
 }
+
+/**
  * Display correlation trace results
  */
 function displayCorrelationTrace(trace) {
