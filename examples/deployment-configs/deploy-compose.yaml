@@ -72,7 +72,7 @@ plugins:
 
   #  # Build from GitHub repository
   #  repo: https://github.com/terylt/mcp-context-forge.git
-  #  ref: feat/use_mtls_plugins 
+  #  ref: feat/use_mtls_plugins
   #  context: plugins/external/llmguard
   #  containerfile: Containerfile
   #  target: builder  # Build only the 'builder' stage (multi-stage build)

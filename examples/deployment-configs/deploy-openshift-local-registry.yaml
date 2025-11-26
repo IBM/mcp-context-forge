@@ -81,7 +81,7 @@ plugins:
 
     # Build from repository
     repo: https://github.com/terylt/mcp-context-forge.git
-    ref: feat/use_mtls_plugins 
+    ref: feat/use_mtls_plugins
     context: plugins/external/opa
     containerfile: Containerfile
     image: mcpgateway-opapluginfilter:latest
