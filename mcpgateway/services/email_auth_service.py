@@ -436,7 +436,7 @@ class EmailAuthService:
             self.db.add(auth_event)
             self.db.commit()
 
-    async def change_password(self, email: str, old_password: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+    async def change_password(self, email: str, old_password: Optional[str], new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
 
         Args:

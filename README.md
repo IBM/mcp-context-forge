@@ -132,7 +132,7 @@ It currently supports:
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
-* An Admin UI for real-time management, configuration, and log monitoring
+* An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
@@ -556,6 +556,31 @@ docker run -d --name mcpgateway \
 ```
 
 Using `--network=host` allows Docker to access the local network, allowing you to add MCP servers running on your host. See [Docker Host network driver documentation](https://docs.docker.com/engine/network/drivers/host/) for more details.
+
+#### 4 - Airgapped deployment (no internet access)
+
+For environments without internet access, build a container with bundled UI assets:
+
+```bash
+# Build airgapped container (downloads CDN assets during build)
+docker build -f Containerfile.lite -t mcpgateway:airgapped .
+
+# Run in airgapped mode
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e MCPGATEWAY_UI_AIRGAPPED=true \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-test-key \
+  -e BASIC_AUTH_USER=admin \
+  -e BASIC_AUTH_PASSWORD=changeme \
+  -e AUTH_REQUIRED=true \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  mcpgateway:airgapped
+```
+
+The Admin UI will work completely offline with all CSS/JS assets (~932KB) served locally.
 
 ---
 

@@ -15,9 +15,9 @@ import mcpgateway.services.elicitation_service as svc
 
 
 class DummyElicitResult:
-	def __init__(self, action, content=None):
-		self.action = action
-		self.content = content
+    def __init__(self, action, content=None):
+        self.action = action
+        self.content = content
 
 
 # --------------------------------------------------------------------------- #
@@ -26,25 +26,25 @@ class DummyElicitResult:
 
 @pytest.mark.asyncio
 async def test_service_start_and_shutdown(monkeypatch):
-	service = svc.ElicitationService(default_timeout=0.1, max_concurrent=2, cleanup_interval=1)
-	await service.start()
-	assert isinstance(service._cleanup_task, asyncio.Task)
+    service = svc.ElicitationService(default_timeout=0.1, max_concurrent=2, cleanup_interval=1)
+    await service.start()
+    assert isinstance(service._cleanup_task, asyncio.Task)
 
-	# Insert a pending elicitation
-	fut = asyncio.Future()
-	p = svc.PendingElicitation(
-		request_id="abc",
-		upstream_session_id="u",
-		downstream_session_id="d",
-		created_at=time.time(),
-		timeout=1,
-		message="m",
-		schema={"type": "object", "properties": {}},
-		future=fut,
-	)
-	service._pending[p.request_id] = p
-	await service.shutdown()
-	assert len(service._pending) == 0
+    # Insert a pending elicitation
+    fut = asyncio.Future()
+    p = svc.PendingElicitation(
+        request_id="abc",
+        upstream_session_id="u",
+        downstream_session_id="d",
+        created_at=time.time(),
+        timeout=1,
+        message="m",
+        schema={"type": "object", "properties": {}},
+        future=fut,
+    )
+    service._pending[p.request_id] = p
+    await service.shutdown()
+    assert len(service._pending) == 0
 
 
 @pytest.mark.asyncio
@@ -114,12 +114,12 @@ def test_complete_get_and_count(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_cleanup_expired(monkeypatch):
-	service = svc.ElicitationService()
-	fut = asyncio.Future()
-	e = svc.PendingElicitation("x", "u", "d", time.time() - 100, 0.1, "m", {"type": "object", "properties": {}}, fut)
-	service._pending[e.request_id] = e
-	await service._cleanup_expired()
-	assert e.request_id not in service._pending
+    service = svc.ElicitationService()
+    fut = asyncio.Future()
+    e = svc.PendingElicitation("x", "u", "d", time.time() - 100, 0.1, "m", {"type": "object", "properties": {}}, fut)
+    service._pending[e.request_id] = e
+    await service._cleanup_expired()
+    assert e.request_id not in service._pending
 
 
 @pytest.mark.asyncio
@@ -137,41 +137,41 @@ async def test_cleanup_loop_cancel(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 def test_validate_schema_success(monkeypatch):
-	s = svc.ElicitationService()
-	schema = {
-		"type": "object",
-		"properties": {
-			"name": {"type": "string"},
-			"age": {"type": "integer"},
-			"email": {"type": "string", "format": "email"},
-		},
-	}
-	s._validate_schema(schema)
+    s = svc.ElicitationService()
+    schema = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+            "email": {"type": "string", "format": "email"},
+        },
+    }
+    s._validate_schema(schema)
 
 
 def test_validate_schema_failures(monkeypatch):
-	s = svc.ElicitationService()
-	with pytest.raises(ValueError):
-		s._validate_schema("bad")
-	with pytest.raises(ValueError):
-		s._validate_schema({"type": "wrong"})
-	with pytest.raises(ValueError):
-		s._validate_schema({"type": "object", "properties": "bad"})
+    s = svc.ElicitationService()
+    with pytest.raises(ValueError):
+        s._validate_schema("bad")
+    with pytest.raises(ValueError):
+        s._validate_schema({"type": "wrong"})
+    with pytest.raises(ValueError):
+        s._validate_schema({"type": "object", "properties": "bad"})
 
-	bad_type = {"type": "object", "properties": {"x": {"type": "complex"}}}
-	with pytest.raises(ValueError):
-		s._validate_schema(bad_type)
+    bad_type = {"type": "object", "properties": {"x": {"type": "complex"}}}
+    with pytest.raises(ValueError):
+        s._validate_schema(bad_type)
 
-	bad_nested = {"type": "object", "properties": {"y": {"type": "string", "properties": {}}}}
-	with pytest.raises(ValueError):
-		s._validate_schema(bad_nested)
+    bad_nested = {"type": "object", "properties": {"y": {"type": "string", "properties": {}}}}
+    with pytest.raises(ValueError):
+        s._validate_schema(bad_nested)
 
 
 def test_validate_schema_warns(monkeypatch, caplog):
-	s = svc.ElicitationService()
-	schema = {"type": "object", "properties": {"f": {"type": "string", "format": "unknown"}}}
-	s._validate_schema(schema)
-	assert "non-standard format" in caplog.text
+    s = svc.ElicitationService()
+    schema = {"type": "object", "properties": {"f": {"type": "string", "format": "unknown"}}}
+    s._validate_schema(schema)
+    assert "non-standard format" in caplog.text
 
 
 # --------------------------------------------------------------------------- #
@@ -179,8 +179,8 @@ def test_validate_schema_warns(monkeypatch, caplog):
 # --------------------------------------------------------------------------- #
 
 def test_global_singleton(monkeypatch):
-	s1 = svc.get_elicitation_service()
-	assert isinstance(s1, svc.ElicitationService)
-	s2 = svc.ElicitationService()
-	svc.set_elicitation_service(s2)
-	assert svc.get_elicitation_service() is s2
+    s1 = svc.get_elicitation_service()
+    assert isinstance(s1, svc.ElicitationService)
+    s2 = svc.ElicitationService()
+    svc.set_elicitation_service(s2)
+    assert svc.get_elicitation_service() is s2
