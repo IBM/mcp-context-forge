@@ -117,23 +117,23 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
+from contextlib import suppress
 import json
 import logging
 import os
 import shlex
 import signal
 import sys
-import uuid
-from contextlib import suppress
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlencode
+import uuid
 
-import uvicorn
 # Third-Party
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from sse_starlette.sse import EventSourceResponse
+import uvicorn
 
 try:
     # Third-Party
@@ -151,8 +151,7 @@ from starlette.types import Receive, Scope, Send
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.translate_header_utils import (extract_env_vars_from_headers,
-                                               parse_header_mappings)
+from mcpgateway.translate_header_utils import extract_env_vars_from_headers, parse_header_mappings
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -2339,8 +2338,7 @@ def main(argv: Optional[Sequence[str]] | None = None) -> None:
         # Handle gRPC server exposure
         if getattr(args, "grpc", None):
             # First-Party
-            from mcpgateway.translate_grpc import \
-                expose_grpc_via_sse  # pylint: disable=import-outside-toplevel
+            from mcpgateway.translate_grpc import expose_grpc_via_sse  # pylint: disable=import-outside-toplevel
 
             # Parse metadata
             metadata = {}

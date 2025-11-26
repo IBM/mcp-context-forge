@@ -21,17 +21,13 @@ import os
 import sys
 from typing import Any, Dict
 
-import uvicorn
 # Third-Party
 from mcp.server.fastmcp import FastMCP
+import uvicorn
 
 # First-Party
 from mcpgateway.plugins.framework import ExternalPluginServer, MCPServerConfig
-from mcpgateway.plugins.framework.constants import (GET_PLUGIN_CONFIG,
-                                                    GET_PLUGIN_CONFIGS,
-                                                    INVOKE_HOOK,
-                                                    MCP_SERVER_INSTRUCTIONS,
-                                                    MCP_SERVER_NAME)
+from mcpgateway.plugins.framework.constants import GET_PLUGIN_CONFIG, GET_PLUGIN_CONFIGS, INVOKE_HOOK, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -161,14 +157,10 @@ class SSLCapableFastMCP(FastMCP):
             health_port: Port number for the health check server.
         """
         # Third-Party
-        from starlette.applications import \
-            Starlette  # pylint: disable=import-outside-toplevel
-        from starlette.requests import \
-            Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import \
-            JSONResponse  # pylint: disable=import-outside-toplevel
-        from starlette.routing import \
-            Route  # pylint: disable=import-outside-toplevel
+        from starlette.applications import Starlette  # pylint: disable=import-outside-toplevel
+        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
+        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
+        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
@@ -197,12 +189,9 @@ class SSLCapableFastMCP(FastMCP):
 
         # Add health check endpoint to main app
         # Third-Party
-        from starlette.requests import \
-            Request  # pylint: disable=import-outside-toplevel
-        from starlette.responses import \
-            JSONResponse  # pylint: disable=import-outside-toplevel
-        from starlette.routing import \
-            Route  # pylint: disable=import-outside-toplevel
+        from starlette.requests import Request  # pylint: disable=import-outside-toplevel
+        from starlette.responses import JSONResponse  # pylint: disable=import-outside-toplevel
+        from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.

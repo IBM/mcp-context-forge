@@ -8,12 +8,12 @@ Vendor-agnostic OpenTelemetry instrumentation for MCP Gateway.
 Supports any OTLP-compatible backend (Jaeger, Zipkin, Tempo, Phoenix, etc.).
 """
 
-import logging
-import os
 # Standard
 from contextlib import nullcontext
 from importlib import import_module as _im
-from typing import Any, Callable, Dict, Optional, cast
+import logging
+import os
+from typing import Any, Callable, cast, Dict, Optional
 
 # Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
@@ -22,9 +22,7 @@ try:
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import (BatchSpanProcessor,
-                                                ConsoleSpanExporter,
-                                                SimpleSpanProcessor)
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SimpleSpanProcessor
     from opentelemetry.trace import Status, StatusCode
 
     OTEL_AVAILABLE = True

@@ -37,16 +37,18 @@ except ImportError:
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_client_chat_service import (AnthropicConfig,
-                                                         AWSBedrockConfig,
-                                                         AzureOpenAIConfig,
-                                                         LLMConfig,
-                                                         MCPChatService,
-                                                         MCPClientConfig,
-                                                         MCPServerConfig,
-                                                         OllamaConfig,
-                                                         OpenAIConfig,
-                                                         WatsonxConfig)
+from mcpgateway.services.mcp_client_chat_service import (
+    AnthropicConfig,
+    AWSBedrockConfig,
+    AzureOpenAIConfig,
+    LLMConfig,
+    MCPChatService,
+    MCPClientConfig,
+    MCPServerConfig,
+    OllamaConfig,
+    OpenAIConfig,
+    WatsonxConfig,
+)
 
 # Load environment variables
 load_dotenv()

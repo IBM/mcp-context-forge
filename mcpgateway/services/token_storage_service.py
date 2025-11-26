@@ -10,9 +10,9 @@ This module handles the storage, retrieval, and management of OAuth access and r
 for Authorization Code flow implementations.
 """
 
-import logging
 # Standard
 from datetime import datetime, timedelta, timezone
+import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
@@ -187,8 +187,7 @@ class TokenStorageService:
 
             # Get the gateway configuration to retrieve OAuth settings
             # First-Party
-            from mcpgateway.db import \
-                Gateway  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import Gateway  # pylint: disable=import-outside-toplevel
 
             gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
 
@@ -217,8 +216,7 @@ class TokenStorageService:
 
             # Use OAuthManager to refresh the token
             # First-Party
-            from mcpgateway.services.oauth_manager import \
-                OAuthManager  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.oauth_manager import OAuthManager  # pylint: disable=import-outside-toplevel
 
             oauth_manager = OAuthManager()
 

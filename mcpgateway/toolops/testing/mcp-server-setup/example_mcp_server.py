@@ -8,9 +8,11 @@ MCP Gateway - Script to set up test MCP server with tools
 
 This module creates test MCP server for toolops testing purpose.
 """
+# Standard
 import json
 from typing import Dict, List, Optional
 
+# Third-Party
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 
@@ -299,6 +301,7 @@ if __name__ == "__main__":
     print("NOTE - After the MCP server is started you need to configure/add server in MCP-CF UI")
     print("-" * 50)
     print("#" * 50)
+    # Third-Party
     import uvicorn
 
     uvicorn.run(app, host="127.0.0.1", port=9009)

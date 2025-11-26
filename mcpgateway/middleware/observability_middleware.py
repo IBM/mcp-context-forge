@@ -29,9 +29,7 @@ from starlette.responses import Response
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
-from mcpgateway.services.observability_service import (ObservabilityService,
-                                                       current_trace_id,
-                                                       parse_traceparent)
+from mcpgateway.services.observability_service import current_trace_id, ObservabilityService, parse_traceparent
 
 logger = logging.getLogger(__name__)
 

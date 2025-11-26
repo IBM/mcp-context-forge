@@ -25,23 +25,22 @@ Examples:
     >>> service.end_trace(db, trace_id, status="ok", http_status_code=200)  # doctest: +SKIP
 """
 
-import logging
-import re
-import traceback
-import uuid
 # Standard
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+import logging
+import re
+import traceback
 from typing import Any, Dict, List, Optional, Tuple
+import uuid
 
 # Third-Party
 from sqlalchemy import desc
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.db import (ObservabilityEvent, ObservabilityMetric,
-                           ObservabilitySpan, ObservabilityTrace)
+from mcpgateway.db import ObservabilityEvent, ObservabilityMetric, ObservabilitySpan, ObservabilityTrace
 
 logger = logging.getLogger(__name__)
 
@@ -1096,7 +1095,7 @@ class ObservabilityService:
         """
         # Third-Party
         # pylint: disable=import-outside-toplevel
-        from sqlalchemy import String, cast, or_
+        from sqlalchemy import cast, or_, String
 
         # pylint: enable=import-outside-toplevel
         # Validate limit
@@ -1270,7 +1269,7 @@ class ObservabilityService:
         """
         # Third-Party
         # pylint: disable=import-outside-toplevel
-        from sqlalchemy import String, cast
+        from sqlalchemy import cast, String
 
         # pylint: enable=import-outside-toplevel
         # Validate limit

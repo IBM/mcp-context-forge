@@ -12,10 +12,10 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 - Client management (update, delete)
 """
 
-import json
-import logging
 # Standard
 from datetime import datetime, timezone
+import json
+import logging
 from typing import Any, Dict, List
 
 # Third-Party

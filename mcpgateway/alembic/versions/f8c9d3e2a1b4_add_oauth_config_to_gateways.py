@@ -14,9 +14,9 @@ Create Date: 2024-12-20 10:00:00.000000
 # Standard
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 # Third-Party
 from alembic import op
+import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "f8c9d3e2a1b4"

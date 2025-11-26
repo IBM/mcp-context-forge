@@ -51,8 +51,7 @@ def _write_span_to_db(span_data: dict) -> None:
         # First-Party
         # pylint: disable=import-outside-toplevel
         from mcpgateway.db import ObservabilitySpan, SessionLocal
-        from mcpgateway.services.observability_service import \
-            ObservabilityService
+        from mcpgateway.services.observability_service import ObservabilityService
 
         # pylint: enable=import-outside-toplevel
 

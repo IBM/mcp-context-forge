@@ -52,12 +52,12 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import datetime, timezone
 import json
 import os
 import platform
 import socket
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 

@@ -43,17 +43,16 @@ Examples:
     error
 """
 
-import binascii
 # Standard
 from base64 import b64decode
+import binascii
 from typing import Optional
 
-import jwt
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from fastapi.security import (HTTPAuthorizationCredentials, HTTPBasic,
-                              HTTPBasicCredentials, HTTPBearer)
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
+import jwt
 
 # First-Party
 from mcpgateway.config import settings
@@ -89,8 +88,7 @@ async def verify_jwt_token(token: str) -> dict:
 
         # Import the verification key helper
         # First-Party
-        from mcpgateway.utils.jwt_config_helper import \
-            get_jwt_public_key_or_secret
+        from mcpgateway.utils.jwt_config_helper import get_jwt_public_key_or_secret
 
         # First decode to check claims
         unverified = jwt.decode(token, options={"verify_signature": False})

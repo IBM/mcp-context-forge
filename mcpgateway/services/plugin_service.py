@@ -9,9 +9,9 @@ This module provides a service layer for accessing plugin information,
 statistics, and configuration from the PluginManager.
 """
 
-import logging
 # Standard
 from collections import defaultdict
+import logging
 from typing import Any, Dict, List, Optional
 
 # First-Party
