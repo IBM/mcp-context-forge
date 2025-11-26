@@ -193,7 +193,7 @@ class EventService:
         fallback_to_local = False
 
         if self._redis_client:
-            
+
             try:
                 # Import asyncio version of redis here to avoid top-level dependency issues
                 # Third-Party
