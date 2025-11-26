@@ -34,7 +34,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
-from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+from mcpgateway.schemas import (GrpcServiceCreate, GrpcServiceRead,
+                                GrpcServiceUpdate)
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 
@@ -450,7 +451,8 @@ class GrpcService:
         try:  # pylint: disable=too-many-nested-blocks
             # Import here to avoid circular dependency
             # Third-Party
-            from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=import-outside-toplevel,no-name-in-module
+            from google.protobuf.descriptor_pb2 import \
+                FileDescriptorProto  # pylint: disable=import-outside-toplevel,no-name-in-module
 
             # Create reflection stub
             stub = reflection_pb2_grpc.ServerReflectionStub(channel)
@@ -572,7 +574,8 @@ class GrpcService:
 
         # Import here to avoid circular dependency
         # First-Party
-        from mcpgateway.translate_grpc import GrpcEndpoint  # pylint: disable=import-outside-toplevel
+        from mcpgateway.translate_grpc import \
+            GrpcEndpoint  # pylint: disable=import-outside-toplevel
 
         # Parse method name (service.Method format)
         if "." not in method_name:

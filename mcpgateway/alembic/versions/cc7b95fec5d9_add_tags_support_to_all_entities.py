@@ -14,9 +14,9 @@ Create Date: 2025-08-06 22:27:08.682814
 # Standard
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql as pg
 
 # revision identifiers, used by Alembic.

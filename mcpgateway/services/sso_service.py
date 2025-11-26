@@ -13,13 +13,13 @@ from __future__ import annotations
 
 # Standard
 import base64
-from datetime import timedelta
 import hashlib
 import logging
 import secrets
 import string
-from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
+from datetime import timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
 import httpx
@@ -28,7 +28,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import PendingUserApproval, SSOAuthSession, SSOProvider, utc_now
+from mcpgateway.db import (PendingUserApproval, SSOAuthSession, SSOProvider,
+                           utc_now)
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.utils.create_jwt_token import create_jwt_token

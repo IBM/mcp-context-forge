@@ -10,9 +10,9 @@ This module provides CRUD operations for roles and user role assignments.
 It handles role creation, assignment, revocation, and validation.
 """
 
+import logging
 # Standard
 from datetime import datetime
-import logging
 from typing import List, Optional
 
 # Third-Party

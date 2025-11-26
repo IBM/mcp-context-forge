@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import (EmailTeam, EmailTeamJoinRequest, EmailTeamMember,
+                           EmailTeamMemberHistory, EmailUser, utc_now)
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging
@@ -173,7 +174,8 @@ class TeamManagementService:
 
             # Check for existing inactive team with same name
             # First-Party
-            from mcpgateway.utils.create_slug import slugify  # pylint: disable=import-outside-toplevel
+            from mcpgateway.utils.create_slug import \
+                slugify  # pylint: disable=import-outside-toplevel
 
             potential_slug = slugify(name)
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()

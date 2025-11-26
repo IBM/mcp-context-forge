@@ -7,14 +7,14 @@ Create Date: 2025-09-15 14:53:32.682953
 
 """
 
+import uuid
 # Standard
 from datetime import datetime, timezone
 from typing import Sequence, Union
-import uuid
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "0f81d4a5efe0"

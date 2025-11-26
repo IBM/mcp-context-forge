@@ -10,10 +10,10 @@ including server_id restrictions, IP restrictions, permission checks,
 and time-based restrictions.
 """
 
-# Standard
-from datetime import datetime, timezone
 import ipaddress
 import re
+# Standard
+from datetime import datetime, timezone
 from typing import Optional
 
 # Third-Party
@@ -363,10 +363,12 @@ class TokenScopingMiddleware:
             return False
 
         # Third-Party
-        from sqlalchemy import and_, select  # pylint: disable=import-outside-toplevel
+        from sqlalchemy import (  # pylint: disable=import-outside-toplevel
+            and_, select)
 
         # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+            EmailTeamMember, get_db)
 
         db = next(get_db())
         try:
@@ -457,10 +459,12 @@ class TokenScopingMiddleware:
 
         # Import database models
         # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+        from sqlalchemy import \
+            select  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.db import get_db, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+            Prompt, Resource, Server, Tool, get_db)
 
         db = next(get_db())
         try:

@@ -17,7 +17,8 @@ import ssl
 
 # First-Party
 from mcpgateway.plugins.framework.errors import PluginError
-from mcpgateway.plugins.framework.models import MCPClientTLSConfig, PluginErrorModel
+from mcpgateway.plugins.framework.models import (MCPClientTLSConfig,
+                                                 PluginErrorModel)
 
 logger = logging.getLogger(__name__)
 

@@ -44,7 +44,7 @@ import re
 
 # Third-Party
 from fastapi import Response, status
-from prometheus_client import Gauge, REGISTRY
+from prometheus_client import REGISTRY, Gauge
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party

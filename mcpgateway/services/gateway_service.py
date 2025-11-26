@@ -39,20 +39,21 @@ Examples:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import logging
 import mimetypes
 import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
 import uuid
+from datetime import datetime, timezone
+from typing import (TYPE_CHECKING, Any, AsyncGenerator, Dict, Generator, List,
+                    Optional, Set, cast)
+from urllib.parse import urlparse, urlunparse
 
+import httpx
 # Third-Party
 from filelock import FileLock, Timeout
-import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
@@ -73,14 +74,14 @@ except ImportError:
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
-from mcpgateway.db import get_db
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import get_db
 from mcpgateway.observability import create_span
-from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
-
+from mcpgateway.schemas import (GatewayCreate, GatewayRead, GatewayUpdate,
+                                PromptCreate, ResourceCreate, ToolCreate)
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -877,7 +878,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Get OAuth tokens for this gateway
             # First-Party
-            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.token_storage_service import \
+                TokenStorageService  # pylint: disable=import-outside-toplevel
 
             token_storage = TokenStorageService(db)
 
@@ -1178,7 +1180,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
@@ -1573,7 +1576,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
@@ -1752,7 +1756,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, gateway):
@@ -1873,7 +1878,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 raise GatewayConnectionError(f"OAuth authorization code gateway {gateway.name} requires user context")
 
                             # First-Party
-                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                            from mcpgateway.services.token_storage_service import \
+                                TokenStorageService  # pylint: disable=import-outside-toplevel
 
                             # Get database session (this is a bit hacky but necessary for now)
                             db = next(get_db())
@@ -1972,7 +1978,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                 continue
 
                             # First-Party
-                            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                            from mcpgateway.services.token_storage_service import \
+                                TokenStorageService  # pylint: disable=import-outside-toplevel
 
                             token_storage = TokenStorageService(db)
                             access_token = await token_storage.get_user_token(str(gateway.id), app_user_email)
@@ -2205,7 +2212,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                     # For Authorization Code flow, try to get stored tokens
                                     try:
                                         # First-Party
-                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                                        from mcpgateway.services.token_storage_service import \
+                                            TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                         token_storage = TokenStorageService(db)
 

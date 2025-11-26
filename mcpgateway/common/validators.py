@@ -51,8 +51,8 @@ Examples:
 import html
 import logging
 import re
-from urllib.parse import urlparse
 import uuid
+from urllib.parse import urlparse
 
 # First-Party
 from mcpgateway.common.config import settings

@@ -8,6 +8,7 @@ Middleware package for MCP Gateway.
 Contains various middleware components for request processing.
 """
 
-from mcpgateway.middleware.token_scoping import TokenScopingMiddleware, token_scoping_middleware
+from mcpgateway.middleware.token_scoping import (TokenScopingMiddleware,
+                                                 token_scoping_middleware)
 
 __all__ = ["TokenScopingMiddleware", "token_scoping_middleware"]

@@ -9,6 +9,7 @@ Exposes external plugin components:
 - server
 """
 
-from mcpgateway.plugins.framework.external.mcp.server.server import ExternalPluginServer
+from mcpgateway.plugins.framework.external.mcp.server.server import \
+    ExternalPluginServer
 
 __all__ = ["ExternalPluginServer"]

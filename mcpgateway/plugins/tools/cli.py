@@ -27,14 +27,14 @@ $ mcpplugins --help
 
 # Standard
 import logging
-from pathlib import Path
 import shutil
 import subprocess  # nosec B404 # Safe: Used only for git commands with hardcoded args
+from pathlib import Path
 from typing import Optional
 
+import typer
 # Third-Party
 from copier import run_copy
-import typer
 from typing_extensions import Annotated
 
 # First-Party

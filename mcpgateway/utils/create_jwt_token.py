@@ -106,7 +106,8 @@ def _create_jwt_token(
     """
     # Validate JWT configuration before creating token
     # First-Party
-    from mcpgateway.utils.jwt_config_helper import get_jwt_private_key_or_secret, validate_jwt_algo_and_keys
+    from mcpgateway.utils.jwt_config_helper import (
+        get_jwt_private_key_or_secret, validate_jwt_algo_and_keys)
 
     validate_jwt_algo_and_keys()
     secret = get_jwt_private_key_or_secret()

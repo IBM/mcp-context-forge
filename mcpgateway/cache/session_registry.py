@@ -50,24 +50,25 @@ Examples:
 
 # Standard
 import asyncio
-from asyncio import Task
-from datetime import datetime, timezone
 import json
 import logging
 import time
 import traceback
+import uuid
+from asyncio import Task
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
-import uuid
 
 # Third-Party
 from fastapi import HTTPException, status
 
 # First-Party
 from mcpgateway import __version__
-from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
+from mcpgateway.common.models import (Implementation, InitializeResult,
+                                      ServerCapabilities)
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
+from mcpgateway.db import SessionMessageRecord, SessionRecord, get_db
 from mcpgateway.services import PromptService, ResourceService, ToolService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport

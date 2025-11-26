@@ -11,9 +11,9 @@ with user input (accept/decline/cancel actions).
 
 # Standard
 import asyncio
-from dataclasses import dataclass, field
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 from uuid import uuid4
 

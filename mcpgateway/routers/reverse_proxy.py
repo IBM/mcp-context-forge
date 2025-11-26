@@ -12,13 +12,14 @@ to connect and tunnel their local MCP servers through the gateway.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import json
-from typing import Any, Dict, Optional
 import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import (APIRouter, Depends, HTTPException, Request, WebSocket,
+                     WebSocketDisconnect, status)
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 

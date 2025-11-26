@@ -18,24 +18,32 @@ It handles:
 
 # Standard
 import base64
+import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-import logging
 from typing import Any, Dict, List, Optional
-import uuid
 
 # Third-Party
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
-from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
-from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayService
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptService
-from mcpgateway.services.resource_service import ResourceService, ResourceURIConflictError
+from mcpgateway.db import (A2AAgent, EmailUser, Gateway, Prompt, Resource,
+                           Server, Tool)
+from mcpgateway.schemas import (AuthenticationValues, GatewayCreate,
+                                GatewayUpdate, PromptCreate, PromptUpdate,
+                                ResourceCreate, ResourceUpdate, ServerCreate,
+                                ServerUpdate, ToolCreate, ToolUpdate)
+from mcpgateway.services.gateway_service import (GatewayNameConflictError,
+                                                 GatewayService)
+from mcpgateway.services.prompt_service import (PromptNameConflictError,
+                                                PromptService)
+from mcpgateway.services.resource_service import (ResourceService,
+                                                  ResourceURIConflictError)
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerNameConflictError, ServerService
+from mcpgateway.services.server_service import (ServerNameConflictError,
+                                                ServerService)
 from mcpgateway.services.tool_service import ToolNameConflictError, ToolService
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 

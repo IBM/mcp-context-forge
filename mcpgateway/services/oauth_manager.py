@@ -14,12 +14,12 @@ This module handles OAuth 2.0 authentication flows including:
 # Standard
 import asyncio
 import base64
-from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
 import logging
 import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -669,7 +669,8 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+                    OAuthState, get_db)
 
                 db_gen = get_db()
                 db = next(db_gen)
@@ -760,7 +761,8 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+                    OAuthState, get_db)
 
                 db_gen = get_db()
                 db = next(db_gen)
@@ -873,7 +875,8 @@ class OAuthManager:
         if settings.cache_type == "database":
             try:
                 # First-Party
-                from mcpgateway.db import get_db, OAuthState  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+                    OAuthState, get_db)
 
                 db_gen = get_db()
                 db = next(db_gen)
@@ -966,7 +969,8 @@ class OAuthManager:
             Authorization URL string with PKCE parameters
         """
         # Standard
-        from urllib.parse import urlencode  # pylint: disable=import-outside-toplevel
+        from urllib.parse import \
+            urlencode  # pylint: disable=import-outside-toplevel
 
         client_id = credentials["client_id"]
         redirect_uri = credentials["redirect_uri"]

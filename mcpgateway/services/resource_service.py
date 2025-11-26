@@ -26,22 +26,23 @@ Examples:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import mimetypes
 import os
 import re
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
+from datetime import datetime, timezone
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import parse
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.models import (ResourceContent, ResourceTemplate,
+                                      TextContent)
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Resource as DbResource
@@ -49,9 +50,12 @@ from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
-from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.schemas import (ResourceCreate, ResourceMetrics, ResourceRead,
+                                ResourceSubscription, ResourceUpdate,
+                                TopPerformer)
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.observability_service import (ObservabilityService,
+                                                       current_trace_id)
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -59,7 +63,10 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import (GlobalContext, PluginManager,
+                                              ResourceHookType,
+                                              ResourcePostFetchPayload,
+                                              ResourcePreFetchPayload)
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -547,7 +554,8 @@ class ResourceService:
             ['converted2']
         """
         # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.team_management_service import \
+            TeamManagementService  # pylint: disable=import-outside-toplevel
 
         # Build query following existing patterns from list_resources()
         team_service = TeamManagementService(db)
@@ -983,7 +991,8 @@ class ResourceService:
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, resource):
@@ -1169,7 +1178,8 @@ class ResourceService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, resource):
@@ -1281,7 +1291,8 @@ class ResourceService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, resource):
