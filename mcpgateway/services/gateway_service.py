@@ -816,7 +816,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await self._notify_gateway_added(db_gateway)
 
             logger.info(f"Registered gateway: {gateway.name}")
-            
+
             # Structured logging: Audit trail for gateway creation
             audit_trail.log_action(
                 user_id=created_by or "system",
@@ -842,7 +842,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful gateway creation
             structured_logger.log(
                 level="INFO",
@@ -870,7 +870,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway creation failed due to connection error",
@@ -887,7 +887,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 gnce: ExceptionGroup[GatewayNameConflictError]
             logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Gateway creation failed due to name conflict",
@@ -903,7 +903,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 guce: ExceptionGroup[GatewayDuplicateConflictError]
             logger.error(f"GatewayDuplicateConflictError in group: {guce.exceptions}")
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Gateway creation failed due to duplicate",
@@ -919,7 +919,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
             logger.error(f"ValueErrors in group: {ve.exceptions}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway creation failed due to validation error",
@@ -936,7 +936,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 re: ExceptionGroup[RuntimeError]
             logger.error(f"RuntimeErrors in group: {re.exceptions}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway creation failed due to runtime error",
@@ -953,7 +953,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 ie: ExceptionGroup[IntegrityError]
             logger.error(f"IntegrityErrors in group: {ie.exceptions}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway creation failed due to database integrity error",
@@ -1586,7 +1586,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
-                
+
                 # Structured logging: Audit trail for gateway update
                 audit_trail.log_action(
                     user_id=user_email or modified_by or "system",
@@ -1608,7 +1608,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     },
                     db=db,
                 )
-                
+
                 # Structured logging: Log successful gateway update
                 structured_logger.log(
                     level="INFO",
@@ -1626,7 +1626,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     },
                     db=db,
                 )
-                
+
                 gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
@@ -1634,7 +1634,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return None
         except GatewayNameConflictError as ge:
             logger.error(f"GatewayNameConflictError in group: {ge}")
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Gateway update failed due to name conflict",
@@ -1649,7 +1649,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise ge
         except GatewayNotFoundError as gnfe:
             logger.error(f"GatewayNotFoundError: {gnfe}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway update failed - gateway not found",
@@ -1664,7 +1664,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise gnfe
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway update failed due to database integrity error",
@@ -1679,7 +1679,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise ie
         except PermissionError as pe:
             db.rollback()
-            
+
             structured_logger.log(
                 level="WARNING",
                 message="Gateway update failed due to permission error",
@@ -1694,7 +1694,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise
         except Exception as e:
             db.rollback()
-            
+
             structured_logger.log(
                 level="ERROR",
                 message="Gateway update failed",
@@ -1914,7 +1914,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
-                
+
                 # Structured logging: Audit trail for gateway status toggle
                 audit_trail.log_action(
                     user_id=user_email or "system",
@@ -1934,7 +1934,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     },
                     db=db,
                 )
-                
+
                 # Structured logging: Log successful gateway status toggle
                 structured_logger.log(
                     level="INFO",
@@ -1972,7 +1972,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise e
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic gateway status toggle failure
             structured_logger.log(
                 level="ERROR",
@@ -2068,7 +2068,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             await self._notify_gateway_deleted(gateway_info)
 
             logger.info(f"Permanently deleted gateway: {gateway.name}")
-            
+
             # Structured logging: Audit trail for gateway deletion
             audit_trail.log_action(
                 user_id=user_email or "system",
@@ -2084,7 +2084,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful gateway deletion
             structured_logger.log(
                 level="INFO",
@@ -2104,7 +2104,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -2120,7 +2120,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic gateway deletion failure
             structured_logger.log(
                 level="ERROR",

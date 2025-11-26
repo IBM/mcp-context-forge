@@ -496,7 +496,7 @@ class ServerService:
             logger.debug(f"Server Data: {server_data}")
             await self._notify_server_added(db_server)
             logger.info(f"Registered server: {server_in.name}")
-            
+
             # Structured logging: Audit trail for server creation
             self._audit_trail.log_action(
                 user_id=created_by or "system",
@@ -518,7 +518,7 @@ class ServerService:
                     "created_user_agent": created_user_agent,
                 },
             )
-            
+
             # Structured logging: Log successful server creation
             self._structured_logger.log(
                 level="INFO",
@@ -531,13 +531,13 @@ class ServerService:
                 created_by=created_by,
                 user_email=created_by,
             )
-            
+
             db_server.team = self._get_team_name(db, db_server.team_id)
             return self._convert_server_to_read(db_server)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             # Structured logging: Log database integrity error
             self._structured_logger.log(
                 level="ERROR",
@@ -553,7 +553,7 @@ class ServerService:
             raise ie
         except ServerNameConflictError as se:
             db.rollback()
-            
+
             # Structured logging: Log name conflict error
             self._structured_logger.log(
                 level="WARNING",
@@ -568,7 +568,7 @@ class ServerService:
             raise se
         except Exception as ex:
             db.rollback()
-            
+
             # Structured logging: Log generic server creation failure
             self._structured_logger.log(
                 level="ERROR",
@@ -971,7 +971,7 @@ class ServerService:
                 changes.append(f"visibility: {server_update.visibility}")
             if server_update.team_id:
                 changes.append(f"team_id: {server_update.team_id}")
-            
+
             self._audit_trail.log_action(
                 user_id=user_email or "system",
                 action="update_server",
@@ -988,7 +988,7 @@ class ServerService:
                     "modified_user_agent": modified_user_agent,
                 },
             )
-            
+
             # Structured logging: Log successful server update
             self._structured_logger.log(
                 level="INFO",
@@ -1020,7 +1020,7 @@ class ServerService:
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
-            
+
             # Structured logging: Log database integrity error
             self._structured_logger.log(
                 level="ERROR",
@@ -1037,7 +1037,7 @@ class ServerService:
         except ServerNameConflictError as snce:
             db.rollback()
             logger.error(f"Server name conflict: {snce}")
-            
+
             # Structured logging: Log name conflict error
             self._structured_logger.log(
                 level="WARNING",
@@ -1051,7 +1051,7 @@ class ServerService:
             raise snce
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic server update failure
             self._structured_logger.log(
                 level="ERROR",
@@ -1124,7 +1124,7 @@ class ServerService:
                 else:
                     await self._notify_server_deactivated(server)
                 logger.info(f"Server {server.name} {'activated' if activate else 'deactivated'}")
-                
+
                 # Structured logging: Audit trail for server status toggle
                 self._audit_trail.log_action(
                     user_id=user_email or "system",
@@ -1136,7 +1136,7 @@ class ServerService:
                         "new_status": "active" if activate else "inactive",
                     },
                 )
-                
+
                 # Structured logging: Log server status change
                 self._structured_logger.log(
                     level="INFO",
@@ -1178,7 +1178,7 @@ class ServerService:
             raise e
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic server status toggle failure
             self._structured_logger.log(
                 level="ERROR",
@@ -1238,7 +1238,7 @@ class ServerService:
 
             await self._notify_server_deleted(server_info)
             logger.info(f"Deleted server: {server_info['name']}")
-            
+
             # Structured logging: Audit trail for server deletion
             self._audit_trail.log_action(
                 user_id=user_email or "system",
@@ -1249,7 +1249,7 @@ class ServerService:
                     "server_name": server_info["name"],
                 },
             )
-            
+
             # Structured logging: Log successful server deletion
             self._structured_logger.log(
                 level="INFO",
@@ -1263,7 +1263,7 @@ class ServerService:
             )
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             self._structured_logger.log(
                 level="WARNING",
@@ -1276,7 +1276,7 @@ class ServerService:
             raise pe
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic server deletion failure
             self._structured_logger.log(
                 level="ERROR",

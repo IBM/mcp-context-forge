@@ -69,7 +69,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.structured_logger import get_structured_logger, LogCategory
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -732,7 +732,7 @@ class ToolService:
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
-            
+
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
                 user_id=created_by or "system",
@@ -757,7 +757,7 @@ class ToolService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful tool creation
             structured_logger.log(
                 level="INFO",
@@ -776,12 +776,12 @@ class ToolService:
                 },
                 db=db,
             )
-            
+
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
-            
+
             # Structured logging: Log database integrity error
             structured_logger.log(
                 level="ERROR",
@@ -800,7 +800,7 @@ class ToolService:
         except ToolNameConflictError as tnce:
             db.rollback()
             logger.error(f"ToolNameConflictError during tool registration: {tnce}")
-            
+
             # Structured logging: Log name conflict error
             structured_logger.log(
                 level="WARNING",
@@ -818,7 +818,7 @@ class ToolService:
             raise tnce
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic tool creation failure
             structured_logger.log(
                 level="ERROR",
@@ -1158,12 +1158,12 @@ class ToolService:
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
             tool_team_id = tool.team_id
-            
+
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
-            
+
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
                 user_id=user_email or "system",
@@ -1178,7 +1178,7 @@ class ToolService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful tool deletion
             structured_logger.log(
                 level="INFO",
@@ -1196,7 +1196,7 @@ class ToolService:
             )
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -1212,7 +1212,7 @@ class ToolService:
             raise
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic tool deletion failure
             structured_logger.log(
                 level="ERROR",
@@ -1303,7 +1303,7 @@ class ToolService:
                     await self._notify_tool_activated(tool)
 
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
-                
+
                 # Structured logging: Audit trail for tool status toggle
                 audit_trail.log_action(
                     user_id=user_email or "system",
@@ -1322,7 +1322,7 @@ class ToolService:
                     },
                     db=db,
                 )
-                
+
                 # Structured logging: Log successful tool status toggle
                 structured_logger.log(
                     level="INFO",
@@ -1340,7 +1340,7 @@ class ToolService:
                     },
                     db=db,
                 )
-            
+
             return self._convert_tool_to_read(tool)
         except PermissionError as e:
             # Structured logging: Log permission error
@@ -1358,7 +1358,7 @@ class ToolService:
             raise e
         except Exception as e:
             db.rollback()
-            
+
             # Structured logging: Log generic tool status toggle failure
             structured_logger.log(
                 level="ERROR",
@@ -1675,11 +1675,11 @@ class ToolService:
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
-                        
+
                         # Add correlation ID to headers
                         if correlation_id and headers:
                             headers["X-Correlation-ID"] = correlation_id
-                        
+
                         # Log MCP call start
                         mcp_start_time = time.time()
                         structured_logger.log(
@@ -1687,21 +1687,15 @@ class ToolService:
                             message=f"MCP tool call started: {tool.original_name}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={
-                                "event": "mcp_call_started",
-                                "tool_name": tool.original_name,
-                                "tool_id": tool.id,
-                                "server_url": server_url,
-                                "transport": "sse"
-                            }
+                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "sse"},
                         )
-                        
+
                         try:
                             async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
                                 async with ClientSession(*streams) as session:
                                     await session.initialize()
                                     tool_call_result = await session.call_tool(tool.original_name, arguments)
-                            
+
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -1710,15 +1704,9 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                metadata={
-                                    "event": "mcp_call_completed",
-                                    "tool_name": tool.original_name,
-                                    "tool_id": tool.id,
-                                    "transport": "sse",
-                                    "success": True
-                                }
+                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse", "success": True},
                             )
-                            
+
                             return tool_call_result
                         except Exception as e:
                             # Log failed MCP call
@@ -1729,16 +1717,8 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={
-                                    "error_type": type(e).__name__,
-                                    "error_message": str(e)
-                                },
-                                metadata={
-                                    "event": "mcp_call_failed",
-                                    "tool_name": tool.original_name,
-                                    "tool_id": tool.id,
-                                    "transport": "sse"
-                                }
+                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse"},
                             )
                             raise
 
@@ -1754,11 +1734,11 @@ class ToolService:
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
-                        
+
                         # Add correlation ID to headers
                         if correlation_id and headers:
                             headers["X-Correlation-ID"] = correlation_id
-                        
+
                         # Log MCP call start
                         mcp_start_time = time.time()
                         structured_logger.log(
@@ -1766,21 +1746,15 @@ class ToolService:
                             message=f"MCP tool call started: {tool.original_name}",
                             component="tool_service",
                             correlation_id=correlation_id,
-                            metadata={
-                                "event": "mcp_call_started",
-                                "tool_name": tool.original_name,
-                                "tool_id": tool.id,
-                                "server_url": server_url,
-                                "transport": "streamablehttp"
-                            }
+                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "streamablehttp"},
                         )
-                        
+
                         try:
                             async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     await session.initialize()
                                     tool_call_result = await session.call_tool(tool.original_name, arguments)
-                            
+
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -1789,15 +1763,9 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                metadata={
-                                    "event": "mcp_call_completed",
-                                    "tool_name": tool.original_name,
-                                    "tool_id": tool.id,
-                                    "transport": "streamablehttp",
-                                    "success": True
-                                }
+                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp", "success": True},
                             )
-                            
+
                             return tool_call_result
                         except Exception as e:
                             # Log failed MCP call
@@ -1808,16 +1776,8 @@ class ToolService:
                                 component="tool_service",
                                 correlation_id=correlation_id,
                                 duration_ms=mcp_duration_ms,
-                                error_details={
-                                    "error_type": type(e).__name__,
-                                    "error_message": str(e)
-                                },
-                                metadata={
-                                    "event": "mcp_call_failed",
-                                    "tool_name": tool.original_name,
-                                    "tool_id": tool.id,
-                                    "transport": "streamablehttp"
-                                }
+                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp"},
                             )
                             raise
 
@@ -1901,15 +1861,15 @@ class ToolService:
             finally:
                 # Calculate duration
                 duration_ms = (time.monotonic() - start_time) * 1000
-                
+
                 # Add final span attributes
                 if span:
                     span.set_attribute("success", success)
                     span.set_attribute("duration.ms", duration_ms)
-                
+
                 # Record tool metric
                 await self._record_tool_metric(db, tool, start_time, success, error_message)
-                
+
                 # Log structured message with performance tracking
                 if success:
                     structured_logger.info(
@@ -1919,11 +1879,7 @@ class ToolService:
                         resource_id=str(tool.id),
                         resource_action="invoke",
                         duration_ms=duration_ms,
-                        custom_fields={
-                            "tool_name": name,
-                            "integration_type": tool.integration_type,
-                            "arguments_count": len(arguments) if arguments else 0
-                        }
+                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "arguments_count": len(arguments) if arguments else 0},
                     )
                 else:
                     structured_logger.error(
@@ -1934,13 +1890,9 @@ class ToolService:
                         resource_id=str(tool.id),
                         resource_action="invoke",
                         duration_ms=duration_ms,
-                        custom_fields={
-                            "tool_name": name,
-                            "integration_type": tool.integration_type,
-                            "error_message": error_message
-                        }
+                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "error_message": error_message},
                     )
-                
+
                 # Track performance with threshold checking
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
@@ -2089,7 +2041,7 @@ class ToolService:
             db.refresh(tool)
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
-            
+
             # Structured logging: Audit trail for tool update
             changes = []
             if tool_update.name:
@@ -2097,8 +2049,8 @@ class ToolService:
             if tool_update.visibility:
                 changes.append(f"visibility: {tool_update.visibility}")
             if tool_update.description:
-                changes.append(f"description updated")
-            
+                changes.append("description updated")
+
             audit_trail.log_action(
                 user_id=user_email or modified_by or "system",
                 action="update_tool",
@@ -2120,7 +2072,7 @@ class ToolService:
                 },
                 db=db,
             )
-            
+
             # Structured logging: Log successful tool update
             structured_logger.log(
                 level="INFO",
@@ -2138,11 +2090,11 @@ class ToolService:
                 },
                 db=db,
             )
-            
+
             return self._convert_tool_to_read(tool)
         except PermissionError as pe:
             db.rollback()
-            
+
             # Structured logging: Log permission error
             structured_logger.log(
                 level="WARNING",
@@ -2159,7 +2111,7 @@ class ToolService:
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool update: {ie}")
-            
+
             # Structured logging: Log database integrity error
             structured_logger.log(
                 level="ERROR",
@@ -2177,7 +2129,7 @@ class ToolService:
         except ToolNotFoundError as tnfe:
             db.rollback()
             logger.error(f"Tool not found during update: {tnfe}")
-            
+
             # Structured logging: Log not found error
             structured_logger.log(
                 level="ERROR",
@@ -2194,7 +2146,7 @@ class ToolService:
         except ToolNameConflictError as tnce:
             db.rollback()
             logger.error(f"Tool name conflict during update: {tnce}")
-            
+
             # Structured logging: Log name conflict error
             structured_logger.log(
                 level="WARNING",
@@ -2211,7 +2163,7 @@ class ToolService:
             raise tnce
         except Exception as ex:
             db.rollback()
-            
+
             # Structured logging: Log generic tool update failure
             structured_logger.log(
                 level="ERROR",
