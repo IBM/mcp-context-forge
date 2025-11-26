@@ -61,6 +61,7 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
@@ -1372,6 +1373,13 @@ class ResourceService:
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
                         logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
+
+                # Validate resource path if experimental validation is enabled
+                if getattr(settings, 'experimental_validate_io', False) and uri and isinstance(uri, str):
+                    try:
+                        SecurityValidator.validate_path(uri, getattr(settings, 'allowed_roots', None))
+                    except ValueError as e:
+                        raise ResourceError(f"Path validation failed: {e}")
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")

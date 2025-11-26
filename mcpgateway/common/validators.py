@@ -51,11 +51,15 @@ Examples:
 import html
 import logging
 import re
+import shlex
+from pathlib import Path
 from urllib.parse import urlparse
 import uuid
+from typing import Any, List, Optional
 
 # First-Party
 from mcpgateway.common.config import settings
+from mcpgateway.config import settings as config_settings
 
 logger = logging.getLogger(__name__)
 
@@ -1188,3 +1192,109 @@ class SecurityValidator:
                 raise ValueError(f"MIME type '{value}' is not in the allowed list")
 
         return value
+
+    @classmethod
+    def validate_shell_parameter(cls, value: str) -> str:
+        """Validate and escape shell parameters."""
+        if not isinstance(value, str):
+            raise ValueError("Parameter must be string")
+        
+        import shlex
+        # Check for dangerous patterns
+        dangerous_chars = re.compile(r"[;&|`$(){}\[\]<>]")
+        if dangerous_chars.search(value):
+            # Check if validation is strict
+            strict_mode = getattr(settings, 'validation_strict', True)
+            if strict_mode:
+                raise ValueError("Parameter contains shell metacharacters")
+            # In non-strict mode, escape using shlex
+            return shlex.quote(value)
+        
+        return value
+
+    @classmethod
+    def validate_path(cls, path: str, allowed_roots: Optional[List[str]] = None) -> str:
+        """Validate and normalize file paths."""
+        from pathlib import Path
+        
+        if not isinstance(path, str):
+            raise ValueError("Path must be string")
+        
+        # Skip validation for URI schemes (http://, plugin://, etc.)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://", path):
+            return path
+        
+        try:
+            p = Path(path)
+            # Check for path traversal
+            if ".." in p.parts:
+                raise ValueError("Path traversal detected")
+            
+            resolved_path = p.resolve()
+            
+            # Check against allowed roots
+            if allowed_roots:
+                allowed = any(
+                    str(resolved_path).startswith(str(Path(root).resolve()))
+                    for root in allowed_roots
+                )
+                if not allowed:
+                    raise ValueError("Path outside allowed roots")
+            
+            return str(resolved_path)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Invalid path: {e}")
+
+    @classmethod
+    def validate_sql_parameter(cls, value: str) -> str:
+        """Validate SQL parameters for injection attempts."""
+        if not isinstance(value, str):
+            return value
+        
+        # Check for SQL injection patterns
+        sql_patterns = [
+            r"[';\"\\]",  # Quote characters
+            r"--",        # SQL comments
+            r"/\\*.*?\\*/",  # Block comments
+            r"\\b(union|select|insert|update|delete|drop|exec|execute)\\b",  # SQL keywords
+        ]
+        
+        for pattern in sql_patterns:
+            if re.search(pattern, value, re.IGNORECASE):
+                if getattr(config_settings, 'validation_strict', True):
+                    raise ValueError("Parameter contains SQL injection patterns")
+                # Basic escaping
+                value = value.replace("'", "''").replace('"', '""')
+        
+        return value
+
+    @classmethod
+    def validate_parameter_length(cls, value: str, max_length: int = None) -> str:
+        """Validate parameter length."""
+        max_len = max_length or getattr(config_settings, 'max_param_length', 10000)
+        if len(value) > max_len:
+            raise ValueError(f"Parameter exceeds maximum length of {max_len}")
+        return value
+
+    @classmethod
+    def sanitize_text(cls, text: str) -> str:
+        """Remove control characters from text output."""
+        if not isinstance(text, str):
+            return text
+        
+        # Remove ANSI escape sequences
+        text = re.sub(r"\x1B\[[0-9;]*[A-Za-z]", "", text)
+        # Remove control characters except newlines and tabs
+        sanitized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
+        return sanitized
+
+    @classmethod
+    def sanitize_json_response(cls, data: Any) -> Any:
+        """Recursively sanitize JSON response data."""
+        if isinstance(data, str):
+            return cls.sanitize_text(data)
+        elif isinstance(data, dict):
+            return {k: cls.sanitize_json_response(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [cls.sanitize_json_response(item) for item in data]
+        return data

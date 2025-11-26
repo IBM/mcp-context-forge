@@ -79,6 +79,7 @@ from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.validators import SecurityValidator
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Initialize logging service first
