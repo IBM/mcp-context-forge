@@ -68,7 +68,7 @@ class AuditTrailService:
     def __init__(self):
         """Initialize audit trail service."""
 
-    def log_action(
+    def log_action(  # pylint: disable=too-many-positional-arguments
         self,
         action: str,
         resource_type: str,
@@ -430,7 +430,7 @@ def get_audit_trail_service() -> AuditTrailService:
     Returns:
         AuditTrailService instance
     """
-    global _audit_trail_service
+    global _audit_trail_service  # pylint: disable=global-statement
     if _audit_trail_service is None:
         _audit_trail_service = AuditTrailService()
     return _audit_trail_service

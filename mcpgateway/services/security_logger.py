@@ -154,7 +154,7 @@ class SecurityLogger:
 
         return event
 
-    def log_data_access(
+    def log_data_access(  # pylint: disable=too-many-positional-arguments
         self,
         action: str,
         resource_type: str,
@@ -344,7 +344,7 @@ class SecurityLogger:
             should_close = True
 
         try:
-            stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)
+            stmt = select(func.count(SecurityEvent.id)).where(SecurityEvent.event_type == SecurityEventType.AUTHENTICATION_FAILURE, SecurityEvent.timestamp >= since)  # pylint: disable=not-callable
 
             if user_id:
                 stmt = stmt.where(SecurityEvent.user_id == user_id)
@@ -358,7 +358,7 @@ class SecurityLogger:
             if should_close:
                 db.close()
 
-    def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:
+    def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:  # pylint: disable=unused-argument
         """Calculate threat score for authentication attempt.
 
         Args:
@@ -490,7 +490,7 @@ class SecurityLogger:
             if should_close:
                 db.close()
 
-    def _create_audit_trail(
+    def _create_audit_trail(  # pylint: disable=too-many-positional-arguments
         self,
         action: str,
         resource_type: str,
@@ -591,7 +591,7 @@ def get_security_logger() -> SecurityLogger:
     Returns:
         Global SecurityLogger instance
     """
-    global _security_logger
+    global _security_logger  # pylint: disable=global-statement
     if _security_logger is None:
         _security_logger = SecurityLogger()
     return _security_logger

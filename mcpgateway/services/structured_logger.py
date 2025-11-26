@@ -85,7 +85,7 @@ class LogEnricher:
         try:
             perf_tracker = get_performance_tracker()
             if correlation_id and perf_tracker and hasattr(perf_tracker, "get_current_operations"):
-                current_ops = perf_tracker.get_current_operations(correlation_id)
+                current_ops = perf_tracker.get_current_operations(correlation_id)  # pylint: disable=no-member
                 if current_ops:
                     entry["active_operations"] = len(current_ops)
         except Exception:
@@ -94,7 +94,7 @@ class LogEnricher:
 
         # Add OpenTelemetry trace context if available
         try:
-            from opentelemetry import trace
+            from opentelemetry import trace  # pylint: disable=import-outside-toplevel
 
             span = trace.get_current_span()
             if span and span.get_span_context().is_valid:
@@ -262,8 +262,6 @@ class LogRouter:
         except Exception as e:
             logger.error(f"Failed to persist log entry to database: {e}", exc_info=True)
             # Also print to console for immediate visibility
-            import traceback
-
             print(f"ERROR persisting log to database: {e}")
             traceback.print_exc()
             if db:

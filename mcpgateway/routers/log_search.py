@@ -171,6 +171,8 @@ class LogEntry(BaseModel):
     error_details: Optional[Dict[str, Any]] = None
 
     class Config:
+        """Pydantic configuration."""
+
         from_attributes = True
 
 
@@ -216,6 +218,8 @@ class SecurityEventResponse(BaseModel):
     resolved: bool
 
     class Config:
+        """Pydantic configuration."""
+
         from_attributes = True
 
 
@@ -236,6 +240,8 @@ class AuditTrailResponse(BaseModel):
     data_classification: Optional[str]
 
     class Config:
+        """Pydantic configuration."""
+
         from_attributes = True
 
 
@@ -259,6 +265,8 @@ class PerformanceMetricResponse(BaseModel):
     p99_duration_ms: float
 
     class Config:
+        """Pydantic configuration."""
+
         from_attributes = True
 
 

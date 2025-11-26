@@ -393,9 +393,8 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """
         if duration_ms < 100:
             return "fast"
-        elif duration_ms < 500:
+        if duration_ms < 500:
             return "normal"
-        elif duration_ms < 2000:
+        if duration_ms < 2000:
             return "slow"
-        else:
-            return "very_slow"
+        return "very_slow"
