@@ -121,16 +121,7 @@ class MockPermissionService:
             return True
         return self.custom_permissions.get(permission, False)
 
-    async def check_admin_permission(self, user_email: str) -> bool:
-        """Mock admin permission check.
 
-        Args:
-            user_email: User email
-
-        Returns:
-            bool: Admin permission result
-        """
-        return self.always_grant or self.custom_permissions.get("admin", True)
 
 
 async def mock_get_current_user_with_permissions(*args, **kwargs) -> Dict:
@@ -286,36 +277,10 @@ def mock_require_permission_decorator(permission: str, resource_type: Optional[s
     return decorator
 
 
-def mock_require_admin_permission():
-    """Mock version of require_admin_permission that always allows access.
-
-    Returns:
-        Callable: A decorator that doesn't perform any permission checks
-    """
-
-    def decorator(func):
-        # Return the function unchanged - no admin permission checking
-        return func
-
-    return decorator
 
 
-def mock_require_any_permission(permissions, resource_type: Optional[str] = None):
-    """Mock version of require_any_permission that always allows access.
 
-    Args:
-        permissions: List of permissions (ignored in mock)
-        resource_type: Optional resource type (ignored in mock)
 
-    Returns:
-        Callable: A decorator that doesn't perform any permission checks
-    """
-
-    def decorator(func):
-        # Return the function unchanged - no permission checking
-        return func
-
-    return decorator
 
 
 def setup_rbac_mocks_for_app(app, custom_user_context: Optional[Dict] = None):
@@ -361,14 +326,10 @@ def patch_rbac_decorators():
     # Store original functions
     originals = {
         "require_permission": rbac_module.require_permission,
-        "require_admin_permission": rbac_module.require_admin_permission,
-        "require_any_permission": rbac_module.require_any_permission,
     }
 
     # Replace with mock versions
     rbac_module.require_permission = mock_require_permission_decorator
-    rbac_module.require_admin_permission = mock_require_admin_permission
-    rbac_module.require_any_permission = mock_require_any_permission
 
     return originals
 
@@ -383,8 +344,6 @@ def restore_rbac_decorators(originals: Dict):
     import mcpgateway.middleware.rbac as rbac_module
 
     rbac_module.require_permission = originals["require_permission"]
-    rbac_module.require_admin_permission = originals["require_admin_permission"]
-    rbac_module.require_any_permission = originals["require_any_permission"]
 
 
 def teardown_rbac_mocks_for_app(app):

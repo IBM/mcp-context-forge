@@ -66,6 +66,45 @@ class PermissionService:
         self._cache_timestamps: Dict[str, datetime] = {}
         self.cache_ttl = 300  # 5 minutes
 
+    async def get_user_scopes(self, user_email: str, roles: Optional[List[UserRole]] = None) -> List[Dict[str, Any]]:
+        """Get all scopes and permissions for the user.
+
+        Args:
+            user_email: Email of the user
+            roles: Optional list of pre-fetched user roles to avoid DB calls
+
+        Returns:
+            List[Dict]: List of scopes, e.g. [{'scope': 'global', 'scope_id': None, 'permissions': [...]}, {'scope': 'team', 'scope_id': 'team-123', 'permissions': [...]}]
+        """
+        if self._is_user_admin(user_email):
+            # Admin has permission everywhere (conceptually global covers everything)
+            return [{"scope": "global", "scope_id": None, "permissions": [Permissions.ALL_PERMISSIONS]}]
+
+        if roles is None:
+            roles = await self._get_user_roles(user_email)
+
+        granted_scopes = []
+        
+        # Check global roles first
+        global_roles = [r for r in roles if r.scope == "global"]
+        for role in global_roles:
+            effective_perms = role.role.get_effective_permissions()
+            granted_scopes.append({"scope": "global", "scope_id": None, "permissions": list(effective_perms)})
+
+        # Check team roles
+        team_roles = [r for r in roles if r.scope == "team"]
+        for role in team_roles:
+            effective_perms = role.role.get_effective_permissions()
+            granted_scopes.append({"scope": "team", "scope_id": role.scope_id, "permissions": list(effective_perms)})
+
+        # Check personal scope
+        personal_roles = [r for r in roles if r.scope == "personal"]
+        for role in personal_roles:
+             effective_perms = role.role.get_effective_permissions()
+             granted_scopes.append({"scope": "personal", "scope_id": None, "permissions": list(effective_perms)})
+
+        return granted_scopes
+
     async def check_permission(
         self,
         user_email: str,
@@ -308,31 +347,7 @@ class PermissionService:
 
         return False
 
-    async def check_admin_permission(self, user_email: str) -> bool:
-        """Check if user has any admin permissions.
 
-        Args:
-            user_email: Email of the user
-
-        Returns:
-            bool: True if user has admin permissions
-
-        Examples:
-            Coroutine check:
-            >>> from unittest.mock import Mock
-            >>> service = PermissionService(Mock())
-            >>> import asyncio
-            >>> asyncio.iscoroutinefunction(service.check_admin_permission)
-            True
-        """
-        # First check if user is admin (handles platform admin virtual user)
-        if await self._is_user_admin(user_email):
-            return True
-
-        admin_permissions = [Permissions.ADMIN_SYSTEM_CONFIG, Permissions.ADMIN_USER_MANAGEMENT, Permissions.ADMIN_SECURITY_AUDIT, Permissions.ALL_PERMISSIONS]
-
-        user_permissions = await self.get_user_permissions(user_email)
-        return any(perm in user_permissions for perm in admin_permissions)
 
     def clear_user_cache(self, user_email: str) -> None:
         """Clear cached permissions for a user.
@@ -591,36 +606,26 @@ class PermissionService:
 
         return has_team_roles
 
-    async def check_resource_access(self, request_path: str, token_teams: List[str]) -> bool:
-        """Check if token has access to the requested resource.
+    async def check_resource_access(self, request_path: str, user_permissions: List[Dict[str, Any]]) -> bool:
+        """Check if user has access to the requested resource based on structured permissions.
 
         Implements Three-Tier Resource Visibility (Public/Team/Private):
-        - PUBLIC: Accessible by all tokens (public-only and team-scoped)
-        - TEAM: Accessible only by tokens scoped to that specific team
-        - PRIVATE: Accessible only by tokens scoped to that specific team
+        - PUBLIC: Accessible by all users
+        - TEAM: Accessible if user has permission in the resource's team
+        - PRIVATE: Accessible if user has permission in the resource's team (and potentially specific permissions)
 
         Args:
             request_path: The request path/URL
-            token_teams: List of team IDs from the token (empty list = public-only token)
+            user_permissions: List of structured permissions (scope, scope_id, permissions)
 
         Returns:
             bool: True if resource access is allowed, False otherwise
         """
-        # Normalize token_teams: extract team IDs from dict objects (backward compatibility)
-        token_team_ids = []
-        for team in token_teams:
-            if isinstance(team, dict) and "id" in team:
-                token_team_ids.append(team["id"])
-            else:
-                token_team_ids.append(team)
-
-        # Determine token type
-        is_public_token = not token_team_ids or len(token_team_ids) == 0
-
-        if is_public_token:
-            logger.debug("Processing request with PUBLIC-ONLY token")
-        else:
-            logger.debug(f"Processing request with TEAM-SCOPED token (teams: {token_teams})")
+        # Determine if user has global access
+        has_global_access = any(p.get("scope") == "global" for p in user_permissions)
+        if has_global_access:
+             logger.debug("Access granted: User has global access")
+             return True
 
         # Extract resource type and ID from path using regex patterns
         resource_patterns = [
@@ -653,41 +658,35 @@ class PermissionService:
 
                 if not server:
                     logger.warning(f"Server {resource_id} not found in database")
-                    return True
+                    return True # Allow 404 to be returned by endpoint
 
                 # Get server visibility (default to 'team' if field doesn't exist)
                 server_visibility = getattr(server, "visibility", "team")
 
-                # PUBLIC SERVERS: Accessible by everyone (including public-only tokens)
+                # PUBLIC SERVERS: Accessible by everyone
                 if server_visibility == "public":
                     logger.debug(f"Access granted: Server {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public servers
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {server_visibility} server {resource_id}")
-                    return False
+                # TEAM/PRIVATE SERVERS: Check if user has access to the team
+                server_team_id = server.team_id
+                if not server_team_id:
+                     # If no team ID, and not public, it's an orphan or personal?
+                     # Assuming personal resources need personal scope or ownership check (not handled here fully yet)
+                     logger.warning(f"Server {resource_id} has no team ID and is not public")
+                     return False
 
-                # TEAM-SCOPED SERVERS: Check if server belongs to token's teams
-                if server_visibility == "team":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team server {resource_id} belongs to token's team {server.team_id}")
-                        return True
+                # Check if user has permission for this team
+                has_team_access = any(
+                    p.get("scope") == "team" and p.get("scope_id") == server_team_id 
+                    for p in user_permissions
+                )
+                
+                if has_team_access:
+                    logger.debug(f"Access granted: User has access to team {server_team_id}")
+                    return True
 
-                    logger.warning(f"Access denied: Server {resource_id} is team-scoped to '{server.team_id}', token is scoped to teams {token_team_ids}")
-                    return False
-
-                # PRIVATE SERVERS: Check if server belongs to token's teams
-                if server_visibility == "private":
-                    if server.team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private server {resource_id} in token's team {server.team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Server {resource_id} is private to team '{server.team_id}'")
-                    return False
-
-                # Unknown visibility - deny by default
-                logger.warning(f"Access denied: Server {resource_id} has unknown visibility: {server_visibility}")
+                logger.warning(f"Access denied: Server {resource_id} belongs to team {server_team_id}, user has no access")
                 return False
 
             # CHECK TOOLS
@@ -701,35 +700,30 @@ class PermissionService:
                 # Get tool visibility (default to 'team' if field doesn't exist)
                 tool_visibility = getattr(tool, "visibility", "team")
 
-                # PUBLIC TOOLS: Accessible by everyone (including public-only tokens)
+                # PUBLIC TOOLS: Accessible by everyone
                 if tool_visibility == "public":
                     logger.debug(f"Access granted: Tool {resource_id} is PUBLIC")
                     return True
 
-                # PUBLIC-ONLY TOKEN: Can ONLY access public tools
-                if is_public_token:
-                    logger.warning(f"Access denied: Public-only token cannot access {tool_visibility} tool {resource_id}")
-                    return False
+                # TEAM/PRIVATE TOOLS: Check if user has access to the team
+                tool_team_id = getattr(tool, "team_id", None)
+                if not tool_team_id:
+                     logger.warning(f"Tool {resource_id} has no team ID and is not public")
+                     return False
 
-                # TEAM TOOLS: Check if tool's team matches token's teams
-                if tool_visibility == "team":
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Team tool {resource_id} belongs to token's team {tool_team_id}")
-                        return True
+                # Check if user has permission for this team
+                has_team_access = any(
+                    p.get("scope") == "team" and p.get("scope_id") == tool_team_id 
+                    for p in user_permissions
+                )
+                
+                if has_team_access:
+                    logger.debug(f"Access granted: User has access to team {tool_team_id}")
+                    return True
 
-                    logger.warning(f"Access denied: Tool {resource_id} is team-scoped to '{tool_team_id}', token is scoped to teams {token_team_ids}")
-                    return False
+                logger.warning(f"Access denied: Tool {resource_id} belongs to team {tool_team_id}, user has no access")
+                return False
 
-                # PRIVATE TOOLS: Check if tool is in token's team context
-                if tool_visibility in ["private", "user"]:
-                    tool_team_id = getattr(tool, "team_id", None)
-                    if tool_team_id and tool_team_id in token_team_ids:
-                        logger.debug(f"Access granted: Private tool {resource_id} in token's team {tool_team_id}")
-                        return True
-
-                    logger.warning(f"Access denied: Tool {resource_id} is {tool_visibility} and not in token's teams")
-                    return False
 
                 # Unknown visibility - deny by default
                 logger.warning(f"Access denied: Tool {resource_id} has unknown visibility: {tool_visibility}")

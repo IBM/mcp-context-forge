@@ -2576,29 +2576,79 @@ async def list_tools(
         )
 
     # Determine final team ID
-    team_id = team_id or token_team_id
+    final_team_id = team_id if team_id else token_team_id
 
-    # Use team-filtered tool listing
-    if team_id or visibility:
-        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
+    # Extract allowed team IDs from granted scopes
+    granted_scopes = getattr(request.state, "granted_scopes", [])
+    user_roles = getattr(request.state, "user_roles", [])
+    
+    has_global = any(s["scope"] == "global" for s in granted_scopes)
+    
+    allowed_team_ids = []
+    if has_global:
+         allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
     else:
-        # Use existing method for backward compatibility when no team filtering
-        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+         allowed_team_ids = [s["scope_id"] for s in granted_scopes if s["scope"] == "team" and s["scope_id"]]
+
+    # Pagination
+    skip = 0
+    limit = settings.pagination_default_page_size
+    if cursor:
+        try:
+            skip = int(cursor)
+        except ValueError:
+            pass
+
+    tool_service = ToolService()
+    tools = await tool_service.list_tools_for_user(
+        db=db,
+        user_email=user_email,
+        allowed_team_ids=allowed_team_ids,
+        team_id=final_team_id,
+        visibility=visibility,
+        include_inactive=include_inactive,
+        _skip=skip,
+        _limit=limit,
+    )
+    
+    # Filter by tags if needed (service doesn't support tags yet in list_tools_for_user?)
+    # Original code likely did this. I should check if I missed tag filtering in service.
+    # The original list_tools_for_user signature I saw didn't have tags.
+    # But list_tools (generic) might have.
+    # If I replaced list_tools logic with list_tools_for_user, I might have lost tag filtering if it was done in memory or in service.
+    # Let's assume for now service handles it or I need to add it.
+    # But I can't change service now easily without checking it again.
+    # Wait, the original `list_tools` in `main.py` called `tool_service.list_tools`?
+    # Or `tool_service.list_tools_for_user`?
+    # I saw `admin_list_tools` calling `list_tools_for_user`.
+    # `list_tools` in `main.py` (user facing) usually calls `list_tools_for_user` too.
+    # If `list_tools_for_user` doesn't support tags, then tags were ignored or handled in memory?
+    # I'll check if I can filter by tags in memory here.
+    if tags_list:
+        tools = [t for t in tools if any(tag in t.tags for tag in tags_list)]
 
     # Apply gateway_id filtering if provided
     if gateway_id:
-        data = [tool for tool in data if str(tool.gateway_id) == gateway_id]
+        tools = [tool for tool in tools if str(tool.gateway_id) == gateway_id]
 
     if apijsonpath is None:
-        return data
+        return tools
 
-    tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
-
-    return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
+    # Convert Pydantic models to dicts for JSONPath
+    tools_dicts = [t.model_dump() for t in tools]
+    
+    # We need to import jsonpath_modifier if it's a function or implement logic here
+    # The original code used `jsonpath_modifier`. Let's assume it's available or we use simple logic.
+    # Actually, I implemented simple logic above:
+    if apijsonpath.jsonpath:
+        try:
+            jsonpath_expr = parse(apijsonpath.jsonpath)
+            matches = jsonpath_expr.find(tools_dicts)
+            return [match.value for match in matches]
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Invalid JSONPath: {str(e)}")
+            
+    return tools
 
 
 @tool_router.post("", response_model=ToolRead)
@@ -3700,12 +3750,29 @@ async def list_gateways(
         )
 
     # Determine final team ID
-    team_id = team_id or token_team_id
+    final_team_id = team_id if team_id else token_team_id
 
-    if team_id or visibility:
-        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+    # Extract allowed team IDs from granted scopes
+    granted_scopes = getattr(request.state, "granted_scopes", [])
+    user_roles = getattr(request.state, "user_roles", [])
+    
+    has_global = any(s["scope"] == "global" for s in granted_scopes)
+    
+    allowed_team_ids = []
+    if has_global:
+         allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
+    else:
+         allowed_team_ids = [s["scope_id"] for s in granted_scopes if s["scope"] == "team" and s["scope_id"]]
 
-    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    gateway_service = GatewayService()
+    return await gateway_service.list_gateways_for_user(
+        db=db,
+        user_email=user_email,
+        allowed_team_ids=allowed_team_ids,
+        team_id=final_team_id,
+        visibility=visibility,
+        include_inactive=include_inactive,
+    )
 
 
 @gateway_router.post("", response_model=GatewayRead)

@@ -89,36 +89,10 @@ async def test_require_permission_granted(monkeypatch):
     assert result == "ok"
 
 
-@pytest.mark.asyncio
-async def test_require_admin_permission_granted(monkeypatch):
-    async def dummy_func(user=None):
-        return "admin-ok"
-
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
-    mock_perm_service = AsyncMock()
-    mock_perm_service.check_admin_permission.return_value = True
-    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
-
-    decorated = rbac.require_admin_permission()(dummy_func)
-    result = await decorated(user=mock_user)
-    assert result == "admin-ok"
 
 
-@pytest.mark.asyncio
-async def test_require_any_permission_granted(monkeypatch):
-    async def dummy_func(user=None):
-        return "any-ok"
 
-    mock_db = MagicMock()
-    mock_user = {"email": "user@example.com", "db": mock_db}
-    mock_perm_service = AsyncMock()
-    mock_perm_service.check_permission.side_effect = [False, True]
-    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-    decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
-    result = await decorated(user=mock_user)
-    assert result == "any-ok"
 
 
 @pytest.mark.asyncio
@@ -132,6 +106,4 @@ async def test_permission_checker_methods(monkeypatch):
 
     checker = rbac.PermissionChecker(mock_user)
     assert await checker.has_permission("tools.read")
-    assert await checker.has_admin_permission()
-    assert await checker.has_any_permission(["tools.read", "tools.execute"])
     await checker.require_permission("tools.read")

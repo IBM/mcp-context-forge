@@ -237,17 +237,26 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             Raises:
                 HTTPException: If user authentication or permission check fails
             """
-            # Extract user context from kwargs
+            # Extract user context from args and kwargs
             user_context = None
+            
+            # Check kwargs first
             for _, value in kwargs.items():
                 if isinstance(value, dict) and "email" in value and "db" in value:
                     user_context = value
                     break
+            
+            # Check args if not found
+            if not user_context:
+                for arg in args:
+                    if isinstance(arg, dict) and "email" in arg and "db" in arg:
+                        user_context = arg
+                        break
 
             if not user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Create permission service and check permission
+            # Create permission service
             permission_service = PermissionService(user_context["db"])
 
             # Extract team_id from path parameters if available
@@ -304,203 +313,53 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                         detail=f"Insufficient permissions. Required: {permission}",
                     )
 
-            # Check if permissions are already cached in request state (from TokenScopingMiddleware)
+            # Retrieve user permissions from request state if available (from TokenScopingMiddleware)
             request = user_context.get("request")
+            user_permissions = None
             if request and hasattr(request, "state") and hasattr(request.state, "user_permissions"):
-                # Use cached permissions
                 user_permissions = request.state.user_permissions
-                if permission in user_permissions:
-                    logger.debug(f"Permission granted from cache: user={user_context['email']}, permission={permission}")
-                    return await func(*args, **kwargs)
-                else:
-                    logger.warning(f"Permission denied from cache: user={user_context['email']}, permission={permission}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
 
-            # No plugin handled it, fall through to standard RBAC check (for non-token auth)
-            granted = await permission_service.check_permission(
-                user_email=user_context["email"],
-                permission=permission,
-                resource_type=resource_type,
-                team_id=team_id,
-                ip_address=user_context.get("ip_address"),
-                user_agent=user_context.get("user_agent"),
-            )
+            # If not in state, fetch them
+            if user_permissions is None:
+                user_roles = None
+                if request and hasattr(request, "state") and hasattr(request.state, "user_roles"):
+                    user_roles = request.state.user_roles
+                
+                user_permissions = await permission_service.get_user_scopes(
+                    user_email=user_context["email"],
+                    roles=user_roles
+                )
 
-            if not granted:
+            # Filter scopes that have the required permission
+            granted_scopes = []
+            for scope in user_permissions:
+                perms = scope.get("permissions", [])
+                if permission in perms or Permissions.ALL_PERMISSIONS in perms:
+                    granted_scopes.append(scope)
+
+            if not granted_scopes:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
 
-            # Permission granted, execute the original function
-            return await func(*args, **kwargs)
 
-        return wrapper
+            # If team_id is specified in the request, we must verify that the user has permission for THAT team.
+            # This preserves backward compatibility for routes that take `team_id`.
+            if team_id:
+                has_team_access = False
+                for scope in granted_scopes:
+                    if scope["scope"] == "global":
+                        continue
+                    if scope["scope"] == "team" and scope["scope_id"] == team_id:
+                        has_team_access = True
+                        break
+                
+                if not has_team_access:
+                     logger.warning(f"Permission denied for team {team_id}: user={user_context['email']}, permission={permission}")
+                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions for team {team_id}. Required: {permission}")
 
-    return decorator
-
-
-def require_admin_permission():
-    """Decorator to require admin permissions for accessing an endpoint.
-
-    Returns:
-        Callable: Decorated function that enforces admin permission requirement
-
-    Examples:
-        >>> decorator = require_admin_permission()
-        >>> callable(decorator)
-        True
-
-        Execute when admin permission granted:
-        >>> import asyncio
-        >>> class DummyPS:
-        ...     def __init__(self, db):
-        ...         pass
-        ...     async def check_admin_permission(self, email):
-        ...         return True
-        >>> @require_admin_permission()
-        ... async def demo(user=None):
-        ...     return "admin-ok"
-        >>> from unittest.mock import patch
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
-        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
-        'admin-ok'
-    """
-
-    def decorator(func: Callable) -> Callable:
-        """Decorator function that wraps the original function with admin permission checking.
-
-        Args:
-            func: The function to be decorated
-
-        Returns:
-            Callable: The wrapped function with admin permission checking
-        """
-
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            """Async wrapper function that performs admin permission check before calling original function.
-
-            Args:
-                *args: Positional arguments passed to the wrapped function
-                **kwargs: Keyword arguments passed to the wrapped function
-
-            Returns:
-                Any: Result from the wrapped function if admin permission check passes
-
-            Raises:
-                HTTPException: If user authentication or admin permission check fails
-            """
-            # Extract user context from kwargs
-            user_context = None
-            for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value and "db" in value:
-                    user_context = value
-                    break
-
-            if not user_context:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
-
-            has_admin_permission = await self.permission_service.check_admin_permission(user_context["email"])
-
-            if not has_admin_permission:
-                logger.warning(f"Admin permission denied: user={user_context['email']}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
-
-            # Admin permission granted, execute the original function
-            return await func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-def require_any_permission(permissions: List[str], resource_type: Optional[str] = None):
-    """Decorator to require any of the specified permissions for accessing an endpoint.
-
-    Args:
-        permissions: List of permissions, user needs at least one
-        resource_type: Optional resource type for resource-specific permissions
-
-    Returns:
-        Callable: Decorated function that enforces the permission requirements
-
-    Examples:
-        >>> decorator = require_any_permission(["tools.read", "tools.execute"], "tools")
-        >>> callable(decorator)
-        True
-
-        Execute when any permission granted:
-        >>> import asyncio
-        >>> class DummyPS:
-        ...     def __init__(self, db):
-        ...         pass
-        ...     async def check_permission(self, **kwargs):
-        ...         return True
-        >>> @require_any_permission(["tools.read", "tools.execute"], "tools")
-        ... async def demo(user=None):
-        ...     return "any-ok"
-        >>> from unittest.mock import patch
-        >>> with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
-        ...     asyncio.run(demo(user={"email": "u", "db": object()}))
-        'any-ok'
-    """
-
-    def decorator(func: Callable) -> Callable:
-        """Decorator function that wraps the original function with any-permission checking.
-
-        Args:
-            func: The function to be decorated
-
-        Returns:
-            Callable: The wrapped function with any-permission checking
-        """
-
-        @wraps(func)
-        async def wrapper(*args, **kwargs):
-            """Async wrapper function that performs any-permission check before calling original function.
-
-            Args:
-                *args: Positional arguments passed to the wrapped function
-                **kwargs: Keyword arguments passed to the wrapped function
-
-            Returns:
-                Any: Result from the wrapped function if any-permission check passes
-
-            Raises:
-                HTTPException: If user authentication or any-permission check fails
-            """
-            # Extract user context from kwargs
-            user_context = None
-            for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value and "db" in value:
-                    user_context = value
-                    break
-
-            if not user_context:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
-
-            # Create permission service
-            permission_service = PermissionService(user_context["db"])
-
-            # Extract team_id from path parameters if available
-            team_id = kwargs.get("team_id")
-
-            # Check if user has any of the required permissions
-            granted = False
-            for permission in permissions:
-                if await permission_service.check_permission(
-                    user_email=user_context["email"],
-                    permission=permission,
-                    resource_type=resource_type,
-                    team_id=team_id,
-                    ip_address=user_context.get("ip_address"),
-                    user_agent=user_context.get("user_agent"),
-                ):
-                    granted = True
-                    break
-
-            if not granted:
-                logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required one of: {', '.join(permissions)}")
+            # Store granted scopes in request state for downstream use
+            if request:
+                request.state.granted_scopes = granted_scopes
 
             # Permission granted, execute the original function
             return await func(*args, **kwargs)
@@ -508,6 +367,12 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
         return wrapper
 
     return decorator
+
+
+
+
+
+
 
 
 class PermissionChecker:
@@ -518,7 +383,7 @@ class PermissionChecker:
     Examples:
         >>> from unittest.mock import Mock
         >>> checker = PermissionChecker({"email": "user@example.com", "db": Mock()})
-        >>> hasattr(checker, 'has_permission') and hasattr(checker, 'has_admin_permission')
+        >>> hasattr(checker, 'has_permission')
         True
     """
 
@@ -553,29 +418,9 @@ class PermissionChecker:
             user_agent=self.user_context.get("user_agent"),
         )
 
-    async def has_admin_permission(self) -> bool:
-        """Check if user has admin permissions.
 
-        Returns:
-            bool: True if user has admin permissions
-        """
-        return await self.permission_service.check_admin_permission(self.user_context["email"])
 
-    async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
-        """Check if user has any of the specified permissions.
 
-        Args:
-            permissions: List of permissions to check
-            resource_type: Optional resource type
-            team_id: Optional team context
-
-        Returns:
-            bool: True if user has at least one permission
-        """
-        for permission in permissions:
-            if await self.has_permission(permission, resource_type, team_id=team_id):
-                return True
-        return False
 
     async def require_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> None:
         """Require specific permission, raise HTTPException if not granted.

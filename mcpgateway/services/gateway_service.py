@@ -1186,7 +1186,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         return result
 
     async def list_gateways_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_email: str, allowed_team_ids: List[str], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
     ) -> List[GatewayRead]:
         """
         List gateways user has access to with team filtering.
@@ -1194,6 +1194,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Args:
             db: Database session
             user_email: Email of the user requesting gateways
+            allowed_team_ids: List of team IDs the user has access to
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive gateways
@@ -1204,9 +1205,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             List[GatewayRead]: Gateways the user has access to
         """
         # Build query following existing patterns from list_gateways()
-        team_service = TeamManagementService(db)
-        user_teams = await team_service.get_user_teams(user_email)
-        team_ids = [team.id for team in user_teams]
+        # team_service = TeamManagementService(db)
+        # user_teams = await team_service.get_user_teams(user_email)
+        # team_ids = [team.id for team in user_teams]
+        # Use provided allowed_team_ids instead of fetching
+        team_ids = allowed_team_ids
 
         query = select(DbGateway)
 

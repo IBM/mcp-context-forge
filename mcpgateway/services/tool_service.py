@@ -989,7 +989,15 @@ class ToolService:
         return result
 
     async def list_tools_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, _skip: int = 0, _limit: int = 100
+        self,
+        db: Session,
+        user_email: str,
+        allowed_team_ids: List[str],
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        _skip: int = 0,
+        _limit: int = 100,
     ) -> List[ToolRead]:
         """
         List tools user has access to with team filtering.
@@ -997,6 +1005,7 @@ class ToolService:
         Args:
             db: Database session
             user_email: Email of the user requesting tools
+            allowed_team_ids: List of team IDs the user has access to
             team_id: Optional team ID to filter by specific team
             visibility: Optional visibility filter (private, team, public)
             include_inactive: Whether to include inactive tools
@@ -1007,9 +1016,11 @@ class ToolService:
             List[ToolRead]: Tools the user has access to
         """
         # Build query following existing patterns from list_tools()
-        team_service = TeamManagementService(db)
-        user_teams = await team_service.get_user_teams(user_email)
-        team_ids = [team.id for team in user_teams]
+        # team_service = TeamManagementService(db)
+        # user_teams = await team_service.get_user_teams(user_email)
+        # team_ids = [team.id for team in user_teams]
+        # Use provided allowed_team_ids instead of fetching
+        team_ids = allowed_team_ids
 
         query = select(DbTool)
 
