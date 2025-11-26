@@ -5,31 +5,27 @@ This service manages the catalog of available MCP servers that can be
 easily registered with one-click from the admin UI.
 """
 
+import logging
+import time
 # Standard
 from datetime import datetime, timezone
-import logging
 from pathlib import Path
-import time
 from typing import Any, Dict, Optional
 
 # Third-Party
 import httpx
+import yaml
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-import yaml
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.schemas import (
-    CatalogBulkRegisterRequest,
-    CatalogBulkRegisterResponse,
-    CatalogListRequest,
-    CatalogListResponse,
-    CatalogServer,
-    CatalogServerRegisterRequest,
-    CatalogServerRegisterResponse,
-    CatalogServerStatusResponse,
-)
+from mcpgateway.schemas import (CatalogBulkRegisterRequest,
+                                CatalogBulkRegisterResponse,
+                                CatalogListRequest, CatalogListResponse,
+                                CatalogServer, CatalogServerRegisterRequest,
+                                CatalogServerRegisterResponse,
+                                CatalogServerStatusResponse)
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.utils.create_slug import slugify
 
@@ -106,7 +102,10 @@ class CatalogService:
             try:
                 # Ensure we're using the correct Gateway model
                 # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+                # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import \
+                    Gateway as \
+                    DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway.url).where(DbGateway.enabled)
                 result = db.execute(stmt)
@@ -194,7 +193,10 @@ class CatalogService:
             # Check if already registered
             try:
                 # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+                # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import \
+                    Gateway as \
+                    DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway).where(DbGateway.url == server_data["url"])
                 result = db.execute(stmt)
@@ -208,7 +210,8 @@ class CatalogService:
 
             # Prepare gateway creation request using proper schema
             # First-Party
-            from mcpgateway.schemas import GatewayCreate  # pylint: disable=import-outside-toplevel
+            from mcpgateway.schemas import \
+                GatewayCreate  # pylint: disable=import-outside-toplevel
 
             # Use explicit transport if provided, otherwise auto-detect from URL
             transport = server_data.get("transport")
@@ -271,7 +274,10 @@ class CatalogService:
             if skip_initialization:
                 # Create minimal gateway entry without tool discovery
                 # First-Party
-                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+                # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import \
+                    Gateway as \
+                    DbGateway  # pylint: disable=import-outside-toplevel
 
                 gateway_create = GatewayCreate(**gateway_data)
                 slug_name = slugify(gateway_data["name"])
@@ -296,7 +302,8 @@ class CatalogService:
                 db.refresh(db_gateway)
 
                 # First-Party
-                from mcpgateway.schemas import GatewayRead  # pylint: disable=import-outside-toplevel
+                from mcpgateway.schemas import \
+                    GatewayRead  # pylint: disable=import-outside-toplevel
 
                 gateway_read = GatewayRead.model_validate(db_gateway)
 
@@ -321,7 +328,8 @@ class CatalogService:
 
             # Query for tools discovered from this gateway
             # First-Party
-            from mcpgateway.db import Tool as DbTool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import \
+                Tool as DbTool  # pylint: disable=import-outside-toplevel
 
             tool_count = 0
             if gateway_read.id:

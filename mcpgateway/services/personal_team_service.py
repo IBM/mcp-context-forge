@@ -24,7 +24,8 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.db import (EmailTeam, EmailTeamMember, EmailTeamMemberHistory,
+                           EmailUser, utc_now)
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging

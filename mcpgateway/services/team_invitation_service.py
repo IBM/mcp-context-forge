@@ -16,9 +16,9 @@ Examples:
     >>> # Service handles team invitation lifecycle
 """
 
+import secrets
 # Standard
 from datetime import timedelta
-import secrets
 from typing import List, Optional
 
 # Third-Party
@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import (EmailTeam, EmailTeamInvitation, EmailTeamMember,
+                           EmailUser, utc_now)
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging

@@ -22,9 +22,9 @@ by bootstrap_db.py to ensure proper transaction management.
 # Standard
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "cfc3d6aa0fb2"

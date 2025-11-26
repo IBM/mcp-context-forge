@@ -14,11 +14,11 @@ Examples:
     >>> # Service provides full token lifecycle management
 """
 
+import hashlib
+import uuid
 # Standard
 from datetime import datetime, timedelta, timezone
-import hashlib
 from typing import List, Optional
-import uuid
 
 # Third-Party
 from sqlalchemy import and_, or_, select
@@ -26,7 +26,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import (EmailApiToken, EmailUser, TokenRevocation,
+                           TokenUsageLog, utc_now)
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -357,7 +358,8 @@ class TokenCatalogService:
         # Validate team exists and user is active member
         if team_id:
             # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+                EmailTeam, EmailTeamMember)
 
             # Check if team exists
             team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
@@ -472,7 +474,8 @@ class TokenCatalogService:
         """
         # Validate user is team owner
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import \
+            EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         membership = self.db.execute(
             select(EmailTeamMember).where(and_(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email, EmailTeamMember.role == "owner", EmailTeamMember.is_active.is_(True)))

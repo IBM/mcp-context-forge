@@ -39,13 +39,13 @@ from __future__ import annotations
 # Standard
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 from typing import List, Optional
 
+import uvicorn
 # Third-Party
 from pydantic import ValidationError
-import uvicorn
 
 # First-Party
 from mcpgateway import __version__
@@ -217,7 +217,8 @@ def _handle_support_bundle(
         ✅ Support bundle created: /tmp/mcpgateway-support-2025-01-09-120000.zip
     """
     # First-Party
-    from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.support_bundle_service import (  # pylint: disable=import-outside-toplevel
+        SupportBundleConfig, SupportBundleService)
 
     try:
         config = SupportBundleConfig(
@@ -281,7 +282,8 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
     if len(sys.argv) > 1 and sys.argv[1] in ["export", "import"]:
         # Avoid cyclic import by importing only when needed
         # First-Party
-        from mcpgateway.cli_export_import import main_with_subcommands  # pylint: disable=import-outside-toplevel,cyclic-import
+        from mcpgateway.cli_export_import import \
+            main_with_subcommands  # pylint: disable=import-outside-toplevel,cyclic-import
 
         main_with_subcommands()
         return

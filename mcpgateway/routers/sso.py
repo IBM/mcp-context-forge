@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import (get_current_user_with_permissions,
+                                        require_permission)
 from mcpgateway.services.sso_service import SSOService
 
 

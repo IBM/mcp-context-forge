@@ -14,9 +14,9 @@ Create Date: 2025-08-19 10:00:00.000000
 # Standard
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "add_a2a_agents_and_metrics"

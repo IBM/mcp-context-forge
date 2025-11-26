@@ -11,13 +11,13 @@ Revises:
 Create Date: 2025-06-26 21:29:59.117140
 """
 
+import uuid
 # Standard
 from typing import Sequence, Union
-import uuid
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 # First-Party

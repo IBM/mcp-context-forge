@@ -25,23 +25,37 @@ import os
 from typing import Any
 
 # Third-Party
-from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
-from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
-from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
+from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import \
+    prompt_utils
+from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import \
+    ToolOpsMCPCFToolEnrichment
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import \
+    NlUtteranceGeneration
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import \
+    nlg_util
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import \
+    TestcaseGeneration
+from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import \
+    prompt_execution
+from altk.build_time.test_case_generation_toolkit.src.toolops.utils import \
+    llm_util
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.schemas import ToolRead, ToolUpdate
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatService, MCPClientConfig, MCPServerConfig
+from mcpgateway.services.mcp_client_chat_service import (LLMConfig,
+                                                         MCPChatService,
+                                                         MCPClientConfig,
+                                                         MCPServerConfig)
 from mcpgateway.services.tool_service import ToolService
-from mcpgateway.toolops.utils.db_util import populate_testcases_table, query_testcases_table
-from mcpgateway.toolops.utils.format_conversion import convert_to_toolops_spec, post_process_nl_test_cases
-from mcpgateway.toolops.utils.llm_util import chat_llm_instance, get_llm_instance
+from mcpgateway.toolops.utils.db_util import (populate_testcases_table,
+                                              query_testcases_table,
+                                              query_tool_auth)
+from mcpgateway.toolops.utils.format_conversion import (
+    convert_to_toolops_spec, post_process_nl_test_cases)
+from mcpgateway.toolops.utils.llm_util import (chat_llm_instance,
+                                               get_llm_instance)
 
 # importing toolops modules from ALTK
 
@@ -181,11 +195,18 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
     tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
     mcp_cf_tool = tool_schema.to_dict(use_alias=True)
     tool_url = mcp_cf_tool.get("url")
-    mcp_server_url = tool_url.split("/sse")[0] + "/mcp"
-    config = MCPClientConfig(mcp_server=MCPServerConfig(url=mcp_server_url, transport="streamable_http"), llm=toolops_llm_config)
+    tool_auth = query_tool_auth(tool_id, db)
+    # handling transport based on protocol type
+    if "/mcp" in tool_url:
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=toolops_llm_config)
+    elif "/sse" in tool_url:
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="sse", headers=tool_auth), llm=toolops_llm_config)
+    else:
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="stdio", headers=tool_auth), llm=toolops_llm_config)
+
     service = MCPChatService(config)
     await service.initialize()
-    logger.info("MCP tool server - " + str(mcp_server_url) + " is ready for tool validation")
+    logger.info("MCP tool server - " + str(tool_url) + " is ready for tool validation")
 
     tool_test_case_outputs = []
     # we execute each nl test case and if there are any errors we add that to test case output
@@ -246,18 +267,18 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
 #     from mcpgateway.db import SessionLocal
 #     from mcpgateway.services.tool_service import ToolService
 
-#     tool_id = "ccf65855a34e403f97c8d801bee1906f"
+#     tool_id = "69df98bcab6b4895a0345a20aeb038b2"
 #     tool_service = ToolService()
 #     db = SessionLocal()
-#     tool_test_cases = asyncio.run(validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
-#     print("#" * 30)
-#     print("tool_test_cases")
-#     print(tool_test_cases)
-#     enrich_output = asyncio.run(enrich_tool(tool_id, tool_service, db))
-#     print("#" * 30)
-#     print("enrich_output")
-#     print(enrich_output)
-#     tool_nl_test_cases = ["get all actions", "get salesloft actions", "I need salesloft all actions"]
+#     # tool_test_cases = asyncio.run(validation_generate_test_cases(tool_id, tool_service, db, number_of_test_cases=2, number_of_nl_variations=2, mode="generate"))
+#     # print("#" * 30)
+#     # print("tool_test_cases")
+#     # print(tool_test_cases)
+#     # enrich_output = asyncio.run(enrich_tool(tool_id, tool_service, db))
+#     # print("#" * 30)
+#     # print("enrich_output")
+#     # print(enrich_output)
+#     tool_nl_test_cases = ["add 3 and 10","please add 4 and 6"]
 #     tool_outputs = asyncio.run(execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service, db))
 #     print("#" * 30)
 #     print("len - tool_outputs", len(tool_outputs))

@@ -14,13 +14,13 @@ import logging
 import os
 from typing import Optional, Sequence, Union
 
+import sqlalchemy as sa
 # Third-Party
 from alembic import op
-from argon2.low_level import hash_secret_raw, Type
+from argon2.low_level import Type, hash_secret_raw
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-import sqlalchemy as sa
 from sqlalchemy import text
 
 # First-Party

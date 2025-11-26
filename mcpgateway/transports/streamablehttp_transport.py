@@ -29,13 +29,13 @@ Examples:
     'SessionManagerWrapper'
 """
 
+import contextvars
+import re
 # Standard
 from collections import deque
-from contextlib import asynccontextmanager, AsyncExitStack
-import contextvars
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any, AsyncGenerator, List, Union
 from uuid import uuid4
 
 # Third-Party
@@ -43,7 +43,8 @@ import anyio
 from fastapi.security.utils import get_authorization_scheme_param
 from mcp import types
 from mcp.server.lowlevel import Server
-from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
+from mcp.server.streamable_http import (EventCallback, EventId, EventMessage,
+                                        EventStore, StreamId)
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from mcp.types import JSONRPCMessage
 from sqlalchemy.orm import Session

@@ -19,7 +19,8 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SessionLocal
-from mcpgateway.routers.email_auth import create_access_token, get_client_ip, get_user_agent
+from mcpgateway.routers.email_auth import (create_access_token, get_client_ip,
+                                           get_user_agent)
 from mcpgateway.schemas import AuthenticationResponse, EmailUserResponse
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService

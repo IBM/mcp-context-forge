@@ -18,10 +18,10 @@ The module consists of several key components:
 - Chat service for conversational interactions
 """
 
-# Standard
-from datetime import datetime, timezone
 import json
 import time
+# Standard
+from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
@@ -31,7 +31,8 @@ try:
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from langchain_ollama import ChatOllama, OllamaLLM
-    from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI
+    from langchain_openai import (AzureChatOpenAI, AzureOpenAI, ChatOpenAI,
+                                  OpenAI)
     from langgraph.prebuilt import create_react_agent
 
     _LLMCHAT_AVAILABLE = True

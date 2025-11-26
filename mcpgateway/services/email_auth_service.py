@@ -20,9 +20,9 @@ Examples:
             # authenticated = await service.authenticate_user("test@example.com", "password123")
 """
 
+import re
 # Standard
 from datetime import datetime, timezone
-import re
 from typing import Optional
 
 # Third-Party
@@ -330,7 +330,8 @@ class EmailAuthService:
                 try:
                     # Import here to avoid circular imports
                     # First-Party
-                    from mcpgateway.services.personal_team_service import PersonalTeamService  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.personal_team_service import \
+                        PersonalTeamService  # pylint: disable=import-outside-toplevel
 
                     personal_team_service = PersonalTeamService(self.db)
                     personal_team = await personal_team_service.create_personal_team(user)
@@ -761,7 +762,8 @@ class EmailAuthService:
 
             # Check if user owns any teams
             # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import (  # pylint: disable=import-outside-toplevel
+                EmailTeam, EmailTeamMember)
 
             teams_owned_stmt = select(EmailTeam).where(EmailTeam.created_by == email)
             teams_owned = self.db.execute(teams_owned_stmt).scalars().all()

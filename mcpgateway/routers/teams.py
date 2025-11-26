@@ -20,7 +20,7 @@ Examples:
 """
 
 # Standard
-from typing import Any, cast, List
+from typing import Any, List, cast
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -29,22 +29,15 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import (
-    EmailUserResponse,
-    SuccessResponse,
-    TeamCreateRequest,
-    TeamDiscoveryResponse,
-    TeamInvitationResponse,
-    TeamInviteRequest,
-    TeamJoinRequest,
-    TeamJoinRequestResponse,
-    TeamListResponse,
-    TeamMemberResponse,
-    TeamMemberUpdateRequest,
-    TeamResponse,
-    TeamUpdateRequest,
-)
+from mcpgateway.middleware.rbac import (get_current_user_with_permissions,
+                                        require_permission)
+from mcpgateway.schemas import (EmailUserResponse, SuccessResponse,
+                                TeamCreateRequest, TeamDiscoveryResponse,
+                                TeamInvitationResponse, TeamInviteRequest,
+                                TeamJoinRequest, TeamJoinRequestResponse,
+                                TeamListResponse, TeamMemberResponse,
+                                TeamMemberUpdateRequest, TeamResponse,
+                                TeamUpdateRequest)
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import TeamManagementService

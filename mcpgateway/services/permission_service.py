@@ -10,9 +10,9 @@ This module provides the core permission checking logic for the RBAC system.
 It handles role-based permission validation, permission auditing, and caching.
 """
 
+import logging
 # Standard
 from datetime import datetime
-import logging
 from typing import Dict, List, Optional, Set
 
 # Third-Party
@@ -20,7 +20,8 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
+from mcpgateway.db import (PermissionAuditLog, Permissions, Role, UserRole,
+                           utc_now)
 
 logger = logging.getLogger(__name__)
 
@@ -481,8 +482,10 @@ class PermissionService:
             bool: True if user is admin
         """
         # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
-        from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+        from mcpgateway.config import \
+            settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import \
+            EmailUser  # pylint: disable=import-outside-toplevel
 
         # Special case for platform admin (virtual user)
         if user_email == getattr(settings, "platform_admin_email", ""):
@@ -538,7 +541,8 @@ class PermissionService:
             bool: True if user is a team member
         """
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import \
+            EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
 
@@ -555,7 +559,8 @@ class PermissionService:
             Optional[str]: User's role in the team or None if not a member
         """
         # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import \
+            EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
 

@@ -17,10 +17,12 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 try:
     # Third-Party
-    from google.protobuf import descriptor_pool, json_format, message_factory
-    from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
     import grpc
-    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
+    from google.protobuf import descriptor_pool, json_format, message_factory
+    from google.protobuf.descriptor_pb2 import \
+        FileDescriptorProto  # pylint: disable=no-name-in-module
+    from grpc_reflection.v1alpha import (  # pylint: disable=no-member
+        reflection_pb2, reflection_pb2_grpc)
 
     GRPC_AVAILABLE = True
 except ImportError:

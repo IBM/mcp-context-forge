@@ -17,20 +17,18 @@ from dotenv import load_dotenv
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.mcp_client_chat_service import (
-    AnthropicConfig,
-    AnthropicProvider,
-    AWSBedrockConfig,
-    AWSBedrockProvider,
-    AzureOpenAIConfig,
-    AzureOpenAIProvider,
-    OllamaConfig,
-    OllamaProvider,
-    OpenAIConfig,
-    OpenAIProvider,
-    WatsonxConfig,
-    WatsonxProvider,
-)
+from mcpgateway.services.mcp_client_chat_service import (AnthropicConfig,
+                                                         AnthropicProvider,
+                                                         AWSBedrockConfig,
+                                                         AWSBedrockProvider,
+                                                         AzureOpenAIConfig,
+                                                         AzureOpenAIProvider,
+                                                         OllamaConfig,
+                                                         OllamaProvider,
+                                                         OpenAIConfig,
+                                                         OpenAIProvider,
+                                                         WatsonxConfig,
+                                                         WatsonxProvider)
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)

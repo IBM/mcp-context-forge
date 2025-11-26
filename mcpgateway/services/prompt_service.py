@@ -16,16 +16,16 @@ It handles:
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
 import os
-from string import Formatter
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
+from datetime import datetime, timezone
+from string import Formatter
+from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 
 # Third-Party
 from jinja2 import Environment, meta, select_autoescape
-from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
+from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -36,10 +36,15 @@ from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
-from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.plugins.framework import (GlobalContext, PluginManager,
+                                          PromptHookType,
+                                          PromptPosthookPayload,
+                                          PromptPrehookPayload)
+from mcpgateway.schemas import (PromptCreate, PromptRead, PromptUpdate,
+                                TopPerformer)
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.observability_service import (ObservabilityService,
+                                                       current_trace_id)
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -518,7 +523,8 @@ class PromptService:
             List[PromptRead]: Prompts the user has access to
         """
         # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.team_management_service import \
+            TeamManagementService  # pylint: disable=import-outside-toplevel
 
         # Build query following existing patterns from list_prompts()
         team_service = TeamManagementService(db)
@@ -939,7 +945,8 @@ class PromptService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, prompt):
@@ -1057,7 +1064,8 @@ class PromptService:
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, prompt):
@@ -1156,7 +1164,8 @@ class PromptService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import \
+                    PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, prompt):

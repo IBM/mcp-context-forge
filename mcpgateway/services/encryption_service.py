@@ -18,7 +18,7 @@ import os
 from typing import Optional, Union
 
 # Third-Party
-from argon2.low_level import hash_secret_raw, Type
+from argon2.low_level import Type, hash_secret_raw
 from cryptography.fernet import Fernet
 from pydantic import SecretStr
 

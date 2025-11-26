@@ -11,11 +11,11 @@ on API endpoints. It includes permission decorators and dependency injection
 functions for protecting routes.
 """
 
+import logging
+import uuid
 # Standard
 from functools import wraps
-import logging
 from typing import Callable, Generator, List, Optional
-import uuid
 
 # Third-Party
 from fastapi import Cookie, Depends, HTTPException, Request, status
@@ -248,11 +248,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             # First, check if any plugins want to handle permission checking
             # First-Party
             from mcpgateway.plugins.framework import (  # pylint: disable=import-outside-toplevel
-                get_plugin_manager,
-                GlobalContext,
-                HttpAuthCheckPermissionPayload,
-                HttpHookType,
-            )
+                GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType,
+                get_plugin_manager)
 
             plugin_manager = get_plugin_manager()
             if plugin_manager:

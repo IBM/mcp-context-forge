@@ -16,7 +16,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
+from mcpgateway.plugins.framework import (GlobalContext, HttpHeaderPayload,
+                                          HttpHookType, HttpPostRequestPayload,
+                                          HttpPreRequestPayload, PluginManager)
 
 logger = logging.getLogger(__name__)
 

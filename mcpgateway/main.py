@@ -27,19 +27,21 @@ Structure:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager
-from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
 import sys
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlparse, urlunparse
-import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
+from fastapi import (APIRouter, Body, Depends, FastAPI, HTTPException, Query,
+                     Request, WebSocket, WebSocketDisconnect, status)
 from fastapi.background import BackgroundTasks
-from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
+from fastapi.exception_handlers import \
+    request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
@@ -65,63 +67,73 @@ from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
-from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
+from mcpgateway.common.models import (ListResourceTemplatesResult, LogLevel,
+                                      Root)
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import refresh_slugs_on_startup
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
+from mcpgateway.middleware.rbac import (get_current_user_with_permissions,
+                                        require_permission)
+from mcpgateway.middleware.request_logging_middleware import \
+    RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.observability import init_telemetry
-from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.framework import (PluginError, PluginManager,
+                                          PluginViolationError)
 from mcpgateway.routers.well_known import router as well_known_router
-from mcpgateway.schemas import (
-    A2AAgentCreate,
-    A2AAgentRead,
-    A2AAgentUpdate,
-    GatewayCreate,
-    GatewayRead,
-    GatewayUpdate,
-    JsonPathModifier,
-    PromptCreate,
-    PromptExecuteArgs,
-    PromptRead,
-    PromptUpdate,
-    ResourceCreate,
-    ResourceRead,
-    ResourceSubscription,
-    ResourceUpdate,
-    RPCRequest,
-    ServerCreate,
-    ServerRead,
-    ServerUpdate,
-    TaggedEntity,
-    TagInfo,
-    ToolCreate,
-    ToolRead,
-    ToolUpdate,
-)
-from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.schemas import (A2AAgentCreate, A2AAgentRead, A2AAgentUpdate,
+                                GatewayCreate, GatewayRead, GatewayUpdate,
+                                JsonPathModifier, PromptCreate,
+                                PromptExecuteArgs, PromptRead, PromptUpdate,
+                                ResourceCreate, ResourceRead,
+                                ResourceSubscription, ResourceUpdate,
+                                RPCRequest, ServerCreate, ServerRead,
+                                ServerUpdate, TaggedEntity, TagInfo,
+                                ToolCreate, ToolRead, ToolUpdate)
+from mcpgateway.services.a2a_service import (A2AAgentError,
+                                             A2AAgentNameConflictError,
+                                             A2AAgentNotFoundError,
+                                             A2AAgentService)
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
-from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
-from mcpgateway.services.import_service import ImportError as ImportServiceError
-from mcpgateway.services.import_service import ImportService, ImportValidationError
+from mcpgateway.services.gateway_service import (GatewayConnectionError,
+                                                 GatewayDuplicateConflictError,
+                                                 GatewayError,
+                                                 GatewayNameConflictError,
+                                                 GatewayNotFoundError,
+                                                 GatewayService)
+from mcpgateway.services.import_service import (ConflictStrategy,
+                                                ImportConflictError)
+from mcpgateway.services.import_service import \
+    ImportError as ImportServiceError
+from mcpgateway.services.import_service import (ImportService,
+                                                ImportValidationError)
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
+from mcpgateway.services.prompt_service import (PromptError,
+                                                PromptNameConflictError,
+                                                PromptNotFoundError,
+                                                PromptService)
+from mcpgateway.services.resource_service import (ResourceError,
+                                                  ResourceNotFoundError,
+                                                  ResourceService,
+                                                  ResourceURIConflictError)
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import (ServerError,
+                                                ServerNameConflictError,
+                                                ServerNotFoundError,
+                                                ServerService)
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import (ToolError, ToolNameConflictError,
+                                              ToolNotFoundError, ToolService)
 from mcpgateway.transports.sse_transport import SSETransport
-from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
+from mcpgateway.transports.streamablehttp_transport import (
+    SessionManagerWrapper, streamable_http_auth)
 from mcpgateway.utils.db_isready import wait_for_db_ready
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -129,9 +141,10 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.verify_credentials import require_auth, require_docs_auth_override, verify_jwt_token
+from mcpgateway.utils.verify_credentials import (require_auth,
+                                                 require_docs_auth_override,
+                                                 verify_jwt_token)
 from mcpgateway.validation.jsonrpc import JSONRPCError
-
 # Import the admin routes from the new module
 from mcpgateway.version import router as version_router
 
@@ -430,7 +443,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
             # First-Party
-            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import \
+                get_elicitation_service  # pylint: disable=import-outside-toplevel
 
             elicitation_service = get_elicitation_service()
             await elicitation_service.start()
@@ -440,7 +454,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
-            attempt_to_bootstrap_sso_providers()
+            try:
+                # First-Party
+                from mcpgateway.utils.sso_bootstrap import \
+                    bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+                bootstrap_sso_providers()
+                logger.info("SSO providers bootstrapped successfully")
+            except Exception as e:
+                logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
         logger.info("All services initialized successfully")
 
@@ -491,7 +513,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Add elicitation service if enabled
         if settings.mcpgateway_elicitation_enabled:
             # First-Party
-            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import \
+                get_elicitation_service  # pylint: disable=import-outside-toplevel
 
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
@@ -1178,7 +1201,8 @@ if settings.log_requests:
 # Execution order will be: AuthContext -> Observability -> Request Handler
 if settings.observability_enabled:
     # First-Party
-    from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+    from mcpgateway.middleware.observability_middleware import \
+        ObservabilityMiddleware
 
     app.add_middleware(ObservabilityMiddleware, enabled=True)
     logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
@@ -1959,8 +1983,10 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
                 if request_id:
                     # Try to complete the elicitation
                     # First-Party
-                    from mcpgateway.common.models import ElicitResult  # pylint: disable=import-outside-toplevel
-                    from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.common.models import \
+                        ElicitResult  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.elicitation_service import \
+                        get_elicitation_service  # pylint: disable=import-outside-toplevel
 
                     elicitation_service = get_elicitation_service()
                     try:
@@ -2970,7 +2996,8 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.common.models import ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.common.models import (  # pylint: disable=import-outside-toplevel
+            ResourceContent, TextContent)
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
@@ -4038,8 +4065,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
             # Validate params
             # First-Party
-            from mcpgateway.common.models import ElicitRequestParams  # pylint: disable=import-outside-toplevel
-            from mcpgateway.services.elicitation_service import get_elicitation_service  # pylint: disable=import-outside-toplevel
+            from mcpgateway.common.models import \
+                ElicitRequestParams  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.elicitation_service import \
+                get_elicitation_service  # pylint: disable=import-outside-toplevel
 
             try:
                 elicit_params = ElicitRequestParams(**params)

@@ -12,8 +12,10 @@ This module defines the utility funtions to read/write/update toolops related da
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.db import Tool
 from mcpgateway.db import ToolOpsTestCases as TestCaseRecord
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.services_auth import decode_auth
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -61,3 +63,37 @@ def query_testcases_table(tool_id, db: Session):
     tool_record = db.query(TestCaseRecord).filter_by(tool_id=tool_id).first()
     logger.info("Tool record obtained from table for tool - " + str(tool_id))
     return tool_record
+
+
+def query_tool_auth(tool_id, db: Session):
+    """
+    Method to read tools table from database and get tool auth
+
+    Args:
+        tool_id: unqiue Tool ID used in MCP-CF
+        db: DB session to access the database
+
+    Returns:
+        This method returns tool auth specified tool id.
+    """
+    tool_auth = None
+    try:
+        tool_record = db.query(Tool).filter_by(id=tool_id).first()
+        tool_auth = decode_auth(tool_record.auth_value)
+        logger.info("Tool auth obtained from table for the tool - " + str(tool_id))
+    except Exception as e:
+        logger.error("Error in obtaining authorization for the tool - " + tool_id + " , " + str(e))
+    return tool_auth
+
+
+# if __name__=='__main__':
+#     # First-Party
+#     from mcpgateway.db import SessionLocal
+#     from mcpgateway.services.tool_service import ToolService
+
+#     tool_id = '36451eb11de64ebf8f224fc41a846ff0'
+#     tool_service = ToolService()
+#     db = SessionLocal()
+
+#     tool_auth = query_tool_auth(tool_id, db)
+#     print(tool_auth)

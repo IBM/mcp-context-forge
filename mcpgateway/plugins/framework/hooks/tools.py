@@ -106,7 +106,8 @@ def _register_tool_hooks() -> None:
     """
     # Import here to avoid circular dependency at module load time
     # First-Party
-    from mcpgateway.plugins.framework.hooks.registry import get_hook_registry  # pylint: disable=import-outside-toplevel
+    from mcpgateway.plugins.framework.hooks.registry import \
+        get_hook_registry  # pylint: disable=import-outside-toplevel
 
     registry = get_hook_registry()
 

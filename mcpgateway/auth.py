@@ -10,12 +10,12 @@ This module provides common authentication functions that can be shared
 across different parts of the application without creating circular imports.
 """
 
-# Standard
-from datetime import datetime, timezone
 import hashlib
 import logging
-from typing import Any, Dict, Generator, Never, Optional
 import uuid
+# Standard
+from datetime import datetime, timezone
+from typing import Any, Dict, Generator, Never, Optional
 
 # Third-Party
 from fastapi import Depends, HTTPException, status
@@ -25,8 +25,13 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
-from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
-from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+from mcpgateway.plugins.framework import (GlobalContext,
+                                          HttpAuthResolveUserPayload,
+                                          HttpHeaderPayload, HttpHookType,
+                                          PluginViolationError,
+                                          get_plugin_manager)
+from mcpgateway.services.team_management_service import \
+    TeamManagementService  # pylint: disable=import-outside-toplevel
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
@@ -278,7 +283,8 @@ async def get_current_user(
         if jti:
             try:
                 # First-Party
-                from mcpgateway.services.token_catalog_service import TokenCatalogService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.token_catalog_service import \
+                    TokenCatalogService  # pylint: disable=import-outside-toplevel
 
                 token_service = TokenCatalogService(db)
                 is_revoked = await token_service.is_token_revoked(jti)
@@ -305,7 +311,8 @@ async def get_current_user(
         logger.debug("JWT validation failed with error: %s, trying database API token", jwt_error)
         try:
             # First-Party
-            from mcpgateway.services.token_catalog_service import TokenCatalogService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.token_catalog_service import \
+                TokenCatalogService  # pylint: disable=import-outside-toplevel
 
             token_service = TokenCatalogService(db)
             token_hash = hashlib.sha256(credentials.credentials.encode()).hexdigest()
@@ -374,7 +381,8 @@ async def get_current_user(
 
     # Get user from database
     # First-Party
-    from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.email_auth_service import \
+        EmailAuthService  # pylint: disable=import-outside-toplevel
 
     auth_service = EmailAuthService(db)
     user = await auth_service.get_user_by_email(email)
