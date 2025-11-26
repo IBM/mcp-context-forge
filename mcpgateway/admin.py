@@ -23,7 +23,6 @@ from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
 from functools import wraps
-import hashlib
 import html
 import io
 import json
@@ -61,7 +60,6 @@ from mcpgateway.config import settings
 from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
-from mcpgateway.db import Role as DbRole
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -122,7 +120,6 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.role_service import RoleService
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -163,30 +160,6 @@ except ImportError:
 
     class GrpcServiceNameConflictError(GrpcServiceError):  # type: ignore
         """Placeholder for GrpcServiceNameConflictError when grpcio is not installed."""
-
-
-def get_user_email(user: Union[str, Dict[str, Any]]) -> str:
-    """Extract email from user object."""
-    if isinstance(user, dict):
-        return user.get("email") or user.get("sub") or "unknown"
-    return str(user) if user else "unknown"
-
-
-def get_allowed_team_ids(request: Request) -> List[str]:
-    """Extract allowed team IDs from request state."""
-    user_permissions = getattr(request.state, "user_permissions", [])
-    allowed_teams = []
-    
-    if not user_permissions:
-        return []
-        
-    for scope in user_permissions:
-        if scope.get("scope") == "team":
-            team_id = scope.get("scope_id")
-            if team_id:
-                allowed_teams.append(team_id)
-                
-    return allowed_teams
 
 
 # Import the shared logging service from main
@@ -782,7 +755,6 @@ async def get_configuration_settings(
             "environment": settings.environment,
             "app_domain": str(settings.app_domain),
             "protocol_version": settings.protocol_version,
-            "docs_allow_basic_auth": settings.docs_allow_basic_auth,
         },
         "Authentication & Security": {
             "auth_required": settings.auth_required,
@@ -792,13 +764,10 @@ async def get_configuration_settings(
             "jwt_secret_key": mask_sensitive(settings.jwt_secret_key, "secret_key"),
             "jwt_audience": settings.jwt_audience,
             "jwt_issuer": settings.jwt_issuer,
-            "jwt_audience_verification": settings.jwt_audience_verification,
             "token_expiry": settings.token_expiry,
             "require_token_expiration": settings.require_token_expiration,
-            "auth_encryption_secret": mask_sensitive(settings.auth_encryption_secret, "auth_encryption_secret"),
             "mcp_client_auth_enabled": settings.mcp_client_auth_enabled,
             "trust_proxy_auth": settings.trust_proxy_auth,
-            "proxy_user_header": settings.proxy_user_header,
             "skip_ssl_verify": settings.skip_ssl_verify,
         },
         "SSO Configuration": {
@@ -813,24 +782,18 @@ async def get_configuration_settings(
             "sso_auto_create_users": settings.sso_auto_create_users,
             "sso_preserve_admin_auth": settings.sso_preserve_admin_auth,
             "sso_require_admin_approval": settings.sso_require_admin_approval,
-            "sso_trusted_domains": settings.sso_trusted_domains,
-            "sso_auto_admin_domains": settings.sso_auto_admin_domains,
         },
         "Email Authentication": {
             "email_auth_enabled": settings.email_auth_enabled,
-            "platform_owner_email": settings.platform_owner_email,
-            "platform_owner_password": mask_sensitive(settings.platform_owner_password, "password"),
-            "platform_owner_full_name": settings.platform_owner_full_name,
+            "platform_admin_email": settings.platform_admin_email,
+            "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
             "database_url": settings.database_url.replace("://", "://***@") if "@" in settings.database_url else settings.database_url,
-            "db_pool_size": settings.db_pool_size,
-            "db_max_overflow": settings.db_max_overflow,
-            "db_pool_timeout": settings.db_pool_timeout,
             "cache_type": settings.cache_type,
             "redis_url": settings.redis_url.replace("://", "://***@") if settings.redis_url and "@" in settings.redis_url else settings.redis_url,
-            "cache_prefix": settings.cache_prefix,
-            "session_ttl": settings.session_ttl,
+            "db_pool_size": settings.db_pool_size,
+            "db_max_overflow": settings.db_max_overflow,
         },
         "Feature Flags": {
             "mcpgateway_ui_enabled": settings.mcpgateway_ui_enabled,
@@ -844,7 +807,6 @@ async def get_configuration_settings(
         "Federation": {
             "federation_enabled": settings.federation_enabled,
             "federation_discovery": settings.federation_discovery,
-            "federation_peers": [str(p) for p in settings.federation_peers],
             "federation_timeout": settings.federation_timeout,
             "federation_sync_interval": settings.federation_sync_interval,
         },
@@ -853,14 +815,6 @@ async def get_configuration_settings(
             "websocket_ping_interval": settings.websocket_ping_interval,
             "sse_retry_timeout": settings.sse_retry_timeout,
             "sse_keepalive_enabled": settings.sse_keepalive_enabled,
-            "sse_keepalive_interval": settings.sse_keepalive_interval,
-        },
-        "Compression": {
-            "compression_enabled": settings.compression_enabled,
-            "compression_minimum_size": settings.compression_minimum_size,
-            "compression_gzip_level": settings.compression_gzip_level,
-            "compression_brotli_quality": settings.compression_brotli_quality,
-            "compression_zstd_level": settings.compression_zstd_level,
         },
         "Logging": {
             "log_level": settings.log_level,
@@ -868,7 +822,6 @@ async def get_configuration_settings(
             "log_to_file": settings.log_to_file,
             "log_file": settings.log_file,
             "log_rotation_enabled": settings.log_rotation_enabled,
-            "log_requests": settings.log_requests,
         },
         "Resources & Tools": {
             "tool_timeout": settings.tool_timeout,
@@ -891,60 +844,9 @@ async def get_configuration_settings(
             "remove_server_headers": settings.remove_server_headers,
         },
         "Observability": {
-            "observability_enabled": settings.observability_enabled,
-            "observability_trace_http_requests": settings.observability_trace_http_requests,
-            "observability_trace_retention_days": settings.observability_trace_retention_days,
-            "observability_max_traces": settings.observability_max_traces,
-            "observability_sample_rate": settings.observability_sample_rate,
-            "observability_metrics_enabled": settings.observability_metrics_enabled,
-            "observability_events_enabled": settings.observability_events_enabled,
-            "observability_exclude_paths": settings.observability_exclude_paths,
             "otel_enable_observability": settings.otel_enable_observability,
             "otel_traces_exporter": settings.otel_traces_exporter,
-            "otel_exporter_otlp_endpoint": settings.otel_exporter_otlp_endpoint,
-            "otel_exporter_otlp_protocol": settings.otel_exporter_otlp_protocol,
-            "otel_exporter_otlp_insecure": settings.otel_exporter_otlp_insecure,
-            "otel_exporter_jaeger_endpoint": settings.otel_exporter_jaeger_endpoint,
-            "otel_exporter_zipkin_endpoint": settings.otel_exporter_zipkin_endpoint,
             "otel_service_name": settings.otel_service_name,
-            "otel_resource_attributes": settings.otel_resource_attributes,
-            "otel_bsp_max_queue_size": settings.otel_bsp_max_queue_size,
-            "otel_bsp_max_export_batch_size": settings.otel_bsp_max_export_batch_size,
-            "otel_bsp_schedule_delay": settings.otel_bsp_schedule_delay,
-        },
-        "DCR Configuration": {
-            "dcr_enabled": settings.dcr_enabled,
-            "dcr_auto_register_on_missing_credentials": settings.dcr_auto_register_on_missing_credentials,
-            "dcr_default_scopes": settings.dcr_default_scopes,
-            "dcr_allowed_issuers": settings.dcr_allowed_issuers,
-            "dcr_token_endpoint_auth_method": settings.dcr_token_endpoint_auth_method,
-            "dcr_metadata_cache_ttl": settings.dcr_metadata_cache_ttl,
-            "dcr_client_name_template": settings.dcr_client_name_template,
-        },
-        "OAuth Discovery": {
-            "oauth_discovery_enabled": settings.oauth_discovery_enabled,
-            "oauth_preferred_code_challenge_method": settings.oauth_preferred_code_challenge_method,
-            "oauth_request_timeout": settings.oauth_request_timeout,
-            "oauth_max_retries": settings.oauth_max_retries,
-            "oauth_default_timeout": settings.oauth_default_timeout,
-        },
-        "Ed25519 Signing": {
-            "enable_ed25519_signing": settings.enable_ed25519_signing,
-            "ed25519_private_key": mask_sensitive(settings.ed25519_private_key, "private_key"),
-            "prev_ed25519_private_key": mask_sensitive(settings.prev_ed25519_private_key, "private_key"),
-        },
-        "Pagination": {
-            "pagination_default_page_size": settings.pagination_default_page_size,
-            "pagination_max_page_size": settings.pagination_max_page_size,
-            "pagination_cursor_enabled": settings.pagination_cursor_enabled,
-            "pagination_default_sort_field": settings.pagination_default_sort_field,
-            "pagination_default_sort_order": settings.pagination_default_sort_order,
-        },
-        "LLM Chat": {
-            "llmchat_enabled": settings.llmchat_enabled,
-            "llmchat_session_ttl": settings.llmchat_session_ttl,
-            "llmchat_chat_history_ttl": settings.llmchat_chat_history_ttl,
-            "llmchat_chat_history_max_messages": settings.llmchat_chat_history_max_messages,
         },
         "Development": {
             "dev_mode": settings.dev_mode,
@@ -960,9 +862,7 @@ async def get_configuration_settings(
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
-@require_permission("servers.read")
 async def admin_list_servers(
-    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -971,7 +871,6 @@ async def admin_list_servers(
     List servers for the admin UI with an option to include inactive servers.
 
     Args:
-        request (Request): The FastAPI request object.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -991,13 +890,17 @@ async def admin_list_servers(
         >>> # Mock server service
         >>> from datetime import datetime, timezone
         >>> mock_metrics = ServerMetrics(
-        ...     request_count=100,
-        ...     error_count=5,
-        ...     average_latency=0.2,
-        ...     last_active=datetime.now(timezone.utc)
+        ...     total_executions=10,
+        ...     successful_executions=8,
+        ...     failed_executions=2,
+        ...     failure_rate=0.2,
+        ...     min_response_time=0.1,
+        ...     max_response_time=2.0,
+        ...     avg_response_time=0.5,
+        ...     last_execution_time=datetime.now(timezone.utc)
         ... )
         >>> mock_server = ServerRead(
-        ...     id="server-123",
+        ...     id="server-1",
         ...     name="Test Server",
         ...     description="A test server",
         ...     icon="test-icon.png",
@@ -1009,7 +912,14 @@ async def admin_list_servers(
         ...     associated_prompts=["1"],
         ...     url="http://test-server",
         ...     owner="test_user",
+        ...     description="A test server",
+        ...     icon="test-icon.png",
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
         ...     is_active=True,
+        ...     associated_tools=["tool1", "tool2"],
+        ...     associated_resources=[1, 2],
+        ...     associated_prompts=[1],
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -1017,17 +927,16 @@ async def admin_list_servers(
         >>> original_list_servers_for_user = server_service.list_servers_for_user
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
         >>>
-        >>> # Test the endpoint
+        >>> # Test the function
         >>> async def test_admin_list_servers():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     result = await admin_list_servers(
-        ...         request=mock_request,
-        ...         include_inactive=True,
+        ...         include_inactive=False,
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
-        ...     return len(result) == 1 and result[0]["id"] == "server-123"
+        ...     return len(result) > 0 and isinstance(result[0], dict)
+        >>>
+        >>> # Run the test
         >>> asyncio.run(test_admin_list_servers())
         True
         >>>
@@ -1037,10 +946,7 @@ async def admin_list_servers(
         >>> # Additional test for empty server list
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_servers_empty():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     result = await admin_list_servers(
-        ...         request=mock_request,
         ...         include_inactive=True,
         ...         db=mock_db,
         ...         user=mock_user
@@ -1055,10 +961,8 @@ async def admin_list_servers(
         >>> from fastapi import HTTPException
         >>> async def test_admin_list_servers_exception():
         ...     server_service.list_servers_for_user = AsyncMock(side_effect=Exception("Test error"))
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_list_servers(mock_request, False, mock_db, mock_user)
+        ...         await admin_list_servers(False, mock_db, mock_user)
         ...     except Exception as e:
         ...         return str(e) == "Test error"
         >>> asyncio.run(test_admin_list_servers_exception())
@@ -1066,232 +970,17 @@ async def admin_list_servers(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested server list")
     user_email = get_user_email(user)
-    allowed_team_ids = get_allowed_team_ids(request)
-    servers = await server_service.list_servers_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
+    servers = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)
     return [server.model_dump(by_alias=True) for server in servers]
 
 
-@admin_router.get("/resources", response_model=List[ResourceRead])
-@require_permission("resources.read")
-async def admin_list_resources(
-    request: Request,
-    include_inactive: bool = False,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
-    """
-    List resources for the admin UI with an option to include inactive resources.
-
-    Args:
-        request (Request): The FastAPI request object.
-        include_inactive (bool): Whether to include inactive resources.
-        db (Session): The database session dependency.
-        user (str): The authenticated user dependency.
-
-    Returns:
-        List[ResourceRead]: A list of resource records.
-
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
-        >>>
-        >>> # Mock dependencies
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>>
-        >>> # Mock resource service
-        >>> from datetime import datetime, timezone
-        >>> mock_metrics = ResourceMetrics(
-        ...     access_count=100,
-        ...     error_count=5,
-        ...     average_latency=0.2,
-        ...     last_accessed=datetime.now(timezone.utc)
-        ... )
-        >>> mock_resource = ResourceRead(
-        ...     id="resource-123",
-        ...     name="Test Resource",
-        ...     uri="http://test-resource",
-        ...     mime_type="application/json",
-        ...     owner="test_user",
-        ...     is_active=True,
-        ...     metrics=mock_metrics
-        ... )
-        >>>
-        >>> # Mock the resource_service.list_resources_for_user method
-        >>> original_list_resources_for_user = resource_service.list_resources_for_user
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource])
-        >>>
-        >>> # Test the endpoint
-        >>> async def test_admin_list_resources():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_list_resources(
-        ...         request=mock_request,
-        ...         include_inactive=True,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return len(result) == 1 and result[0]["id"] == "resource-123"
-        >>> asyncio.run(test_admin_list_resources())
-        True
-        >>>
-        >>> # Restore original method
-        >>> resource_service.list_resources_for_user = original_list_resources_for_user
-        >>>
-        >>> # Additional test for empty resource list
-        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
-        >>> async def test_admin_list_resources_empty():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_list_resources(
-        ...         request=mock_request,
-        ...         include_inactive=True,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return result == []
-        >>> asyncio.run(test_admin_list_resources_empty())
-        True
-        >>> resource_service.list_resources_for_user = original_list_resources_for_user
-        >>>
-        >>> # Additional test for exception handling
-        >>> import pytest
-        >>> from fastapi import HTTPException
-        >>> async def test_admin_list_resources_exception():
-        ...     resource_service.list_resources_for_user = AsyncMock(side_effect=Exception("Test error"))
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_list_resources(mock_request, False, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Test error"
-        >>> asyncio.run(test_admin_list_resources_exception())
-        True
-    """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource list")
-    user_email = get_user_email(user)
-    allowed_team_ids = get_allowed_team_ids(request)
-    resources = await resource_service.list_resources_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
-    return [resource.model_dump(by_alias=True) for resource in resources]
-
-
-@admin_router.get("/tools", response_model=List[ToolRead])
-@require_permission("tools.read")
-async def admin_list_tools(
-    request: Request,
-    include_inactive: bool = False,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
-    """
-    List tools for the admin UI with an option to include inactive tools.
-
-    Args:
-        request (Request): The FastAPI request object.
-        include_inactive (bool): Whether to include inactive tools.
-        db (Session): The database session dependency.
-        user (str): The authenticated user dependency.
-
-    Returns:
-        List[ToolRead]: A list of tool records.
-
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ToolRead, ToolMetrics
-        >>>
-        >>> # Mock dependencies
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>>
-        >>> # Mock tool service
-        >>> from datetime import datetime, timezone
-        >>> mock_metrics = ToolMetrics(
-        ...     execution_count=100,
-        ...     error_count=5,
-        ...     average_duration=0.2,
-        ...     last_used=datetime.now(timezone.utc)
-        ... )
-        >>> mock_tool = ToolRead(
-        ...     id="tool-123",
-        ...     name="Test Tool",
-        ...     description="A test tool",
-        ...     parameters={},
-        ...     server_id="server-1",
-        ...     created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
-        ...     metrics=mock_metrics
-        ... )
-        >>>
-        >>> # Mock the tool_service.list_tools_for_user method
-        >>> original_list_tools_for_user = tool_service.list_tools_for_user
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
-        >>>
-        >>> # Test the endpoint
-        >>> async def test_admin_list_tools():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_list_tools(
-        ...         request=mock_request,
-        ...         include_inactive=True,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return len(result) == 1 and result[0]["id"] == "tool-123"
-        >>> asyncio.run(test_admin_list_tools())
-        True
-        >>>
-        >>> # Restore original method
-        >>> tool_service.list_tools_for_user = original_list_tools_for_user
-        >>>
-        >>> # Additional test for empty tool list
-        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
-        >>> async def test_admin_list_tools_empty():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_list_tools(
-        ...         request=mock_request,
-        ...         include_inactive=True,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return result == []
-        >>> asyncio.run(test_admin_list_tools_empty())
-        True
-        >>> tool_service.list_tools_for_user = original_list_tools_for_user
-        >>>
-        >>> # Additional test for exception handling
-        >>> import pytest
-        >>> from fastapi import HTTPException
-        >>> async def test_admin_list_tools_exception():
-        ...     tool_service.list_tools_for_user = AsyncMock(side_effect=Exception("Test error"))
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_list_tools(mock_request, False, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Test error"
-        >>> asyncio.run(test_admin_list_tools_exception())
-        True
-    """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool list")
-    user_email = get_user_email(user)
-    allowed_team_ids = get_allowed_team_ids(request)
-    tools = await tool_service.list_tools_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
-    return [tool.model_dump(by_alias=True) for tool in tools]
-
-
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
-@require_permission("servers.read")
-async def admin_get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
     Args:
         server_id (str): The ID of the server to retrieve.
-        request (Request): The FastAPI request object.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -1346,11 +1035,8 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_server_success():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     result = await admin_get_server(
         ...         server_id=server_id,
-        ...         request=mock_request,
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
@@ -1364,12 +1050,9 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
         >>> server_service.get_server = AsyncMock(side_effect=ServerNotFoundError("Server not found"))
         >>>
         >>> async def test_admin_get_server_not_found():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     try:
         ...         await admin_get_server(
         ...             server_id="nonexistent",
-        ...             request=mock_request,
         ...             db=mock_db,
         ...             user=mock_user
         ...         )
@@ -1381,30 +1064,14 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
         >>> asyncio.run(test_admin_get_server_not_found())
         True
         >>>
-        >>> # Test generic exception
-        >>> server_service.get_server = AsyncMock(side_effect=Exception("Generic error"))
-        >>>
-        >>> async def test_admin_get_server_error():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_get_server(server_id, mock_request, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Generic error"
-        >>> asyncio.run(test_admin_get_server_error())
-        True
-        >>>
         >>> # Restore original method
         >>> server_service.get_server = original_get_server
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested server details for {server_id}")
     try:
-        user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
-        server = await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
+        server = await server_service.get_server(db, server_id)
         return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
-        LOGGER.warning(f"Server not found: {server_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting server {server_id}: {e}")
@@ -1412,7 +1079,6 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
 
 
 @admin_router.post("/servers", response_model=ServerRead)
-@require_permission("servers.create")
 async def admin_add_server(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Add a new server via the admin UI.
@@ -1607,12 +1273,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             db,
             server,
             created_by=user_email,  # Use the consistent user_email
-            created_from_ip=creation_metadata.get("created_from_ip"),
-            created_via=creation_metadata.get("created_via"),
-            created_user_agent=creation_metadata.get("created_user_agent"),
+            created_from_ip=creation_metadata["created_from_ip"],
+            created_via=creation_metadata["created_via"],
+            created_user_agent=creation_metadata["created_user_agent"],
             team_id=team_id_cast,
-            allowed_team_ids=get_allowed_team_ids(request),
-            user_email=user_email,
+            visibility=visibility,
         )
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -1636,7 +1301,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/servers/{server_id}/edit")
-@require_permission("servers.update")
 async def admin_edit_server(
     server_id: str,
     request: Request,
@@ -1826,7 +1490,6 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            allowed_team_ids=get_allowed_team_ids(request),
         )
 
         return JSONResponse(
@@ -1854,7 +1517,6 @@ async def admin_edit_server(
 
 
 @admin_router.post("/servers/{server_id}/toggle")
-@require_permission("servers.update")
 async def admin_toggle_server(
     server_id: str,
     request: Request,
@@ -1958,7 +1620,7 @@ async def admin_toggle_server(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
         error_message = str(e)
@@ -1981,7 +1643,6 @@ async def admin_toggle_server(
 
 
 @admin_router.post("/servers/{server_id}/delete")
-@require_permission("servers.delete")
 async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
@@ -2056,7 +1717,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
-        await server_service.delete_server(db, server_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await server_service.delete_server(db, server_id, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
         error_message = str(e)
@@ -2081,7 +1742,6 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
 
 @admin_router.get("/resources", response_model=List[ResourceRead])
-@require_permission("resources.read")
 async def admin_list_resources(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2192,7 +1852,6 @@ async def admin_list_resources(
 
 
 @admin_router.get("/prompts", response_model=List[PromptRead])
-@require_permission("prompts.read")
 async def admin_list_prompts(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2302,7 +1961,6 @@ async def admin_list_prompts(
 
 
 @admin_router.get("/gateways", response_model=List[GatewayRead])
-@require_permission("gateways.read")
 async def admin_list_gateways(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2439,7 +2097,6 @@ async def admin_list_gateway_ids(
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
-@require_permission("gateways.update")
 async def admin_toggle_gateway(
     gateway_id: str,
     request: Request,
@@ -2723,7 +2380,7 @@ async def admin_ui(
                             "type": str(getattr(team, "type", "organization")),
                             "is_personal": bool(getattr(team, "is_personal", False)),
                             "member_count": team.get_member_count() if hasattr(team, "get_member_count") else 0,
-                            "role": user_role or "team_member",
+                            "role": user_role or "member",
                         }
                         user_teams.append(team_dict)
                     except Exception as team_error:
@@ -3096,21 +2753,21 @@ async def admin_ui(
             # JWT library is imported at top level as jwt
 
             # Determine the admin user email
-            owner_email = get_user_email(user)
+            admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
             # Generate a comprehensive JWT token that matches the email auth format
             now = datetime.now(timezone.utc)
             payload = {
-                "sub": owner_email,
+                "sub": admin_email,
                 "iss": settings.jwt_issuer,
                 "aud": settings.jwt_audience,
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
-                "user": {"email": owner_email, "full_name": getattr(settings, "platform_owner_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
+                "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
                 "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{owner_email}", "public"],
+                "namespaces": [f"user:{admin_email}", "public"],
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
@@ -3127,7 +2784,7 @@ async def admin_ui(
                 max_age=settings.token_expiry * 60,  # Convert minutes to seconds
                 path=settings.app_root_path or "/",  # Make cookie available for all paths
             )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {owner_email}")
+            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
@@ -3548,28 +3205,11 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 # ============================================================================ #
 
 
-def _generate_color_from_name(name: str) -> str:
-    """Generate a deterministic Tailwind color name from a role name.
-
-    Args:
-        name: Role name to hash
-
-    Returns:
-        Tailwind color name string
-    """
-    # Available Tailwind base colors
-    palette = ["red", "orange", "amber", "yellow", "lime", "green", "emerald", "teal", "cyan", "sky", "blue", "indigo", "violet", "purple", "fuchsia", "pink", "rose", "gray"]
-    # Hash the name and map to a color
-    idx = int(hashlib.sha256(name.encode()).hexdigest(), 16) % len(palette)
-    return palette[idx]
-
-
-async def _generate_unified_teams_view(team_service, role_service, current_user, root_path):  # pylint: disable=unused-argument
+async def _generate_unified_teams_view(team_service, current_user, root_path):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
     Args:
         team_service: Service for team operations
-        role_service: Service for role operations
         current_user: Current authenticated user
         root_path: Application root path
 
@@ -3585,19 +3225,11 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
     # Combine teams with relationship information
     all_teams = []
 
-    roles: List[DbRole] = await role_service.list_roles()
-    team_roles = [r for r in roles if r.scope == "team"]
-
-    role_badges = {}
-    for r in team_roles:
-        color = _generate_color_from_name(r.name)
-        badge_html = f'<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-{color}-100 text-{color}-800 dark:bg-{color}-900 dark:text-{color}-300">{r.name.replace("_", " ").upper()}</span>'
-        role_badges[r.name] = badge_html
-
     # Add user's teams (owned and member)
     for team in user_teams:
         user_role = await team_service.get_user_role_in_team(current_user.email, team.id)
-        all_teams.append({"team": team, "relationship": user_role, "member_count": team.get_member_count()})
+        relationship = "owner" if user_role == "owner" else "member"
+        all_teams.append({"team": team, "relationship": relationship, "member_count": team.get_member_count()})
 
     # Add public teams user can join - check for pending requests
     for team in public_teams:
@@ -3614,13 +3246,19 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
         team = item["team"]
         relationship = item["relationship"]
         member_count = item["member_count"]
-        pending_request = item.get("pending_request", None)
+        pending_request = item.get("pending_request")
 
         # Relationship badge - special handling for personal teams
         if team.is_personal:
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">PERSONAL</span>'
-        elif relationship in role_badges:
-            badge_html = role_badges.get(relationship)
+        elif relationship == "owner":
+            badge_html = (
+                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">OWNER</span>'
+            )
+        elif relationship == "member":
+            badge_html = (
+                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300">MEMBER</span>'
+            )
         else:  # join
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">CAN JOIN</span>'
 
@@ -3632,19 +3270,15 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
         # Subtitle based on relationship - special handling for personal teams
         if team.is_personal:
             subtitle = "Your personal team • Private workspace"
-        elif relationship in [r.name for r in team_roles]:
-            if "owner" in relationship:
-                subtitle = "You own this team"
-            else:
-                role_display = relationship.replace("_", " ").title()
-                subtitle = f"You are a {role_display} • Owner: {team.created_by}"
-        else:
+        elif relationship == "owner":
+            subtitle = "You own this team"
+        elif relationship == "member":
+            subtitle = f"You are a member • Owner: {team.created_by}"
+        else:  # join
             subtitle = f"Public team • Owner: {team.created_by}"
 
         # Escape team name for safe HTML attributes
         safe_team_name = html.escape(team.name)
-
-        roles_with_teams_manage_members = [r.name for r in team_roles if "teams.manage_members" in r.permissions]
 
         # Actions based on relationship - special handling for personal teams
         actions_html = ""
@@ -3657,7 +3291,7 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
                 </span>
             </div>
             """
-        elif relationship in roles_with_teams_manage_members:
+        elif relationship == "owner":
             delete_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="deleteTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete Team</button>'
             join_requests_button = (
                 f'<button data-team-id="{team.id}" onclick="viewJoinRequestsSafe(this)" class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">Join Requests</button>'
@@ -3676,7 +3310,7 @@ async def _generate_unified_teams_view(team_service, role_service, current_user,
                 {delete_button}
             </div>
             """
-        elif relationship == "team_member":
+        elif relationship == "member":
             leave_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="leaveTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">Leave Team</button>'
             actions_html = f"""
             <div class="flex flex-wrap gap-2 mt-3">
@@ -3765,7 +3399,6 @@ async def admin_list_teams(
     try:
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
-        role_service = RoleService(db)
 
         # Get current user
         user_email = get_user_email(user)
@@ -3777,14 +3410,13 @@ async def admin_list_teams(
 
         if unified:
             # Generate unified team view
-            return await _generate_unified_teams_view(team_service, role_service, current_user, root_path)
+            return await _generate_unified_teams_view(team_service, current_user, root_path)
 
         # Generate traditional admin view
-        # if current_user.is_admin:
-        #     teams, _ = await team_service.list_teams()
-        # else:
-        #     teams = await team_service.get_user_teams(current_user.email)
-        teams = await team_service.get_user_teams(current_user.email)
+        if current_user.is_admin:
+            teams, _ = await team_service.list_teams()
+        else:
+            teams = await team_service.get_user_teams(current_user.email)
 
         # Generate HTML for teams (traditional view)
         teams_html = ""
@@ -3964,12 +3596,6 @@ async def admin_view_team_members(
 
         # First-Party
         team_service = TeamManagementService(db)
-        role_service = RoleService(db)
-
-        roles = await role_service.list_roles()
-        team_roles_def = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Get team details
         team = await team_service.get_team_by_id(team_id)
@@ -3977,14 +3603,14 @@ async def admin_view_team_members(
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Get team members
-        team_roles = await team_service.get_team_roles(team_id)
+        members = await team_service.get_team_members(team_id)
 
         # Count owners to determine if this is the last owner
-        team_mananger_count = len([team_role for team_role in team_roles if team_role.role.name in roles_with_teams_manage_members])
+        owner_count = sum(1 for _, membership in members if membership.role == "owner")
 
         # Check if current user is team owner
         current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        role_can_manage: bool = current_user_role in roles_with_teams_manage_members
+        is_team_owner = current_user_role == "owner"
 
         # Build member table with inline role editing for team owners
         members_html = """
@@ -3995,43 +3621,39 @@ async def admin_view_team_members(
             <div class="divide-y divide-gray-200 dark:divide-gray-700">
         """
 
-        for team_role in team_roles:
-            role_display = (team_role.role.name if team_role.role else "unknown").replace("_", " ").title()
-            is_last_team_manager = team_role.role.name in roles_with_teams_manage_members and team_mananger_count == 1
-            is_current_user = team_role.user_email == user_email
+        for member_user, membership in members:
+            role_display = membership.role.replace("_", " ").title() if membership.role else "Member"
+            is_last_owner = membership.role == "owner" and owner_count == 1
+            is_current_user = member_user.email == user_email
 
             # Role selection - only show for team owners and not for last owner
-            if role_can_manage and not is_last_team_manager:
+            if is_team_owner and not is_last_owner:
                 role_selector = f"""
                     <select
                         name="role"
                         class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         hx-post="{root_path}/admin/teams/{team_id}/update-member-role"
-                        hx-vals='{{"user_email": "{team_role.user_email}"}}'
+                        hx-vals='{{"user_email": "{member_user.email}"}}'
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
-                        {"".join([
-                            f'<option value="{r.name}" {"selected" if team_role.role.name == r.name else ""}>{r.name.replace("_", " ").title()}</option>'
-                            for r in team_roles_def
-                        ])}
+                        <option value="member" {"selected" if membership.role == "member" else ""}>Member</option>
+                        <option value="owner" {"selected" if membership.role == "owner" else ""}>Owner</option>
                     </select>
                 """
             else:
                 # Show static role badge
-                role_color = (
-                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if "owner" in team_role.role.name else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
-                )
+                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
             # Remove button - hide for current user and last owner
-            if role_can_manage and not is_current_user and not is_last_team_manager:
+            if is_team_owner and not is_current_user and not is_last_owner:
                 remove_button = f"""
                     <button
                         class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
                         hx-post="{root_path}/admin/teams/{team_id}/remove-member"
-                        hx-vals='{{"user_email": "{team_role.user_email}"}}'
-                        hx-confirm="Remove {team_role.user_email} from this team?"
+                        hx-vals='{{"user_email": "{member_user.email}"}}'
+                        hx-confirm="Remove {member_user.email} from this team?"
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         title="Remove member">
@@ -4047,7 +3669,7 @@ async def admin_view_team_members(
             indicators = []
             if is_current_user:
                 indicators.append('<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>')
-            if is_last_team_manager:
+            if is_last_owner:
                 indicators.append(
                     '<span class="inline-flex items-center px-2 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>'
                 )
@@ -4057,16 +3679,16 @@ async def admin_view_team_members(
                     <div class="flex items-center space-x-4 flex-1">
                         <div class="flex-shrink-0">
                             <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{team_role.user_email[0].upper()}</span>
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_user.email[0].upper()}</span>
                             </div>
                         </div>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center space-x-2">
-                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{team_role.user_email}</p>
+                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_user.full_name or member_user.email}</p>
                                 {" ".join(indicators)}
                             </div>
-                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{team_role.user_email}</p>
-                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {team_role.granted_at.strftime("%b %d, %Y") if team_role.granted_at else "Unknown"}</p>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_user.email}</p>
+                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
@@ -4081,7 +3703,7 @@ async def admin_view_team_members(
         </div>
         """
 
-        if not team_roles:
+        if not members:
             members_html = '<div class="text-center py-8 text-gray-500 dark:text-gray-400">No members found</div>'
 
         # Add member management interface
@@ -4097,7 +3719,7 @@ async def admin_view_team_members(
             </div>"""
 
         # Show Add Member interface for team owners
-        if role_can_manage:
+        if is_team_owner:
             management_html += f"""
             <div class="mb-6">
                 <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
@@ -4128,8 +3750,8 @@ async def admin_view_team_members(
 
                 # Get current team members
                 team_management_service = TeamManagementService(db)
-                team_roles = await team_management_service.get_team_roles(team.id)
-                member_emails = {team_role.user_email for team_role in team_roles}
+                team_members = await team_management_service.get_team_members(team.id)
+                member_emails = {team_user.email for team_user, membership in team_members}
 
                 # Filter out existing members
                 available_users = [team_user for team_user in all_users if team_user.email not in member_emails]
@@ -4139,14 +3761,14 @@ async def admin_view_team_members(
             except Exception as e:
                 LOGGER.error(f"Error loading available users for team {team.id}: {e}")
 
-            options_html = "".join([f'<option value="{r.name}">{r.name.replace("_", " ").title()}</option>' for r in team_roles_def])
-            management_html += f"""                        </select>
+            management_html += """                        </select>
                                 </div>
                                 <div>
                                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Role</label>
                                     <select name="role" required
                                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
-                                        {options_html}
+                                        <option value="member">Member</option>
+                                        <option value="owner">Owner</option>
                                     </select>
                                 </div>
                             </div>
@@ -4399,7 +4021,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.manage_members")  # Team write permission instead of admin user management
+@require_permission("teams.write")  # Team write permission instead of admin user management
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -4424,12 +4046,6 @@ async def admin_add_team_member(
         # First-Party
         team_service = TeamManagementService(db)
         auth_service = EmailAuthService(db)
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists and validate visibility
         team = await team_service.get_team_by_id(team_id)
@@ -4440,14 +4056,14 @@ async def admin_add_team_member(
         user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
             user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-            if user_role not in roles_with_teams_manage_members:
-                return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can add members to private teams. Use the invitation system instead.</div>', status_code=403)
+            if user_role != "owner":
+                return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
         email_val = form.get("user_email")
-        role_val = form.get("role", "team_member")
+        role_val = form.get("role", "member")
         user_email = email_val if isinstance(email_val, str) else None
-        role = role_val if isinstance(role_val, str) else "team_member"
+        role = role_val if isinstance(role_val, str) else "member"
 
         if not user_email:
             return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
@@ -4489,7 +4105,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.manage_members")
+@require_permission("teams.write")
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -4512,12 +4128,6 @@ async def admin_update_team_member_role(
 
     try:
         team_service = TeamManagementService(db)
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
@@ -4527,14 +4137,14 @@ async def admin_update_team_member_role(
         # Only team owners can modify member roles
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role not in roles_with_teams_manage_members:
-            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can modify member roles</div>', status_code=403)
+        if user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
 
         form = await request.form()
         ue_val = form.get("user_email")
-        nr_val = form.get("role", "team_member")
+        nr_val = form.get("role", "member")
         user_email = ue_val if isinstance(ue_val, str) else None
-        new_role = nr_val if isinstance(nr_val, str) else "team_member"
+        new_role = nr_val if isinstance(nr_val, str) else "member"
 
         if not user_email:
             return HTMLResponse(content='<div class="text-red-500">User email is required</div>', status_code=400)
@@ -4580,7 +4190,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.manage_members")  # Team write permission instead of admin user management
+@require_permission("teams.write")  # Team write permission instead of admin user management
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
@@ -4603,12 +4213,6 @@ async def admin_remove_team_member(
 
     try:
         team_service = TeamManagementService(db)
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists and validate user permissions
         team = await team_service.get_team_by_id(team_id)
@@ -4618,7 +4222,7 @@ async def admin_remove_team_member(
         # Only team owners can remove members
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role not in roles_with_teams_manage_members:
+        if user_role != "owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
@@ -4690,12 +4294,6 @@ async def admin_leave_team(
 
     try:
         team_service = TeamManagementService(db)
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
 
         # Check if team exists
         team = await team_service.get_team_by_id(team_id)
@@ -4715,11 +4313,11 @@ async def admin_leave_team(
             return HTMLResponse(content='<div class="text-red-500">Cannot leave your personal team</div>', status_code=400)
 
         # Check if user is the last owner
-        if user_role in roles_with_teams_manage_members:
-            team_roles = await team_service.get_team_roles(team_id)
-            owner_count = sum(1 for role in team_roles if role.role.name in roles_with_teams_manage_members)
+        if user_role == "owner":
+            members = await team_service.get_team_members(team_id)
+            owner_count = sum(1 for _, membership in members if membership.role == "owner")
             if owner_count <= 1:
-                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner or admin. Transfer ownership or delete the team instead.</div>', status_code=400)
+                return HTMLResponse(content='<div class="text-red-500">Cannot leave team as the last owner. Transfer ownership or delete the team instead.</div>', status_code=400)
 
         # Remove user from team
         success = await team_service.remove_member_from_team(team_id=team_id, user_email=user_email, removed_by=user_email)
@@ -4758,7 +4356,6 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
-@require_permission("teams.join")
 async def admin_create_join_request(
     team_id: str,
     request: Request,
@@ -4913,20 +4510,13 @@ async def admin_list_join_requests(
         user_email = get_user_email(user)
         request.scope.get("root_path", "")
 
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role not in roles_with_teams_manage_members:
+        if user_role != "owner":
             return HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
 
         # Get join requests
@@ -5006,17 +4596,10 @@ async def admin_approve_join_request(
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role not in roles_with_teams_manage_members:
-            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can approve join requests</div>', status_code=403)
+        if user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
         member = await team_service.approve_join_request(request_id, approved_by=user_email)
@@ -5072,17 +4655,10 @@ async def admin_reject_join_request(
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
 
-        role_service = RoleService(db)
-
-        roles: List[DbRole] = await role_service.list_roles()
-        team_roles_def: List[DbRole] = [r for r in roles if r.scope == "team"]
-
-        roles_with_teams_manage_members: List[str] = [r.name for r in team_roles_def if "teams.manage_members" in r.permissions]
-
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role not in roles_with_teams_manage_members:
-            return HTMLResponse(content='<div class="text-red-500">Only team owners or admins can reject join requests</div>', status_code=403)
+        if user_role != "owner":
+            return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
         success = await team_service.reject_join_request(request_id, rejected_by=user_email)
@@ -5990,9 +5566,7 @@ async def admin_force_password_change(
 
 
 @admin_router.get("/tools")
-@require_permission("tools.read")
 async def admin_list_tools(
-    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(50, ge=1, le=500, description="Items per page"),
     include_inactive: bool = False,
@@ -6007,7 +5581,6 @@ async def admin_list_tools(
     configurable page size.
 
     Args:
-        request: FastAPI request object.
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
@@ -6025,133 +5598,8 @@ async def admin_list_tools(
     page = max(1, page)
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
-    # Extract allowed team IDs from granted scopes
-    granted_scopes = getattr(request.state, "granted_scopes", [])
-    allowed_team_ids = []
-    for scope in granted_scopes:
-        if scope["scope"] == "global":
-            # If global, user can access all teams (conceptually, or we need to handle this)
-            # If global permission, maybe we pass specific flag or fetch all teams?
-            # For now, if global, we might want to pass a flag or fetch all visible teams.
-            # But list_tools_for_user expects a list of IDs.
-            # If global, we should probably fetch all teams or handle it in service.
-            # However, to keep service simple, let's fetch all teams if global.
-            # OR, we can pass None to imply all? No, None implies no filter in some contexts but here we want explicit list.
-            # Let's check how list_tools_for_user handles it.
-            # It uses `team_ids` to filter.
-            # If global, we should probably fetch all teams the user is in + maybe all public/team tools?
-            # Wait, if I have global admin permission, I should see everything?
-            # The original code fetched `user_teams`.
-            # If I am admin, I might want to see everything.
-            # But `list_tools_for_user` logic was:
-            # if team_id: check if in team_ids
-            # else: show personal + team + public
-            # If I have global permission, I should probably see everything.
-            # But `list_tools_for_user` doesn't seem to support "show everything".
-            # It supports "show what I have access to".
-            # If I am global admin, I have access to everything?
-            # Let's assume for now we just pass the teams I have explicit roles in.
-            # BUT, if I have global role, I don't have a team_id in the scope.
-            # So `allowed_team_ids` might be empty if I only have global role.
-            # In that case, I should probably see public tools + my personal tools.
-            # If I want to see ALL tools as admin, I should use `list_tools` (the general one) instead of `list_tools_for_user`.
-            # But `admin_list_tools` calls `list_tools_for_user` (implied by previous code using `TeamManagementService`).
-            # Actually, `admin_list_tools` usually implies "list all tools in the system" for an admin.
-            # But the previous code was:
-            # team_service = TeamManagementService(db)
-            # user_teams = await team_service.get_user_teams(user_email)
-            # So it was limiting to user's teams!
-            # So even admins were limited to their teams?
-            # That seems to be the existing behavior. I will preserve it.
-            # So I just need to map the scopes to team IDs.
-            pass
-        elif scope["scope"] == "team" and scope["scope_id"]:
-            allowed_team_ids.append(scope["scope_id"])
-    
-    # If global scope is present, we might need to fetch all teams if we want to mimic "all teams I'm in".
-    # But `granted_scopes` only contains scopes where I have the SPECIFIC permission.
-    # If I have global "tools.read", I have it for ALL teams.
-    # So I should fetch all teams I am in?
-    # Or does global "tools.read" mean I can see ALL tools in the system?
-    # If so, `list_tools_for_user` might be too restrictive if it only checks `team_id.in_(team_ids)`.
-    # But since I am refactoring, I should stick to previous behavior which was "get_user_teams".
-    # `get_user_teams` returns all teams where user is a member.
-    # My `granted_scopes` logic returns scopes where I have permission.
-    # If I have global permission, I have it everywhere.
-    # So I should probably pass ALL my teams.
-    # But I don't have the list of all my teams in `granted_scopes` if I have global permission (it just says "global").
-    # So if "global" is in scopes, I might need to fall back to fetching user teams?
-    # OR, I can update `token_scoping` to populate `user_teams` in state?
-    # The user wanted to avoid `TeamManagementService` usage in services.
-    # If I have to call it here, it's fine (controller layer).
-    # BUT, if I can avoid it, better.
-    # If I have global permission, maybe I don't need to filter by team IDs?
-    # If `list_tools_for_user` supports "no team filter" (i.e. show all), that would be great.
-    # But it currently filters by `team_ids`.
-    # Let's look at `list_tools_for_user` again.
-    # It says: `if team_ids: access_conditions.append(...)`.
-    # If `team_ids` is empty, it only shows personal + public.
-    # So if I have global permission, I might miss team tools if I don't pass team IDs.
-    # So I DO need team IDs.
-    # If `granted_scopes` has "global", it means I have permission on ALL teams.
-    # So I should fetch all teams I am a member of.
-    # Wait, if I have global permission, do I need to be a member to see tools?
-    # Usually yes, unless I am "Platform Admin" who sees everything.
-    # If I am Platform Admin, `list_tools` (generic) might be better.
-    # But let's assume I need to pass team IDs.
-    # If `granted_scopes` contains specific teams, I use those.
-    # If it contains "global", I might need to fetch all my teams.
-    # To avoid `TeamManagementService` here, I could use `request.state.user_roles`?
-    # `user_roles` contains all my roles. I can extract team IDs from there!
-    # Yes! `user_roles` was cached in `token_scoping`.
-    
-    user_roles = getattr(request.state, "user_roles", [])
-    # If global permission is present, include ALL team IDs from user_roles.
-    has_global = any(s["scope"] == "global" for s in granted_scopes)
-    
-    if has_global:
-        # Include all teams where user has ANY role
-        allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
-    else:
-        # Only include teams where user has the specific permission (already in granted_scopes)
-        # allowed_team_ids is already populated from granted_scopes loop above (if I keep it)
-        pass
-        
-    # Re-populate allowed_team_ids correctly
-    allowed_team_ids = []
-    if has_global:
-         allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
-    else:
-         allowed_team_ids = [s["scope_id"] for s in granted_scopes if s["scope"] == "team" and s["scope_id"]]
-
-    tool_service = ToolService()
-    
-    # Calculate skip/limit
-    skip = (page - 1) * per_page
-    
-    tools = await tool_service.list_tools_for_user(
-        db=db,
-        user_email=user_email,
-        allowed_team_ids=allowed_team_ids,
-        include_inactive=include_inactive,
-        _skip=skip,
-        _limit=per_page
-    )
-    
-    # Pagination metadata (simplified for now, ideally service returns count)
-    # The service returns list, not tuple with cursor/count in this method.
-    # We might need to adjust if we want full pagination metadata.
-    # But for now, let's match the signature.
-    
-    return {
-        "data": tools,
-        "pagination": {
-            "page": page,
-            "per_page": per_page,
-            "total": len(tools), # Approximation as we don't have total count from this method
-            "total_pages": 1
-        }
-    }
+    # Build base query using tool_service's team filtering logic
+    team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
     team_ids = [team.id for team in user_teams]
 
@@ -6230,7 +5678,6 @@ async def admin_list_tools(
 
 
 @admin_router.get("/tools/partial", response_class=HTMLResponse)
-@require_permission("tools.read")
 async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -6418,7 +5865,6 @@ async def admin_tools_partial_html(
 
 
 @admin_router.get("/tools/ids", response_class=JSONResponse)
-@require_permission("tools.read")
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -6482,7 +5928,6 @@ async def admin_get_all_tool_ids(
 
 
 @admin_router.get("/tools/search", response_class=JSONResponse)
-@require_permission("tools.read")
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -6584,7 +6029,6 @@ async def admin_search_tools(
 
 
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
-@require_permission("prompts.read")
 async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1),
@@ -6758,7 +6202,6 @@ async def admin_prompts_partial_html(
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
-@require_permission("resources.read")
 async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -6932,7 +6375,6 @@ async def admin_resources_partial_html(
 
 
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
-@require_permission("prompts.read")
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -6991,7 +6433,6 @@ async def admin_get_all_prompt_ids(
 
 
 @admin_router.get("/resources/ids", response_class=JSONResponse)
-@require_permission("resources.read")
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7132,7 +6573,6 @@ async def admin_search_resources(
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
-@require_permission("prompts.read")
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -7216,8 +6656,7 @@ async def admin_search_prompts(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
-@require_permission("tools.read")
-async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -7227,7 +6666,6 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
-        request (Request): The FastAPI request object.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -7273,67 +6711,53 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_tool_success():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_get_tool(
-        ...         tool_id=tool_id,
-        ...         request=mock_request,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return isinstance(result, dict) and result.get('id') == tool_id
+        ...     result = await admin_get_tool(tool_id, mock_db, mock_user)
+        ...     return isinstance(result, dict) and result['id'] == tool_id
         >>>
         >>> asyncio.run(test_admin_get_tool_success())
         True
         >>>
         >>> # Test tool not found
         >>> tool_service.get_tool = AsyncMock(side_effect=ToolNotFoundError("Tool not found"))
-        >>>
         >>> async def test_admin_get_tool_not_found():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_tool(tool_id, mock_request, mock_db, mock_user)
+        ...         await admin_get_tool("nonexistent", mock_db, mock_user)
+        ...         return False
         ...     except HTTPException as e:
-        ...         return e.status_code == 404
+        ...         return e.status_code == 404 and "Tool not found" in e.detail
         >>>
         >>> asyncio.run(test_admin_get_tool_not_found())
         True
         >>>
         >>> # Test generic exception
         >>> tool_service.get_tool = AsyncMock(side_effect=Exception("Generic error"))
-        >>>
-        >>> async def test_admin_get_tool_error():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
+        >>> async def test_admin_get_tool_exception():
         ...     try:
-        ...         await admin_get_tool(tool_id, mock_request, mock_db, mock_user)
+        ...         await admin_get_tool(tool_id, mock_db, mock_user)
+        ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Generic error"
         >>>
-        >>> asyncio.run(test_admin_get_tool_error())
+        >>> asyncio.run(test_admin_get_tool_exception())
         True
         >>>
         >>> # Restore original method
         >>> tool_service.get_tool = original_get_tool
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested tool details for {tool_id}")
+    LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
     try:
-        user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
-        tool = await tool_service.get_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        tool = await tool_service.get_tool(db, tool_id)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
-        LOGGER.warning(f"Tool not found: {tool_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error retrieving tool {tool_id}: {e}")
-        raise e
+        # Catch any other unexpected errors and re-raise or log as needed
+        LOGGER.error(f"Error getting tool {tool_id}: {e}")
+        raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
 
 
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
-@require_permission("tools.create")
 async def admin_add_tool(
     request: Request,
     db: Session = Depends(get_db),
@@ -7535,8 +6959,6 @@ async def admin_add_tool(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
-            allowed_team_ids=get_allowed_team_ids(request),
-            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -7561,7 +6983,6 @@ async def admin_add_tool(
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
-@require_permission("tools.update")
 async def admin_edit_tool(
     tool_id: str,
     request: Request,
@@ -7806,7 +7227,6 @@ async def admin_edit_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
-            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
@@ -7834,7 +7254,6 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/{tool_id}/delete")
-@require_permission("tools.delete")
 async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
@@ -7910,7 +7329,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
     error_message = None
     try:
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await tool_service.delete_tool(db, tool_id, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_message = str(e)
@@ -7935,7 +7354,6 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
 
 @admin_router.post("/tools/{tool_id}/toggle")
-@require_permission("tools.update")
 async def admin_toggle_tool(
     tool_id: str,
     request: Request,
@@ -8039,7 +7457,7 @@ async def admin_toggle_tool(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
         error_message = str(e)
@@ -8061,236 +7479,17 @@ async def admin_toggle_tool(
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
-@admin_router.get("/resources/{resource_id}", response_model=ResourceRead)
-@require_permission("resources.read")
-async def admin_get_resource(resource_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
-    """
-    Retrieve specific resource details for the admin UI.
-
-    Args:
-        resource_id (int): The ID of the resource to retrieve.
-        request (Request): The FastAPI request object.
-        db (Session): Database session dependency.
-        user (str): Authenticated user dependency.
-
-    Returns:
-        ResourceRead: The resource details formatted with by_alias=True.
-
-    Raises:
-        HTTPException: If the resource is not found.
-        Exception: For any other unexpected errors.
-
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
-        >>> from datetime import datetime, timezone
-        >>> from mcpgateway.services.resource_service import ResourceNotFoundError # Added import
-        >>> from fastapi import HTTPException
-        >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>> resource_id = 123
-        >>>
-        >>> # Mock resource data
-        >>> mock_resource = ResourceRead(
-        ...     id=resource_id, name="Test Resource", uri="http://test.com",
-        ...     mime_type="application/json", description="A test resource",
-        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=True, gateway_id=None, access_count=0,
-        ...     metrics=ResourceMetrics(
-        ...         access_count=0, error_count=0, average_latency=0.0,
-        ...         last_accessed=None
-        ...     ),
-        ...     tags=[]
-        ... )
-        >>>
-        >>> # Mock the resource_service.get_resource method
-        >>> original_get_resource = resource_service.get_resource
-        >>> resource_service.get_resource = AsyncMock(return_value=mock_resource)
-        >>>
-        >>> # Test successful retrieval
-        >>> async def test_admin_get_resource_success():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_get_resource(
-        ...         resource_id=resource_id,
-        ...         request=mock_request,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return isinstance(result, dict) and result.get('id') == resource_id
-        >>>
-        >>> asyncio.run(test_admin_get_resource_success())
-        True
-        >>>
-        >>> # Test resource not found
-        >>> resource_service.get_resource = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
-        >>>
-        >>> async def test_admin_get_resource_not_found():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_get_resource(resource_id, mock_request, mock_db, mock_user)
-        ...     except HTTPException as e:
-        ...         return e.status_code == 404
-        >>>
-        >>> asyncio.run(test_admin_get_resource_not_found())
-        True
-        >>>
-        >>> # Test generic exception
-        >>> resource_service.get_resource = AsyncMock(side_effect=Exception("Generic error"))
-        >>>
-        >>> async def test_admin_get_resource_error():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_get_resource(resource_id, mock_request, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Generic error"
-        >>>
-        >>> asyncio.run(test_admin_get_resource_error())
-        True
-        >>>
-        >>> # Restore original method
-        >>> resource_service.get_resource = original_get_resource
-    """
-    LOGGER.debug(f"User {get_user_email(user)} requested resource details for {resource_id}")
-    try:
-        user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
-        resource = await resource_service.get_resource(db, resource_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
-        return resource.model_dump(by_alias=True)
-    except ResourceNotFoundError as e:
-        LOGGER.warning(f"Resource not found: {resource_id}")
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        LOGGER.error(f"Error retrieving resource {resource_id}: {e}")
-        raise e
-
-
-@admin_router.get("/prompts/{prompt_id}", response_model=PromptRead)
-@require_permission("prompts.read")
-async def admin_get_prompt(prompt_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
-    """
-    Retrieve specific prompt details for the admin UI.
-
-    Args:
-        prompt_id (int): The ID of the prompt to retrieve.
-        request (Request): The FastAPI request object.
-        db (Session): Database session dependency.
-        user (str): Authenticated user dependency.
-
-    Returns:
-        PromptRead: The prompt details formatted with by_alias=True.
-
-    Raises:
-        HTTPException: If the prompt is not found.
-        Exception: For any other unexpected errors.
-
-    Examples:
-        >>> import asyncio
-        >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import PromptRead, PromptMetrics
-        >>> from datetime import datetime, timezone
-        >>> from mcpgateway.services.prompt_service import PromptNotFoundError # Added import
-        >>> from fastapi import HTTPException
-        >>>
-        >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
-        >>> prompt_id = 123
-        >>>
-        >>> # Mock prompt data
-        >>> mock_prompt = PromptRead(
-        ...     id=prompt_id, name="Test Prompt", description="A test prompt",
-        ...     arguments=[], owner="test_user",
-        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=True, gateway_id=None, usage_count=0,
-        ...     metrics=PromptMetrics(
-        ...         usage_count=0, error_count=0, average_latency=0.0,
-        ...         last_used=None
-        ...     ),
-        ...     tags=[]
-        ... )
-        >>>
-        >>> # Mock the prompt_service.get_prompt method
-        >>> original_get_prompt = prompt_service.get_prompt
-        >>> prompt_service.get_prompt = AsyncMock(return_value=mock_prompt)
-        >>>
-        >>> # Test successful retrieval
-        >>> async def test_admin_get_prompt_success():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_get_prompt(
-        ...         prompt_id=prompt_id,
-        ...         request=mock_request,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return isinstance(result, dict) and result.get('id') == prompt_id
-        >>>
-        >>> asyncio.run(test_admin_get_prompt_success())
-        True
-        >>>
-        >>> # Test prompt not found
-        >>> prompt_service.get_prompt = AsyncMock(side_effect=PromptNotFoundError("Prompt not found"))
-        >>>
-        >>> async def test_admin_get_prompt_not_found():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_get_prompt(prompt_id, mock_request, mock_db, mock_user)
-        ...     except HTTPException as e:
-        ...         return e.status_code == 404
-        >>>
-        >>> asyncio.run(test_admin_get_prompt_not_found())
-        True
-        >>>
-        >>> # Test generic exception
-        >>> prompt_service.get_prompt = AsyncMock(side_effect=Exception("Generic error"))
-        >>>
-        >>> async def test_admin_get_prompt_error():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     try:
-        ...         await admin_get_prompt(prompt_id, mock_request, mock_db, mock_user)
-        ...     except Exception as e:
-        ...         return str(e) == "Generic error"
-        >>>
-        >>> asyncio.run(test_admin_get_prompt_error())
-        True
-        >>>
-        >>> # Restore original method
-        >>> prompt_service.get_prompt = original_get_prompt
-    """
-    LOGGER.debug(f"User {get_user_email(user)} requested prompt details for {prompt_id}")
-    try:
-        user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
-        prompt = await prompt_service.get_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
-        return prompt.model_dump(by_alias=True)
-    except PromptNotFoundError as e:
-        LOGGER.warning(f"Prompt not found: {prompt_id}")
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        LOGGER.error(f"Error retrieving prompt {prompt_id}: {e}")
-        raise e
-
-
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.read")
-async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayRead:
-    """
-    Retrieve specific gateway details for the admin UI.
+async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """Get gateway details for the admin UI.
 
     Args:
-        gateway_id (str): The ID of the gateway to retrieve.
-        request (Request): The FastAPI request object.
-        db (Session): Database session dependency.
-        user (str): Authenticated user dependency.
+        gateway_id: Gateway ID.
+        db: Database session.
+        user: Authenticated user.
 
     Returns:
-        GatewayRead: The gateway details formatted with by_alias=True.
+        Gateway details.
 
     Raises:
         HTTPException: If the gateway is not found.
@@ -8324,15 +7523,8 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_gateway_success():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
-        ...     result = await admin_get_gateway(
-        ...         gateway_id=gateway_id,
-        ...         request=mock_request,
-        ...         db=mock_db,
-        ...         user=mock_user
-        ...     )
-        ...     return isinstance(result, dict) and result.get('id') == gateway_id
+        ...     result = await admin_get_gateway(gateway_id, mock_db, mock_user)
+        ...     return isinstance(result, dict) and result['id'] == gateway_id
         >>>
         >>> asyncio.run(test_admin_get_gateway_success())
         True
@@ -8340,10 +7532,8 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         >>> # Test gateway not found
         >>> gateway_service.get_gateway = AsyncMock(side_effect=GatewayNotFoundError("Gateway not found"))
         >>> async def test_admin_get_gateway_not_found():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_gateway("nonexistent", mock_request, mock_db, mock_user)
+        ...         await admin_get_gateway("nonexistent", mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Gateway not found" in e.detail
@@ -8353,37 +7543,31 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         >>>
         >>> # Test generic exception
         >>> gateway_service.get_gateway = AsyncMock(side_effect=Exception("Generic error"))
-        >>> async def test_admin_get_gateway_error():
-        ...     mock_request = MagicMock()
-        ...     mock_request.state.user_permissions = []
+        >>> async def test_admin_get_gateway_exception():
         ...     try:
-        ...         await admin_get_gateway(gateway_id, mock_request, mock_db, mock_user)
+        ...         await admin_get_gateway(gateway_id, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Generic error"
         >>>
-        >>> asyncio.run(test_admin_get_gateway_error())
+        >>> asyncio.run(test_admin_get_gateway_exception())
         True
         >>>
         >>> # Restore original method
         >>> gateway_service.get_gateway = original_get_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested gateway details for {gateway_id}")
+    LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
-        user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
-        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        gateway = await gateway_service.get_gateway(db, gateway_id)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
-        LOGGER.warning(f"Gateway not found: {gateway_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error retrieving gateway {gateway_id}: {e}")
+        LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
         raise e
 
 
 @admin_router.post("/gateways")
-@require_permission("gateways.create")
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
@@ -8679,7 +7863,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             visibility=visibility,
             team_id=team_id_cast,
             owner_email=user_email,
-            allowed_team_ids=get_allowed_team_ids(request),
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
@@ -8721,7 +7904,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
-@require_permission("gateways.update")
 async def admin_edit_gateway(
     gateway_id: str,
     request: Request,
@@ -8992,7 +8174,6 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
-@require_permission("gateways.delete")
 async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
@@ -9174,7 +8355,6 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 
 @admin_router.get("/resources/{resource_id}")
-@require_permission("resources.read")
 async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
@@ -9377,7 +8557,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
-            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
@@ -9410,7 +8589,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
 
 @admin_router.post("/resources/{resource_id}/edit")
-@require_permission("resources.update")
 async def admin_edit_resource(
     resource_id: str,
     request: Request,
@@ -9531,7 +8709,6 @@ async def admin_edit_resource(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=get_user_email(user),
-            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
@@ -9556,7 +8733,6 @@ async def admin_edit_resource(
 
 
 @admin_router.post("/resources/{resource_id}/delete")
-@require_permission("resources.delete")
 async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
@@ -9616,7 +8792,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
@@ -9640,7 +8816,6 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
 
 @admin_router.post("/resources/{resource_id}/toggle")
-@require_permission("resources.update")
 async def admin_toggle_resource(
     resource_id: str,
     request: Request,
@@ -9743,7 +8918,7 @@ async def admin_toggle_resource(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling resource status {resource_id}: {e}")
         error_message = str(e)
@@ -9766,7 +8941,6 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{prompt_id}")
-@require_permission("prompts.read")
 async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
@@ -9867,7 +9041,6 @@ async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=D
 
 
 @admin_router.post("/prompts")
-@require_permission("prompts.create")
 async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
@@ -9981,7 +9154,6 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
-@require_permission("prompts.update")
 async def admin_edit_prompt(
     prompt_id: str,
     request: Request,
@@ -10116,7 +9288,6 @@ async def admin_edit_prompt(
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
-@require_permission("prompts.delete")
 async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
@@ -10175,7 +9346,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
     error_message = None
     try:
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
         error_message = str(e)
@@ -10199,7 +9370,6 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
-@require_permission("prompts.update")
 async def admin_toggle_prompt(
     prompt_id: str,
     request: Request,
@@ -10302,7 +9472,7 @@ async def admin_toggle_prompt(
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
-        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
+        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling prompt {prompt_id}: {e}")
         error_message = str(e)
@@ -10325,7 +9495,6 @@ async def admin_toggle_prompt(
 
 
 @admin_router.post("/roots")
-@require_permission("roots.create")
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
@@ -10381,7 +9550,6 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 
 @admin_router.post("/roots/{uri:path}/delete")
-@require_permission("roots.delete")
 async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
@@ -10488,7 +9656,6 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 
 @admin_router.get("/metrics")
-@require_permission("metrics.view")
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -10609,7 +9776,6 @@ async def admin_metrics_partial_html(
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
-@require_permission("metrics.reset")
 async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.
@@ -10660,7 +9826,6 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
-@require_permission("gateways.test")
 async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
@@ -11183,7 +10348,6 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
 
 @admin_router.get("/tags", response_model=List[Dict[str, Any]])
-@require_permission("tags.view")
 async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
@@ -11264,7 +10428,6 @@ async def admin_list_tags(
 
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
-@require_permission("tools.create")
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
@@ -11427,7 +10590,6 @@ async def admin_import_tools(
 
 
 @admin_router.get("/logs")
-@require_permission("logs.view")
 async def admin_get_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
@@ -11518,7 +10680,6 @@ async def admin_get_logs(
 
 
 @admin_router.get("/logs/stream")
-@require_permission("logs.view")
 async def admin_stream_logs(
     request: Request,
     entity_type: Optional[str] = None,
@@ -11605,7 +10766,6 @@ async def admin_stream_logs(
 
 
 @admin_router.get("/logs/file")
-@require_permission("logs.view")
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
@@ -11726,7 +10886,6 @@ async def admin_get_log_file(
 
 
 @admin_router.get("/logs/export")
-@require_permission("logs.export")
 async def admin_export_logs(
     export_format: str = Query("json", alias="format"),
     entity_type: Optional[str] = None,
@@ -11856,7 +11015,6 @@ async def admin_export_logs(
 
 
 @admin_router.get("/export/configuration")
-@require_permission("configuration.export")
 async def admin_export_configuration(
     request: Request,  # pylint: disable=unused-argument
     types: Optional[str] = None,
@@ -11943,7 +11101,6 @@ async def admin_export_configuration(
 
 
 @admin_router.post("/export/selective")
-@require_permission("configuration.export")
 async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Export selected entities via Admin UI with entity selection.
@@ -12007,7 +11164,6 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
 
 @admin_router.post("/import/preview")
-@require_permission("configuration.import")
 async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Preview import file to show available items for selective import.
@@ -12061,7 +11217,6 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
 
 @admin_router.post("/import/configuration")
-@require_permission("configuration.import")
 async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Import configuration via Admin UI.
@@ -12125,7 +11280,6 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 
 @admin_router.get("/import/status/{import_id}")
-@require_permission("configuration.import")
 async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)):
     """Get import status via Admin UI.
 
@@ -12149,7 +11303,6 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 
 @admin_router.get("/import/status")
-@require_permission("configuration.import")
 async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions)):
     """List all import statuses via Admin UI.
 
@@ -12171,7 +11324,6 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 
 
 @admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
-@require_permission("a2a_agents.read")
 async def admin_get_agent(
     agent_id: str,
     db: Session = Depends(get_db),
@@ -12270,7 +11422,6 @@ async def admin_get_agent(
 
 
 @admin_router.get("/a2a")
-@require_permission("a2a_agents.read")
 async def admin_list_a2a_agents(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -12371,7 +11522,6 @@ async def admin_list_a2a_agents(
 
 
 @admin_router.post("/a2a")
-@require_permission("a2a_agents.create")
 async def admin_add_a2a_agent(
     request: Request,
     db: Session = Depends(get_db),
@@ -12580,7 +11730,6 @@ async def admin_add_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
-@require_permission("a2a_agents.update")
 async def admin_edit_a2a_agent(
     agent_id: str,
     request: Request,
@@ -12865,7 +12014,6 @@ async def admin_edit_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/toggle")
-@require_permission("a2a_agents.update")
 async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
@@ -12925,7 +12073,6 @@ async def admin_toggle_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
-@require_permission("a2a_agents.delete")
 async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -12975,7 +12122,6 @@ async def admin_delete_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/test")
-@require_permission("a2a_agents.invoke")
 async def admin_test_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -13036,7 +12182,6 @@ async def admin_test_a2a_agent(
 
 
 @admin_router.get("/grpc", response_model=List[GrpcServiceRead])
-@require_permission("grpc_services.read")
 async def admin_list_grpc_services(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None),
@@ -13065,7 +12210,6 @@ async def admin_list_grpc_services(
 
 
 @admin_router.post("/grpc")
-@require_permission("grpc_services.create")
 async def admin_create_grpc_service(
     service: GrpcServiceCreate,
     request: Request,
@@ -13102,7 +12246,6 @@ async def admin_create_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
-@require_permission("grpc_services.read")
 async def admin_get_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -13132,7 +12275,6 @@ async def admin_get_grpc_service(
 
 
 @admin_router.put("/grpc/{service_id}")
-@require_permission("grpc_services.update")
 async def admin_update_grpc_service(
     service_id: str,
     service: GrpcServiceUpdate,
@@ -13173,7 +12315,6 @@ async def admin_update_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/toggle")
-@require_permission("grpc_services.update")
 async def admin_toggle_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -13233,7 +12374,6 @@ async def admin_delete_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/reflect")
-@require_permission("grpc_services.update")
 async def admin_reflect_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -13266,7 +12406,6 @@ async def admin_reflect_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}/methods")
-@require_permission("grpc_services.read")
 async def admin_get_grpc_methods(
     service_id: str,
     db: Session = Depends(get_db),
@@ -13579,7 +12718,6 @@ async def get_gateways_section(
 
 
 @admin_router.get("/plugins/partial")
-@require_permission("plugins.read")
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Render the plugins partial HTML template.
 
@@ -13629,7 +12767,6 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)
-@require_permission("plugins.read")
 async def list_plugins(
     request: Request,
     search: Optional[str] = None,
@@ -13711,7 +12848,6 @@ async def list_plugins(
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
-@require_permission("plugins.read")
 async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
     """Get plugin statistics.
 
@@ -13772,7 +12908,6 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
-@require_permission("plugins.read")
 async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
     """Get detailed information about a specific plugin.
 
@@ -13861,7 +12996,6 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
 
 @admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
-@require_permission("servers.read")
 async def list_catalog_servers(
     _request: Request,
     category: Optional[str] = None,
@@ -13945,7 +13079,6 @@ async def register_catalog_server(
 
 
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
-@require_permission("servers.read")
 async def check_catalog_server_status(
     server_id: str,
     _db: Session = Depends(get_db),
@@ -13997,7 +13130,6 @@ async def bulk_register_catalog_servers(
 
 
 @admin_router.get("/mcp-registry/partial")
-@require_permission("servers.read")
 async def catalog_partial(
     request: Request,
     category: Optional[str] = None,
@@ -14246,7 +13378,6 @@ async def admin_generate_support_bundle(
 
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the observability dashboard partial.
 
@@ -14262,7 +13393,6 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the advanced metrics dashboard partial.
 
@@ -14278,7 +13408,6 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics for the dashboard.
 
@@ -14317,7 +13446,6 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_observability_traces(
     request: Request,
     time_range: str = Query("24h"),
@@ -14412,7 +13540,6 @@ async def get_observability_traces(
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
     """Get detailed trace information with spans.
 
@@ -14441,7 +13568,6 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
 
 @admin_router.post("/observability/queries", response_model=dict)
-@require_permission("observability.create")
 async def save_observability_query(
     request: Request,  # pylint: disable=unused-argument
     name: str = Body(..., description="Name for the saved query"),
@@ -14488,7 +13614,6 @@ async def save_observability_query(
 
 
 @admin_router.get("/observability/queries", response_model=list)
-@require_permission("observability.read")
 async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
@@ -14532,7 +13657,6 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
-@require_permission("observability.read")
 async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
@@ -14575,7 +13699,6 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
-@require_permission("observability.update")
 async def update_observability_query(
     request: Request,  # pylint: disable=unused-argument
     query_id: int,
@@ -14644,7 +13767,6 @@ async def update_observability_query(
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
-@require_permission("observability.delete")
 async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
@@ -14673,7 +13795,6 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
-@require_permission("observability.read")
 async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
@@ -14719,7 +13840,6 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)
-@require_permission("observability.read")
 async def get_latency_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14796,7 +13916,6 @@ async def get_latency_percentiles(
 
 
 @admin_router.get("/observability/metrics/timeseries", response_model=dict)
-@require_permission("observability.read")
 async def get_timeseries_metrics(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14872,7 +13991,6 @@ async def get_timeseries_metrics(
 
 
 @admin_router.get("/observability/metrics/top-slow", response_model=dict)
-@require_permission("observability.read")
 async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14935,7 +14053,6 @@ async def get_top_slow_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-volume", response_model=dict)
-@require_permission("observability.read")
 async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14996,7 +14113,6 @@ async def get_top_volume_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-errors", response_model=dict)
-@require_permission("observability.read")
 async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15060,7 +14176,6 @@ async def get_top_error_endpoints(
 
 
 @admin_router.get("/observability/metrics/heatmap", response_model=dict)
-@require_permission("observability.read")
 async def get_latency_heatmap(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15150,7 +14265,6 @@ async def get_latency_heatmap(
 
 
 @admin_router.get("/observability/tools/usage", response_model=dict)
-@require_permission("observability.read")
 async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15214,7 +14328,6 @@ async def get_tool_usage(
 
 
 @admin_router.get("/observability/tools/performance", response_model=dict)
-@require_permission("observability.read")
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15307,7 +14420,6 @@ async def get_tool_performance(
 
 
 @admin_router.get("/observability/tools/errors", response_model=dict)
-@require_permission("observability.read")
 async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15370,7 +14482,6 @@ async def get_tool_errors(
 
 
 @admin_router.get("/observability/tools/chains", response_model=dict)
-@require_permission("observability.read")
 async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15441,7 +14552,6 @@ async def get_tool_chains(
 
 
 @admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -15471,7 +14581,6 @@ async def get_tools_partial(
 
 
 @admin_router.get("/observability/prompts/usage", response_model=dict)
-@require_permission("observability.read")
 async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15535,7 +14644,6 @@ async def get_prompt_usage(
 
 
 @admin_router.get("/observability/prompts/performance", response_model=dict)
-@require_permission("observability.read")
 async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15628,7 +14736,6 @@ async def get_prompt_performance(
 
 
 @admin_router.get("/observability/prompts/errors", response_model=dict)
-@require_permission("observability.read")
 async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -15683,7 +14790,6 @@ async def get_prompts_errors(
 
 
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -15713,7 +14819,6 @@ async def get_prompts_partial(
 
 
 @admin_router.get("/observability/resources/usage", response_model=dict)
-@require_permission("observability.read")
 async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15777,7 +14882,6 @@ async def get_resource_usage(
 
 
 @admin_router.get("/observability/resources/performance", response_model=dict)
-@require_permission("observability.read")
 async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -15870,7 +14974,6 @@ async def get_resource_performance(
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
-@require_permission("observability.read")
 async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -15925,7 +15028,6 @@ async def get_resources_errors(
 
 
 @admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
-@require_permission("observability.read")
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
