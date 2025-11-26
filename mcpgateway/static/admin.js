@@ -21837,6 +21837,7 @@ function displayCorrelationTrace(trace) {
  */
 async function showSecurityEvents() {
     setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(false);
     try {
         const response = await fetch(`${getRootPath()}/api/logs/security-events?limit=50&resolved=false`, {
             method: 'GET',
@@ -22067,7 +22068,7 @@ function displayAuditTrail(trails) {
         const resourceName = trail.resource_name || trail.resource_id || '-';
         const resourceDisplay = `
             <div class="font-medium">${escapeHtml(resourceName)}</div>
-            ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">ID: ${escapeHtml(trail.resource_id)}</div>` : ''}
+            ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ''}
             ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ''}
         `;
         
