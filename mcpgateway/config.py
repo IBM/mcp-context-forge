@@ -56,7 +56,7 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Annotated, Any, Callable, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -472,6 +472,7 @@ class Settings(BaseSettings):
 
         Args:
             v: The admin password value to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             SecretStr: The validated admin password value, wrapped as SecretStr.
@@ -512,6 +513,7 @@ class Settings(BaseSettings):
 
         Args:
             v: The set of allowed origins to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             set: The validated set of allowed origins.
@@ -543,6 +545,7 @@ class Settings(BaseSettings):
 
         Args:
             v: The database URL to validate.
+            info: ValidationInfo containing field data.
 
         Returns:
             str: The validated database URL.
@@ -1537,6 +1540,9 @@ Disallow: /
 def get_settings(**kwargs: Dict[str, Any]) -> Settings:
     """Get cached settings instance.
 
+    Args:
+        **kwargs: Keyword arguments to pass to the Settings setup.
+
     Returns:
         Settings: A cached instance of the Settings class.
 
@@ -1577,16 +1583,19 @@ def generate_settings_schema() -> dict[str, Any]:
 class LazySettingsWrapper:
     """Lazily initialize settings singleton on getattr"""
 
-    def __init__(self, get_settings_fn: Callable[[], BaseSettings]) -> None:
-        """Initialize the settings object."""
-        self._get_settings = get_settings_fn
-
     def __getattr__(self, key: str) -> Any:
-        """Get the real settings object and forward to it"""
-        return getattr(self._get_settings(), key)
+        """Get the real settings object and forward to it
+
+        Args:
+            key: The key to fetch from settings
+
+        Returns:
+            Any: The value of the attribute on the settings
+        """
+        return getattr(get_settings(), key)
 
 
-settings = LazySettingsWrapper(get_settings)
+settings = LazySettingsWrapper()
 
 
 if __name__ == "__main__":
