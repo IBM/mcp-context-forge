@@ -1363,6 +1363,8 @@ class ResourceService:
 
             raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
+        # Ensure team name is resolved before conversion (consistent with ToolService.get_tool)
+        resource.team = self._get_team_name(db, getattr(resource, "team_id", None))
         return self._convert_resource_to_read(resource)
 
     async def _notify_resource_activated(self, resource: DbResource) -> None:

@@ -49,6 +49,15 @@ def resource_service(monkeypatch):
 def mock_db():
     """Create a mock database session."""
     db = MagicMock()
+    # Provide sensible defaults so tests that don't explicitly configure
+    # execute/scalars/scalar_one_or_none do not get MagicMock objects
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.execute.return_value.scalars.return_value = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+    db.query.return_value = MagicMock()
+    db.query.return_value.filter.return_value = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
     return db
 
 
@@ -760,6 +769,31 @@ class TestResourceManagement:
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
+        # Patch conversion to return a concrete ResourceRead to avoid Pydantic
+        # validation issues when converting MagicMock DB objects.
+        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+            mock_convert.return_value = ResourceRead(
+                id=mock_resource.id,
+                uri=mock_resource.uri,
+                name=mock_resource.name,
+                description=mock_resource.description,
+                mime_type=mock_resource.mime_type,
+                size=mock_resource.size,
+                is_active=mock_resource.is_active,
+                created_at=mock_resource.created_at,
+                updated_at=mock_resource.updated_at,
+                uri_template=mock_resource.uri_template,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
 
         result = await resource_service.get_resource_by_id(mock_db, "1")
 
@@ -797,6 +831,31 @@ class TestResourceManagement:
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.return_value = mock_scalar
+        # Patch conversion to return a concrete ResourceRead to avoid Pydantic
+        # validation issues when converting MagicMock DB objects.
+        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+            mock_convert.return_value = ResourceRead(
+                id=mock_inactive_resource.id,
+                uri=mock_inactive_resource.uri,
+                name=mock_inactive_resource.name,
+                description=mock_inactive_resource.description,
+                mime_type=mock_inactive_resource.mime_type,
+                size=mock_inactive_resource.size,
+                is_active=mock_inactive_resource.is_active,
+                created_at=mock_inactive_resource.created_at,
+                updated_at=mock_inactive_resource.updated_at,
+                uri_template=mock_inactive_resource.uri_template,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
 
         result = await resource_service.get_resource_by_id(mock_db, "1", include_inactive=True)
 

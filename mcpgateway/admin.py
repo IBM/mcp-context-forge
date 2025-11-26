@@ -5567,25 +5567,28 @@ async def admin_resources_partial_html(
 
     resources_db = list(db.scalars(query).all())
 
-    # Convert to schemas using ResourceService
+    # Convert DB rows to ResourceRead using ResourceService public API (async)
+
     local_resource_service = ResourceService()
     resources_data = []
     for r in resources_db:
         try:
-            # Ensure the resource has a resolved team name before conversion
+            # Use the public async getter which resolves team name and converts to schema
             try:
-                team_name = local_resource_service._get_team_name(db, getattr(r, "team_id", None))
-            except Exception:
-                team_name = None
-            r.team = team_name
-            resources_data.append(local_resource_service._convert_resource_to_read(r))  # pylint: disable=protected-access
+                resource_schema = await local_resource_service.get_resource_by_id(db, getattr(r, "id", None), include_inactive=include_inactive)
+            except Exception as inner_exc:
+                LOGGER.warning(
+                    "Failed to load resource id=%s via ResourceService.get_resource_by_id: %s",
+                    getattr(r, "id", "<unknown>"),
+                    inner_exc,
+                )
+                continue
+            resources_data.append(resource_schema)
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
 
     data = jsonable_encoder(resources_data)
-    LOGGER.info(f"resources_data: {resources_data}")
-    LOGGER.info(f"data: {data}")
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
