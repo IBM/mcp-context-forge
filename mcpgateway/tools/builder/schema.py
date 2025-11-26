@@ -108,7 +108,7 @@ class BuildableConfig(BaseModel):
     # Registry configuration
     registry: Optional[RegistryConfig] = Field(None, description="Container registry configuration")
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, _: Any) -> None:
         """Validate that either image or repo is specified
 
         Raises:
