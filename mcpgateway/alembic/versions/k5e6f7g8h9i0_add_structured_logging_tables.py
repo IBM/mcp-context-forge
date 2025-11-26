@@ -10,7 +10,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'k5e6f7g8h9i0'
-down_revision = 'f3a3a3d901b8'
+down_revision = ('f3a3a3d901b8', '191a2def08d7')
 branch_labels = None
 depends_on = None
 
@@ -155,7 +155,8 @@ def upgrade() -> None:
         sa.Column('id', sa.String(36), nullable=False),
         sa.Column('timestamp', sa.DateTime(timezone=True), nullable=False),
         sa.Column('correlation_id', sa.String(64), nullable=True),
-        sa.Column('action', sa.String(50), nullable=False),
+        sa.Column('request_id', sa.String(64), nullable=True),
+        sa.Column('action', sa.String(100), nullable=False),
         sa.Column('resource_type', sa.String(100), nullable=False),
         sa.Column('resource_id', sa.String(255), nullable=False),
         sa.Column('resource_name', sa.String(500), nullable=True),
@@ -180,6 +181,7 @@ def upgrade() -> None:
     # Create indexes for audit_trails
     op.create_index('ix_audit_trails_timestamp', 'audit_trails', ['timestamp'], unique=False)
     op.create_index('ix_audit_trails_correlation_id', 'audit_trails', ['correlation_id'], unique=False)
+    op.create_index('ix_audit_trails_request_id', 'audit_trails', ['request_id'], unique=False)
     op.create_index('ix_audit_trails_action', 'audit_trails', ['action'], unique=False)
     op.create_index('ix_audit_trails_resource_type', 'audit_trails', ['resource_type'], unique=False)
     op.create_index('ix_audit_trails_resource_id', 'audit_trails', ['resource_id'], unique=False)

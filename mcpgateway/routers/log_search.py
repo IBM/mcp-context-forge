@@ -225,10 +225,13 @@ class AuditTrailResponse(BaseModel):
     """Audit trail response model."""
     id: str
     timestamp: datetime
+    correlation_id: Optional[str] = None
     action: str
     resource_type: str
     resource_id: Optional[str]
+    resource_name: Optional[str] = None
     user_id: str
+    user_email: Optional[str] = None
     success: bool
     requires_review: bool
     data_classification: Optional[str]
@@ -629,10 +632,13 @@ async def get_audit_trails(
             AuditTrailResponse(
                 id=str(trail.id),
                 timestamp=trail.timestamp,
+                correlation_id=trail.correlation_id,
                 action=trail.action,
                 resource_type=trail.resource_type,
                 resource_id=trail.resource_id,
+                resource_name=trail.resource_name,
                 user_id=trail.user_id,
+                user_email=trail.user_email,
                 success=trail.success,
                 requires_review=trail.requires_review,
                 data_classification=trail.data_classification,
