@@ -23991,51 +23991,67 @@ function updateEntityStatus(type, data) {
 
 // Current log search state
 let currentLogPage = 0;
-let currentLogLimit = 50;
+const currentLogLimit = 50;
+// eslint-disable-next-line no-unused-vars
 let currentLogFilters = {};
 const PERFORMANCE_HISTORY_HOURS = 24;
 const PERFORMANCE_AGGREGATION_OPTIONS = {
-    '5m': { label: '5-minute aggregation', query: '5m' },
-    '24h': { label: '24-hour aggregation', query: '24h' }
+    "5m": { label: "5-minute aggregation", query: "5m" },
+    "24h": { label: "24-hour aggregation", query: "24h" },
 };
-let currentPerformanceAggregationKey = '5m';
+let currentPerformanceAggregationKey = "5m";
 
-function getPerformanceAggregationConfig(rangeKey = currentPerformanceAggregationKey) {
-    return PERFORMANCE_AGGREGATION_OPTIONS[rangeKey] || PERFORMANCE_AGGREGATION_OPTIONS['5m'];
+function getPerformanceAggregationConfig(
+    rangeKey = currentPerformanceAggregationKey,
+) {
+    return (
+        PERFORMANCE_AGGREGATION_OPTIONS[rangeKey] ||
+        PERFORMANCE_AGGREGATION_OPTIONS["5m"]
+    );
 }
 
-function getPerformanceAggregationLabel(rangeKey = currentPerformanceAggregationKey) {
+function getPerformanceAggregationLabel(
+    rangeKey = currentPerformanceAggregationKey,
+) {
     return getPerformanceAggregationConfig(rangeKey).label;
 }
 
-function getPerformanceAggregationQuery(rangeKey = currentPerformanceAggregationKey) {
+function getPerformanceAggregationQuery(
+    rangeKey = currentPerformanceAggregationKey,
+) {
     return getPerformanceAggregationConfig(rangeKey).query;
 }
 
 function syncPerformanceAggregationSelect() {
-    const select = document.getElementById('performance-aggregation-select');
+    const select = document.getElementById("performance-aggregation-select");
     if (select && select.value !== currentPerformanceAggregationKey) {
         select.value = currentPerformanceAggregationKey;
     }
 }
 
 function setPerformanceAggregationVisibility(shouldShow) {
-    const controls = document.getElementById('performance-aggregation-controls');
-    if (!controls) return;
+    const controls = document.getElementById(
+        "performance-aggregation-controls",
+    );
+    if (!controls) {
+        return;
+    }
     if (shouldShow) {
-        controls.classList.remove('hidden');
+        controls.classList.remove("hidden");
     } else {
-        controls.classList.add('hidden');
+        controls.classList.add("hidden");
     }
 }
 
 function setLogFiltersVisibility(shouldShow) {
-    const filters = document.getElementById('log-filters');
-    if (!filters) return;
+    const filters = document.getElementById("log-filters");
+    if (!filters) {
+        return;
+    }
     if (shouldShow) {
-        filters.classList.remove('hidden');
+        filters.classList.remove("hidden");
     } else {
-        filters.classList.add('hidden');
+        filters.classList.add("hidden");
     }
 }
 
@@ -24052,64 +24068,69 @@ function handlePerformanceAggregationChange(event) {
 async function searchStructuredLogs() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(true);
-    const levelFilter = document.getElementById('log-level-filter')?.value;
-    const componentFilter = document.getElementById('log-component-filter')?.value;
-    const searchQuery = document.getElementById('log-search')?.value;
-    
+    const levelFilter = document.getElementById("log-level-filter")?.value;
+    const componentFilter = document.getElementById(
+        "log-component-filter",
+    )?.value;
+    const searchQuery = document.getElementById("log-search")?.value;
+
     // Restore default log table headers (in case we're coming from performance metrics view)
     restoreLogTableHeaders();
-    
+
     // Build search request
     const searchRequest = {
         limit: currentLogLimit,
         offset: currentLogPage * currentLogLimit,
-        sort_by: 'timestamp',
-        sort_order: 'desc'
+        sort_by: "timestamp",
+        sort_order: "desc",
     };
-    
+
     // Only add filters if they have actual values (not empty strings)
-    if (searchQuery && searchQuery.trim() !== '') {
+    if (searchQuery && searchQuery.trim() !== "") {
         const trimmedSearch = searchQuery.trim();
         // Check if search is a correlation ID (32 hex chars or UUID format) or text search
-        const correlationIdPattern = /^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+        const correlationIdPattern =
+            /^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
         if (correlationIdPattern.test(trimmedSearch)) {
             searchRequest.correlation_id = trimmedSearch;
         } else {
             searchRequest.search_text = trimmedSearch;
         }
     }
-    if (levelFilter && levelFilter !== '') {
+    if (levelFilter && levelFilter !== "") {
         searchRequest.level = [levelFilter];
     }
-    if (componentFilter && componentFilter !== '') {
+    if (componentFilter && componentFilter !== "") {
         searchRequest.component = [componentFilter];
     }
-    
+
     // Store filters for pagination
     currentLogFilters = searchRequest;
-    
+
     try {
         const response = await fetch(`${getRootPath()}/api/logs/search`, {
-            method: 'POST',
+            method: "POST",
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${getAuthToken()}`
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${getAuthToken()}`,
             },
-            body: JSON.stringify(searchRequest)
+            body: JSON.stringify(searchRequest),
         });
-        
+
         if (!response.ok) {
             const errorText = await response.text();
-            console.error('API Error Response:', errorText);
-            throw new Error(`Failed to search logs: ${response.statusText} - ${errorText}`);
+            console.error("API Error Response:", errorText);
+            throw new Error(
+                `Failed to search logs: ${response.statusText} - ${errorText}`,
+            );
         }
-        
+
         const data = await response.json();
         displayLogResults(data);
     } catch (error) {
-        console.error('Error searching logs:', error);
-        showToast('Failed to search logs: ' + error.message, 'error');
-        document.getElementById('logs-tbody').innerHTML = `
+        console.error("Error searching logs:", error);
+        showToast("Failed to search logs: " + error.message, "error");
+        document.getElementById("logs-tbody").innerHTML = `
             <tr><td colspan="7" class="px-4 py-4 text-center text-red-600 dark:text-red-400">
                 ❌ Error: ${escapeHtml(error.message)}
             </td></tr>
@@ -24121,26 +24142,26 @@ async function searchStructuredLogs() {
  * Display log search results
  */
 function displayLogResults(data) {
-    const tbody = document.getElementById('logs-tbody');
-    const logCount = document.getElementById('log-count');
-    const logStats = document.getElementById('log-stats');
-    const prevButton = document.getElementById('prev-page');
-    const nextButton = document.getElementById('next-page');
-    
+    const tbody = document.getElementById("logs-tbody");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+    const prevButton = document.getElementById("prev-page");
+    const nextButton = document.getElementById("next-page");
+
     // Ensure default headers are shown for log view
     restoreLogTableHeaders();
-    
+
     if (!data.results || data.results.length === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
                 📭 No logs found matching your criteria
             </td></tr>
         `;
-        logCount.textContent = '0 logs';
+        logCount.textContent = "0 logs";
         logStats.innerHTML = '<span class="text-sm">No results</span>';
         return;
     }
-    
+
     // Update stats
     logCount.textContent = `${data.total.toLocaleString()} logs`;
     const start = currentLogPage * currentLogLimit + 1;
@@ -24150,21 +24171,24 @@ function displayLogResults(data) {
             Showing ${start}-${end} of ${data.total.toLocaleString()} logs
         </span>
     `;
-    
+
     // Update pagination buttons
     prevButton.disabled = currentLogPage === 0;
     nextButton.disabled = end >= data.total;
-    
+
     // Render log entries
-    tbody.innerHTML = data.results.map(log => {
-        const levelClass = getLogLevelClass(log.level);
-        const durationDisplay = log.duration_ms ? `${log.duration_ms.toFixed(2)}ms` : '-';
-        const correlationId = log.correlation_id || '-';
-        const userDisplay = log.user_email || log.user_id || '-';
-        
-        return `
+    tbody.innerHTML = data.results
+        .map((log) => {
+            const levelClass = getLogLevelClass(log.level);
+            const durationDisplay = log.duration_ms
+                ? `${log.duration_ms.toFixed(2)}ms`
+                : "-";
+            const correlationId = log.correlation_id || "-";
+            const userDisplay = log.user_email || log.user_id || "-";
+
+            return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer" 
-                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || '')}')">
+                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
                 </td>
@@ -24174,11 +24198,11 @@ function displayLogResults(data) {
                     </span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    ${escapeHtml(log.component || '-')}
+                    ${escapeHtml(log.component || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${escapeHtml(truncateText(log.message, 80))}
-                    ${log.error_details ? '<span class="text-red-600">⚠️</span>' : ''}
+                    ${log.error_details ? '<span class="text-red-600">⚠️</span>' : ""}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
                     ${escapeHtml(userDisplay)}
@@ -24187,16 +24211,21 @@ function displayLogResults(data) {
                     ${durationDisplay}
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${correlationId !== '-' ? `
+                    ${
+                        correlationId !== "-"
+                            ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')" 
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(correlationId, 12))}
                         </button>
-                    ` : '-'}
+                    `
+                            : "-"
+                    }
                 </td>
             </tr>
         `;
-    }).join('');
+        })
+        .join("");
 }
 
 /**
@@ -24204,13 +24233,15 @@ function displayLogResults(data) {
  */
 function getLogLevelClass(level) {
     const classes = {
-        'DEBUG': 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200',
-        'INFO': 'bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200',
-        'WARNING': 'bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200',
-        'ERROR': 'bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200',
-        'CRITICAL': 'bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200'
+        DEBUG: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
+        INFO: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+        WARNING:
+            "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        ERROR: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+        CRITICAL:
+            "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
     };
-    return classes[level] || classes['INFO'];
+    return classes[level] || classes.INFO;
 }
 
 /**
@@ -24218,12 +24249,12 @@ function getLogLevelClass(level) {
  */
 function formatTimestamp(timestamp) {
     const date = new Date(timestamp);
-    return date.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit'
+    return date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
     });
 }
 
@@ -24231,8 +24262,12 @@ function formatTimestamp(timestamp) {
  * Truncate text with ellipsis
  */
 function truncateText(text, maxLength) {
-    if (!text) return '';
-    return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    if (!text) {
+        return "";
+    }
+    return text.length > maxLength
+        ? text.substring(0, maxLength) + "..."
+        : text;
 }
 
 /**
@@ -24242,8 +24277,8 @@ function showLogDetails(logId, correlationId) {
     if (correlationId) {
         showCorrelationTrace(correlationId);
     } else {
-        console.log('Log details:', logId);
-        showToast('Full log details view coming soon', 'info');
+        console.log("Log details:", logId);
+        showToast("Full log details view coming soon", "info");
     }
 }
 
@@ -24251,7 +24286,7 @@ function showLogDetails(logId, correlationId) {
  * Restore default log table headers
  */
 function restoreLogTableHeaders() {
-    const thead = document.getElementById('logs-thead');
+    const thead = document.getElementById("logs-thead");
     if (thead) {
         thead.innerHTML = `
             <tr>
@@ -24288,28 +24323,39 @@ async function showCorrelationTrace(correlationId) {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(true);
     if (!correlationId) {
-        const searchInput = document.getElementById('log-search');
-        correlationId = prompt('Enter Correlation ID to trace:', searchInput?.value || '');
-        if (!correlationId) return;
+        const searchInput = document.getElementById("log-search");
+        correlationId = prompt(
+            "Enter Correlation ID to trace:",
+            searchInput?.value || "",
+        );
+        if (!correlationId) {
+            return;
+        }
     }
-    
+
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${getAuthToken()}`
-            }
-        });
-        
+        const response = await fetch(
+            `${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
+            {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+            },
+        );
+
         if (!response.ok) {
             throw new Error(`Failed to fetch trace: ${response.statusText}`);
         }
-        
+
         const trace = await response.json();
         displayCorrelationTrace(trace);
     } catch (error) {
-        console.error('Error fetching correlation trace:', error);
-        showToast('Failed to fetch correlation trace: ' + error.message, 'error');
+        console.error("Error fetching correlation trace:", error);
+        showToast(
+            "Failed to fetch correlation trace: " + error.message,
+            "error",
+        );
     }
 }
 
@@ -24474,16 +24520,17 @@ console.log("💡 Use: window.debugMCPSearchState() to check current state");
  * Display correlation trace results
  */
 function displayCorrelationTrace(trace) {
-    const tbody = document.getElementById('logs-tbody');
-    const thead = document.getElementById('logs-thead');
-    const logCount = document.getElementById('log-count');
-    const logStats = document.getElementById('log-stats');
-    
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
     // Calculate total events
-    const totalEvents = (trace.logs?.length || 0) + 
-                       (trace.security_events?.length || 0) + 
-                       (trace.audit_trails?.length || 0);
-    
+    const totalEvents =
+        (trace.logs?.length || 0) +
+        (trace.security_events?.length || 0) +
+        (trace.audit_trails?.length || 0);
+
     // Update table headers for trace view
     if (thead) {
         thead.innerHTML = `
@@ -24512,7 +24559,7 @@ function displayCorrelationTrace(trace) {
             </tr>
         `;
     }
-    
+
     // Update stats
     logCount.textContent = `${totalEvents} events`;
     logStats.innerHTML = `
@@ -24531,11 +24578,11 @@ function displayCorrelationTrace(trace) {
                 <strong>Audit:</strong> <span class="text-yellow-600">${trace.audit_trails?.length || 0}</span>
             </div>
             <div>
-                <strong>Duration:</strong> ${trace.total_duration_ms ? trace.total_duration_ms.toFixed(2) + 'ms' : 'N/A'}
+                <strong>Duration:</strong> ${trace.total_duration_ms ? trace.total_duration_ms.toFixed(2) + "ms" : "N/A"}
             </div>
         </div>
     `;
-    
+
     if (totalEvents === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
@@ -24544,12 +24591,12 @@ function displayCorrelationTrace(trace) {
         `;
         return;
     }
-    
+
     // Combine all events into a unified timeline
     const allEvents = [];
-    
+
     // Add logs
-    (trace.logs || []).forEach(log => {
+    (trace.logs || []).forEach((log) => {
         const levelClass = getLogLevelClass(log.level);
         allEvents.push({
             timestamp: new Date(log.timestamp),
@@ -24564,17 +24611,17 @@ function displayCorrelationTrace(trace) {
                         </span>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(log.component || '-')}
+                        ${escapeHtml(log.component || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                         ${escapeHtml(log.message)}
-                        ${log.error_details ? `<br><small class="text-red-600">⚠️ ${escapeHtml(log.error_details.error_message || JSON.stringify(log.error_details))}</small>` : ''}
+                        ${log.error_details ? `<br><small class="text-red-600">⚠️ ${escapeHtml(log.error_details.error_message || JSON.stringify(log.error_details))}</small>` : ""}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(log.user_email || log.user_id || '-')}
+                        ${escapeHtml(log.user_email || log.user_id || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${log.duration_ms ? log.duration_ms.toFixed(2) + 'ms' : '-'}
+                        ${log.duration_ms ? log.duration_ms.toFixed(2) + "ms" : "-"}
                     </td>
                     <td class="px-4 py-3">
                         <span class="px-2 py-1 text-xs font-semibold rounded ${levelClass}">
@@ -24582,14 +24629,16 @@ function displayCorrelationTrace(trace) {
                         </span>
                     </td>
                 </tr>
-            `
+            `,
         });
     });
-    
+
     // Add security events
-    (trace.security_events || []).forEach(event => {
+    (trace.security_events || []).forEach((event) => {
         const severityClass = getSeverityClass(event.severity);
-        const threatScore = event.threat_score ? (event.threat_score * 100).toFixed(0) : 0;
+        const threatScore = event.threat_score
+            ? (event.threat_score * 100).toFixed(0)
+            : 0;
         allEvents.push({
             timestamp: new Date(event.timestamp),
             html: `
@@ -24603,13 +24652,13 @@ function displayCorrelationTrace(trace) {
                         </span>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(event.event_type || '-')}
+                        ${escapeHtml(event.event_type || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
-                        ${escapeHtml(event.description || '-')}
+                        ${escapeHtml(event.description || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(event.user_email || event.user_id || '-')}
+                        ${escapeHtml(event.user_email || event.user_id || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                         -
@@ -24629,23 +24678,27 @@ function displayCorrelationTrace(trace) {
                         </div>
                     </td>
                 </tr>
-            `
+            `,
         });
     });
-    
+
     // Add audit trails
-    (trace.audit_trails || []).forEach(audit => {
+    (trace.audit_trails || []).forEach((audit) => {
         const actionBadgeColors = {
-            'create': 'bg-green-200 text-green-800',
-            'update': 'bg-blue-200 text-blue-800',
-            'delete': 'bg-red-200 text-red-800',
-            'read': 'bg-gray-200 text-gray-800'
+            create: "bg-green-200 text-green-800",
+            update: "bg-blue-200 text-blue-800",
+            delete: "bg-red-200 text-red-800",
+            read: "bg-gray-200 text-gray-800",
         };
-        const actionBadge = actionBadgeColors[audit.action?.toLowerCase()] || 'bg-purple-200 text-purple-800';
-        const statusIcon = audit.success ? '✓' : '✗';
-        const statusClass = audit.success ? 'text-green-600' : 'text-red-600';
-        const statusBg = audit.success ? 'bg-green-100 dark:bg-green-900' : 'bg-red-100 dark:bg-red-900';
-        
+        const actionBadge =
+            actionBadgeColors[audit.action?.toLowerCase()] ||
+            "bg-purple-200 text-purple-800";
+        const statusIcon = audit.success ? "✓" : "✗";
+        const statusClass = audit.success ? "text-green-600" : "text-red-600";
+        const statusBg = audit.success
+            ? "bg-green-100 dark:bg-green-900"
+            : "bg-red-100 dark:bg-red-900";
+
         allEvents.push({
             timestamp: new Date(audit.timestamp),
             html: `
@@ -24659,33 +24712,33 @@ function displayCorrelationTrace(trace) {
                         </span>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(audit.resource_type || '-')}
+                        ${escapeHtml(audit.resource_type || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                         <strong>${audit.action}:</strong> ${audit.resource_type} 
-                        <code class="text-xs bg-gray-200 px-1 rounded">${escapeHtml(audit.resource_id || '-')}</code>
+                        <code class="text-xs bg-gray-200 px-1 rounded">${escapeHtml(audit.resource_id || "-")}</code>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                        ${escapeHtml(audit.user_email || audit.user_id || '-')}
+                        ${escapeHtml(audit.user_email || audit.user_id || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                         -
                     </td>
                     <td class="px-4 py-3">
                         <span class="px-2 py-1 text-xs font-semibold rounded ${statusBg} ${statusClass}">
-                            ${statusIcon} ${audit.success ? 'Success' : 'Failed'}
+                            ${statusIcon} ${audit.success ? "Success" : "Failed"}
                         </span>
                     </td>
                 </tr>
-            `
+            `,
         });
     });
-    
+
     // Sort all events chronologically
     allEvents.sort((a, b) => a.timestamp - b.timestamp);
-    
+
     // Render sorted events
-    tbody.innerHTML = allEvents.map(event => event.html).join('');
+    tbody.innerHTML = allEvents.map((event) => event.html).join("");
 }
 
 /**
@@ -24695,22 +24748,27 @@ async function showSecurityEvents() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/security-events?limit=50&resolved=false`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${getAuthToken()}`
-            }
-        });
-        
+        const response = await fetch(
+            `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
+            {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+            },
+        );
+
         if (!response.ok) {
-            throw new Error(`Failed to fetch security events: ${response.statusText}`);
+            throw new Error(
+                `Failed to fetch security events: ${response.statusText}`,
+            );
         }
-        
+
         const events = await response.json();
         displaySecurityEvents(events);
     } catch (error) {
-        console.error('Error fetching security events:', error);
-        showToast('Failed to fetch security events: ' + error.message, 'error');
+        console.error("Error fetching security events:", error);
+        showToast("Failed to fetch security events: " + error.message, "error");
     }
 }
 
@@ -24718,11 +24776,11 @@ async function showSecurityEvents() {
  * Display security events
  */
 function displaySecurityEvents(events) {
-    const tbody = document.getElementById('logs-tbody');
-    const thead = document.getElementById('logs-thead');
-    const logCount = document.getElementById('log-count');
-    const logStats = document.getElementById('log-stats');
-    
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
     // Update table headers for security events
     if (thead) {
         thead.innerHTML = `
@@ -24751,14 +24809,14 @@ function displaySecurityEvents(events) {
             </tr>
         `;
     }
-    
+
     logCount.textContent = `${events.length} security events`;
     logStats.innerHTML = `
         <span class="text-sm text-red-600 dark:text-red-400">
             🛡️ Unresolved Security Events
         </span>
     `;
-    
+
     if (events.length === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
@@ -24767,12 +24825,13 @@ function displaySecurityEvents(events) {
         `;
         return;
     }
-    
-    tbody.innerHTML = events.map(event => {
-        const severityClass = getSeverityClass(event.severity);
-        const threatScore = (event.threat_score * 100).toFixed(0);
-        
-        return `
+
+    tbody.innerHTML = events
+        .map((event) => {
+            const severityClass = getSeverityClass(event.severity);
+            const threatScore = (event.threat_score * 100).toFixed(0);
+
+            return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(event.timestamp)}
@@ -24789,7 +24848,7 @@ function displaySecurityEvents(events) {
                     ${escapeHtml(event.description)}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    ${escapeHtml(event.user_email || event.user_id || '-')}
+                    ${escapeHtml(event.user_email || event.user_id || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm">
                     <div class="flex items-center">
@@ -24800,16 +24859,21 @@ function displaySecurityEvents(events) {
                     </div>
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${event.correlation_id ? `
+                    ${
+                        event.correlation_id
+                            ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')" 
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(event.correlation_id, 12))}
                         </button>
-                    ` : '-'}
+                    `
+                            : "-"
+                    }
                 </td>
             </tr>
         `;
-    }).join('');
+        })
+        .join("");
 }
 
 /**
@@ -24817,12 +24881,12 @@ function displaySecurityEvents(events) {
  */
 function getSeverityClass(severity) {
     const classes = {
-        'LOW': 'bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200',
-        'MEDIUM': 'bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200',
-        'HIGH': 'bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200',
-        'CRITICAL': 'bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200'
+        LOW: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+        MEDIUM: "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        HIGH: "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+        CRITICAL: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
     };
-    return classes[severity] || classes['MEDIUM'];
+    return classes[severity] || classes.MEDIUM;
 }
 
 /**
@@ -24832,22 +24896,27 @@ async function showAuditTrail() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${getAuthToken()}`
-            }
-        });
-        
+        const response = await fetch(
+            `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
+            {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+            },
+        );
+
         if (!response.ok) {
-            throw new Error(`Failed to fetch audit trails: ${response.statusText}`);
+            throw new Error(
+                `Failed to fetch audit trails: ${response.statusText}`,
+            );
         }
-        
+
         const trails = await response.json();
         displayAuditTrail(trails);
     } catch (error) {
-        console.error('Error fetching audit trails:', error);
-        showToast('Failed to fetch audit trails: ' + error.message, 'error');
+        console.error("Error fetching audit trails:", error);
+        showToast("Failed to fetch audit trails: " + error.message, "error");
     }
 }
 
@@ -24855,11 +24924,11 @@ async function showAuditTrail() {
  * Display audit trail entries
  */
 function displayAuditTrail(trails) {
-    const tbody = document.getElementById('logs-tbody');
-    const thead = document.getElementById('logs-thead');
-    const logCount = document.getElementById('log-count');
-    const logStats = document.getElementById('log-stats');
-    
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
     // Update table headers for audit trail
     if (thead) {
         thead.innerHTML = `
@@ -24888,14 +24957,14 @@ function displayAuditTrail(trails) {
             </tr>
         `;
     }
-    
+
     logCount.textContent = `${trails.length} audit entries`;
     logStats.innerHTML = `
         <span class="text-sm text-yellow-600 dark:text-yellow-400">
             📝 Audit Trail Entries Requiring Review
         </span>
     `;
-    
+
     if (trails.length === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
@@ -24904,31 +24973,39 @@ function displayAuditTrail(trails) {
         `;
         return;
     }
-    
-    tbody.innerHTML = trails.map(trail => {
-        const actionClass = trail.success ? 'text-green-600' : 'text-red-600';
-        const actionIcon = trail.success ? '✓' : '✗';
-        
-        // Determine action badge color
-        const actionBadgeColors = {
-            'create': 'bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200',
-            'update': 'bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200',
-            'delete': 'bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200',
-            'read': 'bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200',
-            'activate': 'bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200',
-            'deactivate': 'bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200'
-        };
-        const actionBadge = actionBadgeColors[trail.action.toLowerCase()] || 'bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200';
-        
-        // Format resource name with ID
-        const resourceName = trail.resource_name || trail.resource_id || '-';
-        const resourceDisplay = `
+
+    tbody.innerHTML = trails
+        .map((trail) => {
+            const actionClass = trail.success
+                ? "text-green-600"
+                : "text-red-600";
+            const actionIcon = trail.success ? "✓" : "✗";
+
+            // Determine action badge color
+            const actionBadgeColors = {
+                create: "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
+                update: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+                delete: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+                read: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
+                activate:
+                    "bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200",
+                deactivate:
+                    "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+            };
+            const actionBadge =
+                actionBadgeColors[trail.action.toLowerCase()] ||
+                "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200";
+
+            // Format resource name with ID
+            const resourceName =
+                trail.resource_name || trail.resource_id || "-";
+            const resourceDisplay = `
             <div class="font-medium">${escapeHtml(resourceName)}</div>
-            ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ''}
-            ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ''}
+            ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ""}
+            ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ""}
         `;
-        
-        return `
+
+            return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(trail.timestamp)}
@@ -24939,28 +25016,33 @@ function displayAuditTrail(trails) {
                     </span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    ${escapeHtml(trail.resource_type || '-')}
+                    ${escapeHtml(trail.resource_type || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${resourceDisplay}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    ${escapeHtml(trail.user_email || trail.user_id || '-')}
+                    ${escapeHtml(trail.user_email || trail.user_id || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm ${actionClass}">
-                    ${actionIcon} ${trail.success ? 'Success' : 'Failed'}
+                    ${actionIcon} ${trail.success ? "Success" : "Failed"}
                 </td>
                 <td class="px-4 py-3 text-sm">
-                    ${trail.correlation_id ? `
+                    ${
+                        trail.correlation_id
+                            ? `
                         <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')" 
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(trail.correlation_id, 12))}
                         </button>
-                    ` : '-'}
+                    `
+                            : "-"
+                    }
                 </td>
             </tr>
         `;
-    }).join('');
+        })
+        .join("");
 }
 
 /**
@@ -24970,7 +25052,9 @@ async function showPerformanceMetrics(rangeKey) {
     if (rangeKey && PERFORMANCE_AGGREGATION_OPTIONS[rangeKey]) {
         currentPerformanceAggregationKey = rangeKey;
     } else {
-        const select = document.getElementById('performance-aggregation-select');
+        const select = document.getElementById(
+            "performance-aggregation-select",
+        );
         if (select?.value && PERFORMANCE_AGGREGATION_OPTIONS[select.value]) {
             currentPerformanceAggregationKey = select.value;
         }
@@ -24980,25 +25064,35 @@ async function showPerformanceMetrics(rangeKey) {
     setPerformanceAggregationVisibility(true);
     setLogFiltersVisibility(false);
     const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
-    const aggregationParam = encodeURIComponent(getPerformanceAggregationQuery());
+    const aggregationParam = encodeURIComponent(
+        getPerformanceAggregationQuery(),
+    );
 
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${getAuthToken()}`
-            }
-        });
-        
+        const response = await fetch(
+            `${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
+            {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${getAuthToken()}`,
+                },
+            },
+        );
+
         if (!response.ok) {
-            throw new Error(`Failed to fetch performance metrics: ${response.statusText}`);
+            throw new Error(
+                `Failed to fetch performance metrics: ${response.statusText}`,
+            );
         }
-        
+
         const metrics = await response.json();
         displayPerformanceMetrics(metrics);
     } catch (error) {
-        console.error('Error fetching performance metrics:', error);
-        showToast('Failed to fetch performance metrics: ' + error.message, 'error');
+        console.error("Error fetching performance metrics:", error);
+        showToast(
+            "Failed to fetch performance metrics: " + error.message,
+            "error",
+        );
     }
 }
 
@@ -25006,12 +25100,12 @@ async function showPerformanceMetrics(rangeKey) {
  * Display performance metrics
  */
 function displayPerformanceMetrics(metrics) {
-    const tbody = document.getElementById('logs-tbody');
-    const thead = document.getElementById('logs-thead');
-    const logCount = document.getElementById('log-count');
-    const logStats = document.getElementById('log-stats');
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
     const aggregationLabel = getPerformanceAggregationLabel();
-    
+
     // Update table headers for performance metrics
     if (thead) {
         thead.innerHTML = `
@@ -25040,14 +25134,14 @@ function displayPerformanceMetrics(metrics) {
             </tr>
         `;
     }
-    
+
     logCount.textContent = `${metrics.length} metrics`;
     logStats.innerHTML = `
         <span class="text-sm text-green-600 dark:text-green-400">
             ⚡ Performance Metrics (${aggregationLabel})
         </span>
     `;
-    
+
     if (metrics.length === 0) {
         tbody.innerHTML = `
             <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
@@ -25056,21 +25150,23 @@ function displayPerformanceMetrics(metrics) {
         `;
         return;
     }
-    
-    tbody.innerHTML = metrics.map(metric => {
-        const errorRatePercent = (metric.error_rate * 100).toFixed(2);
-        const errorClass = metric.error_rate > 0.1 ? 'text-red-600' : 'text-green-600';
-        
-        return `
+
+    tbody.innerHTML = metrics
+        .map((metric) => {
+            const errorRatePercent = (metric.error_rate * 100).toFixed(2);
+            const errorClass =
+                metric.error_rate > 0.1 ? "text-red-600" : "text-green-600";
+
+            return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(metric.window_start)}
                 </td>
                 <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-300">
-                    ${escapeHtml(metric.component || '-')}
+                    ${escapeHtml(metric.component || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    ${escapeHtml(metric.operation_type || '-')}
+                    ${escapeHtml(metric.operation_type || "-")}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     <div class="text-xs">
@@ -25083,7 +25179,7 @@ function displayPerformanceMetrics(metrics) {
                 </td>
                 <td class="px-4 py-3 text-sm ${errorClass}">
                     ${errorRatePercent}%
-                    ${metric.error_rate > 0.1 ? '⚠️' : ''}
+                    ${metric.error_rate > 0.1 ? "⚠️" : ""}
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
                     <div class="text-xs">
@@ -25092,7 +25188,8 @@ function displayPerformanceMetrics(metrics) {
                 </td>
             </tr>
         `;
-    }).join('');
+        })
+        .join("");
 }
 
 /**
@@ -25114,56 +25211,20 @@ function nextLogPage() {
 }
 
 /**
- * Get auth token from session
- */
-function getAuthToken() {
-    // Check cookie first (matches HTMX authentication)
-    const jwtToken = getCookie('jwt_token') || getCookie('access_token') || getCookie('token');
-    if (jwtToken) {
-        return jwtToken;
-    }
-    
-    // Fallback: check localStorage
-    const localToken = localStorage.getItem('auth_token');
-    if (localToken) {
-        return localToken;
-    }
-    
-    // Last resort: check input field
-    const tokenInput = document.querySelector('input[name="auth_token"]');
-    if (tokenInput && tokenInput.value) {
-        return tokenInput.value;
-    }
-    
-    // No token found - log warning for debugging
-    console.warn('No authentication token found for API request');
-    return '';
-}
-
-/**
  * Get root path for API calls
  */
 function getRootPath() {
-    return window.ROOT_PATH || '';
-}
-
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text) {
-    if (!text) return '';
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
+    return window.ROOT_PATH || "";
 }
 
 /**
  * Show toast notification
  */
-function showToast(message, type = 'info') {
+function showToast(message, type = "info") {
     // Check if showMessage function exists (from existing admin.js)
-    if (typeof showMessage === 'function') {
-        showMessage(message, type === 'error' ? 'danger' : type);
+    if (typeof showMessage === "function") {
+        // eslint-disable-next-line no-undef
+        showMessage(message, type === "error" ? "danger" : type);
     } else {
         console.log(`[${type.toUpperCase()}] ${message}`);
     }
