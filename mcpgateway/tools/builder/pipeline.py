@@ -57,11 +57,38 @@ class CICDModule(ABC):
         - MCPStackDagger: High-performance implementation using Dagger SDK
         - MCPStackPython: Fallback implementation using plain Python + Docker/Podman
 
-    Example:
-        >>> class MyDeployer(CICDModule):
+    Examples:
+        >>> # Test that CICDModule is abstract
+        >>> from abc import ABC
+        >>> issubclass(CICDModule, ABC)
+        True
+
+        >>> # Test initialization with defaults
+        >>> class TestDeployer(CICDModule):
         ...     async def build(self, config_file: str, **kwargs) -> None:
-        ...         # Implementation-specific build logic
         ...         pass
+        ...     async def generate_certificates(self, config_file: str) -> None:
+        ...         pass
+        ...     async def deploy(self, config_file: str, **kwargs) -> None:
+        ...         pass
+        ...     async def verify(self, config_file: str, **kwargs) -> None:
+        ...         pass
+        ...     async def destroy(self, config_file: str) -> None:
+        ...         pass
+        ...     def generate_manifests(self, config_file: str, **kwargs) -> Path:
+        ...         return Path(".")
+        >>> deployer = TestDeployer()
+        >>> deployer.verbose
+        False
+
+        >>> # Test initialization with verbose=True
+        >>> verbose_deployer = TestDeployer(verbose=True)
+        >>> verbose_deployer.verbose
+        True
+
+        >>> # Test that console is available
+        >>> hasattr(deployer, 'console')
+        True
     """
 
     def __init__(self, verbose: bool = False):
@@ -69,6 +96,14 @@ class CICDModule(ABC):
 
         Args:
             verbose: Enable verbose output during all operations
+
+        Examples:
+            >>> # Cannot instantiate abstract class directly
+            >>> try:
+            ...     CICDModule()
+            ... except TypeError as e:
+            ...     "abstract" in str(e).lower()
+            True
         """
         self.verbose = verbose
         self.console = console
@@ -92,14 +127,57 @@ class CICDModule(ABC):
             ValidationError: If Pydantic schema validation fails
             FileNotFoundError: If config_file does not exist
 
-        Example:
-            # deployer.validate("mcp-stack-local.yaml")
-            # ✓ Configuration valid
+        Examples:
+            >>> import tempfile
+            >>> import yaml
+            >>> from pathlib import Path
+            >>> # Create a test deployer
+            >>> class TestDeployer(CICDModule):
+            ...     async def build(self, config_file: str, **kwargs) -> None:
+            ...         pass
+            ...     async def generate_certificates(self, config_file: str) -> None:
+            ...         pass
+            ...     async def deploy(self, config_file: str, **kwargs) -> None:
+            ...         pass
+            ...     async def verify(self, config_file: str, **kwargs) -> None:
+            ...         pass
+            ...     async def destroy(self, config_file: str) -> None:
+            ...         pass
+            ...     def generate_manifests(self, config_file: str, **kwargs) -> Path:
+            ...         return Path(".")
+            >>> deployer = TestDeployer(verbose=False)
 
-            # deployer.validate("invalid.yaml")
-            # ValueError: Configuration validation failed:
-            #   • plugins -> 0 -> name: Field required
-            #   • gateway -> image: Field required
+            >>> # Test with valid minimal config
+            >>> with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            ...     config = {
+            ...         'deployment': {'type': 'compose'},
+            ...         'gateway': {'image': 'test:latest'},
+            ...         'plugins': []
+            ...     }
+            ...     yaml.dump(config, f)
+            ...     config_path = f.name
+            >>> deployer.validate(config_path)
+            >>> import os
+            >>> os.unlink(config_path)
+
+            >>> # Test with missing file
+            >>> try:
+            ...     deployer.validate("/nonexistent/config.yaml")
+            ... except FileNotFoundError as e:
+            ...     "config.yaml" in str(e)
+            True
+
+            >>> # Test with invalid config (missing required fields)
+            >>> with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+            ...     bad_config = {'deployment': {'type': 'compose'}}
+            ...     yaml.dump(bad_config, f)
+            ...     bad_path = f.name
+            >>> try:
+            ...     deployer.validate(bad_path)
+            ... except ValueError as e:
+            ...     "validation failed" in str(e).lower()
+            True
+            >>> os.unlink(bad_path)
         """
         if self.verbose:
             self.console.print(f"[blue]Validating {config_file}...[/blue]")
