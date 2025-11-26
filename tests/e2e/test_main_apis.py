@@ -84,7 +84,7 @@ def noop_decorator(*args, **kwargs):
 # Replace all RBAC decorators with no-ops
 rbac_module.require_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
 rbac_module.require_admin_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_any_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
+
 
 # Standard
 # Patch bootstrap_db to prevent it from running during tests

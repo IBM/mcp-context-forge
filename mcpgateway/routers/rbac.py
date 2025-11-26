@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Permissions, SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.role_service import RoleService
@@ -60,7 +60,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 @router.post("/roles", response_model=RoleResponse)
-@require_admin_permission()
+@router.post("/roles", response_model=RoleResponse)
+@require_permission("admin.user_management")
 async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Create a new role.
 
@@ -181,7 +182,8 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
-@require_admin_permission()
+@router.put("/roles/{role_id}", response_model=RoleResponse)
+@require_permission("admin.user_management")
 async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update an existing role.
 
@@ -223,7 +225,8 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
 
 @router.delete("/roles/{role_id}")
-@require_admin_permission()
+@router.delete("/roles/{role_id}")
+@require_permission("admin.user_management")
 async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Delete a role.
 

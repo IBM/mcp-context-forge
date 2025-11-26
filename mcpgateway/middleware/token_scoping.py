@@ -285,25 +285,37 @@ class TokenScopingMiddleware:
             # Initialize DB and Service
             db = next(get_db())
             permission_service = PermissionService(db)
+            # Import RoleService here to avoid circular imports if any, or better at top level if safe.
+            # Assuming safe to import at top level, but for now let's keep it clean.
+            from mcpgateway.services.role_service import RoleService
+            role_service = RoleService(db)
 
             try:
                 # PERMISSION RETRIEVAL: Get user permissions and cache them
-                user_permissions = await self._get_user_permissions(payload, permission_service)
+                # OPTIMIZATION: Fetch all roles once
+                user_email = payload.get("sub")
+                user_roles = []
+                if user_email:
+                    user_roles = await role_service.get_all_active_user_roles(user_email)
                 
-                # Validate user has some permissions (replaces team membership check)
+                # Cache roles in request state for use by require_permission
+                request.state.user_roles = user_roles
+                request.state.user_email = user_email
+
+                # Derive structured permissions from roles
+                user_permissions = await permission_service.get_user_scopes(user_email, roles=user_roles)
+
+                # Validate user has some permissions
                 if not user_permissions:
                     logger.warning("Token rejected: User has no permissions")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User has no permissions")
                 
-                # Cache permissions in request state for use by require_permission
                 request.state.user_permissions = user_permissions
-                request.state.user_email = payload.get("sub")
 
-                # TEAM VALIDATION: Check resource team ownership
-                token_teams = payload.get("teams", [])
-                if not await permission_service.check_resource_access(request.url.path, token_teams):
-                    logger.warning(f"Access denied: Resource does not belong to token's teams {token_teams}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource using the current token")
+                # TEAM VALIDATION: Check resource team ownership using structured permissions
+                if not await permission_service.check_resource_access(request.url.path, user_permissions):
+                    logger.warning(f"Access denied: Resource access validation failed for user {user_email}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource")
 
                 # Extract scopes from payload
                 scopes = payload.get("scopes", {})
