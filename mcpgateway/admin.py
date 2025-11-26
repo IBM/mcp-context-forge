@@ -5083,7 +5083,7 @@ async def admin_tools_partial_html(
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
-    
+
     # Build pagination metadata
     pagination = PaginationMeta(
         page=page,
