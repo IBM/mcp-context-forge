@@ -1541,6 +1541,9 @@ class ToolService:
                     ).scalar_one_or_none()
                     if existing_tool:
                         raise ToolNameConflictError(existing_tool.custom_name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
+                if tool_update.custom_name is None and tool.name == tool.custom_name:
+                    tool.custom_name = tool_update.name
+                tool.name = tool_update.name
 
             if tool_update.custom_name is not None:
                 tool.custom_name = tool_update.custom_name

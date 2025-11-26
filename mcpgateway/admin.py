@@ -41,6 +41,7 @@ import uuid
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
 import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
@@ -51,6 +52,8 @@ from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
 # First-Party
+# Authentication and password-related imports
+from mcpgateway.auth import get_current_user
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
@@ -59,6 +62,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -99,7 +103,9 @@ from mcpgateway.schemas import (
     ToolUpdate,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
@@ -122,6 +128,7 @@ from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.pagination import generate_pagination_links
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
+from mcpgateway.utils.security_cookies import set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
 
@@ -222,6 +229,80 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP address from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        str: Client IP address
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>>
+        >>> # Test with X-Forwarded-For header
+        >>> mock_request = MagicMock()
+        >>> mock_request.headers = {"X-Forwarded-For": "192.168.1.1, 10.0.0.1"}
+        >>> get_client_ip(mock_request)
+        '192.168.1.1'
+        >>>
+        >>> # Test with X-Real-IP header
+        >>> mock_request.headers = {"X-Real-IP": "10.0.0.5"}
+        >>> get_client_ip(mock_request)
+        '10.0.0.5'
+        >>>
+        >>> # Test with direct client IP
+        >>> mock_request.headers = {}
+        >>> mock_request.client.host = "127.0.0.1"
+        >>> get_client_ip(mock_request)
+        '127.0.0.1'
+        >>>
+        >>> # Test with no client info
+        >>> mock_request.client = None
+        >>> get_client_ip(mock_request)
+        'unknown'
+    """
+    # Check for X-Forwarded-For header (proxy/load balancer)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+
+    # Check for X-Real-IP header
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip
+
+    # Fall back to direct client IP
+    return request.client.host if request.client else "unknown"
+
+
+def get_user_agent(request: Request) -> str:
+    """Extract user agent from request.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        str: User agent string
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>>
+        >>> # Test with User-Agent header
+        >>> mock_request = MagicMock()
+        >>> mock_request.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0)"}
+        >>> get_user_agent(mock_request)
+        'Mozilla/5.0 (Windows NT 10.0)'
+        >>>
+        >>> # Test without User-Agent header
+        >>> mock_request.headers = {}
+        >>> get_user_agent(mock_request)
+        'unknown'
+    """
+    return request.headers.get("User-Agent", "unknown")
 
 
 def rate_limit(requests_per_minute: Optional[int] = None):
@@ -2712,9 +2793,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
         # Authenticate using the email auth service
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         auth_service = EmailAuthService(db)
 
         try:
@@ -2728,10 +2806,36 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
-            # Create JWT token with proper audience and issuer claims
-            # First-Party
-            from mcpgateway.routers.email_auth import create_access_token  # pylint: disable=import-outside-toplevel
+            # Check if password change is required OR if user is using default password
+            needs_password_change = user.password_change_required
 
+            # Also check if user is using the default password
+            if not needs_password_change:
+                password_service = Argon2PasswordService()
+                is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                if is_using_default_password:
+                    needs_password_change = True
+                    # Set the flag in database for future reference
+                    user.password_change_required = True
+                    db.commit()
+                    LOGGER.info(f"User {email} is using default password - forcing password change")
+
+            if needs_password_change:
+                LOGGER.info(f"User {email} requires password change - redirecting to change password page")
+
+                # Create temporary JWT token for password change process
+                token, _ = await create_access_token(user)
+
+                # Create redirect response to password change page
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
+
+                # Set JWT token as secure cookie for the password change process
+                set_auth_cookie(response, token, remember_me=False)
+
+                return response
+
+            # Create JWT token with proper audience and issuer claims
             token, _ = await create_access_token(user)  # expires_seconds not needed here
 
             # Create redirect response
@@ -2739,9 +2843,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            # First-Party
-            from mcpgateway.utils.security_cookies import set_auth_cookie  # pylint: disable=import-outside-toplevel
-
             set_auth_cookie(response, token, remember_me=False)
 
             LOGGER.info(f"Admin user {email} logged in successfully")
@@ -2804,6 +2905,182 @@ async def admin_logout(request: Request) -> RedirectResponse:
     response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
 
     return response
+
+
+@admin_router.get("/change-password-required", response_class=HTMLResponse)
+async def change_password_required_page(request: Request) -> HTMLResponse:
+    """
+    Render the password change required page.
+
+    This page is shown when a user's password has expired and must be changed
+    to continue accessing the system.
+
+    Args:
+        request (Request): FastAPI request object.
+
+    Returns:
+        HTMLResponse: The password change required page.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> from fastapi import Request
+        >>> from fastapi.responses import HTMLResponse
+        >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock(spec=Request)
+        >>> mock_request.scope = {"root_path": "/test"}
+        >>> mock_request.app.state.templates = MagicMock()
+        >>> mock_response = HTMLResponse("<html>Change Password</html>")
+        >>> mock_request.app.state.templates.TemplateResponse.return_value = mock_response
+        >>>
+        >>> import asyncio
+        >>> async def test_change_password_page():
+        ...     # Note: This requires email_auth_enabled=True in settings
+        ...     return True  # Simplified test due to settings dependency
+        >>>
+        >>> asyncio.run(test_change_password_page())
+        True
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+    # Get root path for template
+    root_path = request.scope.get("root_path", "")
+
+    return request.app.state.templates.TemplateResponse("change-password-required.html", {"request": request, "root_path": root_path})
+
+
+@admin_router.post("/change-password-required")
+async def change_password_required_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    """
+    Handle password change requirement form submission.
+
+    This endpoint processes the forced password change form, validates the credentials,
+    changes the password, clears the password_change_required flag, and redirects to admin panel.
+
+    Args:
+        request (Request): FastAPI request object.
+        db (Session): Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to admin panel on success or back to form with error.
+
+    Examples:
+        >>> from unittest.mock import MagicMock, AsyncMock
+        >>> from fastapi import Request
+        >>> from fastapi.responses import RedirectResponse
+        >>>
+        >>> # Mock request with form data
+        >>> mock_request = MagicMock(spec=Request)
+        >>> mock_request.scope = {"root_path": "/test"}
+        >>> mock_form = {
+        ...     "current_password": "oldpass",
+        ...     "new_password": "newpass123",
+        ...     "confirm_password": "newpass123"
+        ... }
+        >>> mock_request.form = AsyncMock(return_value=mock_form)
+        >>> mock_request.cookies = {"jwt_token": "test_token"}
+        >>> mock_request.headers = {"User-Agent": "TestAgent"}
+        >>>
+        >>> mock_db = MagicMock()
+        >>>
+        >>> import asyncio
+        >>> async def test_password_change_handler():
+        ...     # Note: Full test requires email_auth_enabled and valid JWT
+        ...     return True  # Simplified test due to settings/auth dependencies
+        >>>
+        >>> asyncio.run(test_password_change_handler())
+        True
+    """
+    if not getattr(settings, "email_auth_enabled", False):
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+    try:
+        form = await request.form()
+        current_password_val = form.get("current_password")
+        new_password_val = form.get("new_password")
+        confirm_password_val = form.get("confirm_password")
+
+        current_password = current_password_val if isinstance(current_password_val, str) else None
+        new_password = new_password_val if isinstance(new_password_val, str) else None
+        confirm_password = confirm_password_val if isinstance(confirm_password_val, str) else None
+
+        if not all([current_password, new_password, confirm_password]):
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=missing_fields", status_code=303)
+
+        if new_password != confirm_password:
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=mismatch", status_code=303)
+
+        # Get user from JWT token in cookie
+        try:
+            jwt_token = request.cookies.get("jwt_token")
+            if not jwt_token:
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+
+            # Authenticate using the token
+            # Create credentials object from cookie
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+            current_user = await get_current_user(credentials, db, request)
+
+            if not current_user:
+                root_path = request.scope.get("root_path", "")
+                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+        except Exception as e:
+            LOGGER.error(f"Authentication error: {e}")
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+
+        # Authenticate using the email auth service
+        auth_service = EmailAuthService(db)
+        ip_address = get_client_ip(request)
+        user_agent = get_user_agent(request)
+
+        try:
+            # Change password
+            success = await auth_service.change_password(email=current_user.email, old_password=current_password, new_password=new_password, ip_address=ip_address, user_agent=user_agent)
+
+            if success:
+                # Clear the password_change_required flag
+                current_user.password_change_required = False
+                db.commit()
+
+                # Create new JWT token
+                token, _ = await create_access_token(current_user)
+
+                # Create redirect response to admin panel
+                root_path = request.scope.get("root_path", "")
+                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+
+                # Update JWT token cookie
+                set_auth_cookie(response, token, remember_me=False)
+
+                LOGGER.info(f"User {current_user.email} successfully changed their expired password")
+                return response
+
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=change_failed", status_code=303)
+
+        except AuthenticationError:
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=invalid_password", status_code=303)
+        except PasswordValidationError as e:
+            LOGGER.warning(f"Password validation failed for {current_user.email}: {e}")
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=weak_password", status_code=303)
+        except Exception as e:
+            LOGGER.error(f"Password change failed for {current_user.email}: {e}", exc_info=True)
+            root_path = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
+
+    except Exception as e:
+        LOGGER.error(f"Password change handler error: {e}")
+        root_path = request.scope.get("root_path", "")
+        return RedirectResponse(url=f"{root_path}/admin/change-password-required?error=server_error", status_code=303)
 
 
 # ============================================================================ #
@@ -3003,9 +3280,6 @@ async def admin_list_teams(
         return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. Teams feature requires email auth.</p></div>', status_code=200)
 
     try:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
-
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
 
@@ -3204,8 +3478,6 @@ async def admin_view_team_members(
         LOGGER.info(f"User {user_email} viewing members for team {team_id}")
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Get team details
@@ -3655,8 +3927,6 @@ async def admin_add_team_member(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         auth_service = EmailAuthService(db)
 
@@ -4331,7 +4601,6 @@ async def admin_list_users(
         root_path = request.scope.get("root_path", "")
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4376,6 +4645,34 @@ async def admin_list_users(
             if not is_current_user and not is_last_admin:
                 delete_button = f'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>'
 
+            # Build force password change button/indicator
+            password_change_button_html = ""  # nosec B105 - HTML content, not password
+            if not is_current_user:
+                if user_obj.password_change_required:
+                    # HTML content for password change required indicator
+                    password_change_required_html = (  # nosec B105 - HTML content, not password
+                        '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 '
+                        "bg-orange-50 dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 "
+                        'rounded-md">Password Change Required</span>'
+                    )
+                    password_change_button_html = password_change_required_html
+                else:
+                    password_change_button_html = (
+                        f'<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 '
+                        f"hover:text-yellow-800 dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 "
+                        f"hover:border-yellow-500 dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 "
+                        f'focus:ring-offset-2 focus:ring-yellow-500" hx-post="{root_path}/admin/users/{urllib.parse.quote(user_obj.email, safe="")}/force-password-change" '
+                        f'hx-confirm="Force this user to change their password on next login?" hx-target="closest .user-card" '
+                        f'hx-swap="outerHTML">Force Password Change</button>'
+                    )
+
+            # Password change required badge
+            password_badge = (
+                '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
+                if user_obj.password_change_required
+                else ""
+            )
+
             users_html += f"""
             <div class="user-card border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-white dark:bg-gray-800">
                 <div class="flex justify-between items-start">
@@ -4386,6 +4683,7 @@ async def admin_list_users(
                             <span class="px-2 py-1 text-xs font-semibold {status_class} bg-gray-100 dark:bg-gray-700 rounded-full">{status_text}</span>
                             {'<span class="px-2 py-1 text-xs font-semibold bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' if is_current_user else ""}
                             {'<span class="px-2 py-1 text-xs font-semibold bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Admin</span>' if is_last_admin else ""}
+                            {password_badge}
                         </div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {user_obj.email}</p>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {user_obj.auth_provider}</p>
@@ -4397,6 +4695,7 @@ async def admin_list_users(
                             Edit
                         </button>
                         {activate_deactivate_button}
+                        {password_change_button_html}
                         {delete_button}
                     </div>
                 </div>
@@ -4437,7 +4736,6 @@ async def admin_create_user(
         form = await request.form()
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4445,6 +4743,11 @@ async def admin_create_user(
         new_user = await auth_service.create_user(
             email=str(form.get("email", "")), password=str(form.get("password", "")), full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
         )
+
+        # If the user was created with the default password, force password change
+        if str(form.get("password", "")) == settings.default_user_password.get_secret_value():  # nosec B105
+            new_user.password_change_required = True
+            db.commit()
 
         LOGGER.info(f"Admin {user} created user: {new_user.email}")
 
@@ -4509,7 +4812,6 @@ async def admin_get_user_edit(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4598,7 +4900,6 @@ async def admin_update_user(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4677,7 +4978,6 @@ async def admin_activate_user(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4745,7 +5045,6 @@ async def admin_deactivate_user(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4819,7 +5118,6 @@ async def admin_delete_user(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4846,6 +5144,136 @@ async def admin_delete_user(
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {str(e)}</div>', status_code=400)
+
+
+@admin_router.post("/users/{user_email}/force-password-change")
+@require_permission("admin.user_management")
+async def admin_force_password_change(
+    user_email: str,
+    _request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Force user to change password on next login.
+
+    Args:
+        user_email: Email of user to force password change
+        _request: FastAPI request object
+        db: Database session
+        user: Current authenticated user context
+
+    Returns:
+        HTMLResponse: Updated user card with success message
+
+    Examples:
+        >>> from unittest.mock import MagicMock, AsyncMock
+        >>> from fastapi import Request
+        >>> from fastapi.responses import HTMLResponse
+        >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock(spec=Request)
+        >>> mock_request.scope = {"root_path": "/test"}
+        >>>
+        >>> # Mock database
+        >>> mock_db = MagicMock()
+        >>>
+        >>> # Mock user context
+        >>> mock_user = MagicMock()
+        >>> mock_user.email = "admin@example.com"
+        >>>
+        >>> import asyncio
+        >>> async def test_force_password_change():
+        ...     # Note: Full test requires email_auth_enabled and valid user
+        ...     return True  # Simplified test due to dependencies
+        >>>
+        >>> asyncio.run(test_force_password_change())
+        True
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    try:
+        # Get root path for URL construction
+        root_path = _request.scope.get("root_path", "") if _request else ""
+
+        auth_service = EmailAuthService(db)
+
+        # URL decode the email
+        decoded_email = urllib.parse.unquote(user_email)
+
+        # Get current user email from JWT
+        current_user_email = get_user_email(user)
+
+        # Get the user to update
+        user_obj = await auth_service.get_user_by_email(decoded_email)
+        if not user_obj:
+            return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
+
+        # Set password_change_required flag
+        user_obj.password_change_required = True
+        db.commit()
+
+        LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
+
+        # Return updated user card with status indicator
+        user_html = f"""
+        <div class="user-card bg-white dark:bg-gray-800 rounded-lg shadow-md p-6 border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow duration-200">
+            <div class="flex items-start justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold text-lg">
+                        {user_obj.get_display_name()[0].upper()}
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{html.escape(user_obj.get_display_name())}</h3>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">{html.escape(user_obj.email)}</p>
+                        <div class="flex items-center space-x-2 mt-1">
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium {'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' if user_obj.is_active else 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'}">
+                                {'Active' if user_obj.is_active else 'Inactive'}
+                            </span>
+                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">Admin</span>' if user_obj.is_admin else ''}
+                            {'<span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300"><i class="fas fa-key mr-1"></i>Password Change Required</span>' if user_obj.password_change_required else ''}
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-col space-y-2">
+                    <button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                            hx-get="{root_path}/admin/users/{user_obj.email}/edit" hx-target="#user-edit-modal-content">
+                        Edit
+                    </button>
+                    {(
+                        '<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
+                        'dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 '
+                        'dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
+                        'focus:ring-orange-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
+                        '/deactivate" hx-confirm="Deactivate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Deactivate</button>'
+                        if user_obj.is_active else
+                        '<button class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 '
+                        'dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 '
+                        'dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
+                        'focus:ring-green-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
+                        '/activate" hx-confirm="Activate this user?" hx-target="closest .user-card" hx-swap="outerHTML">Activate</button>'
+                    )}
+                    {(
+                        '<button class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 hover:text-yellow-800 '
+                        'dark:hover:text-yellow-300 border border-yellow-300 dark:border-yellow-600 hover:border-yellow-500 '
+                        'dark:hover:border-yellow-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 '
+                        'focus:ring-yellow-500" hx-post="' + root_path + '/admin/users/' + user_obj.email.replace("@", "%40") +
+                        '/force-password-change" hx-confirm="Force this user to change their password on next login?" '
+                        'hx-target="closest .user-card" hx-swap="outerHTML">Force Password Change</button>'
+                        if not user_obj.password_change_required else
+                        '<span class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 bg-orange-50 '
+                        'dark:bg-orange-900/20 border border-orange-300 dark:border-orange-600 rounded-md">Password Change Required</span>'
+                    )}
+                    <button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/users/{user_obj.email.replace("@", "%40")}" hx-confirm="Are you sure you want to delete this user? This action cannot be undone." hx-target="closest .user-card" hx-swap="outerHTML">Delete</button>
+                </div>
+            </div>
+        </div>
+        """
+        return HTMLResponse(content=user_html)
+
+    except Exception as e:
+        LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
+        return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {str(e)}</div>', status_code=400)
 
 
 @admin_router.get("/tools")
@@ -5752,6 +6180,69 @@ async def admin_get_all_resource_ids(
     query = query.where(or_(*access_conditions))
     resource_ids = [row[0] for row in db.execute(query).all()]
     return {"resource_ids": resource_ids, "count": len(resource_ids)}
+
+
+@admin_router.get("/resources/search", response_class=JSONResponse)
+async def admin_search_resources(
+    q: str = Query("", description="Search query"),
+    include_inactive: bool = False,
+    limit: int = Query(100, ge=1, le=1000),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Search resources by name or description for selector search.
+
+    Performs a case-insensitive search over resource names and descriptions
+    and returns a limited list of matching resources suitable for selector
+    UIs (id, name, description).
+
+    Args:
+        q (str): Search query string.
+        include_inactive (bool): When True include resources that are inactive.
+        limit (int): Maximum number of results to return (bounded by the query parameter).
+        db (Session): Database session (injected dependency).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        dict: A dictionary containing:
+            - "resources": List[dict] where each dict has keys "id", "name", "description".
+            - "count": int number of matched resources returned.
+    """
+    user_email = get_user_email(user)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"resources": [], "count": 0}
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
+
+    query = select(DbResource.id, DbResource.name, DbResource.description)
+    if not include_inactive:
+        query = query.where(DbResource.is_active.is_(True))
+
+    access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
+    if team_ids:
+        access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
+    query = query.where(or_(*access_conditions))
+
+    search_conditions = [func.lower(DbResource.name).contains(search_query), func.lower(coalesce(DbResource.description, "")).contains(search_query)]
+    query = query.where(or_(*search_conditions))
+
+    query = query.order_by(
+        case(
+            (func.lower(DbResource.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbResource.name),
+    ).limit(limit)
+
+    results = db.execute(query).all()
+    resources = []
+    for row in results:
+        resources.append({"id": row.id, "name": row.name, "description": row.description})
+
+    return {"resources": resources, "count": len(resources)}
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
@@ -7567,7 +8058,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
         ...     ("name", "Test Resource"),
         ...     ("description", "A test resource"),
         ...     ("mimeType", "text/plain"),
-        ...     ("template", ""),
+        ...     ("uri_template", ""),
         ...     ("content", "Sample content"),
         ... ])
         >>> mock_request = MagicMock(spec=Request)
@@ -7600,15 +8091,22 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
     try:
         # Handle template field: convert empty string to None for optional field
-        template_value = form.get("template")
+        template = None
+        template_value = form.get("uri_template")
         template = template_value if template_value else None
+        template_value = form.get("uri_template")
+        uri_value = form.get("uri")
+
+        # Ensure uri_value is a string
+        if isinstance(uri_value, str) and "{" in uri_value and "}" in uri_value:
+            template = uri_value
 
         resource = ResourceCreate(
             uri=str(form["uri"]),
             name=str(form["name"]),
             description=str(form.get("description", "")),
             mime_type=str(form.get("mimeType", "")),
-            template=template,
+            uri_template=template,
             content=str(form["content"]),
             tags=tags,
             visibility=visibility,

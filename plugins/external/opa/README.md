@@ -40,7 +40,7 @@ The OPA plugin and loader configuration can be customized in `resources/plugins/
 
 ## Installation
 
-1. In the folder `external/opa`, copy .env.example .env
+1. In the folder `external/opa`, copy .env.template .env
 2. Add the plugin configuration to `plugins/external/opa/resources/plugins/config.yaml`:
 
 ```yaml
@@ -172,6 +172,18 @@ starting
 ```
 
 ## Testing with gateway
+
+### Authentication & Tokens
+Run the following from the project root folder:
+
+```bash
+# Generate JWT bearer token
+python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key
+
+# Export for API calls
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+```
+
 
 1. Add server fast-time that exposes git tools in the mcp gateway
 ```bash
