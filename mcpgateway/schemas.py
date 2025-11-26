@@ -3716,7 +3716,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_prompts: List[int] = []
     associated_a2a_agents: List[str] = []
     metrics: ServerMetrics
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
