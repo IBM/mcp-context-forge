@@ -42,6 +42,26 @@ def sign_data(data: bytes, private_key_pem: str) -> str:
 
     Raises:
         TypeError: If the provided key is not an Ed25519 private key.
+
+    Examples:
+        >>> from cryptography.hazmat.primitives.asymmetric import ed25519
+        >>> from cryptography.hazmat.primitives import serialization
+        >>>
+        >>> # Generate a test key pair
+        >>> private_key = ed25519.Ed25519PrivateKey.generate()
+        >>> private_pem = private_key.private_bytes(
+        ...     encoding=serialization.Encoding.PEM,
+        ...     format=serialization.PrivateFormat.PKCS8,
+        ...     encryption_algorithm=serialization.NoEncryption()
+        ... ).decode()
+        >>>
+        >>> # Sign some data
+        >>> data = b"test message"
+        >>> signature = sign_data(data, private_pem)
+        >>> isinstance(signature, str)
+        True
+        >>> len(signature) == 128  # 64 bytes = 128 hex chars
+        True
     """
     try:
         private_key = serialization.load_pem_private_key(private_key_pem.encode(), password=None)
@@ -68,6 +88,33 @@ def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str)
 
     Returns:
         bool: True if signature is valid, False otherwise.
+
+    Examples:
+        >>> from cryptography.hazmat.primitives.asymmetric import ed25519
+        >>> from cryptography.hazmat.primitives import serialization
+        >>>
+        >>> # Generate a test key pair
+        >>> private_key = ed25519.Ed25519PrivateKey.generate()
+        >>> public_key = private_key.public_key()
+        >>> public_pem = public_key.public_bytes(
+        ...     encoding=serialization.Encoding.PEM,
+        ...     format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ... ).decode()
+        >>>
+        >>> # Sign and verify
+        >>> data = b"test message"
+        >>> signature = private_key.sign(data)
+        >>> validate_signature(data, signature, public_pem)
+        True
+        >>>
+        >>> # Test with hex signature
+        >>> hex_sig = signature.hex()
+        >>> validate_signature(data, hex_sig, public_pem)
+        True
+        >>>
+        >>> # Test invalid signature
+        >>> validate_signature(b"wrong data", signature, public_pem)
+        False
     """
     if isinstance(data, str):
         data = data.encode()
@@ -110,6 +157,31 @@ def resign_data(
 
     Returns:
         bytes | None: New signature if re-signed, None if verification fails.
+
+    Examples:
+        >>> from cryptography.hazmat.primitives.asymmetric import ed25519
+        >>> from cryptography.hazmat.primitives import serialization
+        >>>
+        >>> # Generate old and new key pairs
+        >>> old_private = ed25519.Ed25519PrivateKey.generate()
+        >>> old_public = old_private.public_key()
+        >>> new_private = ed25519.Ed25519PrivateKey.generate()
+        >>>
+        >>> old_public_pem = old_public.public_bytes(
+        ...     encoding=serialization.Encoding.PEM,
+        ...     format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ... ).decode()
+        >>> new_private_pem = new_private.private_bytes(
+        ...     encoding=serialization.Encoding.PEM,
+        ...     format=serialization.PrivateFormat.PKCS8,
+        ...     encryption_algorithm=serialization.NoEncryption()
+        ... ).decode()
+        >>>
+        >>> # Test first-time signing (no old signature)
+        >>> data = b"test message"
+        >>> new_sig = resign_data(data, old_public_pem, "", new_private_pem)
+        >>> isinstance(new_sig, str)
+        True
     """
     # Handle first-time signing (no old signature)
     if not old_signature:

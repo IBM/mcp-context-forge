@@ -352,7 +352,7 @@ mcpContextForge:
     VALIDATION_DANGEROUS_JS_PATTERN: '(?i)(?:^|\s|[\"''`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|\bon[a-z]+\s*=|<\s*script\b)' # pattern to detect JavaScript injection
     VALIDATION_NAME_PATTERN: '^[a-zA-Z0-9_.\-\s]+$' # pattern for validating names (allows spaces)
     VALIDATION_IDENTIFIER_PATTERN: '^[a-zA-Z0-9_\-\.]+$' # pattern for validating IDs (no spaces)
-    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%]+$' # pattern for safe URI characters
+    VALIDATION_SAFE_URI_PATTERN: '^[a-zA-Z0-9_\-.:/?=&%{}]+$' # pattern for safe URI characters
     VALIDATION_UNSAFE_URI_PATTERN: '[<>"''\\]' # pattern to detect unsafe URI characters
     VALIDATION_TOOL_NAME_PATTERN: '^[a-zA-Z][a-zA-Z0-9._-]*$' # MCP tool naming pattern
     VALIDATION_TOOL_METHOD_PATTERN: '^[a-zA-Z][a-zA-Z0-9_\./-]*$' # MCP tool method naming pattern

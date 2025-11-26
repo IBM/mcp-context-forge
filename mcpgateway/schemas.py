@@ -1501,7 +1501,7 @@ class ResourceCreate(BaseModel):
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
-    template: Optional[str] = Field(None, description="URI template for parameterized resources")
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
@@ -1642,7 +1642,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
-    template: Optional[str] = Field(None, description="URI template for parameterized resources")
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the resource")
 
@@ -1776,6 +1776,7 @@ class ResourceRead(BaseModelWithConfigDict):
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
     updated_at: datetime
@@ -4864,6 +4865,7 @@ class EmailUserResponse(BaseModel):
     created_at: datetime = Field(..., description="Account creation timestamp")
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -4884,6 +4886,7 @@ class EmailUserResponse(BaseModel):
             created_at=user.created_at,
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
+            password_change_required=user.password_change_required,
         )
 
 
