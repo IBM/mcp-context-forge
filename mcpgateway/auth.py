@@ -176,16 +176,25 @@ async def get_current_user(
             else:
                 request_id = uuid.uuid4().hex
 
-            # Create global context
-            global_context = GlobalContext(
-                request_id=request_id,
-                server_id=None,
-                tenant_id=None,
-            )
+            global_context = None
+            context_table = None
+
+            if request and hasattr(request, "state") and hasattr(request.state, "plugin_global_context"):
+                global_context = request.state.plugin_global_context
+            else:
+                # Create global context
+                global_context = GlobalContext(
+                    request_id=request_id,
+                    server_id=None,
+                    tenant_id=None,
+                )
+
+            if request and hasattr(request, "state") and hasattr(request.state, "plugin_context_table"):
+                context_table = request.state.plugin_context_table
 
             # Invoke custom auth resolution hook
             # violations_as_exceptions=True so PluginViolationError is raised for explicit denials
-            auth_result, _ = await plugin_manager.invoke_hook(
+            auth_result, context_table_result = await plugin_manager.invoke_hook(
                 HttpHookType.HTTP_AUTH_RESOLVE_USER,
                 payload=HttpAuthResolveUserPayload(
                     credentials=credentials_dict,
@@ -194,7 +203,7 @@ async def get_current_user(
                     client_port=client_port,
                 ),
                 global_context=global_context,
-                local_contexts=None,
+                local_contexts=context_table,
                 violations_as_exceptions=True,  # Raise PluginViolationError for auth denials
             )
 
@@ -221,6 +230,11 @@ async def get_current_user(
                         request.state.auth_method = auth_method
                         logger.debug(f"Stored auth_method '{auth_method}' in request.state")
 
+                if context_table_result:
+                    request.state.plugin_context_table = context_table_result
+
+                if global_context:
+                    request.state.plugin_global_context = global_context
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
 

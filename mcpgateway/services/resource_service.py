@@ -59,7 +59,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -685,6 +685,8 @@ class ResourceService:
         user: Optional[str] = None,
         server_id: Optional[str] = None,
         include_inactive: bool = False,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
     ) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
@@ -696,6 +698,8 @@ class ResourceService:
             user: Optional user making the request.
             server_id: Optional server ID for context.
             include_inactive: Whether to include inactive resources. Defaults to False.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
 
         Returns:
             Resource content object
@@ -811,12 +815,29 @@ class ResourceService:
                             # Attempt to fallback to attribute access
                             user_id = getattr(user, "email", None)
 
-                    global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
+                    # Use existing global_context from middleware or create new one
+                    if plugin_global_context:
+                        global_context = plugin_global_context
+                        # Update fields with resource-specific information
+                        if user_id:
+                            global_context.user = user_id
+                        if server_id:
+                            global_context.server_id = server_id
+                    else:
+                        # Create new context (fallback when middleware didn't run)
+                        global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
+
                     # Create pre-fetch payload
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
-                    # Execute pre-fetch hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, pre_payload, global_context, violations_as_exceptions=True)
+                    # Execute pre-fetch hooks with context from previous hooks
+                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                        ResourceHookType.RESOURCE_PRE_FETCH,
+                        pre_payload,
+                        global_context,
+                        local_contexts=plugin_context_table,  # Pass context from previous hooks
+                        violations_as_exceptions=True,
+                    )
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
