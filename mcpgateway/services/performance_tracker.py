@@ -166,14 +166,14 @@ class PerformanceTracker:
             sorted_timings = sorted(timings)
             count = len(sorted_timings)
 
-            def percentile(p: float) -> float:
+            def percentile(p: float, *, sorted_vals=sorted_timings, n=count) -> float:
                 """Calculate percentile value."""
-                k = (count - 1) * p
+                k = (n - 1) * p
                 f = int(k)
                 c = k - f
-                if f + 1 < count:
-                    return sorted_timings[f] * (1 - c) + sorted_timings[f + 1] * c
-                return sorted_timings[f]
+                if f + 1 < n:
+                    return sorted_vals[f] * (1 - c) + sorted_vals[f + 1] * c
+                return sorted_vals[f]
 
             summary[op_name] = {
                 "count": count,
@@ -286,7 +286,7 @@ def get_performance_tracker() -> PerformanceTracker:
     Returns:
         Global PerformanceTracker instance
     """
-    global _performance_tracker
+    global _performance_tracker  # pylint: disable=global-statement
     if _performance_tracker is None:
         _performance_tracker = PerformanceTracker()
     return _performance_tracker

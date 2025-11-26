@@ -476,7 +476,7 @@ def get_log_aggregator() -> LogAggregator:
     Returns:
         Global LogAggregator instance
     """
-    global _log_aggregator
+    global _log_aggregator  # pylint: disable=global-statement
     if _log_aggregator is None:
         _log_aggregator = LogAggregator()
     return _log_aggregator
