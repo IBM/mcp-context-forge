@@ -9904,7 +9904,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
             event: <event_type>
             data: <json-encoded data>
 
-        Returns:
+        Yields:
             AsyncGenerator[str, None]: A generator yielding SSE-formatted strings.
 
         Raises:
@@ -9942,7 +9942,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
             ...     async def stream_to_queue(gen, tag):
             ...         async for e in gen:
             ...             await event_queue.put(e)
-            ...     class DummyLogger: 
+            ...     class DummyLogger:
             ...         def debug(self, *args, **kwargs): pass
             ...         def error(self, *args, **kwargs): pass
             ...     LOGGER = DummyLogger()
