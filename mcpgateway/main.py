@@ -272,6 +272,34 @@ def get_user_email(user):
     return str(user) if user else "unknown"
 
 
+def get_allowed_team_ids(request: Request) -> List[str]:
+    """Extract allowed team IDs from request state.
+
+    Args:
+        request: FastAPI request object
+
+    Returns:
+        List[str]: List of team IDs the user has access to
+    """
+    # First check if we have explicit granted scopes (from require_permission)
+    # But for listing, we want ALL teams, not just the one we are currently accessing
+    # So we look at user_permissions which should be populated by middleware
+    
+    user_permissions = getattr(request.state, "user_permissions", [])
+    allowed_teams = []
+    
+    if not user_permissions:
+        return []
+        
+    for scope in user_permissions:
+        if scope.get("scope") == "team":
+            team_id = scope.get("scope_id")
+            if team_id:
+                allowed_teams.append(team_id)
+                
+    return allowed_teams
+
+
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
@@ -1756,39 +1784,47 @@ async def list_servers(
 
     # Determine final team ID
     team_id = team_id or token_team_id
+    
+    allowed_team_ids = get_allowed_team_ids(request)
 
     # Use team-filtered server listing
-    if team_id or visibility:
-        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [server for server in data if any(tag in server.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        data = await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+    data = await server_service.list_servers_for_user(
+        db=db, 
+        user_email=user_email, 
+        team_id=team_id, 
+        visibility=visibility, 
+        include_inactive=include_inactive, 
+        allowed_team_ids=allowed_team_ids
+    )
+    
+    # Apply tag filtering if needed
+    if tags_list:
+        data = [server for server in data if server.tags and any(tag in server.tags for tag in tags_list)]
+        
     return data
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
-    Retrieves a server by its ID.
+    Retrieve a server by ID.
 
     Args:
-        server_id (str): The ID of the server to retrieve.
-        db (Session): The database session used to interact with the data store.
-        user (str): The authenticated user making the request.
+        server_id: ID of the server.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
 
     Returns:
-        ServerRead: The server object with the specified ID.
-
-    Raises:
-        HTTPException: If the server is not found.
+        Server data.
     """
+    logger.debug(f"User '{user}' requested server {server_id}")
+    user_email = get_user_email(user)
+    allowed_team_ids = get_allowed_team_ids(request)
     try:
         logger.debug(f"User {user} requested server with ID {server_id}")
-        return await server_service.get_server(db, server_id)
+        return await server_service.get_server(db, server_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1829,16 +1865,19 @@ async def create_server(
         user_email = get_user_email(user)
 
         token_team_id = getattr(request.state, "team_id", None)
+        server_team_id = team_id # Use the parameter name for clarity
 
         # Check for team ID mismatch
-        if team_id is not None and token_team_id is not None and team_id != token_team_id:
+        if server_team_id is not None and token_team_id is not None and server_team_id != token_team_id:
             return JSONResponse(
                 content={"message": "Access issue: This API token does not have the required permissions for this team."},
                 status_code=status.HTTP_403_FORBIDDEN,
             )
 
         # Determine final team ID
-        team_id = team_id or token_team_id
+        team_id = server_team_id or token_team_id
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
         return await server_service.register_server(
@@ -1851,6 +1890,8 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1895,6 +1936,7 @@ async def update_server(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email: str = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
 
         return await server_service.update_server(
             db,
@@ -1905,6 +1947,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -1959,26 +2002,28 @@ async def toggle_server_status(
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
-async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
-    Deletes a server by its ID.
+    Delete a server by ID.
 
     Args:
-        server_id (str): The ID of the server to delete.
-        db (Session): The database session used to interact with the data store.
-        user (str): The authenticated user making the request.
+        server_id: ID of the server.
+        request: The FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
 
     Returns:
-        Dict[str, str]: A success message indicating the server was deleted.
+        Status message.
 
     Raises:
-        HTTPException: If the server is not found or there is an error.
+        HTTPException: If permission denied (403), server not found (404), or other server error (400).
     """
+    logger.debug(f"User '{user}' requested deletion of server {server_id}")
     try:
-        logger.debug(f"User {user} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        await server_service.delete_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         await server_service.get_server(db, server_id)
-        await server_service.delete_server(db, server_id, user_email=user_email)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -2234,10 +2279,22 @@ async def list_a2a_agents(
         user_email = str(user.get("email", "Unknown"))
     else:
         user_email = "Uknown"
+    
+    # Extract allowed team IDs
+    allowed_team_ids = get_allowed_team_ids(request)
+
     # Use team-aware filtering
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
+    return await a2a_service.list_agents(
+        db, 
+        include_inactive=include_inactive, 
+        tags=tags_list, 
+        allowed_team_ids=allowed_team_ids, 
+        user_email=user_email,
+        skip=skip, 
+        limit=limit
+    )
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
@@ -2261,7 +2318,11 @@ async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depen
         logger.debug(f"User {user} requested A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.get_agent(db, agent_id)
+        
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        
+        return await a2a_service.get_agent(db, agent_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -2312,6 +2373,8 @@ async def create_a2a_agent(
 
         # Determine final team ID
         team_id = team_id or token_team_id
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
@@ -2328,6 +2391,8 @@ async def create_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -2374,6 +2439,8 @@ async def update_a2a_agent(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -2383,6 +2450,7 @@ async def update_a2a_agent(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2428,7 +2496,9 @@ async def toggle_a2a_agent_status(
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+        
+        allowed_team_ids = get_allowed_team_ids(request)
+        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -2439,7 +2509,7 @@ async def toggle_a2a_agent_status(
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_a2a_agent(agent_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
@@ -2459,7 +2529,8 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
@@ -2579,16 +2650,7 @@ async def list_tools(
     final_team_id = team_id if team_id else token_team_id
 
     # Extract allowed team IDs from granted scopes
-    granted_scopes = getattr(request.state, "granted_scopes", [])
-    user_roles = getattr(request.state, "user_roles", [])
-    
-    has_global = any(s["scope"] == "global" for s in granted_scopes)
-    
-    allowed_team_ids = []
-    if has_global:
-         allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
-    else:
-         allowed_team_ids = [s["scope_id"] for s in granted_scopes if s["scope"] == "team" and s["scope_id"]]
+    allowed_team_ids = get_allowed_team_ids(request)
 
     # Pagination
     skip = 0
@@ -2695,6 +2757,8 @@ async def create_tool(
 
         # Determine final team ID
         team_id = team_id or token_team_id
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
         return await tool_service.register_tool(
@@ -2708,6 +2772,8 @@ async def create_tool(
             federation_source=metadata["federation_source"],
             team_id=team_id,
             owner_email=user_email,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
             visibility=tool.visibility,
         )
     except Exception as ex:
@@ -2733,8 +2799,11 @@ async def create_tool(
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
 @require_permission("tools.read")
+@tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])
+@require_permission("tools.read")
 async def get_tool(
     tool_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: JsonPathModifier = Body(None),
@@ -2744,6 +2813,7 @@ async def get_tool(
 
     Args:
         tool_id: The numeric ID of the tool.
+        request: The FastAPI request object.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
         apijsonpath: Optional JSON-Path modifier supplied in the body.
@@ -2757,7 +2827,9 @@ async def get_tool(
     """
     try:
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
-        data = await tool_service.get_tool(db, tool_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        data = await tool_service.get_tool(db, tool_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
         if apijsonpath is None:
             return data
 
@@ -2803,6 +2875,7 @@ async def update_tool(
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         return await tool_service.update_tool(
             db,
             tool_id,
@@ -2812,6 +2885,7 @@ async def update_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -2832,12 +2906,15 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+@tool_router.delete("/{tool_id}")
+@require_permission("tools.delete")
+async def delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
     Args:
         tool_id (str): The ID of the tool to delete.
+        request: The FastAPI request object.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
 
@@ -2850,7 +2927,8 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2864,6 +2942,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
 @require_permission("tools.update")
 async def toggle_tool_status(
     tool_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2873,6 +2952,7 @@ async def toggle_tool_status(
 
     Args:
         tool_id (str): The ID of the tool to toggle.
+        request (Request): The FastAPI request object.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -2886,7 +2966,8 @@ async def toggle_tool_status(
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -2927,7 +3008,8 @@ async def list_resource_templates(
 @resource_router.post("/{resource_id}/toggle")
 @require_permission("resources.update")
 async def toggle_resource_status(
-    resource_id: str,
+    resource_id: int,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2936,7 +3018,8 @@ async def toggle_resource_status(
     Activate or deactivate a resource by its ID.
 
     Args:
-        resource_id (str): The ID of the resource.
+        resource_id (int): The ID of the resource.
+        request (Request): The FastAPI request object.
         activate (bool): True to activate, False to deactivate.
         db (Session): Database session.
         user (str): Authenticated user.
@@ -2950,7 +3033,8 @@ async def toggle_resource_status(
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
@@ -3010,20 +3094,23 @@ async def list_resources(
 
     # Determine final team ID
     team_id = team_id or token_team_id
+    
+    allowed_team_ids = get_allowed_team_ids(request)
 
     # Use team-filtered resource listing
-    if team_id or visibility:
-        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [resource for resource in data if any(tag in resource.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
-        if cached := resource_cache.get("resource_list"):
-            return cached
-        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
-        resource_cache.set("resource_list", data)
+    data = await resource_service.list_resources_for_user(
+        db=db, 
+        user_email=user_email, 
+        team_id=team_id, 
+        visibility=visibility, 
+        include_inactive=include_inactive, 
+        allowed_team_ids=allowed_team_ids
+    )
+    
+    # Apply tag filtering if needed
+    if tags_list:
+        data = [resource for resource in data if resource.tags and any(tag in resource.tags for tag in tags_list)]
+        
     return data
 
 
@@ -3073,6 +3160,8 @@ async def create_resource(
 
         # Determine final team ID
         team_id = team_id or token_team_id
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
         return await resource_service.register_resource(
@@ -3087,6 +3176,8 @@ async def create_resource(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -3134,6 +3225,8 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
     try:
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         # Call service with context for plugin support
         content = await resource_service.read_resource(
             db,
@@ -3207,6 +3300,7 @@ async def update_resource(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -3216,6 +3310,7 @@ async def update_resource(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -3235,12 +3330,13 @@ async def update_resource(
 
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
     Args:
         resource_id (str): ID of the resource to delete.
+        request (Request): FastAPI request object.
         db (Session): Database session.
         user (str): Authenticated user.
 
@@ -3253,7 +3349,8 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
     try:
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        await resource_service.delete_resource(db, resource_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -3286,7 +3383,8 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 @prompt_router.post("/{prompt_id}/toggle")
 @require_permission("prompts.update")
 async def toggle_prompt_status(
-    prompt_id: str,
+    prompt_id: int,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3296,6 +3394,7 @@ async def toggle_prompt_status(
 
     Args:
         prompt_id: ID of the prompt to toggle.
+        request: The FastAPI request object.
         activate: True to activate, False to deactivate.
         db: Database session.
         user: Authenticated user.
@@ -3309,7 +3408,8 @@ async def toggle_prompt_status(
     logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
@@ -3369,17 +3469,23 @@ async def list_prompts(
 
     # Determine final team ID
     team_id = team_id or token_team_id
+    
+    allowed_team_ids = get_allowed_team_ids(request)
 
     # Use team-filtered prompt listing
-    if team_id or visibility:
-        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
-        # Apply tag filtering to team-filtered results if needed
-        if tags_list:
-            data = [prompt for prompt in data if any(tag in prompt.tags for tag in tags_list)]
-    else:
-        # Use existing method for backward compatibility when no team filtering
-        logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+    data = await prompt_service.list_prompts_for_user(
+        db=db, 
+        user_email=user_email, 
+        team_id=team_id, 
+        visibility=visibility, 
+        include_inactive=include_inactive, 
+        allowed_team_ids=allowed_team_ids
+    )
+    
+    # Apply tag filtering if needed
+    if tags_list:
+        data = [prompt for prompt in data if prompt.tags and any(tag in prompt.tags for tag in tags_list)]
+        
     return data
 
 
@@ -3431,6 +3537,8 @@ async def create_prompt(
 
         # Determine final team ID
         team_id = team_id or token_team_id
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
         return await prompt_service.register_prompt(
@@ -3445,6 +3553,8 @@ async def create_prompt(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
@@ -3471,6 +3581,7 @@ async def create_prompt(
 async def get_prompt(
     request: Request,
     prompt_id: str,
+    request: Request,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3484,6 +3595,7 @@ async def get_prompt(
     Args:
         request: FastAPI request object.
         prompt_id: ID of the prompt.
+        request: The FastAPI request object.
         args: Template arguments.
         db: Database session.
         user: Authenticated user.
@@ -3502,10 +3614,12 @@ async def get_prompt(
 
     try:
         PromptExecuteArgs(args=args)
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         result = await prompt_service.get_prompt(
             db,
             prompt_id,
-            args,
+            args, allowed_team_ids=allowed_team_ids, user_email=user_email,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -3528,6 +3642,7 @@ async def get_prompt(
 async def get_prompt_no_args(
     request: Request,
     prompt_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Any:
@@ -3538,6 +3653,7 @@ async def get_prompt_no_args(
     Args:
         request: FastAPI request object.
         prompt_id: The ID of the prompt to retrieve
+        request: The FastAPI request object
         db: Database session
         user: Authenticated user
 
@@ -3548,6 +3664,8 @@ async def get_prompt_no_args(
         Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
+    user_email = get_user_email(user)
+    allowed_team_ids = get_allowed_team_ids(request)
 
     # Get plugin contexts from request.state for cross-hook sharing
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -3556,7 +3674,7 @@ async def get_prompt_no_args(
     return await prompt_service.get_prompt(
         db,
         prompt_id,
-        {},
+        {}, allowed_team_ids=allowed_team_ids, user_email=user_email,
         plugin_context_table=plugin_context_table,
         plugin_global_context=plugin_global_context,
     )
@@ -3586,7 +3704,8 @@ async def update_prompt(
 
     Raises:
         HTTPException: * **409 Conflict** - a different prompt with the same *name* already exists and is still active.
-            * **400 Bad Request** - validation or persistence error raised by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
+            * **400 Bad Request** - validation or persistence error raised
+                by :pyclass:`~mcpgateway.services.prompt_service.PromptService`.
     """
     logger.debug(f"User: {user} requested to update prompt: {prompt_id} with data={prompt}")
     try:
@@ -3594,6 +3713,7 @@ async def update_prompt(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         return await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -3603,6 +3723,7 @@ async def update_prompt(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -3628,12 +3749,13 @@ async def update_prompt(
 
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
     Args:
         prompt_id: ID of the prompt.
+        request: The FastAPI request object.
         db: Database session.
         user: Authenticated user.
 
@@ -3646,7 +3768,8 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
     logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        allowed_team_ids = get_allowed_team_ids(request)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -3671,6 +3794,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 @require_permission("gateways.update")
 async def toggle_gateway_status(
     gateway_id: str,
+    request: Request,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3680,6 +3804,7 @@ async def toggle_gateway_status(
 
     Args:
         gateway_id (str): String ID of the gateway to toggle.
+        request (Request): The FastAPI request object.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
@@ -3693,11 +3818,13 @@ async def toggle_gateway_status(
     logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         gateway = await gateway_service.toggle_gateway_status(
             db,
             gateway_id,
             activate,
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
         return {
             "status": "success",
@@ -3753,24 +3880,13 @@ async def list_gateways(
     final_team_id = team_id if team_id else token_team_id
 
     # Extract allowed team IDs from granted scopes
-    granted_scopes = getattr(request.state, "granted_scopes", [])
-    user_roles = getattr(request.state, "user_roles", [])
-    
-    has_global = any(s["scope"] == "global" for s in granted_scopes)
-    
-    allowed_team_ids = []
-    if has_global:
-         allowed_team_ids = list(set(r.scope_id for r in user_roles if r.scope == "team" and r.scope_id))
-    else:
-         allowed_team_ids = [s["scope_id"] for s in granted_scopes if s["scope"] == "team" and s["scope_id"]]
+    allowed_team_ids = get_allowed_team_ids(request)
 
     gateway_service = GatewayService()
-    return await gateway_service.list_gateways_for_user(
+    return await gateway_service.list_gateways(
         db=db,
         user_email=user_email,
         allowed_team_ids=allowed_team_ids,
-        team_id=final_team_id,
-        visibility=visibility,
         include_inactive=include_inactive,
     )
 
@@ -3819,6 +3935,8 @@ async def register_gateway(
         visibility = gateway.visibility
 
         logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
+        
+        allowed_team_ids = get_allowed_team_ids(request)
 
         return await gateway_service.register_gateway(
             db,
@@ -3830,6 +3948,8 @@ async def register_gateway(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -3851,12 +3971,13 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: The FastAPI request object.
         db: Database session.
         user: Authenticated user.
 
@@ -3864,7 +3985,9 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
         Gateway data.
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
-    return await gateway_service.get_gateway(db, gateway_id)
+    user_email = get_user_email(user)
+    allowed_team_ids = get_allowed_team_ids(request)
+    return await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
@@ -3895,6 +4018,7 @@ async def update_gateway(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = get_allowed_team_ids(request)
         return await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -3904,6 +4028,7 @@ async def update_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -3929,12 +4054,13 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
     Args:
         gateway_id: ID of the gateway.
+        request: The FastAPI request object.
         db: Database session.
         user: Authenticated user.
 
@@ -3947,9 +4073,10 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        current = await gateway_service.get_gateway(db, gateway_id)
+        allowed_team_ids = get_allowed_team_ids(request)
+        current = await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both

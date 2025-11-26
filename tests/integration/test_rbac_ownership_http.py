@@ -273,11 +273,13 @@ class TestRBACOwnershipHTTP:
         # Cleanup
         app.dependency_overrides.clear()
 
+    @patch("mcpgateway.main.gateway_service.get_gateway", new_callable=AsyncMock)
     @patch("mcpgateway.main.gateway_service.delete_gateway", new_callable=AsyncMock)
     @patch("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     def test_delete_gateway_team_admin_succeeds(
         self,
         mock_delete_gateway: AsyncMock,
+        mock_get_gateway: AsyncMock,
         test_db_and_client,
     ):
         """Test that team admin can delete team member's gateway."""
@@ -285,6 +287,11 @@ class TestRBACOwnershipHTTP:
 
         # Mock service to succeed (team admin has permission)
         mock_delete_gateway.return_value = None
+        
+        # Mock get_gateway to return a gateway with capabilities
+        mock_gateway = MagicMock()
+        mock_gateway.capabilities = {"resources": False}
+        mock_get_gateway.return_value = mock_gateway
 
         # Set up user context as team admin
         mock_user = MagicMock()

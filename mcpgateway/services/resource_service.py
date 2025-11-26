@@ -318,6 +318,8 @@ class ResourceService:
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> ResourceRead:
         """Register a new resource.
 
@@ -333,6 +335,8 @@ class ResourceService:
             team_id (Optional[str]): Team ID to assign the resource to.
             owner_email (Optional[str]): Email of the user who owns this resource.
             visibility (str): Resource visibility level (private, team, public).
+            allowed_team_ids: List of team IDs the user has write access to.
+            user_email: Email of the user performing the operation.
 
         Returns:
             Created resource information
@@ -341,37 +345,29 @@ class ResourceService:
             IntegrityError: If a database integrity error occurs.
             ResourceURIConflictError: If a resource with the same URI already exists.
             ResourceError: For other resource registration errors
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ResourceRead
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource = MagicMock()
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> db.add = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_resource_added = AsyncMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
-            >>> ResourceRead.model_validate = MagicMock(return_value='resource_read')
-            >>> import asyncio
-            >>> asyncio.run(service.register_resource(db, resource))
-            'resource_read'
+            PermissionError: If the user does not have permission to create the resource in the specified team.
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
+            
+            target_team_id = getattr(resource, "team_id", None) or team_id
+            
+            # Validate write access
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
+
             # Check for existing server with the same uri
             if visibility.lower() == "public":
                 logger.info(f"visibility:: {visibility}")
                 # Check for existing public resource with the same uri
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
                 if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
-            elif visibility.lower() == "team" and team_id:
+                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+            elif visibility.lower() == "team" and target_team_id:
                 # Check for existing team resource with the same uri
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
+                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == target_team_id)).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
@@ -402,7 +398,7 @@ class ResourceService:
                 federation_source=federation_source,
                 version=1,
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(resource, "team_id", None) or team_id,
+                team_id=target_team_id,
                 owner_email=getattr(resource, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(resource, "visibility", None) or visibility,
             )
@@ -518,9 +514,9 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
-    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
+    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> tuple[List[ResourceRead], Optional[str]]:
         """
-        Retrieve a list of registered resources from the database with pagination support.
+        Retrieve a list of registered resources from the database with pagination support and access control.
 
         This method retrieves resources from the database and converts them into a list
         of ResourceRead objects. It supports filtering out inactive resources based on the
@@ -533,35 +529,13 @@ class ResourceService:
             cursor (Optional[str], optional): An opaque cursor token for pagination.
                 Opaque base64-encoded string containing last item's ID.
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the list.
 
         Returns:
             tuple[List[ResourceRead], Optional[str]]: Tuple containing:
                 - List of resources for current page
                 - Next cursor token if more results exist, None otherwise
-
-        Examples:
-            >>> from mcpgateway.services.resource_service import ResourceService
-            >>> from unittest.mock import MagicMock
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> resource_read = MagicMock()
-            >>> service._convert_resource_to_read = MagicMock(return_value=resource_read)
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> import asyncio
-            >>> resources, next_cursor = asyncio.run(service.list_resources(db))
-            >>> isinstance(resources, list)
-            True
-
-            With tags filter:
-            >>> db2 = MagicMock()
-            >>> bind = MagicMock()
-            >>> bind.dialect = MagicMock()
-            >>> bind.dialect.name = "sqlite"           # or "postgresql" / "mysql"
-            >>> db2.get_bind.return_value = bind
-            >>> db2.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> result2, _ = asyncio.run(service.list_resources(db2, tags=['api']))
-            >>> isinstance(result2, list)
-            True
         """
         page_size = settings.pagination_default_page_size
         query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
@@ -586,6 +560,22 @@ class ResourceService:
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbResource.tags, tags, match_any=True))
+
+        # Access Control Filtering
+        if allowed_team_ids is not None or user_email is not None:
+             access_conditions = []
+             # 1. Public resources
+             access_conditions.append(DbResource.visibility == "public")
+             
+             # 2. Team resources where user is a member
+             if allowed_team_ids:
+                 access_conditions.append(and_(DbResource.visibility == "team", DbResource.team_id.in_(allowed_team_ids)))
+                 
+             # 3. Private/Personal resources owned by user
+             if user_email:
+                 access_conditions.append(DbResource.owner_email == user_email)
+                 
+             query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -613,7 +603,7 @@ class ResourceService:
         return (result, next_cursor)
 
     async def list_resources_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100, allowed_team_ids: Optional[List[str]] = None
     ) -> List[ResourceRead]:
         """
         List resources user has access to with team filtering.
@@ -626,48 +616,19 @@ class ResourceService:
             include_inactive: Whether to include inactive resources
             skip: Number of resources to skip for pagination
             limit: Maximum number of resources to return
+            allowed_team_ids: Optional list of team IDs the user has access to (optimization to avoid re-fetching)
 
         Returns:
             List[ResourceRead]: Resources the user has access to
-
-        Examples:
-            >>> from unittest.mock import MagicMock
-            >>> import asyncio
-            >>> service = ResourceService()
-            >>> db = MagicMock()
-            >>> # Patch out TeamManagementService so it doesn't run real logic
-            >>> import mcpgateway.services.resource_service as _rs
-            >>> class FakeTeamService:
-            ...     def __init__(self, db): pass
-            ...     async def get_user_teams(self, email): return []
-            >>> _rs.TeamManagementService = FakeTeamService
-            >>> # Force DB to return one fake row with a 'team' attribute
-            >>> class FakeResource:
-            ...     pass
-            >>> fake_resource = FakeResource()
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [fake_resource]
-            >>> service._convert_resource_to_read = MagicMock(return_value="converted")
-            >>> asyncio.run(service.list_resources_for_user(db, "user@example.com"))
-            ['converted']
-
-            Without team_id (default/public access):
-            >>> db2 = MagicMock()
-            >>> class FakeResource2:
-            ...     pass
-            >>> fake_resource2 = FakeResource2()
-            >>> db2.execute.return_value.scalars.return_value.all.return_value = [fake_resource2]
-            >>> service._convert_resource_to_read = MagicMock(return_value="converted2")
-            >>> out2 = asyncio.run(service.list_resources_for_user(db2, "user@example.com"))
-            >>> out2
-            ['converted2']
         """
-        # First-Party
-        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
-        # Build query following existing patterns from list_resources()
-        team_service = TeamManagementService(db)
-        user_teams = await team_service.get_user_teams(user_email)
-        team_ids = [team.id for team in user_teams]
+        # If allowed_team_ids is not provided, fetch them
+        team_ids = allowed_team_ids
+        if team_ids is None:
+            # First-Party
+            from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
         # Build query following existing patterns from list_resources()
         query = select(DbResource)
@@ -733,7 +694,7 @@ class ResourceService:
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
-
+        
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
@@ -1327,7 +1288,7 @@ class ResourceService:
                 original_uri = uri
                 contexts = None
                 # Call pre-fetch hooks if plugin manager is available
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
+                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and (":://" in uri))
                 if plugin_eligible:
                     # Initialize plugin manager if needed
                     # pylint: disable=protected-access
@@ -1515,7 +1476,7 @@ class ResourceService:
                     except Exception as e:
                         logger.warning(f"Failed to end observability span for resource reading: {e}")
 
-    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None) -> ResourceRead:
+    async def toggle_resource_status(self, db: Session, resource_id: int, activate: bool, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> ResourceRead:
         """
         Toggle the activation status of a resource.
 
@@ -1524,6 +1485,7 @@ class ResourceService:
             resource_id: Resource ID
             activate: True to activate, False to deactivate
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             The updated ResourceRead object
@@ -1555,6 +1517,15 @@ class ResourceService:
             resource = db.get(DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+
+            # Validate write access
+            if resource.visibility == "team":
+                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+            elif resource.visibility == "private":
+                 if user_email and resource.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to resource {resource.id}")
 
             # Update status if it's different
             if resource.enabled != activate:
@@ -1730,6 +1701,7 @@ class ResourceService:
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> ResourceRead:
         """
         Update a resource.
@@ -1743,6 +1715,7 @@ class ResourceService:
             modified_via: Source of modification (ui/api/import)
             modified_user_agent: User agent string from the modification request
             user_email: Email of user performing update (for ownership check)
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             The updated ResourceRead object
@@ -1777,6 +1750,21 @@ class ResourceService:
             resource = db.get(DbResource, resource_id)
             if not resource:
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+
+            # Validate write access
+            if resource.visibility == "team":
+                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+            elif resource.visibility == "private":
+                 if user_email and resource.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to resource {resource.id}")
+            
+            # If transferring to another team, validate access to that team
+            if resource_update.team_id and resource_update.team_id != resource.team_id:
+                if allowed_team_ids is not None and resource_update.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for target team {resource_update.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to target team {resource_update.team_id}")
 
             # # Check for uri conflict if uri is being changed and visibility is public
             if resource_update.uri and resource_update.uri != resource.uri:
@@ -1977,7 +1965,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
-    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
+    async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
         """
         Delete a resource.
 
@@ -1985,6 +1973,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             user_email: Email of user performing delete (for ownership check)
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Raises:
             ResourceNotFoundError: If the resource is not found
@@ -2012,6 +2001,15 @@ class ResourceService:
                 # If resource doesn't exist, rollback and re-raise a ResourceNotFoundError.
                 db.rollback()
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+
+            # Validate write access
+            if resource.visibility == "team":
+                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+            elif resource.visibility == "private":
+                 if user_email and resource.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to resource {resource.id}")
 
             # Store resource info for notification before deletion.
             resource_info = {

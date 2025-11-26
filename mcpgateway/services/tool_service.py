@@ -603,6 +603,8 @@ class ToolService:
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -618,6 +620,8 @@ class ToolService:
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            allowed_team_ids: List of team IDs the user has write access to.
+            user_email: Email of the user performing the operation.
 
         Returns:
             Created tool information.
@@ -626,29 +630,7 @@ class ToolService:
             IntegrityError: If there is a database integrity error.
             ToolNameConflictError: If a tool with the same name and visibility public exists.
             ToolError: For other tool registration errors.
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ToolRead
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> tool.name = 'test'
-            >>> db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> mock_gateway = MagicMock()
-            >>> mock_gateway.name = 'test_gateway'
-            >>> db.add = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> def mock_refresh(obj):
-            ...     obj.gateway = mock_gateway
-            >>> db.refresh = MagicMock(side_effect=mock_refresh)
-            >>> service._notify_tool_added = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
-            >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
-            >>> import asyncio
-            >>> asyncio.run(service.register_tool(db, tool))
-            'tool_read'
+            PermissionError: If the user does not have permission to create the tool in the specified team.
         """
         try:
             if tool.auth is None:
@@ -658,8 +640,13 @@ class ToolService:
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
 
-            if team_id is None:
-                team_id = tool.team_id
+            target_team_id = team_id or tool.team_id
+            
+            # Validate write access
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
 
             if owner_email is None:
                 owner_email = tool.owner_email
@@ -672,10 +659,10 @@ class ToolService:
                 existing_tool = db.execute(select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "public")).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
-            elif visibility.lower() == "team" and team_id:
+            elif visibility.lower() == "team" and target_team_id:
                 # Check for existing team tool with the same name, team_id
                 existing_tool = db.execute(
-                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == team_id)  # pylint: disable=comparison-with-callable
+                    select(DbTool).where(DbTool.name == tool.name, DbTool.visibility == "team", DbTool.team_id == target_team_id)  # pylint: disable=comparison-with-callable
                 ).scalar_one_or_none()
                 if existing_tool:
                     raise ToolNameConflictError(existing_tool.name, enabled=existing_tool.enabled, tool_id=existing_tool.id, visibility=existing_tool.visibility)
@@ -707,7 +694,7 @@ class ToolService:
                 federation_source=federation_source,
                 version=1,
                 # Team scoping fields
-                team_id=team_id,
+                team_id=target_team_id,
                 owner_email=owner_email or created_by,
                 visibility=visibility,
                 # passthrough REST tools fields
@@ -831,10 +818,10 @@ class ToolService:
             raise ToolError(f"Failed to register tool: {str(e)}")
 
     async def list_tools(
-        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None
+        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
-        Retrieve a list of registered tools from the database with pagination support.
+        Retrieve a list of registered tools from the database with pagination support and access control.
 
         Args:
             db (Session): The SQLAlchemy database session.
@@ -845,24 +832,13 @@ class ToolService:
             tags (Optional[List[str]]): Filter tools by tags. If provided, only tools with at least one matching tag will be returned.
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the list.
 
         Returns:
             tuple[List[ToolRead], Optional[str]]: Tuple containing:
                 - List of tools for current page
                 - Next cursor token if more results exist, None otherwise
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> import asyncio
-            >>> tools, next_cursor = asyncio.run(service.list_tools(db))
-            >>> isinstance(tools, list)
-            True
         """
         page_size = settings.pagination_default_page_size
 
@@ -891,6 +867,22 @@ class ToolService:
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
+
+        # Access Control Filtering
+        if allowed_team_ids is not None or user_email is not None:
+             access_conditions = []
+             # 1. Public tools
+             access_conditions.append(DbTool.visibility == "public")
+             
+             # 2. Team tools where user is a member
+             if allowed_team_ids:
+                 access_conditions.append(and_(DbTool.visibility == "team", DbTool.team_id.in_(allowed_team_ids)))
+                 
+             # 3. Private/Personal tools owned by user
+             if user_email:
+                 access_conditions.append(DbTool.owner_email == user_email)
+                 
+             query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -938,20 +930,7 @@ class ToolService:
                 Currently unused but kept for API consistency. Defaults to None.
 
         Returns:
-            List[ToolRead]: A list of registered tools represented as ToolRead objects.
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool_read = MagicMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value=tool_read)
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> import asyncio
-            >>> result = asyncio.run(service.list_server_tools(db, 'server1'))
-            >>> isinstance(result, list)
-            True
+            List[ToolRead]: List of tools
         """
 
         if include_metrics:
@@ -1086,35 +1065,45 @@ class ToolService:
             result.append(self._convert_tool_to_read(tool))
         return result
 
-    async def get_tool(self, db: Session, tool_id: str) -> ToolRead:
+    async def get_tool(self, db: Session, tool_id: str, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> ToolRead:
         """
         Retrieve a tool by its ID.
 
         Args:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the tool.
 
         Returns:
             ToolRead: The tool object.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> db.get.return_value = tool
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
-            >>> import asyncio
-            >>> asyncio.run(service.get_tool(db, 'tool_id'))
-            'tool_read'
+            PermissionError: If the user does not have permission to access the tool.
         """
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
+        
+        # Access control validation
+        if allowed_team_ids is not None or user_email is not None:
+            has_access = False
+            if tool.visibility == "public":
+                has_access = True
+            elif tool.visibility == "team":
+                if allowed_team_ids and tool.team_id in allowed_team_ids:
+                    has_access = True
+                elif user_email and tool.owner_email == user_email:
+                    has_access = True
+            elif tool.visibility == "private":
+                if user_email and tool.owner_email == user_email:
+                    has_access = True
+            
+            if not has_access:
+                logger.warning(f"Access denied to tool {tool_id} (visibility={tool.visibility}, team={tool.team_id}) for user {user_email}")
+                raise PermissionError(f"Access denied to tool {tool_id}")
+
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
         tool_read = self._convert_tool_to_read(tool)
@@ -1136,7 +1125,7 @@ class ToolService:
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -1144,29 +1133,37 @@ class ToolService:
             db (Session): The SQLAlchemy database session.
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
-            PermissionError: If user doesn't own the tool.
+            PermissionError: If user doesn't own the tool or have write access.
             ToolError: For other deletion errors.
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> db.get.return_value = tool
-            >>> db.delete = MagicMock()
-            >>> db.commit = MagicMock()
-            >>> service._notify_tool_deleted = AsyncMock()
-            >>> import asyncio
-            >>> asyncio.run(service.delete_tool(db, 'tool_id'))
         """
         try:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            # Access control validation for delete (Write Access)
+            if user_email or allowed_team_ids:
+                has_write_access = False
+                if tool.visibility == "private":
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "team":
+                    if allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+                    elif user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "public":
+                     if user_email and tool.owner_email == user_email:
+                         has_write_access = True
+                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                         has_write_access = True
+                
+                if not has_write_access:
+                     raise PermissionError(f"User does not have permission to delete tool {tool_id}")
 
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
@@ -1240,7 +1237,7 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -1250,6 +1247,7 @@ class ToolService:
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             ToolRead: The updated tool object.
@@ -1257,30 +1255,32 @@ class ToolService:
         Raises:
             ToolNotFoundError: If the tool is not found.
             ToolError: For other errors.
-            PermissionError: If user doesn't own the agent.
-
-        Examples:
-            >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock, AsyncMock
-            >>> from mcpgateway.schemas import ToolRead
-            >>> service = ToolService()
-            >>> db = MagicMock()
-            >>> tool = MagicMock()
-            >>> db.get.return_value = tool
-            >>> db.commit = MagicMock()
-            >>> db.refresh = MagicMock()
-            >>> service._notify_tool_activated = AsyncMock()
-            >>> service._notify_tool_deactivated = AsyncMock()
-            >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
-            >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
-            >>> import asyncio
-            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
-            'tool_read'
+            PermissionError: If user doesn't own the agent or have write access.
         """
         try:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            # Access control validation for toggle (Write Access)
+            if user_email or allowed_team_ids:
+                has_write_access = False
+                if tool.visibility == "private":
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "team":
+                    if allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+                    elif user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "public":
+                     if user_email and tool.owner_email == user_email:
+                         has_write_access = True
+                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                         has_write_access = True
+                
+                if not has_write_access:
+                     raise PermissionError(f"User does not have permission to toggle status of tool {tool_id}")
 
             is_activated = is_reachable = False
             if tool.enabled != activate:

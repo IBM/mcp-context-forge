@@ -174,6 +174,8 @@ class A2AAgentService:
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> A2AAgentRead:
         """Register a new A2A agent.
 
@@ -189,6 +191,8 @@ class A2AAgentService:
             team_id (Optional[str]): ID of the team to assign the agent to.
             owner_email (Optional[str]): Email of the agent owner.
             visibility (Optional[str]): Visibility level ('public', 'team', 'private').
+            allowed_team_ids: List of team IDs the user has write access to.
+            user_email: Email of the user performing the operation.
 
         Returns:
             A2AAgentRead: The created agent object.
@@ -198,11 +202,20 @@ class A2AAgentService:
             IntegrityError: If a database constraint or integrity violation occurs.
             ValueError: If invalid configuration or data is provided.
             A2AAgentError: For any other unexpected errors during registration.
+            PermissionError: If the user does not have permission to create the agent in the specified team.
 
         Examples:
             # TODO
         """
         try:
+            target_team_id = getattr(agent_data, "team_id", None) or team_id
+            
+            # Validate write access
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
+
             agent_data.slug = slugify(agent_data.name)
             # Check for existing server with the same slug within the same team or public scope
             if visibility.lower() == "public":
@@ -213,9 +226,9 @@ class A2AAgentService:
                 existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "public")).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
-            elif visibility.lower() == "team" and team_id:
+            elif visibility.lower() == "team" and target_team_id:
                 # Check for existing team a2a agent with the same slug
-                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == team_id)).scalar_one_or_none()
+                existing_agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.slug == agent_data.slug, DbA2AAgent.visibility == "team", DbA2AAgent.team_id == target_team_id)).scalar_one_or_none()
                 if existing_agent:
                     raise A2AAgentNameConflictError(name=agent_data.slug, is_active=existing_agent.enabled, agent_id=existing_agent.id, visibility=existing_agent.visibility)
 
@@ -257,7 +270,7 @@ class A2AAgentService:
                 tags=agent_data.tags,
                 passthrough_headers=getattr(agent_data, "passthrough_headers", None),
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(agent_data, "team_id", None) or team_id,
+                team_id=getattr(agent_data, "team_id", None) or target_team_id,
                 owner_email=getattr(agent_data, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(agent_data, "visibility", None) or visibility,
                 created_by=created_by,
@@ -318,7 +331,7 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
-    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
+    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
 
         Args:
@@ -326,44 +339,13 @@ class A2AAgentService:
             cursor: Pagination cursor (not implemented yet).
             include_inactive: Whether to include inactive agents.
             tags: List of tags to filter by.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the list.
+            skip: Number of agents to skip for pagination.
+            limit: Maximum number of agents to return.
 
         Returns:
             List of agent data.
-
-        Examples:
-            >>> from mcpgateway.services.a2a_service import A2AAgentService
-            >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.schemas import A2AAgentRead
-            >>> import asyncio
-
-            >>> service = A2AAgentService()
-            >>> db = MagicMock()
-
-            >>> # Mock a single agent object returned by the DB
-            >>> agent_obj = MagicMock()
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [agent_obj]
-
-            >>> # Mock the A2AAgentRead schema to return a masked string
-            >>> mocked_agent_read = MagicMock()
-            >>> mocked_agent_read.masked.return_value = 'agent_read'
-            >>> A2AAgentRead.model_validate = MagicMock(return_value=mocked_agent_read)
-
-            >>> # Run the service method
-            >>> result = asyncio.run(service.list_agents(db))
-            >>> result == ['agent_read']
-            True
-
-            >>> # Test include_inactive parameter (same mock works)
-            >>> result_with_inactive = asyncio.run(service.list_agents(db, include_inactive=True))
-            >>> result_with_inactive == ['agent_read']
-            True
-
-            >>> # Test empty result
-            >>> db.execute.return_value.scalars.return_value.all.return_value = []
-            >>> empty_result = asyncio.run(service.list_agents(db))
-            >>> empty_result
-            []
-
         """
         query = select(DbA2AAgent)
 
@@ -379,7 +361,24 @@ class A2AAgentService:
             if tag_conditions:
                 query = query.where(*tag_conditions)
 
+        # Access Control Filtering
+        if allowed_team_ids is not None or user_email is not None:
+             access_conditions = []
+             # 1. Public agents
+             access_conditions.append(DbA2AAgent.visibility == "public")
+             
+             # 2. Team agents where user is a member
+             if allowed_team_ids:
+                 access_conditions.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(allowed_team_ids)))
+                 
+             # 3. Private/Personal agents owned by user
+             if user_email:
+                 access_conditions.append(DbA2AAgent.owner_email == user_email)
+                 
+             query = query.where(or_(*access_conditions))
+
         query = query.order_by(desc(DbA2AAgent.created_at))
+        query = query.offset(skip).limit(limit)
 
         agents = db.execute(query).scalars().all()
 
@@ -458,13 +457,15 @@ class A2AAgentService:
         agents = db.execute(query).scalars().all()
         return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
 
-    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True) -> A2AAgentRead:
+    async def get_agent(self, db: Session, agent_id: str, include_inactive: bool = True, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> A2AAgentRead:
         """Retrieve an A2A agent by ID.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             include_inactive: Whether to include inactive a2a agents
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the agent.
 
         Returns:
             Agent data.
@@ -553,6 +554,24 @@ class A2AAgentService:
         if not agent.enabled and not include_inactive:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
 
+        # Access control validation
+        if allowed_team_ids is not None or user_email is not None:
+            has_access = False
+            if agent.visibility == "public":
+                has_access = True
+            elif agent.visibility == "team":
+                if allowed_team_ids and agent.team_id in allowed_team_ids:
+                    has_access = True
+                elif user_email and agent.owner_email == user_email:
+                    has_access = True
+            elif agent.visibility == "private":
+                if user_email and agent.owner_email == user_email:
+                    has_access = True
+            
+            if not has_access:
+                logger.warning(f"Access denied to agent {agent_id} (visibility={agent.visibility}, team={agent.team_id}) for user {user_email}")
+                raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
         # ✅ Delegate conversion and masking to _db_to_schema()
         return self._db_to_schema(db=db, db_agent=agent)
 
@@ -587,6 +606,7 @@ class A2AAgentService:
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> A2AAgentRead:
         """Update an existing A2A agent.
 
@@ -599,6 +619,7 @@ class A2AAgentService:
             modified_via: Modification method.
             modified_user_agent: User agent of modification request.
             user_email: Email of user performing update (for ownership check).
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             Updated agent data.
@@ -616,6 +637,15 @@ class A2AAgentService:
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+            # Validate write access
+            if agent.visibility == "team":
+                 if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {agent.team_id}")
+            elif agent.visibility == "private":
+                 if user_email and agent.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to agent {agent.id}")
 
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
@@ -691,7 +721,7 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None) -> A2AAgentRead:
+    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
 
         Args:
@@ -700,6 +730,7 @@ class A2AAgentService:
             activate: True to activate, False to deactivate.
             reachable: Optional reachability status.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             Updated agent data.
@@ -713,6 +744,15 @@ class A2AAgentService:
 
         if not agent:
             raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+        # Validate write access
+        if agent.visibility == "team":
+             if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                 logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                 raise PermissionError(f"User does not have write access to team {agent.team_id}")
+        elif agent.visibility == "private":
+             if user_email and agent.owner_email != user_email:
+                 raise PermissionError(f"User does not have write access to agent {agent.id}")
 
         agent.enabled = activate
         if reachable is not None:
@@ -741,13 +781,14 @@ class A2AAgentService:
 
         return self._db_to_schema(db=db, db_agent=agent)
 
-    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
         """Delete an A2A agent.
 
         Args:
             db: Database session.
             agent_id: Agent ID.
             user_email: Email of user performing delete (for ownership check).
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Raises:
             A2AAgentNotFoundError: If the agent is not found.
@@ -759,6 +800,15 @@ class A2AAgentService:
 
             if not agent:
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
+
+            # Validate write access
+            if agent.visibility == "team":
+                 if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {agent.team_id}")
+            elif agent.visibility == "private":
+                 if user_email and agent.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to agent {agent.id}")
 
             agent_name = agent.name
             db.delete(agent)

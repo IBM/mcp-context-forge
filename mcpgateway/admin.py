@@ -165,6 +165,30 @@ except ImportError:
         """Placeholder for GrpcServiceNameConflictError when grpcio is not installed."""
 
 
+def get_user_email(user: Union[str, Dict[str, Any]]) -> str:
+    """Extract email from user object."""
+    if isinstance(user, dict):
+        return user.get("email") or user.get("sub") or "unknown"
+    return str(user) if user else "unknown"
+
+
+def get_allowed_team_ids(request: Request) -> List[str]:
+    """Extract allowed team IDs from request state."""
+    user_permissions = getattr(request.state, "user_permissions", [])
+    allowed_teams = []
+    
+    if not user_permissions:
+        return []
+        
+    for scope in user_permissions:
+        if scope.get("scope") == "team":
+            team_id = scope.get("scope_id")
+            if team_id:
+                allowed_teams.append(team_id)
+                
+    return allowed_teams
+
+
 # Import the shared logging service from main
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
@@ -938,6 +962,7 @@ async def get_configuration_settings(
 @admin_router.get("/servers", response_model=List[ServerRead])
 @require_permission("servers.read")
 async def admin_list_servers(
+    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -946,6 +971,7 @@ async def admin_list_servers(
     List servers for the admin UI with an option to include inactive servers.
 
     Args:
+        request (Request): The FastAPI request object.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -965,17 +991,13 @@ async def admin_list_servers(
         >>> # Mock server service
         >>> from datetime import datetime, timezone
         >>> mock_metrics = ServerMetrics(
-        ...     total_executions=10,
-        ...     successful_executions=8,
-        ...     failed_executions=2,
-        ...     failure_rate=0.2,
-        ...     min_response_time=0.1,
-        ...     max_response_time=2.0,
-        ...     avg_response_time=0.5,
-        ...     last_execution_time=datetime.now(timezone.utc)
+        ...     request_count=100,
+        ...     error_count=5,
+        ...     average_latency=0.2,
+        ...     last_active=datetime.now(timezone.utc)
         ... )
         >>> mock_server = ServerRead(
-        ...     id="server-1",
+        ...     id="server-123",
         ...     name="Test Server",
         ...     description="A test server",
         ...     icon="test-icon.png",
@@ -985,6 +1007,9 @@ async def admin_list_servers(
         ...     associated_tools=["tool1", "tool2"],
         ...     associated_resources=["1", "2"],
         ...     associated_prompts=["1"],
+        ...     url="http://test-server",
+        ...     owner="test_user",
+        ...     is_active=True,
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -992,16 +1017,17 @@ async def admin_list_servers(
         >>> original_list_servers_for_user = server_service.list_servers_for_user
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
         >>>
-        >>> # Test the function
+        >>> # Test the endpoint
         >>> async def test_admin_list_servers():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     result = await admin_list_servers(
-        ...         include_inactive=False,
+        ...         request=mock_request,
+        ...         include_inactive=True,
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
-        ...     return len(result) > 0 and isinstance(result[0], dict)
-        >>>
-        >>> # Run the test
+        ...     return len(result) == 1 and result[0]["id"] == "server-123"
         >>> asyncio.run(test_admin_list_servers())
         True
         >>>
@@ -1011,7 +1037,10 @@ async def admin_list_servers(
         >>> # Additional test for empty server list
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_servers_empty():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     result = await admin_list_servers(
+        ...         request=mock_request,
         ...         include_inactive=True,
         ...         db=mock_db,
         ...         user=mock_user
@@ -1026,8 +1055,10 @@ async def admin_list_servers(
         >>> from fastapi import HTTPException
         >>> async def test_admin_list_servers_exception():
         ...     server_service.list_servers_for_user = AsyncMock(side_effect=Exception("Test error"))
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_list_servers(False, mock_db, mock_user)
+        ...         await admin_list_servers(mock_request, False, mock_db, mock_user)
         ...     except Exception as e:
         ...         return str(e) == "Test error"
         >>> asyncio.run(test_admin_list_servers_exception())
@@ -1035,18 +1066,232 @@ async def admin_list_servers(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested server list")
     user_email = get_user_email(user)
-    servers = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)
+    allowed_team_ids = get_allowed_team_ids(request)
+    servers = await server_service.list_servers_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
     return [server.model_dump(by_alias=True) for server in servers]
+
+
+@admin_router.get("/resources", response_model=List[ResourceRead])
+@require_permission("resources.read")
+async def admin_list_resources(
+    request: Request,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """
+    List resources for the admin UI with an option to include inactive resources.
+
+    Args:
+        request (Request): The FastAPI request object.
+        include_inactive (bool): Whether to include inactive resources.
+        db (Session): The database session dependency.
+        user (str): The authenticated user dependency.
+
+    Returns:
+        List[ResourceRead]: A list of resource records.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
+        >>>
+        >>> # Mock dependencies
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>>
+        >>> # Mock resource service
+        >>> from datetime import datetime, timezone
+        >>> mock_metrics = ResourceMetrics(
+        ...     access_count=100,
+        ...     error_count=5,
+        ...     average_latency=0.2,
+        ...     last_accessed=datetime.now(timezone.utc)
+        ... )
+        >>> mock_resource = ResourceRead(
+        ...     id="resource-123",
+        ...     name="Test Resource",
+        ...     uri="http://test-resource",
+        ...     mime_type="application/json",
+        ...     owner="test_user",
+        ...     is_active=True,
+        ...     metrics=mock_metrics
+        ... )
+        >>>
+        >>> # Mock the resource_service.list_resources_for_user method
+        >>> original_list_resources_for_user = resource_service.list_resources_for_user
+        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource])
+        >>>
+        >>> # Test the endpoint
+        >>> async def test_admin_list_resources():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_list_resources(
+        ...         request=mock_request,
+        ...         include_inactive=True,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return len(result) == 1 and result[0]["id"] == "resource-123"
+        >>> asyncio.run(test_admin_list_resources())
+        True
+        >>>
+        >>> # Restore original method
+        >>> resource_service.list_resources_for_user = original_list_resources_for_user
+        >>>
+        >>> # Additional test for empty resource list
+        >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
+        >>> async def test_admin_list_resources_empty():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_list_resources(
+        ...         request=mock_request,
+        ...         include_inactive=True,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return result == []
+        >>> asyncio.run(test_admin_list_resources_empty())
+        True
+        >>> resource_service.list_resources_for_user = original_list_resources_for_user
+        >>>
+        >>> # Additional test for exception handling
+        >>> import pytest
+        >>> from fastapi import HTTPException
+        >>> async def test_admin_list_resources_exception():
+        ...     resource_service.list_resources_for_user = AsyncMock(side_effect=Exception("Test error"))
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_list_resources(mock_request, False, mock_db, mock_user)
+        ...     except Exception as e:
+        ...         return str(e) == "Test error"
+        >>> asyncio.run(test_admin_list_resources_exception())
+        True
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested resource list")
+    user_email = get_user_email(user)
+    allowed_team_ids = get_allowed_team_ids(request)
+    resources = await resource_service.list_resources_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
+    return [resource.model_dump(by_alias=True) for resource in resources]
+
+
+@admin_router.get("/tools", response_model=List[ToolRead])
+@require_permission("tools.read")
+async def admin_list_tools(
+    request: Request,
+    include_inactive: bool = False,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """
+    List tools for the admin UI with an option to include inactive tools.
+
+    Args:
+        request (Request): The FastAPI request object.
+        include_inactive (bool): Whether to include inactive tools.
+        db (Session): The database session dependency.
+        user (str): The authenticated user dependency.
+
+    Returns:
+        List[ToolRead]: A list of tool records.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import ToolRead, ToolMetrics
+        >>>
+        >>> # Mock dependencies
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>>
+        >>> # Mock tool service
+        >>> from datetime import datetime, timezone
+        >>> mock_metrics = ToolMetrics(
+        ...     execution_count=100,
+        ...     error_count=5,
+        ...     average_duration=0.2,
+        ...     last_used=datetime.now(timezone.utc)
+        ... )
+        >>> mock_tool = ToolRead(
+        ...     id="tool-123",
+        ...     name="Test Tool",
+        ...     description="A test tool",
+        ...     parameters={},
+        ...     server_id="server-1",
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
+        ...     is_active=True,
+        ...     metrics=mock_metrics
+        ... )
+        >>>
+        >>> # Mock the tool_service.list_tools_for_user method
+        >>> original_list_tools_for_user = tool_service.list_tools_for_user
+        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[mock_tool])
+        >>>
+        >>> # Test the endpoint
+        >>> async def test_admin_list_tools():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_list_tools(
+        ...         request=mock_request,
+        ...         include_inactive=True,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return len(result) == 1 and result[0]["id"] == "tool-123"
+        >>> asyncio.run(test_admin_list_tools())
+        True
+        >>>
+        >>> # Restore original method
+        >>> tool_service.list_tools_for_user = original_list_tools_for_user
+        >>>
+        >>> # Additional test for empty tool list
+        >>> tool_service.list_tools_for_user = AsyncMock(return_value=[])
+        >>> async def test_admin_list_tools_empty():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_list_tools(
+        ...         request=mock_request,
+        ...         include_inactive=True,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return result == []
+        >>> asyncio.run(test_admin_list_tools_empty())
+        True
+        >>> tool_service.list_tools_for_user = original_list_tools_for_user
+        >>>
+        >>> # Additional test for exception handling
+        >>> import pytest
+        >>> from fastapi import HTTPException
+        >>> async def test_admin_list_tools_exception():
+        ...     tool_service.list_tools_for_user = AsyncMock(side_effect=Exception("Test error"))
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_list_tools(mock_request, False, mock_db, mock_user)
+        ...     except Exception as e:
+        ...         return str(e) == "Test error"
+        >>> asyncio.run(test_admin_list_tools_exception())
+        True
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested tool list")
+    user_email = get_user_email(user)
+    allowed_team_ids = get_allowed_team_ids(request)
+    tools = await tool_service.list_tools_for_user(db, user_email, allowed_team_ids=allowed_team_ids, include_inactive=include_inactive)
+    return [tool.model_dump(by_alias=True) for tool in tools]
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): The FastAPI request object.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -1101,8 +1346,11 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_server_success():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     result = await admin_get_server(
         ...         server_id=server_id,
+        ...         request=mock_request,
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
@@ -1116,9 +1364,12 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>> server_service.get_server = AsyncMock(side_effect=ServerNotFoundError("Server not found"))
         >>>
         >>> async def test_admin_get_server_not_found():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
         ...         await admin_get_server(
         ...             server_id="nonexistent",
+        ...             request=mock_request,
         ...             db=mock_db,
         ...             user=mock_user
         ...         )
@@ -1130,14 +1381,30 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         >>> asyncio.run(test_admin_get_server_not_found())
         True
         >>>
+        >>> # Test generic exception
+        >>> server_service.get_server = AsyncMock(side_effect=Exception("Generic error"))
+        >>>
+        >>> async def test_admin_get_server_error():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_get_server(server_id, mock_request, mock_db, mock_user)
+        ...     except Exception as e:
+        ...         return str(e) == "Generic error"
+        >>> asyncio.run(test_admin_get_server_error())
+        True
+        >>>
         >>> # Restore original method
         >>> server_service.get_server = original_get_server
     """
+    LOGGER.debug(f"User {get_user_email(user)} requested server details for {server_id}")
     try:
-        LOGGER.debug(f"User {get_user_email(user)} requested details for server ID {server_id}")
-        server = await server_service.get_server(db, server_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        server = await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return server.model_dump(by_alias=True)
     except ServerNotFoundError as e:
+        LOGGER.warning(f"Server not found: {server_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         LOGGER.error(f"Error getting server {server_id}: {e}")
@@ -1340,11 +1607,12 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             db,
             server,
             created_by=user_email,  # Use the consistent user_email
-            created_from_ip=creation_metadata["created_from_ip"],
-            created_via=creation_metadata["created_via"],
-            created_user_agent=creation_metadata["created_user_agent"],
+            created_from_ip=creation_metadata.get("created_from_ip"),
+            created_via=creation_metadata.get("created_via"),
+            created_user_agent=creation_metadata.get("created_user_agent"),
             team_id=team_id_cast,
-            visibility=visibility,
+            allowed_team_ids=get_allowed_team_ids(request),
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -1558,6 +1826,7 @@ async def admin_edit_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            allowed_team_ids=get_allowed_team_ids(request),
         )
 
         return JSONResponse(
@@ -1689,7 +1958,7 @@ async def admin_toggle_server(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+        await server_service.toggle_server_status(db, server_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling servers {server_id}: {e}")
         error_message = str(e)
@@ -1787,7 +2056,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
     try:
         user_email = get_user_email(user)
         LOGGER.debug(f"User {user_email} is deleting server ID {server_id}")
-        await server_service.delete_server(db, server_id, user_email=user_email)
+        await server_service.delete_server(db, server_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {get_user_email(user)} deleting server {server_id}: {e}")
         error_message = str(e)
@@ -6948,7 +7217,7 @@ async def admin_search_prompts(
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
 @require_permission("tools.read")
-async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
 
@@ -6958,6 +7227,7 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
+        request (Request): The FastAPI request object.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -7003,49 +7273,62 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_tool_success():
-        ...     result = await admin_get_tool(tool_id, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['id'] == tool_id
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_get_tool(
+        ...         tool_id=tool_id,
+        ...         request=mock_request,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return isinstance(result, dict) and result.get('id') == tool_id
         >>>
         >>> asyncio.run(test_admin_get_tool_success())
         True
         >>>
         >>> # Test tool not found
         >>> tool_service.get_tool = AsyncMock(side_effect=ToolNotFoundError("Tool not found"))
+        >>>
         >>> async def test_admin_get_tool_not_found():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_tool("nonexistent", mock_db, mock_user)
-        ...         return False
+        ...         await admin_get_tool(tool_id, mock_request, mock_db, mock_user)
         ...     except HTTPException as e:
-        ...         return e.status_code == 404 and "Tool not found" in e.detail
+        ...         return e.status_code == 404
         >>>
         >>> asyncio.run(test_admin_get_tool_not_found())
         True
         >>>
         >>> # Test generic exception
         >>> tool_service.get_tool = AsyncMock(side_effect=Exception("Generic error"))
-        >>> async def test_admin_get_tool_exception():
+        >>>
+        >>> async def test_admin_get_tool_error():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_tool(tool_id, mock_db, mock_user)
-        ...         return False
+        ...         await admin_get_tool(tool_id, mock_request, mock_db, mock_user)
         ...     except Exception as e:
         ...         return str(e) == "Generic error"
         >>>
-        >>> asyncio.run(test_admin_get_tool_exception())
+        >>> asyncio.run(test_admin_get_tool_error())
         True
         >>>
         >>> # Restore original method
         >>> tool_service.get_tool = original_get_tool
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    LOGGER.debug(f"User {get_user_email(user)} requested tool details for {tool_id}")
     try:
-        tool = await tool_service.get_tool(db, tool_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        tool = await tool_service.get_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
+        LOGGER.warning(f"Tool not found: {tool_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        # Catch any other unexpected errors and re-raise or log as needed
-        LOGGER.error(f"Error getting tool {tool_id}: {e}")
-        raise e  # Re-raise for now, or return a 500 JSONResponse if preferred for API consistency
+        LOGGER.error(f"Error retrieving tool {tool_id}: {e}")
+        raise e
 
 
 @admin_router.post("/tools/")
@@ -7252,6 +7535,8 @@ async def admin_add_tool(
             created_user_agent=metadata["created_user_agent"],
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
+            allowed_team_ids=get_allowed_team_ids(request),
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -7521,6 +7806,7 @@ async def admin_edit_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
@@ -7624,7 +7910,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     LOGGER.debug(f"User {user_email} is deleting tool ID {tool_id}")
     error_message = None
     try:
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_message = str(e)
@@ -7753,7 +8039,7 @@ async def admin_toggle_tool(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
         error_message = str(e)
@@ -7775,18 +8061,236 @@ async def admin_toggle_tool(
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
-@admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.read")
-async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
-    """Get gateway details for the admin UI.
+@admin_router.get("/resources/{resource_id}", response_model=ResourceRead)
+@require_permission("resources.read")
+async def admin_get_resource(resource_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """
+    Retrieve specific resource details for the admin UI.
 
     Args:
-        gateway_id: Gateway ID.
-        db: Database session.
-        user: Authenticated user.
+        resource_id (int): The ID of the resource to retrieve.
+        request (Request): The FastAPI request object.
+        db (Session): Database session dependency.
+        user (str): Authenticated user dependency.
 
     Returns:
-        Gateway details.
+        ResourceRead: The resource details formatted with by_alias=True.
+
+    Raises:
+        HTTPException: If the resource is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
+        >>> from datetime import datetime, timezone
+        >>> from mcpgateway.services.resource_service import ResourceNotFoundError # Added import
+        >>> from fastapi import HTTPException
+        >>>
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> resource_id = 123
+        >>>
+        >>> # Mock resource data
+        >>> mock_resource = ResourceRead(
+        ...     id=resource_id, name="Test Resource", uri="http://test.com",
+        ...     mime_type="application/json", description="A test resource",
+        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ...     is_active=True, gateway_id=None, access_count=0,
+        ...     metrics=ResourceMetrics(
+        ...         access_count=0, error_count=0, average_latency=0.0,
+        ...         last_accessed=None
+        ...     ),
+        ...     tags=[]
+        ... )
+        >>>
+        >>> # Mock the resource_service.get_resource method
+        >>> original_get_resource = resource_service.get_resource
+        >>> resource_service.get_resource = AsyncMock(return_value=mock_resource)
+        >>>
+        >>> # Test successful retrieval
+        >>> async def test_admin_get_resource_success():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_get_resource(
+        ...         resource_id=resource_id,
+        ...         request=mock_request,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return isinstance(result, dict) and result.get('id') == resource_id
+        >>>
+        >>> asyncio.run(test_admin_get_resource_success())
+        True
+        >>>
+        >>> # Test resource not found
+        >>> resource_service.get_resource = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
+        >>>
+        >>> async def test_admin_get_resource_not_found():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_get_resource(resource_id, mock_request, mock_db, mock_user)
+        ...     except HTTPException as e:
+        ...         return e.status_code == 404
+        >>>
+        >>> asyncio.run(test_admin_get_resource_not_found())
+        True
+        >>>
+        >>> # Test generic exception
+        >>> resource_service.get_resource = AsyncMock(side_effect=Exception("Generic error"))
+        >>>
+        >>> async def test_admin_get_resource_error():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_get_resource(resource_id, mock_request, mock_db, mock_user)
+        ...     except Exception as e:
+        ...         return str(e) == "Generic error"
+        >>>
+        >>> asyncio.run(test_admin_get_resource_error())
+        True
+        >>>
+        >>> # Restore original method
+        >>> resource_service.get_resource = original_get_resource
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested resource details for {resource_id}")
+    try:
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        resource = await resource_service.get_resource(db, resource_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        return resource.model_dump(by_alias=True)
+    except ResourceNotFoundError as e:
+        LOGGER.warning(f"Resource not found: {resource_id}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error retrieving resource {resource_id}: {e}")
+        raise e
+
+
+@admin_router.get("/prompts/{prompt_id}", response_model=PromptRead)
+@require_permission("prompts.read")
+async def admin_get_prompt(prompt_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """
+    Retrieve specific prompt details for the admin UI.
+
+    Args:
+        prompt_id (int): The ID of the prompt to retrieve.
+        request (Request): The FastAPI request object.
+        db (Session): Database session dependency.
+        user (str): Authenticated user dependency.
+
+    Returns:
+        PromptRead: The prompt details formatted with by_alias=True.
+
+    Raises:
+        HTTPException: If the prompt is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.schemas import PromptRead, PromptMetrics
+        >>> from datetime import datetime, timezone
+        >>> from mcpgateway.services.prompt_service import PromptNotFoundError # Added import
+        >>> from fastapi import HTTPException
+        >>>
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> prompt_id = 123
+        >>>
+        >>> # Mock prompt data
+        >>> mock_prompt = PromptRead(
+        ...     id=prompt_id, name="Test Prompt", description="A test prompt",
+        ...     arguments=[], owner="test_user",
+        ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
+        ...     is_active=True, gateway_id=None, usage_count=0,
+        ...     metrics=PromptMetrics(
+        ...         usage_count=0, error_count=0, average_latency=0.0,
+        ...         last_used=None
+        ...     ),
+        ...     tags=[]
+        ... )
+        >>>
+        >>> # Mock the prompt_service.get_prompt method
+        >>> original_get_prompt = prompt_service.get_prompt
+        >>> prompt_service.get_prompt = AsyncMock(return_value=mock_prompt)
+        >>>
+        >>> # Test successful retrieval
+        >>> async def test_admin_get_prompt_success():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_get_prompt(
+        ...         prompt_id=prompt_id,
+        ...         request=mock_request,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return isinstance(result, dict) and result.get('id') == prompt_id
+        >>>
+        >>> asyncio.run(test_admin_get_prompt_success())
+        True
+        >>>
+        >>> # Test prompt not found
+        >>> prompt_service.get_prompt = AsyncMock(side_effect=PromptNotFoundError("Prompt not found"))
+        >>>
+        >>> async def test_admin_get_prompt_not_found():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_get_prompt(prompt_id, mock_request, mock_db, mock_user)
+        ...     except HTTPException as e:
+        ...         return e.status_code == 404
+        >>>
+        >>> asyncio.run(test_admin_get_prompt_not_found())
+        True
+        >>>
+        >>> # Test generic exception
+        >>> prompt_service.get_prompt = AsyncMock(side_effect=Exception("Generic error"))
+        >>>
+        >>> async def test_admin_get_prompt_error():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     try:
+        ...         await admin_get_prompt(prompt_id, mock_request, mock_db, mock_user)
+        ...     except Exception as e:
+        ...         return str(e) == "Generic error"
+        >>>
+        >>> asyncio.run(test_admin_get_prompt_error())
+        True
+        >>>
+        >>> # Restore original method
+        >>> prompt_service.get_prompt = original_get_prompt
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested prompt details for {prompt_id}")
+    try:
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        prompt = await prompt_service.get_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        return prompt.model_dump(by_alias=True)
+    except PromptNotFoundError as e:
+        LOGGER.warning(f"Prompt not found: {prompt_id}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error retrieving prompt {prompt_id}: {e}")
+        raise e
+
+
+@admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
+@require_permission("gateways.read")
+async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> GatewayRead:
+    """
+    Retrieve specific gateway details for the admin UI.
+
+    Args:
+        gateway_id (str): The ID of the gateway to retrieve.
+        request (Request): The FastAPI request object.
+        db (Session): Database session dependency.
+        user (str): Authenticated user dependency.
+
+    Returns:
+        GatewayRead: The gateway details formatted with by_alias=True.
 
     Raises:
         HTTPException: If the gateway is not found.
@@ -7820,8 +8324,15 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_gateway_success():
-        ...     result = await admin_get_gateway(gateway_id, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['id'] == gateway_id
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
+        ...     result = await admin_get_gateway(
+        ...         gateway_id=gateway_id,
+        ...         request=mock_request,
+        ...         db=mock_db,
+        ...         user=mock_user
+        ...     )
+        ...     return isinstance(result, dict) and result.get('id') == gateway_id
         >>>
         >>> asyncio.run(test_admin_get_gateway_success())
         True
@@ -7829,8 +8340,10 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>> # Test gateway not found
         >>> gateway_service.get_gateway = AsyncMock(side_effect=GatewayNotFoundError("Gateway not found"))
         >>> async def test_admin_get_gateway_not_found():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_gateway("nonexistent", mock_db, mock_user)
+        ...         await admin_get_gateway("nonexistent", mock_request, mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Gateway not found" in e.detail
@@ -7840,27 +8353,32 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
         >>>
         >>> # Test generic exception
         >>> gateway_service.get_gateway = AsyncMock(side_effect=Exception("Generic error"))
-        >>> async def test_admin_get_gateway_exception():
+        >>> async def test_admin_get_gateway_error():
+        ...     mock_request = MagicMock()
+        ...     mock_request.state.user_permissions = []
         ...     try:
-        ...         await admin_get_gateway(gateway_id, mock_db, mock_user)
+        ...         await admin_get_gateway(gateway_id, mock_request, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Generic error"
         >>>
-        >>> asyncio.run(test_admin_get_gateway_exception())
+        >>> asyncio.run(test_admin_get_gateway_error())
         True
         >>>
         >>> # Restore original method
         >>> gateway_service.get_gateway = original_get_gateway
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
+    LOGGER.debug(f"User {get_user_email(user)} requested gateway details for {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = get_allowed_team_ids(request)
+        gateway = await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
+        LOGGER.warning(f"Gateway not found: {gateway_id}")
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting gateway {gateway_id}: {e}")
+        LOGGER.error(f"Error retrieving gateway {gateway_id}: {e}")
         raise e
 
 
@@ -8161,6 +8679,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             visibility=visibility,
             team_id=team_id_cast,
             owner_email=user_email,
+            allowed_team_ids=get_allowed_team_ids(request),
         )
 
         # Provide specific guidance for OAuth Authorization Code flow
@@ -8858,6 +9377,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(
             content={"message": "Add resource registered successfully!", "success": True},
@@ -9011,6 +9531,7 @@ async def admin_edit_resource(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=get_user_email(user),
+            allowed_team_ids=get_allowed_team_ids(request),
         )
         return JSONResponse(
             content={"message": "Resource updated successfully!", "success": True},
@@ -9095,11 +9616,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(
-            user["db"] if isinstance(user, dict) else db,
-            resource_id,
-            user_email=user_email,
-        )
+        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
@@ -9226,7 +9743,7 @@ async def admin_toggle_resource(
     activate = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
-        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+        await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling resource status {resource_id}: {e}")
         error_message = str(e)
@@ -9658,7 +10175,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
     LOGGER.info(f"User {get_user_email(user)} is deleting prompt id {prompt_id}")
     error_message = None
     try:
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting prompt {prompt_id}: {e}")
         error_message = str(e)
@@ -9785,7 +10302,7 @@ async def admin_toggle_prompt(
     activate: bool = str(form.get("activate", "true")).lower() == "true"
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     try:
-        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+        await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email, allowed_team_ids=get_allowed_team_ids(request))
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling prompt {prompt_id}: {e}")
         error_message = str(e)

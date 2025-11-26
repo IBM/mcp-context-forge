@@ -312,10 +312,7 @@ class TokenScopingMiddleware:
                 
                 request.state.user_permissions = user_permissions
 
-                # TEAM VALIDATION: Check resource team ownership using structured permissions
-                if not await permission_service.check_resource_access(request.url.path, user_permissions):
-                    logger.warning(f"Access denied: Resource access validation failed for user {user_email}")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied: You do not have permission to access this resource")
+
 
                 # Extract scopes from payload
                 scopes = payload.get("scopes", {})

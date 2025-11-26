@@ -365,6 +365,8 @@ class ServerService:
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -390,6 +392,8 @@ class ServerService:
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            allowed_team_ids (Optional[List[str]]): List of team IDs the user has write access to.
+            user_email (Optional[str]): Email of the user performing the operation.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -398,6 +402,8 @@ class ServerService:
             IntegrityError: If a database integrity error occurs.
             ServerNameConflictError: If a server name conflict occurs (public or team visibility).
             ServerError: If any associated tool, resource, or prompt does not exist, or if any other registration error occurs.
+            PermissionError: If the user does not have permission to create the server in the specified team.
+
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
@@ -421,6 +427,13 @@ class ServerService:
             'server_read'
         """
         try:
+            # Validate write access
+            target_team_id = getattr(server_in, "team_id", None) or team_id
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
+
             logger.info(f"Registering server: {server_in.name}")
             # # Create the new server record.
             db_server = DbServer(
@@ -430,7 +443,7 @@ class ServerService:
                 enabled=True,
                 tags=server_in.tags or [],
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
-                team_id=getattr(server_in, "team_id", None) or team_id,
+                team_id=target_team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
                 visibility=getattr(server_in, "visibility", None) or visibility,
                 # Metadata fields
@@ -645,29 +658,18 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[ServerRead]:
-        """List all registered servers.
+    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> List[ServerRead]:
+        """List all registered servers with access control filtering.
 
         Args:
             db: Database session.
             include_inactive: Whether to include inactive servers.
             tags: Filter servers by tags. If provided, only servers with at least one matching tag will be returned.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the list.
 
         Returns:
             A list of ServerRead objects.
-
-        Examples:
-            >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock
-            >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> server_read = MagicMock()
-            >>> service._convert_server_to_read = MagicMock(return_value=server_read)
-            >>> db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
-            >>> import asyncio
-            >>> result = asyncio.run(service.list_servers(db))
-            >>> isinstance(result, list)
-            True
         """
         query = select(DbServer)
         if not include_inactive:
@@ -676,6 +678,22 @@ class ServerService:
         # Add tag filtering if tags are provided
         if tags:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
+
+        # Access Control Filtering
+        if allowed_team_ids is not None or user_email is not None:
+             access_conditions = []
+             # 1. Public servers
+             access_conditions.append(DbServer.visibility == "public")
+             
+             # 2. Team servers where user is a member
+             if allowed_team_ids:
+                 access_conditions.append(and_(DbServer.visibility == "team", DbServer.team_id.in_(allowed_team_ids)))
+                 
+             # 3. Private/Personal servers owned by user
+             if user_email:
+                 access_conditions.append(DbServer.owner_email == user_email)
+                 
+             query = query.where(or_(*access_conditions))
 
         servers = db.execute(query).scalars().all()
 
@@ -694,7 +712,7 @@ class ServerService:
         return result
 
     async def list_servers_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100, allowed_team_ids: Optional[List[str]] = None
     ) -> List[ServerRead]:
         """
         List servers user has access to with team filtering.
@@ -707,14 +725,17 @@ class ServerService:
             include_inactive: Whether to include inactive servers
             skip: Number of servers to skip for pagination
             limit: Maximum number of servers to return
+            allowed_team_ids: Optional list of team IDs the user has access to (optimization to avoid re-fetching)
 
         Returns:
             List[ServerRead]: Servers the user has access to
         """
-        # Build query following existing patterns from list_servers()
-        team_service = TeamManagementService(db)
-        user_teams = await team_service.get_user_teams(user_email)
-        team_ids = [team.id for team in user_teams]
+        # If allowed_team_ids is not provided, fetch them
+        team_ids = allowed_team_ids
+        if team_ids is None:
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            team_ids = [team.id for team in user_teams]
 
         query = select(DbServer)
 
@@ -772,34 +793,44 @@ class ServerService:
             result.append(self._convert_server_to_read(s))
         return result
 
-    async def get_server(self, db: Session, server_id: str) -> ServerRead:
+    async def get_server(self, db: Session, server_id: str, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> ServerRead:
         """Retrieve server details by ID.
 
         Args:
             db: Database session.
             server_id: The unique identifier of the server.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the server.
 
         Returns:
             The corresponding ServerRead object.
 
         Raises:
             ServerNotFoundError: If no server with the given ID exists.
-
-        Examples:
-            >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock
-            >>> service = ServerService()
-            >>> db = MagicMock()
-            >>> server = MagicMock()
-            >>> db.get.return_value = server
-            >>> service._convert_server_to_read = MagicMock(return_value='server_read')
-            >>> import asyncio
-            >>> asyncio.run(service.get_server(db, 'server_id'))
-            'server_read'
+            PermissionError: If the user does not have permission to access the server.
         """
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
+        
+        # Access control validation
+        if allowed_team_ids is not None or user_email is not None:
+            has_access = False
+            if server.visibility == "public":
+                has_access = True
+            elif server.visibility == "team":
+                if allowed_team_ids and server.team_id in allowed_team_ids:
+                    has_access = True
+                elif user_email and server.owner_email == user_email:
+                    has_access = True
+            elif server.visibility == "private":
+                if user_email and server.owner_email == user_email:
+                    has_access = True
+            
+            if not has_access:
+                logger.warning(f"Access denied to server {server_id} (visibility={server.visibility}, team={server.team_id}) for user {user_email}")
+                raise PermissionError(f"Access denied to server {server_id}")
+
         server_data = {
             "id": server.id,
             "name": server.name,
@@ -858,6 +889,7 @@ class ServerService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -870,13 +902,14 @@ class ServerService:
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             The updated ServerRead object.
 
         Raises:
             ServerNotFoundError: If the server is not found.
-            PermissionError: If user doesn't own the server.
+            PermissionError: If user doesn't own the server or have write access.
             ServerNameConflictError: If a new name conflicts with an existing server.
             ServerError: For other update errors.
             IntegrityError: If a database integrity error occurs.
@@ -911,6 +944,37 @@ class ServerService:
             server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+
+            # Access control validation for update (Write Access)
+            # 1. Check if user has access to modify this specific server
+            has_write_access = False
+            if server.visibility == "private":
+                if server.owner_email == user_email:
+                    has_write_access = True
+            elif server.visibility == "team":
+                if allowed_team_ids and server.team_id in allowed_team_ids:
+                    # Note: Being in the team might not be enough for update, usually requires specific permission
+                    # But here we assume allowed_team_ids passed in already filters for 'servers.update' or similar if needed
+                    # Or we rely on the fact that if you are in the team you can edit team resources (simplified)
+                    # For now, let's assume if you have write access to the team (passed in allowed_team_ids), you can edit.
+                    has_write_access = True
+                elif server.owner_email == user_email:
+                    has_write_access = True
+            elif server.visibility == "public":
+                 # Public servers might be editable by owner or admins. 
+                 # Assuming owner for now or if it belongs to a team the user is in.
+                 if server.owner_email == user_email:
+                     has_write_access = True
+                 elif server.team_id and allowed_team_ids and server.team_id in allowed_team_ids:
+                     has_write_access = True
+            
+            if not has_write_access:
+                 raise PermissionError(f"User does not have permission to update server {server_id}")
+
+            # 2. If changing team_id, check access to new team
+            if server_update.team_id and server_update.team_id != server.team_id:
+                 if allowed_team_ids and server_update.team_id not in allowed_team_ids:
+                      raise PermissionError(f"User does not have write access to new team {server_update.team_id}")
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:

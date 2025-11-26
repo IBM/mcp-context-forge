@@ -571,6 +571,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -584,6 +586,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             team_id (Optional[str]): Team ID to assign the gateway to.
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
+            allowed_team_ids: List of team IDs the user has write access to.
+            user_email: Email of the user performing the operation.
 
         Returns:
             Created gateway information
@@ -591,6 +595,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Raises:
             GatewayNameConflictError: If gateway name already exists
             GatewayConnectionError: If there was an error connecting to the gateway
+            ValueError: If required values are missing
+            RuntimeError: If there is an error during processing that is not covered by other exceptions
+            IntegrityError: If there is a database integrity error
+            BaseException: If an unexpected error occurs
+            PermissionError: If the user does not have permission to create the gateway in the specified team.
             ValueError: If required values are missing
             RuntimeError: If there is an error during processing that is not covered by other exceptions
             IntegrityError: If there is a database integrity error
@@ -615,6 +624,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
+            target_team_id = getattr(gateway, "team_id", None) or team_id
+            
+            # Validate write access
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
+
             # # Check for name conflicts (both active and inactive)
             # existing_gateway = db.execute(select(DbGateway).where(DbGateway.name == gateway.name)).scalar_one_or_none()
 
@@ -631,9 +648,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "public")).scalar_one_or_none()
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
-            elif visibility.lower() == "team" and team_id:
+            elif visibility.lower() == "team" and target_team_id:
                 # Check for existing team gateway with the same slug
-                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == team_id)).scalar_one_or_none()
+                existing_gateway = db.execute(select(DbGateway).where(DbGateway.slug == slug_name, DbGateway.visibility == "team", DbGateway.team_id == target_team_id)).scalar_one_or_none()
                 if existing_gateway:
                     raise GatewayNameConflictError(existing_gateway.slug, enabled=existing_gateway.enabled, gateway_id=existing_gateway.id, visibility=existing_gateway.visibility)
 
@@ -654,7 +671,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check for duplicate gateway
             if not gateway.one_time_auth:
                 duplicate_gateway = self._check_gateway_uniqueness(
-                    db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=team_id, owner_email=owner_email, visibility=visibility
+                    db=db, url=normalized_url, auth_value=decoded_auth_value, oauth_config=gateway.oauth_config, team_id=target_team_id, owner_email=owner_email, visibility=visibility
                 )
 
                 if duplicate_gateway:
@@ -721,7 +738,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     federation_source=gateway.name,
                     version=1,
                     # Inherit team assignment from gateway
-                    team_id=team_id,
+                    team_id=target_team_id,
                     owner_email=owner_email,
                     visibility=visibility,
                 )
@@ -749,7 +766,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     import_batch_id=None,
                     federation_source=gateway.name,
                     version=1,
-                    team_id=getattr(r, "team_id", None) or team_id,
+                    team_id=getattr(r, "team_id", None) or target_team_id,
                     owner_email=getattr(r, "owner_email", None) or owner_email or created_by,
                     visibility=getattr(r, "visibility", None) or visibility,
                 )
@@ -771,7 +788,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     federation_source=gateway.name,
                     version=1,
                     # Inherit team assignment from gateway
-                    team_id=team_id,
+                    team_id=target_team_id,
                     owner_email=owner_email,
                     visibility=visibility,
                 )
@@ -802,7 +819,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 created_user_agent=created_user_agent,
                 version=1,
                 # Team scoping fields
-                team_id=team_id,
+                team_id=target_team_id,
                 owner_email=owner_email,
                 visibility=visibility,
                 ca_certificate=gateway.ca_certificate,
@@ -1124,13 +1141,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None) -> List[GatewayRead]:
+    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> List[GatewayRead]:
         """List all registered gateways.
 
         Args:
             db: Database session
             include_inactive: Whether to include inactive gateways
             tags (Optional[List[str]]): Filter resources by tags. If provided, only resources with at least one matching tag will be returned.
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the list.
 
         Returns:
             List of registered gateways
@@ -1169,6 +1188,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if tags:
             query = query.where(json_contains_expr(db, DbGateway.tags, tags, match_any=True))
+
+        # Access Control Filtering
+        if allowed_team_ids is not None or user_email is not None:
+             access_conditions = []
+             # 1. Public gateways
+             access_conditions.append(DbGateway.visibility == "public")
+             
+             # 2. Team gateways where user is a member
+             if allowed_team_ids:
+                 access_conditions.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(allowed_team_ids)))
+                 
+             # 3. Private/Personal gateways owned by user
+             if user_email:
+                 access_conditions.append(DbGateway.owner_email == user_email)
+                 
+             query = query.where(or_(*access_conditions))
 
         gateways = db.execute(query).scalars().all()
 
@@ -1281,6 +1316,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> GatewayRead:
         """Update a gateway.
 
@@ -1294,6 +1330,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
             user_email: Email of user performing update (for ownership check)
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             Updated gateway information
@@ -1311,6 +1348,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            # Validate write access
+            if gateway.visibility == "team":
+                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+            elif gateway.visibility == "private":
+                 if user_email and gateway.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
@@ -1711,13 +1757,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
+    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> GatewayRead:
         """Get a gateway by its ID.
 
         Args:
             db: Database session
             gateway_id: Gateway ID
             include_inactive: Whether to include inactive gateways
+            allowed_team_ids: List of team IDs the user has access to.
+            user_email: Email of the user requesting the gateway.
 
         Returns:
             GatewayRead object
@@ -1770,6 +1818,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
         if gateway.enabled or include_inactive:
+            # Access control validation
+            if allowed_team_ids is not None or user_email is not None:
+                has_access = False
+                if gateway.visibility == "public":
+                    has_access = True
+                elif gateway.visibility == "team":
+                    if allowed_team_ids and gateway.team_id in allowed_team_ids:
+                        has_access = True
+                    elif user_email and gateway.owner_email == user_email:
+                        has_access = True
+                elif gateway.visibility == "private":
+                    if user_email and gateway.owner_email == user_email:
+                        has_access = True
+                
+                if not has_access:
+                    logger.warning(f"Access denied to gateway {gateway_id} (visibility={gateway.visibility}, team={gateway.team_id}) for user {user_email}")
+                    raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
 
             # Structured logging: Log gateway view
@@ -1793,7 +1859,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> GatewayRead:
         """
         Toggle the activation status of a gateway.
 
@@ -1804,6 +1870,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             The updated GatewayRead object
@@ -1817,6 +1884,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            # Validate write access
+            if gateway.visibility == "team":
+                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+            elif gateway.visibility == "private":
+                 if user_email and gateway.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
@@ -2020,7 +2096,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
         """
         Delete a gateway by its ID.
 
@@ -2028,6 +2104,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             db: Database session
             gateway_id: Gateway ID
             user_email: Email of user performing deletion (for ownership check)
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Raises:
             GatewayNotFoundError: If the gateway is not found
@@ -2055,6 +2132,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             gateway = db.get(DbGateway, gateway_id)
             if not gateway:
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+            # Validate write access
+            if gateway.visibility == "team":
+                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+            elif gateway.visibility == "private":
+                 if user_email and gateway.owner_email != user_email:
+                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}

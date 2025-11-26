@@ -16,7 +16,7 @@ barriers while preserving the ability to test RBAC functionality when needed.
 """
 
 # Standard
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
@@ -120,6 +120,16 @@ class MockPermissionService:
         if self.always_grant:
             return True
         return self.custom_permissions.get(permission, False)
+
+    async def get_user_scopes(self, user_email: str, roles: Optional[List] = None) -> List[Dict]:
+        """Mock get_user_scopes."""
+        if self.always_grant:
+            return [{
+                "scope": "global",
+                "scope_id": "*",
+                "permissions": ["*"]
+            }]
+        return []
 
 
 
@@ -331,6 +341,13 @@ def patch_rbac_decorators():
     # Replace with mock versions
     rbac_module.require_permission = mock_require_permission_decorator
 
+    # Also patch in main.py if it has been imported
+    import sys
+    if "mcpgateway.main" in sys.modules:
+        import mcpgateway.main as main_module
+        originals["main_require_permission"] = getattr(main_module, "require_permission", None)
+        main_module.require_permission = mock_require_permission_decorator
+
     return originals
 
 
@@ -344,6 +361,13 @@ def restore_rbac_decorators(originals: Dict):
     import mcpgateway.middleware.rbac as rbac_module
 
     rbac_module.require_permission = originals["require_permission"]
+
+    if "main_require_permission" in originals:
+        import sys
+        if "mcpgateway.main" in sys.modules:
+            import mcpgateway.main as main_module
+            if originals["main_require_permission"] is not None:
+                main_module.require_permission = originals["main_require_permission"]
 
 
 def teardown_rbac_mocks_for_app(app):
