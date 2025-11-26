@@ -906,9 +906,10 @@ async def admin_list_servers(
         >>> asyncio.run(test_admin_list_servers_exception())
         True
     """
-    LOGGER.debug(f"User {get_user_email(user)} requested server list")
+    LOGGER.info(f"User {get_user_email(user)} requested server list")
     user_email = get_user_email(user)
     servers = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive)
+    LOGGER.info(f"servers:{servers}")
     return [server.model_dump(by_alias=True) for server in servers]
 
 
