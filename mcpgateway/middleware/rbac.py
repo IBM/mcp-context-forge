@@ -349,7 +349,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                 for scope in granted_scopes:
                     if scope["scope"] == "global":
                         continue
-                    if scope["scope"] == "team" and scope["scope_id"] == team_id:
+                    if scope["scope"] == "team" and scope["scope_id"] == team_id and permission in scope["permissions"] or Permissions.ALL_PERMISSIONS in scope["permissions"]:
                         has_team_access = True
                         break
                 
