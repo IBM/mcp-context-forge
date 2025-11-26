@@ -1,0 +1,99 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     - setuptools ≥ 77 gives SPDX licence support (PEP 639)
+#     - wheel is needed by most build front-ends
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "cedarpolicyplugin"
+version = "0.1.0"
+description = "A plugin that does policy decision and enforcement using cedar"
+keywords = ["MCP","API","gateway","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+maintainers = [
+    {name = "Shriti Priya", email = "shritip@ibm.com"}
+]
+
+authors = [
+    {name = "Shriti Priya", email = "shritip@ibm.com"}
+]
+
+dependencies = [
+    "mcp>=1.16.0",
+    "mcp-contextforge-gateway",
+    "cedarpy>=4.1.0"
+]
+
+# URLs
+[project.urls]
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+
+[tool.uv.sources]
+mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git", rev = "main" }
+
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+dev = [
+    "black>=25.1.0",
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "pytest-cov>=6.2.1",
+    "pytest-dotenv>=0.5.2",
+    "pytest-env>=1.1.5",
+    "pytest-examples>=0.0.18",
+    "pytest-md-report>=0.7.0",
+    "pytest-rerunfailures>=15.1",
+    "pytest-trio>=0.8.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.12.9",
+    "unimport>=1.2.1",
+    "uv>=0.8.11",
+]
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "cedarpolicyplugin"
+[tool.setuptools.packages.find]
+include = ["cedarpolicyplugin*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+[tool.setuptools.package-data]
+cedarpolicyplugin = [
+  "resources/plugins/config.yaml",
+]
