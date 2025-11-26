@@ -472,6 +472,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             log_aggregator = get_log_aggregator()
 
             async def run_log_backfill() -> None:
+                """Backfill log aggregation metrics for configured hours."""
                 hours = getattr(settings, "metrics_aggregation_backfill_hours", 0)
                 if hours <= 0:
                     return
@@ -482,6 +483,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                     logger.warning("Log aggregation backfill failed: %s", backfill_error)
 
             async def run_log_aggregation_loop() -> None:
+                """Run continuous log aggregation at configured intervals."""
                 interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
                 logger.info(
                     "Starting log aggregation loop (window=%s min)",
