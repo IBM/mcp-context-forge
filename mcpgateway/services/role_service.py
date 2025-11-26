@@ -801,6 +801,24 @@ class RoleService:
         result = self.db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_all_active_user_roles(self, user_email: str) -> List[UserRole]:
+        """Get all active roles for a user across all scopes.
+
+        Args:
+            user_email: Email of the user
+
+        Returns:
+            List[UserRole]: List of all active roles for the user
+        """
+        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+
+        # Filter out expired roles
+        now = utc_now()
+        query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
+
+        result = self.db.execute(query)
+        return result.scalars().all()
+
     async def revoke_scope_role_assignments(self, scope: str, scope_id: Optional[str] = None, revoked_by: Optional[str] = None) -> int:
         """Revoke all user role assignments within a specific scope.
 
