@@ -225,6 +225,28 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
+        # Check if password change is required OR if user is using default password
+        needs_password_change = user.password_change_required
+
+        # Also check if user is using the default password
+        if not needs_password_change:
+            # First-Party
+            from mcpgateway.services.argon2_service import Argon2PasswordService
+
+            password_service = Argon2PasswordService()
+            is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+            if is_using_default_password:
+                needs_password_change = True
+                # Set the flag in database for future reference
+                user.password_change_required = True
+                db.commit()
+
+        if needs_password_change:
+            # For API login, return a specific error indicating password change is required
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Password change required. Please change your password before continuing.", headers={"X-Password-Change-Required": "true"}
+            )
+
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
@@ -502,6 +524,11 @@ async def create_user(user_request: EmailRegistrationRequest, current_user: Emai
             auth_provider="local",
         )
 
+        # If the user was created with the default password, force password change
+        if user_request.password == settings.default_user_password.get_secret_value():  # nosec B105
+            user.password_change_required = True
+            db.commit()
+
         logger.info(f"Admin {current_user.email} created user: {user.email}")
 
         return EmailUserResponse.from_email_user(user)
@@ -578,13 +605,19 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
         # Update password if provided
         if user_request.password:
-            await auth_service.change_password(
-                email=user_email,
-                old_password=None,  # Admin can change without old password
-                new_password=user_request.password,
-                ip_address="admin_update",
-                user_agent="admin_panel",
-            )
+            # For admin updates, we need to directly update the password hash
+            # since we don't have the old password to verify
+            # First-Party
+            from mcpgateway.services.argon2_service import Argon2PasswordService
+
+            password_service = Argon2PasswordService()
+
+            # Validate the new password meets requirements
+            auth_service.validate_password(user_request.password)
+
+            # Update password hash directly
+            user.password_hash = password_service.hash_password(user_request.password)
+            user.password_change_required = False  # Clear password change requirement
 
         db.commit()
         db.refresh(user)
