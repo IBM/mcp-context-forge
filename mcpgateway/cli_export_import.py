@@ -18,12 +18,12 @@ It implements the export/import CLI functionality according to the specification
 import argparse
 import asyncio
 import base64
+from datetime import datetime
 import json
 import logging
 import os
-import sys
-from datetime import datetime
 from pathlib import Path
+import sys
 from typing import Any, Dict, Optional
 
 # Third-Party
@@ -318,8 +318,7 @@ def main_with_subcommands() -> None:
     else:
         # Fall back to the original uvicorn-based CLI
         # First-Party
-        from mcpgateway.cli import \
-            main  # pylint: disable=import-outside-toplevel,cyclic-import
+        from mcpgateway.cli import main  # pylint: disable=import-outside-toplevel,cyclic-import
 
         main()
 

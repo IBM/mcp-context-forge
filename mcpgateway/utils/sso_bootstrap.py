@@ -220,8 +220,7 @@ def get_predefined_sso_providers() -> List[Dict]:
     if settings.sso_keycloak_enabled and settings.sso_keycloak_base_url and settings.sso_keycloak_client_id:
         try:
             # First-Party
-            from mcpgateway.utils.keycloak_discovery import \
-                discover_keycloak_endpoints_sync
+            from mcpgateway.utils.keycloak_discovery import discover_keycloak_endpoints_sync
 
             endpoints = discover_keycloak_endpoints_sync(settings.sso_keycloak_base_url, settings.sso_keycloak_realm)
 

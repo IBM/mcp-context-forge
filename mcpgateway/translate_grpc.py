@@ -17,12 +17,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 try:
     # Third-Party
-    import grpc
     from google.protobuf import descriptor_pool, json_format, message_factory
-    from google.protobuf.descriptor_pb2 import \
-        FileDescriptorProto  # pylint: disable=no-name-in-module
-    from grpc_reflection.v1alpha import (  # pylint: disable=no-member
-        reflection_pb2, reflection_pb2_grpc)
+    from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+    import grpc
+    from grpc_reflection.v1alpha import reflection_pb2, reflection_pb2_grpc  # pylint: disable=no-member
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -264,6 +262,7 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # Create message classes
+        # pylint: disable=no-member
         request_class = self._factory.GetPrototype(input_desc)
         response_class = self._factory.GetPrototype(output_desc)
 
@@ -280,6 +279,7 @@ class GrpcEndpoint:
         )
 
         # Convert protobuf response to JSON
+        # pylint: disable=unexpected-keyword-arg
         response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
 
         logger.debug(f"Successfully invoked {service}.{method}")
@@ -337,6 +337,7 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # Create message classes
+        # pylint: disable=no-member
         request_class = self._factory.GetPrototype(input_desc)
         response_class = self._factory.GetPrototype(output_desc)
 
@@ -352,6 +353,7 @@ class GrpcEndpoint:
         # Yield responses as they arrive
         try:
             for response_msg in stream_call:
+                # pylint: disable=unexpected-keyword-arg
                 response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
                 yield response_dict
         except grpc.RpcError as e:

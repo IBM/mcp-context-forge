@@ -29,22 +29,16 @@ Examples:
 
 # Standard
 import asyncio
-import logging
 from copy import deepcopy
+import logging
 from typing import Any, Optional, Union
 
 # First-Party
 from mcpgateway.plugins.framework.base import HookRef, Plugin
-from mcpgateway.plugins.framework.errors import (PluginError,
-                                                 PluginViolationError,
-                                                 convert_exception_to_error)
+from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.models import (Config, GlobalContext,
-                                                 PluginContext,
-                                                 PluginContextTable,
-                                                 PluginErrorModel, PluginMode,
-                                                 PluginPayload, PluginResult)
+from mcpgateway.plugins.framework.models import Config, GlobalContext, PluginContext, PluginContextTable, PluginErrorModel, PluginMode, PluginPayload, PluginResult
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.utils import payload_matches
 
@@ -316,8 +310,7 @@ class PluginExecutor:
             # First-Party
             # pylint: disable=import-outside-toplevel
             from mcpgateway.db import SessionLocal
-            from mcpgateway.services.observability_service import (
-                ObservabilityService, current_trace_id)
+            from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 
             # pylint: enable=import-outside-toplevel
 

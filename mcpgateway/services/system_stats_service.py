@@ -35,15 +35,35 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import (A2AAgent, A2AAgentMetric, EmailApiToken,
-                           EmailAuthEvent, EmailTeam, EmailTeamInvitation,
-                           EmailTeamJoinRequest, EmailTeamMember, EmailUser,
-                           Gateway, OAuthToken, PendingUserApproval,
-                           PermissionAuditLog, Prompt, PromptMetric, Resource,
-                           ResourceMetric, ResourceSubscription, Server,
-                           ServerMetric, SessionMessageRecord, SessionRecord,
-                           SSOProvider, TokenRevocation, TokenUsageLog, Tool,
-                           ToolMetric)
+from mcpgateway.db import (
+    A2AAgent,
+    A2AAgentMetric,
+    EmailApiToken,
+    EmailAuthEvent,
+    EmailTeam,
+    EmailTeamInvitation,
+    EmailTeamJoinRequest,
+    EmailTeamMember,
+    EmailUser,
+    Gateway,
+    OAuthToken,
+    PendingUserApproval,
+    PermissionAuditLog,
+    Prompt,
+    PromptMetric,
+    Resource,
+    ResourceMetric,
+    ResourceSubscription,
+    Server,
+    ServerMetric,
+    SessionMessageRecord,
+    SessionRecord,
+    SSOProvider,
+    TokenRevocation,
+    TokenUsageLog,
+    Tool,
+    ToolMetric,
+)
 
 logger = logging.getLogger(__name__)
 

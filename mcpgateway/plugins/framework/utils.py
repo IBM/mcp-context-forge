@@ -9,9 +9,9 @@ This module implements the utility functions associated with
 plugins.
 """
 
-import importlib
 # Standard
 from functools import cache
+import importlib
 from types import ModuleType
 from typing import Any, Optional
 

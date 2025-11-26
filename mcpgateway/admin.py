@@ -17,37 +17,37 @@ various services to perform the actual business logic operations on the
 underlying data.
 """
 
+# Standard
+from collections import defaultdict
 import csv
+from datetime import datetime, timedelta, timezone
+from functools import wraps
 import html
 import io
 import json
 import logging
 import math
 import os
+from pathlib import Path
 import tempfile
 import time
+from typing import Any
+from typing import cast as typing_cast
+from typing import Dict, List, Optional, Union
 import urllib.parse
 import uuid
-# Standard
-from collections import defaultdict
-from datetime import datetime, timedelta, timezone
-from functools import wraps
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from typing import cast as typing_cast
 
-import httpx
 # Third-Party
-from fastapi import (APIRouter, Body, Depends, HTTPException, Query, Request,
-                     Response)
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
-                               StreamingResponse)
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials
+import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
-from sqlalchemy import String, and_, case, cast, desc, func, or_, select
+from sqlalchemy import and_, case, cast, desc, func, or_, select, String
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
@@ -56,67 +56,72 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.auth import get_current_user
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import (GlobalConfig, ObservabilitySavedQuery,
-                           ObservabilitySpan, ObservabilityTrace)
+from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import get_db, utc_now
-from mcpgateway.middleware.rbac import (get_current_user_with_permissions,
-                                        require_permission)
-from mcpgateway.schemas import (A2AAgentCreate, A2AAgentRead, A2AAgentUpdate,
-                                CatalogBulkRegisterRequest,
-                                CatalogBulkRegisterResponse,
-                                CatalogListRequest, CatalogListResponse,
-                                CatalogServerRegisterRequest,
-                                CatalogServerRegisterResponse,
-                                CatalogServerStatusResponse, GatewayCreate,
-                                GatewayRead, GatewayTestRequest,
-                                GatewayTestResponse, GatewayUpdate,
-                                GlobalConfigRead, GlobalConfigUpdate,
-                                PaginationMeta, PluginDetail,
-                                PluginListResponse, PluginStatsResponse,
-                                PromptCreate, PromptMetrics, PromptRead,
-                                PromptUpdate, ResourceCreate, ResourceMetrics,
-                                ResourceRead, ResourceUpdate, ServerCreate,
-                                ServerMetrics, ServerRead, ServerUpdate,
-                                ToolCreate, ToolMetrics, ToolRead, ToolUpdate)
-from mcpgateway.services.a2a_service import (A2AAgentError,
-                                             A2AAgentNameConflictError,
-                                             A2AAgentNotFoundError,
-                                             A2AAgentService)
+from mcpgateway.db import utc_now
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.routers.email_auth import create_access_token
+from mcpgateway.schemas import (
+    A2AAgentCreate,
+    A2AAgentRead,
+    A2AAgentUpdate,
+    CatalogBulkRegisterRequest,
+    CatalogBulkRegisterResponse,
+    CatalogListRequest,
+    CatalogListResponse,
+    CatalogServerRegisterRequest,
+    CatalogServerRegisterResponse,
+    CatalogServerStatusResponse,
+    GatewayCreate,
+    GatewayRead,
+    GatewayTestRequest,
+    GatewayTestResponse,
+    GatewayUpdate,
+    GlobalConfigRead,
+    GlobalConfigUpdate,
+    PaginationMeta,
+    PluginDetail,
+    PluginListResponse,
+    PluginStatsResponse,
+    PromptCreate,
+    PromptMetrics,
+    PromptRead,
+    PromptUpdate,
+    ResourceCreate,
+    ResourceMetrics,
+    ResourceRead,
+    ResourceUpdate,
+    ServerCreate,
+    ServerMetrics,
+    ServerRead,
+    ServerUpdate,
+    ToolCreate,
+    ToolMetrics,
+    ToolRead,
+    ToolUpdate,
+)
+from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import (GatewayConnectionError,
-                                                 GatewayDuplicateConflictError,
-                                                 GatewayNameConflictError,
-                                                 GatewayNotFoundError,
-                                                 GatewayService)
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ConflictStrategy
-from mcpgateway.services.import_service import \
-    ImportError as ImportServiceError
-from mcpgateway.services.import_service import (ImportService,
-                                                ImportValidationError)
+from mcpgateway.services.import_service import ImportError as ImportServiceError
+from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.plugin_service import get_plugin_service
-from mcpgateway.services.prompt_service import (PromptNameConflictError,
-                                                PromptNotFoundError,
-                                                PromptService)
-from mcpgateway.services.resource_service import (ResourceNotFoundError,
-                                                  ResourceService,
-                                                  ResourceURIConflictError)
+from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import (ServerError,
-                                                ServerNameConflictError,
-                                                ServerNotFoundError,
-                                                ServerService)
+from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.services.tool_service import (ToolError, ToolNameConflictError,
-                                              ToolNotFoundError, ToolService)
+from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
@@ -130,12 +135,8 @@ from mcpgateway.utils.validate_signature import sign_data
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
     # First-Party
-    from mcpgateway.schemas import (GrpcServiceCreate, GrpcServiceRead,
-                                    GrpcServiceUpdate)
-    from mcpgateway.services.grpc_service import (GrpcService,
-                                                  GrpcServiceError,
-                                                  GrpcServiceNameConflictError,
-                                                  GrpcServiceNotFoundError)
+    from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+    from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNameConflictError, GrpcServiceNotFoundError
 
     GRPC_AVAILABLE = True
 except ImportError:
@@ -2792,10 +2793,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
 
         # Authenticate using the email auth service
-        # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         auth_service = EmailAuthService(db)
 
         try:
@@ -2809,10 +2806,8 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 root_path = request.scope.get("root_path", "")
                 return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
 
-            # Create JWT token with proper audience and issuer claims
-            # First-Party
-            from mcpgateway.routers.email_auth import \
-                create_access_token  # pylint: disable=import-outside-toplevel
+            # Check if password change is required OR if user is using default password
+            needs_password_change = user.password_change_required
 
             # Also check if user is using the default password
             if not needs_password_change:
@@ -2848,10 +2843,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            # First-Party
-            from mcpgateway.utils.security_cookies import \
-                set_auth_cookie  # pylint: disable=import-outside-toplevel
-
             set_auth_cookie(response, token, remember_me=False)
 
             LOGGER.info(f"Admin user {email} logged in successfully")
@@ -3289,10 +3280,6 @@ async def admin_list_teams(
         return HTMLResponse(content='<div class="text-center py-8"><p class="text-gray-500">Email authentication is disabled. Teams feature requires email auth.</p></div>', status_code=200)
 
     try:
-        # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel
-
         auth_service = EmailAuthService(db)
         team_service = TeamManagementService(db)
 
@@ -3399,8 +3386,7 @@ async def admin_create_team(
 
         # Create team
         # First-Party
-        from mcpgateway.schemas import \
-            TeamCreateRequest  # pylint: disable=import-outside-toplevel
+        from mcpgateway.schemas import TeamCreateRequest  # pylint: disable=import-outside-toplevel
 
         team_service = TeamManagementService(db)
 
@@ -3492,9 +3478,6 @@ async def admin_view_team_members(
         LOGGER.info(f"User {user_email} viewing members for team {team_id}")
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
 
         # Get team details
@@ -3944,9 +3927,6 @@ async def admin_add_team_member(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
-
         team_service = TeamManagementService(db)
         auth_service = EmailAuthService(db)
 
@@ -4621,8 +4601,6 @@ async def admin_list_users(
         root_path = request.scope.get("root_path", "")
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4758,8 +4736,6 @@ async def admin_create_user(
         form = await request.form()
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4836,8 +4812,6 @@ async def admin_get_user_edit(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -4926,8 +4900,6 @@ async def admin_update_user(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -5006,8 +4978,6 @@ async def admin_activate_user(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -5075,8 +5045,6 @@ async def admin_deactivate_user(
         root_path = _request.scope.get("root_path", "") if _request else ""
 
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -5150,8 +5118,6 @@ async def admin_delete_user(
 
     try:
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel  # pylint: disable=import-outside-toplevel
 
         auth_service = EmailAuthService(db)
 
@@ -9583,8 +9549,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import \
-                        TokenStorageService  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                     token_storage = TokenStorageService(db)
 
@@ -12472,8 +12437,7 @@ async def get_system_stats(
         LOGGER.info(f"System metrics requested by user: {user}")
 
         # First-Party
-        from mcpgateway.services.system_stats_service import \
-            SystemStatsService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.system_stats_service import SystemStatsService  # pylint: disable=import-outside-toplevel
 
         # Get metrics
         service = SystemStatsService()
@@ -12538,8 +12502,7 @@ async def admin_generate_support_bundle(
         LOGGER.info(f"Support bundle generation requested by user: {user}")
 
         # First-Party
-        from mcpgateway.services.support_bundle_service import (  # pylint: disable=import-outside-toplevel
-            SupportBundleConfig, SupportBundleService)
+        from mcpgateway.services.support_bundle_service import SupportBundleConfig, SupportBundleService  # pylint: disable=import-outside-toplevel
 
         # Create configuration
         config = SupportBundleConfig(

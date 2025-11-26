@@ -111,7 +111,7 @@ from typing import Any, Dict, Final, Optional
 try:
     # Third-Party
     from sqlalchemy import create_engine, text
-    from sqlalchemy.engine import URL, Engine
+    from sqlalchemy.engine import Engine, URL
     from sqlalchemy.engine.url import make_url
     from sqlalchemy.exc import OperationalError
 except ImportError:  # pragma: no cover - handled at runtime for the CLI

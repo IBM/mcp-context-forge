@@ -11,17 +11,15 @@ It supports RFC 5424 severity levels, log level management, and log event subscr
 
 # Standard
 import asyncio
-import logging
-import os
 from asyncio.events import AbstractEventLoop
 from datetime import datetime, timezone
+import logging
 from logging.handlers import RotatingFileHandler
-from typing import (Any, AsyncGenerator, Dict, List, NotRequired, Optional,
-                    TextIO, TypedDict)
+import os
+from typing import Any, AsyncGenerator, Dict, List, NotRequired, Optional, TextIO, TypedDict
 
 # Third-Party
-from pythonjsonlogger import \
-    json as jsonlogger  # You may need to install python-json-logger package
+from pythonjsonlogger import json as jsonlogger  # You may need to install python-json-logger package
 
 # First-Party
 from mcpgateway.common.models import LogLevel
@@ -32,9 +30,7 @@ AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
     # Optional import; only used for filtering a known benign upstream error
     # Third-Party
-    from anyio import \
-        ClosedResourceError as \
-        AnyioClosedResourceError  # pylint: disable=invalid-name
+    from anyio import ClosedResourceError as AnyioClosedResourceError  # pylint: disable=invalid-name
 except Exception:  # pragma: no cover - environment without anyio
     AnyioClosedResourceError = None  # pylint: disable=invalid-name
 

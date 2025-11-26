@@ -8,15 +8,14 @@ Plugin instance registry.
 Module that stores plugin instances and manages hook points.
 """
 
-import logging
 # Standard
 from collections import defaultdict
+import logging
 from typing import Optional
 
 # First-Party
 from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
-from mcpgateway.plugins.framework.external.mcp.client import (ExternalHookRef,
-                                                              ExternalPlugin)
+from mcpgateway.plugins.framework.external.mcp.client import ExternalHookRef, ExternalPlugin
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
 logger = logging.getLogger(__name__)

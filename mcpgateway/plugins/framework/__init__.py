@@ -19,46 +19,30 @@ from typing import Optional
 
 # First-Party
 from mcpgateway.plugins.framework.base import Plugin
-from mcpgateway.plugins.framework.errors import (PluginError,
-                                                 PluginViolationError)
-from mcpgateway.plugins.framework.external.mcp.server import \
-    ExternalPluginServer
-from mcpgateway.plugins.framework.hooks.agents import (AgentHookType,
-                                                       AgentPostInvokePayload,
-                                                       AgentPostInvokeResult,
-                                                       AgentPreInvokePayload,
-                                                       AgentPreInvokeResult)
+from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
+from mcpgateway.plugins.framework.external.mcp.server import ExternalPluginServer
+from mcpgateway.plugins.framework.hooks.agents import AgentHookType, AgentPostInvokePayload, AgentPostInvokeResult, AgentPreInvokePayload, AgentPreInvokeResult
 from mcpgateway.plugins.framework.hooks.http import (
-    HttpAuthCheckPermissionPayload, HttpAuthCheckPermissionResult,
-    HttpAuthCheckPermissionResultPayload, HttpAuthResolveUserPayload,
-    HttpAuthResolveUserResult, HttpHeaderPayload, HttpHookType,
-    HttpPostRequestPayload, HttpPostRequestResult, HttpPreRequestPayload,
-    HttpPreRequestResult)
-from mcpgateway.plugins.framework.hooks.prompts import (PromptHookType,
-                                                        PromptPosthookPayload,
-                                                        PromptPosthookResult,
-                                                        PromptPrehookPayload,
-                                                        PromptPrehookResult)
-from mcpgateway.plugins.framework.hooks.registry import (HookRegistry,
-                                                         get_hook_registry)
-from mcpgateway.plugins.framework.hooks.resources import (
-    ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult,
-    ResourcePreFetchPayload, ResourcePreFetchResult)
-from mcpgateway.plugins.framework.hooks.tools import (ToolHookType,
-                                                      ToolPostInvokePayload,
-                                                      ToolPostInvokeResult,
-                                                      ToolPreInvokePayload,
-                                                      ToolPreInvokeResult)
+    HttpAuthCheckPermissionPayload,
+    HttpAuthCheckPermissionResult,
+    HttpAuthCheckPermissionResultPayload,
+    HttpAuthResolveUserPayload,
+    HttpAuthResolveUserResult,
+    HttpHeaderPayload,
+    HttpHookType,
+    HttpPostRequestPayload,
+    HttpPostRequestResult,
+    HttpPreRequestPayload,
+    HttpPreRequestResult,
+)
+from mcpgateway.plugins.framework.hooks.prompts import PromptHookType, PromptPosthookPayload, PromptPosthookResult, PromptPrehookPayload, PromptPrehookResult
+from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_registry
+from mcpgateway.plugins.framework.hooks.resources import ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import (GlobalContext,
-                                                 MCPServerConfig,
-                                                 PluginCondition, PluginConfig,
-                                                 PluginContext,
-                                                 PluginErrorModel, PluginMode,
-                                                 PluginPayload, PluginResult,
-                                                 PluginViolation)
+from mcpgateway.plugins.framework.models import GlobalContext, MCPServerConfig, PluginCondition, PluginConfig, PluginContext, PluginErrorModel, PluginMode, PluginPayload, PluginResult, PluginViolation
 
 # Plugin manager singleton (lazy initialization)
 _plugin_manager: Optional[PluginManager] = None
@@ -83,8 +67,7 @@ def get_plugin_manager() -> Optional[PluginManager]:
     global _plugin_manager  # pylint: disable=global-statement
     if _plugin_manager is None:
         # Import here to avoid circular dependency
-        from mcpgateway.config import \
-            settings  # pylint: disable=import-outside-toplevel
+        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
         if settings.plugins_enabled:
             config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))

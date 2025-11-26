@@ -22,9 +22,9 @@ References:
 # Standard
 from typing import Any
 
-import orjson
 # Third-Party
 from fastapi.responses import JSONResponse
+import orjson
 
 
 class ORJSONResponse(JSONResponse):

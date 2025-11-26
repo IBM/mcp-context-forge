@@ -36,8 +36,8 @@ Examples:
 
 # Standard
 import asyncio
-import time
 from dataclasses import dataclass
+import time
 from typing import Any, Dict, Optional
 
 # First-Party

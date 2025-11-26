@@ -8,17 +8,14 @@ Base plugin implementation.
 This module implements the base plugin object.
 """
 
-import uuid
 # Standard
 from abc import ABC
 from typing import Awaitable, Callable, Optional, Union
+import uuid
 
 # First-Party
 from mcpgateway.plugins.framework.errors import PluginError
-from mcpgateway.plugins.framework.models import (PluginCondition, PluginConfig,
-                                                 PluginContext,
-                                                 PluginErrorModel, PluginMode,
-                                                 PluginPayload, PluginResult)
+from mcpgateway.plugins.framework.models import PluginCondition, PluginConfig, PluginContext, PluginErrorModel, PluginMode, PluginPayload, PluginResult
 
 # pylint: disable=import-outside-toplevel
 
@@ -178,8 +175,7 @@ class Plugin(ABC):
         # Fall back to global registry
         if not hook_payload_type:
             # First-Party
-            from mcpgateway.plugins.framework.hooks.registry import \
-                get_hook_registry
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
             registry = get_hook_registry()
             hook_payload_type = registry.get_payload_type(hook)
@@ -214,8 +210,7 @@ class Plugin(ABC):
         # Fall back to global registry
         if not hook_result_type:
             # First-Party
-            from mcpgateway.plugins.framework.hooks.registry import \
-                get_hook_registry
+            from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
             registry = get_hook_registry()
             hook_result_type = registry.get_result_type(hook)
@@ -491,8 +486,7 @@ class HookRef:
         from typing import get_type_hints
 
         # First-Party
-        from mcpgateway.plugins.framework.hooks.registry import \
-            get_hook_registry
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
         # Get expected types from registry
         registry = get_hook_registry()

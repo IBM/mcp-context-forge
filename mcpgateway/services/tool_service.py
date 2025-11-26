@@ -17,15 +17,15 @@ It handles:
 # Standard
 import asyncio
 import base64
+from datetime import datetime, timezone
 import json
 import os
 import re
 import ssl
 import time
-import uuid
-from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
+import uuid
 
 # Third-Party
 import httpx
@@ -34,7 +34,7 @@ import jsonschema
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from sqlalchemy import Float, and_, case, delete, desc, func, not_, or_, select
+from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -47,16 +47,12 @@ from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, server_tool_association
+from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import (GlobalContext, HttpHeaderPayload,
-                                          PluginError, PluginManager,
-                                          PluginViolationError, ToolHookType,
-                                          ToolPostInvokePayload,
-                                          ToolPreInvokePayload)
-from mcpgateway.plugins.framework.constants import (GATEWAY_METADATA,
-                                                    TOOL_METADATA)
+from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -986,8 +982,7 @@ class ToolService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
@@ -1049,8 +1044,7 @@ class ToolService:
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):
@@ -1267,8 +1261,7 @@ class ToolService:
                             # For Authorization Code flow, try to get stored tokens
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import \
-                                    TokenStorageService  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
                                 token_storage = TokenStorageService(db)
 
@@ -1527,8 +1520,7 @@ class ToolService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, tool):

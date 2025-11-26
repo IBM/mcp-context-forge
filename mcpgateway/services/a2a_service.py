@@ -24,8 +24,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, EmailTeam
-from mcpgateway.schemas import (A2AAgentCreate, A2AAgentMetrics, A2AAgentRead,
-                                A2AAgentUpdate)
+from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
@@ -597,8 +596,7 @@ class A2AAgentService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, agent):
@@ -702,8 +700,7 @@ class A2AAgentService:
 
         if user_email:
             # First-Party
-            from mcpgateway.services.permission_service import \
-                PermissionService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
             permission_service = PermissionService(db)
             if not await permission_service.check_resource_ownership(user_email, agent):
@@ -743,8 +740,7 @@ class A2AAgentService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, agent):

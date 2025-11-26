@@ -32,17 +32,17 @@ from __future__ import annotations
 # Standard
 import argparse
 import asyncio
+from contextlib import suppress
+from enum import Enum
 import json
 import logging
 import os
 import shlex
 import signal
 import sys
-import uuid
-from contextlib import suppress
-from enum import Enum
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, cast, Dict, List, Optional
 from urllib.parse import urljoin, urlparse
+import uuid
 
 try:
     # Third-Party

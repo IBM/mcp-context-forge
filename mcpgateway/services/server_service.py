@@ -18,7 +18,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
 import httpx
-from sqlalchemy import Float, and_, case, delete, desc, func, or_, select
+from sqlalchemy import and_, case, delete, desc, Float, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -32,8 +32,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.schemas import (ServerCreate, ServerMetrics, ServerRead,
-                                ServerUpdate, TopPerformer)
+from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -726,8 +725,7 @@ class ServerService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
@@ -923,8 +921,7 @@ class ServerService:
 
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):
@@ -996,8 +993,7 @@ class ServerService:
             # Check ownership if user_email provided
             if user_email:
                 # First-Party
-                from mcpgateway.services.permission_service import \
-                    PermissionService  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
 
                 permission_service = PermissionService(db)
                 if not await permission_service.check_resource_ownership(user_email, server):

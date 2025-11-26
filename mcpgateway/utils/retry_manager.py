@@ -149,9 +149,9 @@ Example Usage:
 
 # Standard
 import asyncio
+from contextlib import asynccontextmanager
 import logging
 import random
-from contextlib import asynccontextmanager
 from typing import Any, AsyncContextManager, Dict, Optional
 
 # Third-Party

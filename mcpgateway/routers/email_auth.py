@@ -18,7 +18,7 @@ Examples:
 """
 
 # Standard
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 # Third-Party
@@ -31,15 +31,8 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.middleware.rbac import require_permission
-from mcpgateway.schemas import (AuthenticationResponse, AuthEventResponse,
-                                ChangePasswordRequest, EmailLoginRequest,
-                                EmailRegistrationRequest, EmailUserResponse,
-                                SuccessResponse, UserListResponse)
-from mcpgateway.services.email_auth_service import (AuthenticationError,
-                                                    EmailAuthService,
-                                                    EmailValidationError,
-                                                    PasswordValidationError,
-                                                    UserExistsError)
+from mcpgateway.schemas import AuthenticationResponse, AuthEventResponse, ChangePasswordRequest, EmailLoginRequest, EmailRegistrationRequest, EmailUserResponse, SuccessResponse, UserListResponse
+from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 

@@ -41,8 +41,7 @@ from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import (A2AAgent, Base, EmailTeam, EmailUser, Gateway,
-                           Prompt, Resource, Server, SessionLocal, Tool)
+from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service first
@@ -64,8 +63,7 @@ async def bootstrap_admin_user() -> None:
     try:
         # Import services here to avoid circular imports
         # First-Party
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
 
         with cast(Any, SessionLocal)() as db:
             auth_service = EmailAuthService(db)
@@ -87,8 +85,7 @@ async def bootstrap_admin_user() -> None:
 
             # Mark admin user as email verified and require password change on first login
             # First-Party
-            from mcpgateway.db import \
-                utc_now  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
             admin_user.password_change_required = True  # Force admin to change default password
@@ -119,12 +116,9 @@ async def bootstrap_default_roles() -> None:
 
     try:
         # First-Party
-        from mcpgateway.db import \
-            get_db  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.email_auth_service import \
-            EmailAuthService  # pylint: disable=import-outside-toplevel
-        from mcpgateway.services.role_service import \
-            RoleService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
         # Get database session
         db_gen = get_db()
