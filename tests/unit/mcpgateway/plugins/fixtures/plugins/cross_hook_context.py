@@ -14,6 +14,8 @@ This plugin demonstrates sharing context across different hook types:
 - PROMPT_PRE_FETCH reads and adds more data
 """
 
+import logging
+
 from mcpgateway.plugins.framework import (
     HttpAuthCheckPermissionPayload,
     HttpAuthCheckPermissionResult,
@@ -28,6 +30,9 @@ from mcpgateway.plugins.framework import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+
+logger = logging.getLogger("cross_hook_context_plugin")
+logger.setLevel(logging.INFO)  # Ensure INFO level logs are captured
 
 
 class CrossHookContextPlugin(Plugin):
@@ -50,6 +55,12 @@ class CrossHookContextPlugin(Plugin):
         Returns:
             Result allowing processing to continue.
         """
+        logger.info(
+            f"🔍 [CrossHookContextPlugin] HTTP_PRE_REQUEST executed - "
+            f"request_id={context.global_context.request_id}, "
+            f"path={payload.path}, method={payload.method}"
+        )
+
         # Store data in plugin-specific state
         context.state["http_timestamp"] = "2025-01-01T00:00:00Z"
         context.state["http_request_path"] = payload.path
@@ -75,6 +86,12 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
+        logger.info(
+            f"🔍 [CrossHookContextPlugin] HTTP_AUTH_CHECK_PERMISSION executed - "
+            f"request_id={context.global_context.request_id}, "
+            f"user_email={payload.user_email}"
+        )
+
         # Verify we can read data stored in HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
             raise ValueError("http_timestamp not found in context! Cross-hook sharing failed.")
@@ -85,6 +102,18 @@ class CrossHookContextPlugin(Plugin):
         # Verify global context is shared
         if "shared_request_id" not in context.global_context.state:
             raise ValueError("shared_request_id not found in global context!")
+
+        # Verify request_id consistency
+        shared_request_id = context.global_context.state["shared_request_id"]
+        if shared_request_id != context.global_context.request_id:
+            raise ValueError(
+                f"Request ID mismatch! shared_request_id={shared_request_id}, "
+                f"global_context.request_id={context.global_context.request_id}"
+            )
+
+        logger.info(
+            f"✅ [CrossHookContextPlugin] Request ID verified: {context.global_context.request_id}"
+        )
 
         # Add permission-specific data
         context.state["permission_checked"] = True
@@ -107,6 +136,12 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
+        logger.info(
+            f"🔍 [CrossHookContextPlugin] TOOL_PRE_INVOKE executed - "
+            f"request_id={context.global_context.request_id}, "
+            f"tool_name={payload.name}"
+        )
+
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
             raise ValueError("http_timestamp not found in tool hook! Cross-hook sharing failed.")
@@ -114,6 +149,15 @@ class CrossHookContextPlugin(Plugin):
         # Verify we can read data from HTTP_AUTH_CHECK_PERMISSION
         if "permission_checked" not in context.state:
             raise ValueError("permission_checked not found in tool hook!")
+
+        # Verify request_id consistency
+        if "shared_request_id" in context.global_context.state:
+            shared_request_id = context.global_context.state["shared_request_id"]
+            if shared_request_id != context.global_context.request_id:
+                raise ValueError(
+                    f"Request ID mismatch in tool hook! shared_request_id={shared_request_id}, "
+                    f"global_context.request_id={context.global_context.request_id}"
+                )
 
         # Add tool-specific data
         context.state["tool_name"] = payload.name
@@ -136,6 +180,12 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
+        logger.info(
+            f"🔍 [CrossHookContextPlugin] RESOURCE_PRE_FETCH executed - "
+            f"request_id={context.global_context.request_id}, "
+            f"resource_uri={payload.uri}"
+        )
+
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
             raise ValueError("http_timestamp not found in resource hook! Cross-hook sharing failed.")
@@ -143,6 +193,14 @@ class CrossHookContextPlugin(Plugin):
         # Verify global context is shared
         if "shared_request_id" not in context.global_context.state:
             raise ValueError("shared_request_id not found in resource hook!")
+
+        # Verify request_id consistency
+        shared_request_id = context.global_context.state["shared_request_id"]
+        if shared_request_id != context.global_context.request_id:
+            raise ValueError(
+                f"Request ID mismatch in resource hook! shared_request_id={shared_request_id}, "
+                f"global_context.request_id={context.global_context.request_id}"
+            )
 
         # Add resource-specific data
         context.state["resource_uri"] = payload.uri
@@ -165,6 +223,12 @@ class CrossHookContextPlugin(Plugin):
         Raises:
             ValueError: If expected context data is missing.
         """
+        logger.info(
+            f"🔍 [CrossHookContextPlugin] PROMPT_PRE_FETCH executed - "
+            f"request_id={context.global_context.request_id}, "
+            f"prompt_id={payload.prompt_id}"
+        )
+
         # Verify we can read data from HTTP_PRE_REQUEST
         if "http_timestamp" not in context.state:
             raise ValueError("http_timestamp not found in prompt hook! Cross-hook sharing failed.")
@@ -172,6 +236,14 @@ class CrossHookContextPlugin(Plugin):
         # Verify global context is shared
         if "shared_request_id" not in context.global_context.state:
             raise ValueError("shared_request_id not found in prompt hook!")
+
+        # Verify request_id consistency
+        shared_request_id = context.global_context.state["shared_request_id"]
+        if shared_request_id != context.global_context.request_id:
+            raise ValueError(
+                f"Request ID mismatch in prompt hook! shared_request_id={shared_request_id}, "
+                f"global_context.request_id={context.global_context.request_id}"
+            )
 
         # Add prompt-specific data
         context.state["prompt_id"] = payload.prompt_id

@@ -170,18 +170,13 @@ async def get_current_user(
                 headers = dict(request.headers)
 
             # Get request ID from request state (set by middleware) or generate new one
-            request_id = None
-            if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
-                request_id = request.state.request_id
-            else:
+            request_id = getattr(request.state, "request_id", None) if request else None
+            if not request_id:
                 request_id = uuid.uuid4().hex
 
-            global_context = None
-            context_table = None
-
-            if request and hasattr(request, "state") and hasattr(request.state, "plugin_global_context"):
-                global_context = request.state.plugin_global_context
-            else:
+            # Get plugin contexts from request state if available
+            global_context = getattr(request.state, "plugin_global_context", None) if request else None
+            if not global_context:
                 # Create global context
                 global_context = GlobalContext(
                     request_id=request_id,
@@ -189,8 +184,7 @@ async def get_current_user(
                     tenant_id=None,
                 )
 
-            if request and hasattr(request, "state") and hasattr(request.state, "plugin_context_table"):
-                context_table = request.state.plugin_context_table
+            context_table = getattr(request.state, "plugin_context_table", None) if request else None
 
             # Invoke custom auth resolution hook
             # violations_as_exceptions=True so PluginViolationError is raised for explicit denials
@@ -224,16 +218,16 @@ async def get_current_user(
                 )
 
                 # Store auth_method in request.state so it can be accessed by RBAC middleware
-                if request and hasattr(request, "state") and auth_result.metadata:
+                if request and auth_result.metadata:
                     auth_method = auth_result.metadata.get("auth_method")
                     if auth_method:
                         request.state.auth_method = auth_method
                         logger.debug(f"Stored auth_method '{auth_method}' in request.state")
 
-                if context_table_result:
+                if request and context_table_result:
                     request.state.plugin_context_table = context_table_result
 
-                if global_context:
+                if request and global_context:
                     request.state.plugin_global_context = global_context
                 return user
             # If continue_processing=True (no payload), fall through to standard auth
@@ -308,7 +302,7 @@ async def get_current_user(
 
         # Check team level token, if applicable. If public token, then will be defaulted to personal team.
         team_id = await get_team_from_token(payload, db)
-        if request and hasattr(request, "state"):
+        if request:
             request.state.team_id = team_id
 
     except HTTPException:
