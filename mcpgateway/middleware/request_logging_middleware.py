@@ -131,7 +131,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.log_detailed_requests = log_detailed_requests
         self.log_level = log_level.upper()
         self.max_body_size = max_body_size  # Expected to be in bytes
-        
+
     async def _resolve_user_identity(self, request: Request):
         """Best-effort extraction of user identity for request logs."""
         # Prefer context injected by upstream middleware
@@ -182,7 +182,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         """
         # Track start time for total duration
         start_time = time.time()
-        
+
         # Get correlation ID and request metadata for boundary logging
         correlation_id = get_correlation_id()
         path = request.url.path
@@ -190,11 +190,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         user_agent = request.headers.get("user-agent", "unknown")
         client_ip = request.client.host if request.client else "unknown"
         user_id, user_email = await self._resolve_user_identity(request)
-        
+
         # Skip boundary logging for health checks and static assets
         skip_paths = ["/health", "/healthz", "/static", "/favicon.ico"]
         should_log_boundary = self.enable_gateway_logging and not any(path.startswith(skip_path) for skip_path in skip_paths)
-        
+
         # Log gateway request started
         if should_log_boundary:
             try:
@@ -210,18 +210,15 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     request_path=path,
                     user_agent=user_agent,
                     client_ip=client_ip,
-                    metadata={
-                        "event": "request_started",
-                        "query_params": str(request.query_params) if request.query_params else None
-                    }
+                    metadata={"event": "request_started", "query_params": str(request.query_params) if request.query_params else None},
                 )
             except Exception as e:
                 logger.warning(f"Failed to log request start: {e}")
-        
+
         # Skip detailed logging if disabled
         if not self.log_detailed_requests:
             response = await call_next(request)
-            
+
             # Still log request completed even if detailed logging is disabled
             if should_log_boundary:
                 duration_ms = (time.time() - start_time) * 1000
@@ -241,14 +238,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         user_agent=user_agent,
                         client_ip=client_ip,
                         duration_ms=duration_ms,
-                        metadata={
-                            "event": "request_completed",
-                            "response_time_category": "fast" if duration_ms < 100 else "normal" if duration_ms < 1000 else "slow"
-                        }
+                        metadata={"event": "request_completed", "response_time_category": "fast" if duration_ms < 100 else "normal" if duration_ms < 1000 else "slow"},
                     )
                 except Exception as e:
                     logger.warning(f"Failed to log request completion: {e}")
-            
+
             return response
 
         # Always log at INFO level for request payloads to ensure visibility
@@ -333,7 +327,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             status_code = response.status_code
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
-            
+
             # Log request failed
             if should_log_boundary:
                 try:
@@ -351,23 +345,21 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                         client_ip=client_ip,
                         duration_ms=duration_ms,
                         error=e,
-                        metadata={
-                            "event": "request_failed"
-                        }
+                        metadata={"event": "request_failed"},
                     )
                 except Exception as log_error:
                     logger.warning(f"Failed to log request failure: {log_error}")
-            
+
             raise
-        
+
         # Calculate total duration
         duration_ms = (time.time() - start_time) * 1000
-        
+
         # Log gateway request completed
         if should_log_boundary:
             try:
                 log_level = "ERROR" if status_code >= 500 else "WARNING" if status_code >= 400 else "INFO"
-                
+
                 structured_logger.log(
                     level=log_level,
                     message=f"Request completed: {method} {path} - {status_code}",
@@ -382,23 +374,20 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     user_agent=user_agent,
                     client_ip=client_ip,
                     duration_ms=duration_ms,
-                    metadata={
-                        "event": "request_completed",
-                        "response_time_category": self._categorize_response_time(duration_ms)
-                    }
+                    metadata={"event": "request_completed", "response_time_category": self._categorize_response_time(duration_ms)},
                 )
             except Exception as e:
                 logger.warning(f"Failed to log request completion: {e}")
-        
+
         return response
-    
+
     @staticmethod
     def _categorize_response_time(duration_ms: float) -> str:
         """Categorize response time for analytics.
-        
+
         Args:
             duration_ms: Response time in milliseconds
-            
+
         Returns:
             Category string
         """

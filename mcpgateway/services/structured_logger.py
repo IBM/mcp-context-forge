@@ -15,7 +15,6 @@ from enum import Enum
 import logging
 import os
 import socket
-import sys
 import traceback
 from typing import Any, Dict, List, Optional, Union
 
@@ -33,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 class LogLevel(str, Enum):
     """Log levels matching Python logging."""
+
     DEBUG = "DEBUG"
     INFO = "INFO"
     WARNING = "WARNING"
@@ -42,6 +42,7 @@ class LogLevel(str, Enum):
 
 class LogCategory(str, Enum):
     """Log categories for classification."""
+
     APPLICATION = "application"
     REQUEST = "request"
     SECURITY = "security"
@@ -56,14 +57,14 @@ class LogCategory(str, Enum):
 
 class LogEnricher:
     """Enriches log entries with contextual information."""
-    
+
     @staticmethod
     def enrich(entry: Dict[str, Any]) -> Dict[str, Any]:
         """Enrich log entry with system and context information.
-        
+
         Args:
             entry: Base log entry
-            
+
         Returns:
             Enriched log entry
         """
@@ -71,29 +72,30 @@ class LogEnricher:
         correlation_id = get_correlation_id()
         if correlation_id:
             entry["correlation_id"] = correlation_id
-        
+
         # Add hostname and process info
         entry.setdefault("hostname", socket.gethostname())
         entry.setdefault("process_id", os.getpid())
-        
+
         # Add timestamp if not present
         if "timestamp" not in entry:
             entry["timestamp"] = datetime.now(timezone.utc)
-        
+
         # Add performance metrics if available
         try:
             perf_tracker = get_performance_tracker()
-            if correlation_id and perf_tracker and hasattr(perf_tracker, 'get_current_operations'):
+            if correlation_id and perf_tracker and hasattr(perf_tracker, "get_current_operations"):
                 current_ops = perf_tracker.get_current_operations(correlation_id)
                 if current_ops:
                     entry["active_operations"] = len(current_ops)
         except Exception:
             # Silently skip if performance tracker is unavailable or method doesn't exist
             pass
-        
+
         # Add OpenTelemetry trace context if available
         try:
             from opentelemetry import trace
+
             span = trace.get_current_span()
             if span and span.get_span_context().is_valid:
                 ctx = span.get_span_context()
@@ -101,61 +103,58 @@ class LogEnricher:
                 entry["span_id"] = format(ctx.span_id, "016x")
         except (ImportError, Exception):
             pass
-        
+
         return entry
 
 
 class LogRouter:
     """Routes log entries to appropriate destinations."""
-    
+
     def __init__(self):
         """Initialize log router."""
         self.database_enabled = getattr(settings, "structured_logging_database_enabled", True)
         self.external_enabled = getattr(settings, "structured_logging_external_enabled", False)
-    
+
     def route(self, entry: Dict[str, Any], db: Optional[Session] = None) -> None:
         """Route log entry to configured destinations.
-        
+
         Args:
             entry: Log entry to route
             db: Optional database session
         """
         # Always log to standard Python logger
         self._log_to_python_logger(entry)
-        
+
         # Persist to database if enabled
         if self.database_enabled:
             self._persist_to_database(entry, db)
-        
+
         # Send to external systems if enabled
         if self.external_enabled:
             self._send_to_external(entry)
-    
+
     def _log_to_python_logger(self, entry: Dict[str, Any]) -> None:
         """Log to standard Python logger.
-        
+
         Args:
             entry: Log entry
         """
         level_str = entry.get("level", "INFO")
         level = getattr(logging, level_str, logging.INFO)
-        
+
         message = entry.get("message", "")
         component = entry.get("component", "")
-        
+
         log_message = f"[{component}] {message}" if component else message
-        
+
         # Build extra dict for structured logging
-        extra = {
-            k: v for k, v in entry.items()
-            if k not in ["message", "level"]
-        }
-        
+        extra = {k: v for k, v in entry.items() if k not in ["message", "level"]}
+
         logger.log(level, log_message, extra=extra)
-    
+
     def _persist_to_database(self, entry: Dict[str, Any], db: Optional[Session] = None) -> None:
         """Persist log entry to database.
-        
+
         Args:
             entry: Log entry
             db: Optional database session
@@ -164,7 +163,7 @@ class LogRouter:
         if db is None:
             db = SessionLocal()
             should_close = True
-        
+
         try:
             # Build error_details JSON from error-related fields
             error_details = None
@@ -175,7 +174,7 @@ class LogRouter:
                     "error_stack_trace": entry.get("error_stack_trace"),
                     "error_context": entry.get("error_context"),
                 }
-            
+
             # Build performance_metrics JSON from performance-related fields
             performance_metrics = None
             perf_fields = {
@@ -190,7 +189,7 @@ class LogRouter:
             }
             if any(v is not None for v in perf_fields.values()):
                 performance_metrics = {k: v for k, v in perf_fields.items() if v is not None}
-            
+
             # Build threat_indicators JSON from security-related fields
             threat_indicators = None
             security_fields = {
@@ -200,7 +199,7 @@ class LogRouter:
             }
             if any(v is not None for v in security_fields.values()):
                 threat_indicators = {k: v for k, v in security_fields.items() if v is not None}
-            
+
             # Build context JSON from remaining fields
             context_fields = {
                 "team_id": entry.get("team_id"),
@@ -222,11 +221,11 @@ class LogRouter:
                 "metadata": entry.get("metadata"),
             }
             context = {k: v for k, v in context_fields.items() if v is not None}
-            
+
             # Determine if this is a security event
             is_security_event = entry.get("is_security_event", False) or bool(threat_indicators)
             security_severity = entry.get("security_severity")
-            
+
             log_entry = StructuredLogEntry(
                 timestamp=entry.get("timestamp", datetime.now(timezone.utc)),
                 level=entry.get("level", "INFO"),
@@ -256,47 +255,47 @@ class LogRouter:
                 environment=entry.get("environment", getattr(settings, "environment", "development")),
                 version=entry.get("version", getattr(settings, "version", "unknown")),
             )
-            
+
             db.add(log_entry)
             db.commit()
-        
+
         except Exception as e:
             logger.error(f"Failed to persist log entry to database: {e}", exc_info=True)
             # Also print to console for immediate visibility
             import traceback
+
             print(f"ERROR persisting log to database: {e}")
             traceback.print_exc()
             if db:
                 db.rollback()
-        
+
         finally:
             if should_close:
                 db.close()
-    
+
     def _send_to_external(self, entry: Dict[str, Any]) -> None:
         """Send log entry to external systems.
-        
+
         Args:
             entry: Log entry
         """
         # Placeholder for external logging integration
         # Will be implemented in log exporters
-        pass
 
 
 class StructuredLogger:
     """Main structured logger with enrichment and routing."""
-    
+
     def __init__(self, component: str):
         """Initialize structured logger.
-        
+
         Args:
             component: Component name for log entries
         """
         self.component = component
         self.enricher = LogEnricher()
         self.router = LogRouter()
-    
+
     def log(
         self,
         level: Union[LogLevel, str],
@@ -310,10 +309,10 @@ class StructuredLogger:
         custom_fields: Optional[Dict[str, Any]] = None,
         tags: Optional[List[str]] = None,
         db: Optional[Session] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         """Log a structured message.
-        
+
         Args:
             level: Log level
             message: Log message
@@ -341,38 +340,38 @@ class StructuredLogger:
             "custom_fields": custom_fields,
             "tags": tags,
         }
-        
+
         # Add error information if present
         if error:
             entry["error_type"] = type(error).__name__
             entry["error_message"] = str(error)
             entry["error_stack_trace"] = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        
+
         # Add any additional kwargs
         entry.update(kwargs)
-        
+
         # Enrich entry with context
         entry = self.enricher.enrich(entry)
-        
+
         # Route to destinations
         self.router.route(entry, db)
-    
+
     def debug(self, message: str, **kwargs: Any) -> None:
         """Log debug message."""
         self.log(LogLevel.DEBUG, message, **kwargs)
-    
+
     def info(self, message: str, **kwargs: Any) -> None:
         """Log info message."""
         self.log(LogLevel.INFO, message, **kwargs)
-    
+
     def warning(self, message: str, **kwargs: Any) -> None:
         """Log warning message."""
         self.log(LogLevel.WARNING, message, **kwargs)
-    
+
     def error(self, message: str, error: Optional[Exception] = None, **kwargs: Any) -> None:
         """Log error message."""
         self.log(LogLevel.ERROR, message, error=error, **kwargs)
-    
+
     def critical(self, message: str, error: Optional[Exception] = None, **kwargs: Any) -> None:
         """Log critical message."""
         self.log(LogLevel.CRITICAL, message, error=error, **kwargs)
@@ -380,23 +379,23 @@ class StructuredLogger:
 
 class ComponentLogger:
     """Logger factory for component-specific loggers."""
-    
+
     _loggers: Dict[str, StructuredLogger] = {}
-    
+
     @classmethod
     def get_logger(cls, component: str) -> StructuredLogger:
         """Get or create a logger for a specific component.
-        
+
         Args:
             component: Component name
-            
+
         Returns:
             StructuredLogger instance for the component
         """
         if component not in cls._loggers:
             cls._loggers[component] = StructuredLogger(component)
         return cls._loggers[component]
-    
+
     @classmethod
     def clear_loggers(cls) -> None:
         """Clear all cached loggers (useful for testing)."""
@@ -406,10 +405,10 @@ class ComponentLogger:
 # Global structured logger instance for backward compatibility
 def get_structured_logger(component: str = "mcpgateway") -> StructuredLogger:
     """Get a structured logger instance.
-    
+
     Args:
         component: Component name
-        
+
     Returns:
         StructuredLogger instance
     """

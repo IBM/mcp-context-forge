@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 # Context variable for storing correlation ID (request ID) per-request
 # This is async-safe and provides automatic isolation between concurrent requests
-_correlation_id_context: ContextVar[Optional[str]] = ContextVar('correlation_id', default=None)
+_correlation_id_context: ContextVar[Optional[str]] = ContextVar("correlation_id", default=None)
 
 
 def get_correlation_id() -> Optional[str]:
@@ -168,7 +168,7 @@ def validate_correlation_id(correlation_id: Optional[str], max_length: int = 255
         return False
 
     # Allow alphanumeric, hyphens, and underscores only
-    if not all(c.isalnum() or c in ('-', '_') for c in correlation_id):
+    if not all(c.isalnum() or c in ("-", "_") for c in correlation_id):
         logger.warning(f"Correlation ID contains invalid characters: {correlation_id}")
         return False
 
