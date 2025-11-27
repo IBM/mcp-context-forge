@@ -369,6 +369,20 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
+def attempt_to_bootstrap_sso_providers():
+    """
+    Try to bootstrap SSO provider services based on settings.
+    """
+    try:
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+        bootstrap_sso_providers()
+        logger.info("SSO providers bootstrapped successfully")
+    except Exception as e:
+        logger.warning(f"Failed to bootstrap SSO providers: {e}")
+
+
 ####################
 # Startup/Shutdown #
 ####################
@@ -440,14 +454,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
-            try:
-                # First-Party
-                from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
-
-                bootstrap_sso_providers()
-                logger.info("SSO providers bootstrapped successfully")
-            except Exception as e:
-                logger.warning(f"Failed to bootstrap SSO providers: {e}")
+            attempt_to_bootstrap_sso_providers()
 
         logger.info("All services initialized successfully")
 
@@ -537,20 +544,6 @@ async def setup_passthrough_headers():
         await set_global_passthrough_headers(db)
     finally:
         db.close()
-
-
-def attempt_to_bootstrap_sso_providers():
-    """
-    Try to bootstrap SSO provider services based on settings.
-    """
-    try:
-        # First-Party
-        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
-
-        bootstrap_sso_providers()
-        logger.info("SSO providers bootstrapped successfully")
-    except Exception as e:
-        logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
 
 # Initialize FastAPI app with orjson for 2-3x faster JSON serialization
