@@ -12,3 +12,13 @@ revision: str = '814d1ae4d51b'
 down_revision: Union[str, Sequence[str], None] = ('0a142ad09274', 'z1a2b3c4d5e6')
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    pass
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    pass
