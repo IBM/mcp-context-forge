@@ -17526,9 +17526,27 @@ async function getAuthToken() {
     if (!token) {
         token = localStorage.getItem("auth_token");
     }
-    console.log("MY TOKEN GENERATED:", token);
-
     return token || "";
+}
+
+/**
+ * Fetch helper that always includes auth context.
+ * Ensures HTTP-only cookies are sent even when JS cannot read them.
+ */
+async function fetchWithAuth(url, options = {}) {
+    const opts = { ...options };
+    // Always send same-origin cookies unless caller overrides explicitly
+    opts.credentials = options.credentials || "same-origin";
+
+    // Clone headers to avoid mutating caller-provided object
+    const headers = new Headers(options.headers || {});
+    const token = await getAuthToken();
+    if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+    opts.headers = headers;
+
+    return fetch(url, opts);
 }
 
 // Expose token management functions to global scope
@@ -23120,14 +23138,16 @@ async function searchStructuredLogs() {
     currentLogFilters = searchRequest;
 
     try {
-        const response = await fetch(`${getRootPath()}/api/logs/search`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${getAuthToken()}`,
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/search`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(searchRequest),
             },
-            body: JSON.stringify(searchRequest),
-        });
+        );
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -23346,13 +23366,10 @@ async function showCorrelationTrace(correlationId) {
     }
 
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
             {
                 method: "GET",
-                headers: {
-                    Authorization: `Bearer ${getAuthToken()}`,
-                },
             },
         );
 
@@ -23676,13 +23693,10 @@ async function showSecurityEvents() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
             {
                 method: "GET",
-                headers: {
-                    Authorization: `Bearer ${getAuthToken()}`,
-                },
             },
         );
 
@@ -23824,13 +23838,10 @@ async function showAuditTrail() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
             {
                 method: "GET",
-                headers: {
-                    Authorization: `Bearer ${getAuthToken()}`,
-                },
             },
         );
 
@@ -23997,13 +24008,10 @@ async function showPerformanceMetrics(rangeKey) {
     );
 
     try {
-        const response = await fetch(
+        const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
             {
                 method: "GET",
-                headers: {
-                    Authorization: `Bearer ${getAuthToken()}`,
-                },
             },
         );
 

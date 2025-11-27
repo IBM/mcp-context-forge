@@ -400,7 +400,7 @@ class ServerService:
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import ServerRead
             >>> service = ServerService()
             >>> db = MagicMock()
@@ -412,6 +412,8 @@ class ServerService:
             >>> db.refresh = MagicMock()
             >>> service._notify_server_added = AsyncMock()
             >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
+            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> import asyncio
             >>> asyncio.run(service.register_server(db, server_in))
@@ -879,7 +881,7 @@ class ServerService:
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import ServerRead
             >>> service = ServerService()
             >>> db = MagicMock()
@@ -893,6 +895,8 @@ class ServerService:
             >>> db.refresh = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
+            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> server_update = MagicMock()
             >>> server_update.id = None  # No UUID change
@@ -1159,7 +1163,7 @@ class ServerService:
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> from mcpgateway.schemas import ServerRead
             >>> service = ServerService()
             >>> db = MagicMock()
@@ -1170,6 +1174,8 @@ class ServerService:
             >>> service._notify_server_activated = AsyncMock()
             >>> service._notify_server_deactivated = AsyncMock()
             >>> service._convert_server_to_read = MagicMock(return_value='server_read')
+            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
+            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> import asyncio
             >>> asyncio.run(service.toggle_server_status(db, 'server_id', True))
@@ -1281,7 +1287,7 @@ class ServerService:
 
         Examples:
             >>> from mcpgateway.services.server_service import ServerService
-            >>> from unittest.mock import MagicMock, AsyncMock
+            >>> from unittest.mock import MagicMock, AsyncMock, patch
             >>> service = ServerService()
             >>> db = MagicMock()
             >>> server = MagicMock()
@@ -1289,6 +1295,8 @@ class ServerService:
             >>> db.delete = MagicMock()
             >>> db.commit = MagicMock()
             >>> service._notify_server_deleted = AsyncMock()
+            >>> service._structured_logger = MagicMock()  # Mock structured logger to prevent database writes
+            >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> import asyncio
             >>> asyncio.run(service.delete_server(db, 'server_id', 'user@example.com'))
         """
