@@ -142,7 +142,7 @@ mysql -u mysql -p mcp < mcp_backup.sql
    ```bash
    # Check MariaDB service status
    sudo systemctl status mariadb
-   
+
    # Verify port is open
    netstat -tlnp | grep 3306
    ```

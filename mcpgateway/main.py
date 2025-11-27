@@ -3095,21 +3095,20 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@resource_router.post("/subscribe/{resource_id}")
+@resource_router.post("/subscribe")
 @require_permission("resources.read")
-async def subscribe_resource(resource_id: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {user} is subscribing to resource with resource_id {resource_id}")
-    return StreamingResponse(resource_service.subscribe_events(resource_id), media_type="text/event-stream")
+    logger.debug(f"User {user} is subscribing to resource")
+    return StreamingResponse(resource_service.subscribe_events(), media_type="text/event-stream")
 
 
 ###############

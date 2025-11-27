@@ -822,13 +822,13 @@ class TestAdminResourceRoutes:
         # Use a valid MIME type
         form_data = FakeForm(
             {
-                        "uri": "greetme://morning/{name}", 
-                        "name": "test_doc", 
-                        "content": "Test content", 
+                        "uri": "greetme://morning/{name}",
+                        "name": "test_doc",
+                        "content": "Test content",
                         "mimeType": "text/plain"
             }
         )
-        
+
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_resource(mock_request, mock_db, "test-user")

@@ -15,7 +15,6 @@ It handles:
 """
 
 # Standard
-import asyncio
 import base64
 from datetime import datetime, timezone
 import json
@@ -64,6 +63,7 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -242,14 +242,12 @@ class ToolService:
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
             >>> service = ToolService()
-            >>> isinstance(service._event_subscribers, list)
+            >>> isinstance(service._event_service, EventService)
             True
-            >>> len(service._event_subscribers)
-            0
             >>> hasattr(service, '_http_client')
             True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
+        self._event_service = EventService(channel_name="mcpgateway:tool_events")
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         # Initialize plugin manager with env overrides to ease testing
         env_flag = os.getenv("PLUGINS_ENABLED")
@@ -286,6 +284,7 @@ class ToolService:
             >>> asyncio.run(service.shutdown())  # Should log "Tool service shutdown complete"
         """
         await self._http_client.aclose()
+        await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
     async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -1101,10 +1100,17 @@ class ToolService:
 
                 db.commit()
                 db.refresh(tool)
-                if activate:
-                    await self._notify_tool_activated(tool)
-                else:
+
+                if not tool.enabled:
+                    # Inactive
                     await self._notify_tool_deactivated(tool)
+                elif tool.enabled and not tool.reachable:
+                    # Offline
+                    await self._notify_tool_offline(tool)
+                else:
+                    # Active
+                    await self._notify_tool_activated(tool)
+
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
             return self._convert_tool_to_read(tool)
         except PermissionError as e:
@@ -1705,7 +1711,7 @@ class ToolService:
         """
         event = {
             "type": "tool_activated",
-            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled},
+            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled, "reachable": tool.reachable},
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1719,7 +1725,26 @@ class ToolService:
         """
         event = {
             "type": "tool_deactivated",
-            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled},
+            "data": {"id": tool.id, "name": tool.name, "enabled": tool.enabled, "reachable": tool.reachable},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_tool_offline(self, tool: DbTool) -> None:
+        """
+        Notify subscribers that tool is offline.
+
+        Args:
+            tool: Tool database object
+        """
+        event = {
+            "type": "tool_offline",
+            "data": {
+                "id": tool.id,
+                "name": tool.name,
+                "enabled": True,
+                "reachable": False,
+            },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
@@ -1739,19 +1764,13 @@ class ToolService:
         await self._publish_event(event)
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to tool events.
+        """Subscribe to tool events via the EventService.
 
         Yields:
             Tool event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     async def _notify_tool_added(self, tool: DbTool) -> None:
         """
@@ -1789,13 +1808,12 @@ class ToolService:
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """
-        Publish event to all subscribers.
+        Publish event to all subscribers via the EventService.
 
         Args:
             event: Event to publish
         """
-        for queue in self._event_subscribers:
-            await queue.put(event)
+        await self._event_service.publish_event(event)
 
     async def _validate_tool_url(self, url: str) -> None:
         """Validate tool URL is accessible.
@@ -1827,20 +1845,20 @@ class ToolService:
         except Exception:
             return False
 
-    async def event_generator(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Generate tool events for SSE.
+    # async def event_generator(self) -> AsyncGenerator[Dict[str, Any], None]:
+    #     """Generate tool events for SSE.
 
-        Yields:
-            Tool events.
-        """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+    #     Yields:
+    #         Tool events.
+    #     """
+    #     queue: asyncio.Queue = asyncio.Queue()
+    #     self._event_subscribers.append(queue)
+    #     try:
+    #         while True:
+    #             event = await queue.get()
+    #             yield event
+    #     finally:
+    #         self._event_subscribers.remove(queue)
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:

@@ -16,16 +16,11 @@ It handles:
 Examples:
     >>> from mcpgateway.services.resource_service import ResourceService, ResourceError
     >>> service = ResourceService()
-    >>> hasattr(service, '_event_subscribers')
-    True
-    >>> hasattr(service, '_template_cache')
-    True
-    >>> isinstance(service._event_subscribers, dict)
+    >>> isinstance(service._event_service, EventService)
     True
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import mimetypes
 import os
@@ -50,6 +45,7 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -117,7 +113,7 @@ class ResourceService:
 
     def __init__(self) -> None:
         """Initialize the resource service."""
-        self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
 
         # Initialize plugin manager if plugins are enabled in settings
@@ -151,7 +147,7 @@ class ResourceService:
     async def shutdown(self) -> None:
         """Shutdown the service."""
         # Clear subscriptions
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         logger.info("Resource service shutdown complete")
 
     async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -1400,7 +1396,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deactivated(self, resource: DbResource) -> None:
         """
@@ -1419,7 +1415,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deleted(self, resource_info: Dict[str, Any]) -> None:
         """
@@ -1433,7 +1429,7 @@ class ResourceService:
             "data": resource_info,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource_info["uri"], event)
+        await self._publish_event(event)
 
     async def _notify_resource_removed(self, resource: DbResource) -> None:
         """
@@ -1452,40 +1448,16 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def subscribe_events(self, uri: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to resource events.
-
-        Args:
-            uri: Optional URI to filter events
+    async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
+        """Subscribe to Resource events via the EventService.
 
         Yields:
-            Resource event messages
+            Resource event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-
-        if uri:
-            if uri not in self._event_subscribers:
-                self._event_subscribers[uri] = []
-            self._event_subscribers[uri].append(queue)
-        else:
-            self._event_subscribers["*"] = self._event_subscribers.get("*", [])
-            self._event_subscribers["*"].append(queue)
-
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            if uri:
-                self._event_subscribers[uri].remove(queue)
-                if not self._event_subscribers[uri]:
-                    del self._event_subscribers[uri]
-            else:
-                self._event_subscribers["*"].remove(queue)
-                if not self._event_subscribers["*"]:
-                    del self._event_subscribers["*"]
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
         """Detect mime type from URI and content.
@@ -1654,7 +1626,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_updated(self, resource: DbResource) -> None:
         """
@@ -1673,24 +1645,16 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def _publish_event(self, uri: str, event: Dict[str, Any]) -> None:
-        """Publish event to relevant subscribers.
+    async def _publish_event(self, event: Dict[str, Any]) -> None:
+        """
+        Publish event to all subscribers via the EventService.
 
         Args:
-            uri: Resource URI event relates to
-            event: Event data to publish
+            event: Event to publish
         """
-        # Notify resource-specific subscribers
-        if uri in self._event_subscribers:
-            for queue in self._event_subscribers[uri]:
-                await queue.put(event)
-
-        # Notify global subscribers
-        if "*" in self._event_subscribers:
-            for queue in self._event_subscribers["*"]:
-                await queue.put(event)
+        await self._event_service.publish_event(event)
 
     # --- Resource templates ---
     async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:

@@ -15,7 +15,6 @@ It handles:
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import os
 from string import Formatter
@@ -38,6 +37,7 @@ from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -120,12 +120,12 @@ class PromptService:
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
             >>> service = PromptService()
-            >>> service._event_subscribers
-            []
+            >>> isinstance(service._event_service, EventService)
+            True
             >>> service._jinja_env is not None
             True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
+        self._event_service = EventService(channel_name="mcpgateway:prompt_events")
         self._jinja_env = Environment(autoescape=select_autoescape(["html", "xml"]), trim_blocks=True, lstrip_blocks=True)
         # Initialize plugin manager with env overrides for testability
         env_flag = os.getenv("PLUGINS_ENABLED")
@@ -146,14 +146,15 @@ class PromptService:
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
+            >>> from unittest.mock import AsyncMock
             >>> import asyncio
             >>> service = PromptService()
-            >>> service._event_subscribers.append("test_subscriber")
+            >>> service._event_service = AsyncMock()
             >>> asyncio.run(service.shutdown())
-            >>> service._event_subscribers
-            []
+            >>> # Verify event service shutdown was called
+            >>> service._event_service.shutdown.assert_awaited_once()
         """
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         logger.info("Prompt service shutdown complete")
 
     async def get_top_prompts(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -1197,19 +1198,13 @@ class PromptService:
             raise PromptError(f"Failed to delete prompt: {str(e)}")
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to prompt events.
+        """Subscribe to Prompt events via the EventService.
 
         Yields:
-            Prompt event messages
+            Prompt event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     def _validate_template(self, template: str) -> None:
         """Validate template syntax.
@@ -1442,13 +1437,12 @@ class PromptService:
 
     async def _publish_event(self, event: Dict[str, Any]) -> None:
         """
-        Publish event to all subscribers.
+        Publish event to all subscribers via the EventService.
 
         Args:
-            event: Dictionary containing event info
+            event: Event to publish
         """
-        for queue in self._event_subscribers:
-            await queue.put(event)
+        await self._event_service.publish_event(event)
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> Dict[str, Any]:
