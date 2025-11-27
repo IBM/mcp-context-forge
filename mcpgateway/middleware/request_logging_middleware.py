@@ -174,7 +174,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             if db:
                 try:
                     db.close()
-                except Exception:
+                except Exception:  # nosec B110 - Silently handle db.close() failures during cleanup
                     pass
 
     async def dispatch(self, request: Request, call_next: Callable):

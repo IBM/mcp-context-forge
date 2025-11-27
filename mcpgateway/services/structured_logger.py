@@ -88,7 +88,7 @@ class LogEnricher:
                 current_ops = perf_tracker.get_current_operations(correlation_id)  # pylint: disable=no-member
                 if current_ops:
                     entry["active_operations"] = len(current_ops)
-        except Exception:
+        except Exception:  # nosec B110 - Graceful degradation if performance tracker unavailable
             # Silently skip if performance tracker is unavailable or method doesn't exist
             pass
 
