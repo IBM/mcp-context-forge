@@ -2151,6 +2151,8 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
+# help: container-build-multi - Build multi-platform image (amd64/arm64) and push
+# help: container-build-multi-local - Build multi-platform image locally for testing
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
@@ -2176,7 +2178,7 @@ endef
         container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
-        container-build-multi use-docker use-podman show-runtime print-runtime \
+        container-build-multi container-build-multi-local use-docker use-podman show-runtime print-runtime \
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
@@ -2410,7 +2412,7 @@ container-build-multi:
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
 			echo "📦 Creating buildx builder..."; \
-			docker buildx create --name $(PROJECT_NAME)-builder; \
+			docker buildx create --name $(PROJECT_NAME)-builder --driver docker-container; \
 		fi; \
 		docker buildx use $(PROJECT_NAME)-builder; \
 		docker buildx build \
@@ -2426,6 +2428,34 @@ container-build-multi:
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
 		echo "💡 To push: podman manifest push $(IMAGE_BASE):$(IMAGE_TAG)"; \
+	else \
+		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
+		exit 1; \
+	fi
+
+# Build multi-platform image locally (without push) for testing
+container-build-multi-local:
+	@echo "🔨 Building multi-architecture image locally..."
+	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
+			echo "📦 Creating buildx builder..."; \
+			docker buildx create --name $(PROJECT_NAME)-builder --driver docker-container; \
+		fi; \
+		docker buildx use $(PROJECT_NAME)-builder; \
+		docker buildx build \
+			--platform=linux/amd64,linux/arm64 \
+			-f $(CONTAINER_FILE) \
+			--tag $(IMAGE_BASE):$(IMAGE_TAG)-multi \
+			--metadata-file /tmp/build-metadata.json \
+			.; \
+		echo "💡 Multi-platform image built. Use 'docker buildx imagetools inspect $(IMAGE_BASE):$(IMAGE_TAG)-multi' to see details"; \
+	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		echo "📦 Building manifest with Podman..."; \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64 \
+			-f $(CONTAINER_FILE) \
+			--manifest $(IMAGE_BASE):$(IMAGE_TAG)-multi \
+			.; \
+		echo "💡 Multi-platform image built locally"; \
 	else \
 		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
 		exit 1; \
