@@ -106,7 +106,6 @@ class CatalogService:
             try:
                 # Ensure we're using the correct Gateway model
                 # First-Party
-                # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway.url).where(DbGateway.enabled)
@@ -195,7 +194,6 @@ class CatalogService:
             # Check if already registered
             try:
                 # First-Party
-                # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 stmt = select(DbGateway).where(DbGateway.url == server_data["url"])
@@ -273,7 +271,6 @@ class CatalogService:
             if skip_initialization:
                 # Create minimal gateway entry without tool discovery
                 # First-Party
-                # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 gateway_create = GatewayCreate(**gateway_data)
