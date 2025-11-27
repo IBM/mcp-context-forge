@@ -85,8 +85,25 @@ def setup_metrics(app):
     enable_metrics = os.getenv("ENABLE_METRICS", "true").lower() == "true"
 
     if enable_metrics:
-        # Custom labels gauge
+        # Detect database engine from DATABASE_URL
+        database_url = settings.database_url.lower()
+        if database_url.startswith("mysql+pymysql://") or "mariadb" in database_url:
+            db_engine = "mariadb"
+        elif database_url.startswith("postgresql://") or database_url.startswith("postgres://"):
+            db_engine = "postgresql"
+        elif database_url.startswith("sqlite://"):
+            db_engine = "sqlite"
+        elif database_url.startswith("mongodb://"):
+            db_engine = "mongodb"
+        else:
+            db_engine = "unknown"
+
+        # Custom labels gauge with automatic database engine detection
         custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
+
+        # Always include database engine in metrics
+        custom_labels["engine"] = db_engine
+
         if custom_labels:
             app_info_gauge = Gauge(
                 "app_info",
@@ -97,6 +114,18 @@ def setup_metrics(app):
             app_info_gauge.labels(**custom_labels).set(1)
 
         excluded = [pattern.strip() for pattern in (settings.METRICS_EXCLUDED_HANDLERS or "").split(",") if pattern.strip()]
+
+        # Add database metrics gauge
+        db_info_gauge = Gauge(
+            "database_info",
+            "Database engine information",
+            labelnames=["engine", "url_scheme"],
+            registry=REGISTRY,
+        )
+
+        # Extract URL scheme for additional context
+        url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
+        db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
         # Create instrumentator instance
         instrumentator = Instrumentator(
