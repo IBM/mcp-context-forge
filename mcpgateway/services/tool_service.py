@@ -1964,7 +1964,7 @@ class ToolService:
             return self._convert_tool_to_read(existing_tool)
 
         # Create tool entry for the A2A agent
-        logger.info(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
+        logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
 
         # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
         # extract the human-friendly label. If tags are already strings, keep them.
