@@ -8,9 +8,8 @@ MCP Gateway supports multiple database backends with full feature parity across 
 |-------------|---------------|------------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | ✅ Yes           | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | ✅ Yes           | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
-| MariaDB     | ✅ Full       | ✅ Yes           | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 12.0+ |
+| MariaDB     | ✅ Full       | ✅ Yes           | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | ✅ Yes           | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
-| MongoDB     | ✅ Full       | ✅ Yes           | `mongodb://admin:changeme@localhost:27017/mcp`              | NoSQL document store           |
 
 ## MariaDB/MySQL Configuration
 
@@ -28,8 +27,8 @@ DATABASE_URL=mysql+pymysql://mcpuser:mypassword@192.168.1.100:3306/mcp_productio
 
 ### Version Requirements
 
-- **MariaDB**: 12.0+ (recommended)
-- **MySQL**: 8.4+ (supported)
+- **MariaDB**: 10.6+ (recommended)
+- **MySQL**: 8.0+ (supported)
 
 ### Driver Requirements
 
@@ -44,7 +43,7 @@ pip install mcp-contextforge-gateway
 
 MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
 
-- **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+- **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
 - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
 - Complete feature parity with SQLite and PostgreSQL
 - Supports all MCP Gateway features including federation, caching, and A2A agents

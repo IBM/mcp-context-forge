@@ -494,7 +494,7 @@ docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
 ```
 
 **What you get:**
-- 🗄️ **MariaDB 12.0** - Production-ready database with 36+ tables
+- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
 - 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
 - 📊 **Redis** - High-performance caching and session storage
 - 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
