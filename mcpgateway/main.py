@@ -483,7 +483,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                     logger.warning("Log aggregation backfill failed: %s", backfill_error)
 
             async def run_log_aggregation_loop() -> None:
-                """Run continuous log aggregation at configured intervals."""
+                """Run continuous log aggregation at configured intervals.
+
+                Raises:
+                    asyncio.CancelledError: When aggregation is stopped
+                """
                 interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
                 logger.info(
                     "Starting log aggregation loop (window=%s min)",

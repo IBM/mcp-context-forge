@@ -64,6 +64,9 @@ class PerformanceTracker:
         Yields:
             None
 
+        Raises:
+            Exception: Any exception from the tracked operation is re-raised
+
         Example:
             >>> tracker = PerformanceTracker()
             >>> with tracker.track_operation("database_query", component="tool_service"):
@@ -167,7 +170,16 @@ class PerformanceTracker:
             count = len(sorted_timings)
 
             def percentile(p: float, *, sorted_vals=sorted_timings, n=count) -> float:
-                """Calculate percentile value."""
+                """Calculate percentile value.
+
+                Args:
+                    p: Percentile to calculate (0.0 to 1.0)
+                    sorted_vals: Sorted list of values
+                    n: Number of values
+
+                Returns:
+                    float: Calculated percentile value
+                """
                 k = (n - 1) * p
                 f = int(k)
                 c = k - f

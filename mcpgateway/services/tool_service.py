@@ -1693,6 +1693,9 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            Exception: On connection or communication errors
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
@@ -1752,6 +1755,9 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            Exception: On connection or communication errors
                         """
                         # Get correlation ID for distributed tracing
                         correlation_id = get_correlation_id()
