@@ -51,7 +51,17 @@ from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, HttpHeaderPayload, PluginError, PluginManager, PluginViolationError, ToolHookType, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginManager,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
@@ -1103,7 +1113,16 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
 
-    async def invoke_tool(self, db: Session, name: str, arguments: Dict[str, Any], request_headers: Optional[Dict[str, str]] = None, app_user_email: Optional[str] = None) -> ToolResult:
+    async def invoke_tool(
+        self,
+        db: Session,
+        name: str,
+        arguments: Dict[str, Any],
+        request_headers: Optional[Dict[str, str]] = None,
+        app_user_email: Optional[str] = None,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+    ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
 
@@ -1115,6 +1134,8 @@ class ToolService:
                 Defaults to None.
             app_user_email (Optional[str], optional): MCP Gateway user email for OAuth token retrieval.
                 Required for OAuth-protected gateways.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
 
         Returns:
             Tool invocation result.
@@ -1157,12 +1178,22 @@ class ToolService:
             return await self._invoke_a2a_tool(db=db, tool=tool, arguments=arguments)
 
         # Plugin hook: tool pre-invoke
-        context_table = None
-        request_id = uuid.uuid4().hex
-        # Use gateway_id if available, otherwise use a generic server identifier
-        gateway_id = getattr(tool, "gateway_id", "unknown")
-        server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
-        global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None)
+        # Use existing context_table from previous hooks if available
+        context_table = plugin_context_table
+
+        # Reuse existing global_context from middleware or create new one
+        if plugin_global_context:
+            global_context = plugin_global_context
+            # Update server_id if we have better information
+            gateway_id = getattr(tool, "gateway_id", None)
+            if gateway_id and isinstance(gateway_id, str):
+                global_context.server_id = gateway_id
+        else:
+            # Create new context (fallback when middleware didn't run)
+            request_id = uuid.uuid4().hex
+            gateway_id = getattr(tool, "gateway_id", "unknown")
+            server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
+            global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
 
         start_time = time.monotonic()
         success = False
@@ -1210,7 +1241,7 @@ class ToolService:
                             ToolHookType.TOOL_PRE_INVOKE,
                             payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
                             global_context=global_context,
-                            local_contexts=None,
+                            local_contexts=context_table,  # Pass context from previous hooks
                             violations_as_exceptions=True,
                         )
                         if pre_result.modified_payload:

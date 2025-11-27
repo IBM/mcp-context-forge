@@ -36,7 +36,7 @@ from mcpgateway.db import EmailTeam
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
-from mcpgateway.plugins.framework import GlobalContext, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -652,6 +652,8 @@ class PromptService:
         tenant_id: Optional[str] = None,
         server_id: Optional[str] = None,
         request_id: Optional[str] = None,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
     ) -> PromptResult:
         """Get a prompt template and optionally render it.
 
@@ -663,6 +665,8 @@ class PromptService:
             tenant_id: Optional tenant identifier for plugin context
             server_id: Optional server identifier for plugin context
             request_id: Optional request ID, generated if not provided
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
 
         Returns:
             Prompt result with rendered messages
@@ -747,14 +751,30 @@ class PromptService:
                     prompt_id_int = prompt_id
 
                 if self._plugin_manager:
-                    if not request_id:
-                        request_id = uuid.uuid4().hex
-                    global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
+                    # Use existing context_table from previous hooks if available
+                    context_table = plugin_context_table
+
+                    # Reuse existing global_context from middleware or create new one
+                    if plugin_global_context:
+                        global_context = plugin_global_context
+                        # Update fields with prompt-specific information
+                        if user:
+                            global_context.user = user
+                        if server_id:
+                            global_context.server_id = server_id
+                        if tenant_id:
+                            global_context.tenant_id = tenant_id
+                    else:
+                        # Create new context (fallback when middleware didn't run)
+                        if not request_id:
+                            request_id = uuid.uuid4().hex
+                        global_context = GlobalContext(request_id=request_id, user=user, server_id=server_id, tenant_id=tenant_id)
+
                     pre_result, context_table = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_PRE_FETCH,
                         payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments),
                         global_context=global_context,
-                        local_contexts=None,
+                        local_contexts=context_table,  # Pass context from previous hooks
                         violations_as_exceptions=True,
                     )
 

@@ -2960,9 +2960,21 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     if cached := resource_cache.get(resource_id):
         return cached
 
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, resource_id=resource_id, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(
+            db,
+            resource_id=resource_id,
+            request_id=request_id,
+            user=user,
+            server_id=server_id,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -3289,6 +3301,7 @@ async def create_prompt(
 @prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt(
+    request: Request,
     prompt_id: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
@@ -3301,6 +3314,7 @@ async def get_prompt(
 
 
     Args:
+        request: FastAPI request object.
         prompt_id: ID of the prompt.
         args: Template arguments.
         db: Database session.
@@ -3314,9 +3328,19 @@ async def get_prompt(
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with args={args}")
 
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
     try:
         PromptExecuteArgs(args=args)
-        result = await prompt_service.get_prompt(db, prompt_id, args)
+        result = await prompt_service.get_prompt(
+            db,
+            prompt_id,
+            args,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
         logger.debug(f"Prompt execution successful for '{prompt_id}'")
     except Exception as ex:
         logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
@@ -3334,6 +3358,7 @@ async def get_prompt(
 @prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt_no_args(
+    request: Request,
     prompt_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3343,6 +3368,7 @@ async def get_prompt_no_args(
     This endpoint is for convenience when no arguments are needed.
 
     Args:
+        request: FastAPI request object.
         prompt_id: The ID of the prompt to retrieve
         db: Database session
         user: Authenticated user
@@ -3354,7 +3380,18 @@ async def get_prompt_no_args(
         Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
-    return await prompt_service.get_prompt(db, prompt_id, {})
+
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+    return await prompt_service.get_prompt(
+        db,
+        prompt_id,
+        {},
+        plugin_context_table=plugin_context_table,
+        plugin_global_context=plugin_global_context,
+    )
 
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
@@ -3921,8 +3958,18 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
             # Get user email for OAuth token selection
             user_email = get_user_email(user)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await resource_service.read_resource(db, uri, request_id=request_id, user=user_email)
+                result = await resource_service.read_resource(
+                    db,
+                    resource_uri=uri,
+                    request_id=request_id,
+                    user=user_email,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                )
                 if hasattr(result, "model_dump"):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
@@ -3966,7 +4013,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
-            result = await prompt_service.get_prompt(db, name, arguments)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
+            result = await prompt_service.get_prompt(
+                db,
+                name,
+                arguments,
+                plugin_context_table=plugin_context_table,
+                plugin_global_context=plugin_global_context,
+            )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "ping":
@@ -3981,8 +4037,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
             # Get user email for OAuth token selection
             user_email = get_user_email(user)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers, app_user_email=user_email)
+                result = await tool_service.invoke_tool(
+                    db=db,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=headers,
+                    app_user_email=user_email,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
