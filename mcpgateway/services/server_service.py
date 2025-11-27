@@ -247,10 +247,7 @@ class ServerService:
         server_dict["associated_resources"] = [res.id for res in server.resources] if server.resources else []
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
-        # Convert DB-stored tag strings into validated tag dicts expected by ServerRead
-        # (`TagValidator.to_tag_objects` returns a list of {"id":..., "label":...} dicts)
-        #server_dict["tags"] = TagValidator.validate_list(server.tags or [])
-        server_dict["tags"] = TagValidator.to_tag_objects(server.tags or [])
+        server_dict["tags"] = server.tags or []
         # Include metadata fields for proper API response
         server_dict["created_by"] = getattr(server, "created_by", None)
         server_dict["modified_by"] = getattr(server, "modified_by", None)
