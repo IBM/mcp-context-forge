@@ -46,7 +46,15 @@ _AGGREGATION_LEVELS: Dict[str, Dict[str, Any]] = {
 
 
 def _align_to_window(dt: datetime, window_minutes: int) -> datetime:
-    """Align a datetime down to the nearest aggregation window boundary."""
+    """Align a datetime down to the nearest aggregation window boundary.
+
+    Args:
+        dt: Datetime to align
+        window_minutes: Aggregation window size in minutes
+
+    Returns:
+        datetime: Aligned datetime at window boundary
+    """
     timestamp = dt.astimezone(timezone.utc)
     total_minutes = int(timestamp.timestamp() // 60)
     aligned_minutes = (total_minutes // window_minutes) * window_minutes
@@ -54,7 +62,14 @@ def _align_to_window(dt: datetime, window_minutes: int) -> datetime:
 
 
 def _deduplicate_metrics(metrics: List[PerformanceMetric]) -> List[PerformanceMetric]:
-    """Ensure a single metric per component/operation/window."""
+    """Ensure a single metric per component/operation/window.
+
+    Args:
+        metrics: List of performance metrics to deduplicate
+
+    Returns:
+        List[PerformanceMetric]: Deduplicated metrics sorted by window_start
+    """
     if not metrics:
         return []
 
@@ -75,7 +90,13 @@ def _aggregate_custom_windows(
     window_minutes: int,
     db: Session,
 ) -> None:
-    """Aggregate metrics using custom window duration."""
+    """Aggregate metrics using custom window duration.
+
+    Args:
+        aggregator: Log aggregator instance
+        window_minutes: Window size in minutes
+        db: Database session
+    """
     window_delta = timedelta(minutes=window_minutes)
     window_duration_seconds = window_minutes * 60
 
@@ -278,11 +299,14 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
     Args:
         request: Search parameters
+        user: Current authenticated user
         db: Database session
-        _: Permission check dependency
 
     Returns:
         Search results with pagination
+
+    Raises:
+        HTTPException: On database or validation errors
     """
     try:
         # Build base query
@@ -383,11 +407,14 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
 
     Args:
         correlation_id: Correlation ID to trace
+        user: Current authenticated user
         db: Database session
-        _: Permission check dependency
 
     Returns:
         Complete trace of all related logs and events
+
+    Raises:
+        HTTPException: On database or validation errors
     """
     try:
         # Get structured logs
@@ -509,11 +536,14 @@ async def get_security_events(
         end_time: End timestamp
         limit: Maximum results
         offset: Result offset
+        user: Current authenticated user
         db: Database session
-        _: Permission check dependency
 
     Returns:
         List of security events
+
+    Raises:
+        HTTPException: On database or validation errors
     """
     try:
         stmt = select(SecurityEvent)
@@ -584,11 +614,14 @@ async def get_audit_trails(
         end_time: End timestamp
         limit: Maximum results
         offset: Result offset
+        user: Current authenticated user
         db: Database session
-        _: Permission check dependency
 
     Returns:
         List of audit trail entries
+
+    Raises:
+        HTTPException: On database or validation errors
     """
     try:
         stmt = select(AuditTrail)
@@ -652,12 +685,16 @@ async def get_performance_metrics(
     Args:
         component: Filter by component
         operation: Filter by operation
+        aggregation: Aggregation level (5m, 1h, 1d, 7d)
         hours: Hours of history
+        user: Current authenticated user
         db: Database session
-        _: Permission check dependency
 
     Returns:
         List of performance metrics
+
+    Raises:
+        HTTPException: On database or validation errors
     """
     try:
         aggregation_config = _AGGREGATION_LEVELS.get(aggregation, _AGGREGATION_LEVELS[_DEFAULT_AGGREGATION_KEY])

@@ -42,7 +42,7 @@ class LogAggregator:
 
         Args:
             component: Component name
-            operation: Operation name
+            operation_type: Operation name
             window_start: Start of aggregation window (defaults to N minutes ago)
             window_end: End of aggregation window (defaults to now)
             db: Optional database session
@@ -335,7 +335,15 @@ class LogAggregator:
 
     @staticmethod
     def _percentile(sorted_values: List[float], percentile: float) -> float:
-        """Calculate percentile from sorted values."""
+        """Calculate percentile from sorted values.
+
+        Args:
+            sorted_values: Sorted list of values
+            percentile: Percentile to calculate (0.0 to 1.0)
+
+        Returns:
+            float: Calculated percentile value
+        """
         if not sorted_values:
             return 0.0
 
@@ -355,7 +363,14 @@ class LogAggregator:
 
     @staticmethod
     def _calculate_error_count(entries: List[StructuredLogEntry]) -> int:
-        """Calculate error occurrences for a batch of log entries."""
+        """Calculate error occurrences for a batch of log entries.
+
+        Args:
+            entries: List of log entries to analyze
+
+        Returns:
+            int: Count of error entries
+        """
         error_levels = {"ERROR", "CRITICAL"}
         return sum(1 for entry in entries if (entry.level and entry.level.upper() in error_levels) or entry.error_details)
 
@@ -364,7 +379,15 @@ class LogAggregator:
         window_start: Optional[datetime],
         window_end: Optional[datetime],
     ) -> Tuple[datetime, datetime]:
-        """Resolve and normalize aggregation window bounds."""
+        """Resolve and normalize aggregation window bounds.
+
+        Args:
+            window_start: Start of window or None to calculate
+            window_end: End of window or None for current time
+
+        Returns:
+            Tuple[datetime, datetime]: Resolved window start and end
+        """
         window_delta = timedelta(minutes=self.aggregation_window_minutes)
 
         if window_start is not None and window_end is not None:
@@ -414,7 +437,28 @@ class LogAggregator:
         metric_metadata: Optional[Dict[str, Any]],
         db: Session,
     ) -> PerformanceMetric:
-        """Create or update a performance metric window."""
+        """Create or update a performance metric window.
+
+        Args:
+            component: Component name
+            operation_type: Operation type
+            window_start: Window start time
+            window_end: Window end time
+            request_count: Total request count
+            error_count: Total error count
+            error_rate: Error rate (0.0-1.0)
+            avg_duration_ms: Average duration in milliseconds
+            min_duration_ms: Minimum duration in milliseconds
+            max_duration_ms: Maximum duration in milliseconds
+            p50_duration_ms: 50th percentile duration
+            p95_duration_ms: 95th percentile duration
+            p99_duration_ms: 99th percentile duration
+            metric_metadata: Additional metadata
+            db: Database session
+
+        Returns:
+            PerformanceMetric: Created or updated metric
+        """
 
         existing_stmt = select(PerformanceMetric).where(
             and_(

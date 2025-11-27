@@ -355,23 +355,50 @@ class StructuredLogger:
         self.router.route(entry, db)
 
     def debug(self, message: str, **kwargs: Any) -> None:
-        """Log debug message."""
+        """Log debug message.
+
+        Args:
+            message: Log message
+            **kwargs: Additional context fields
+        """
         self.log(LogLevel.DEBUG, message, **kwargs)
 
     def info(self, message: str, **kwargs: Any) -> None:
-        """Log info message."""
+        """Log info message.
+
+        Args:
+            message: Log message
+            **kwargs: Additional context fields
+        """
         self.log(LogLevel.INFO, message, **kwargs)
 
     def warning(self, message: str, **kwargs: Any) -> None:
-        """Log warning message."""
+        """Log warning message.
+
+        Args:
+            message: Log message
+            **kwargs: Additional context fields
+        """
         self.log(LogLevel.WARNING, message, **kwargs)
 
     def error(self, message: str, error: Optional[Exception] = None, **kwargs: Any) -> None:
-        """Log error message."""
+        """Log error message.
+
+        Args:
+            message: Log message
+            error: Exception object if available
+            **kwargs: Additional context fields
+        """
         self.log(LogLevel.ERROR, message, error=error, **kwargs)
 
     def critical(self, message: str, error: Optional[Exception] = None, **kwargs: Any) -> None:
-        """Log critical message."""
+        """Log critical message.
+
+        Args:
+            message: Log message
+            error: Exception object if available
+            **kwargs: Additional context fields
+        """
         self.log(LogLevel.CRITICAL, message, error=error, **kwargs)
 
 
