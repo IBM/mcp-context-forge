@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/alembic/versions/add_a2a_agents_and_metrics.py
+"""Location: ./mcpgateway/alembic/versions/add_toolops_test_case_table.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Jay Bandlamudi
 
 add_a2a_agents_and_metrics
 
 Revision ID: add_a2a_agents_and_metrics
 Revises: add_oauth_tokens_table
-Create Date: 2025-08-19 10:00:00.000000
+Create Date: 2025-11-27 10:00:00.000000
 """
 
 # Standard
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "add_toolops_test_cases_table"
-down_revision: Union[str, Sequence[str], None] = None
+down_revision: Union[str, Sequence[str], None] = "z1a2b3c4d5e6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
