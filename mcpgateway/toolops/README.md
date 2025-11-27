@@ -11,5 +11,10 @@
 * For toolops developement (Caution) : Only if required to re-install of latest version of `agent life cycle toolkit(ALTK)` from git repo in case of fixes/updates please use pip install via git ssh url. 
 
 ### Testing toolops requires MCP server running to set up MCP server using OAPI specification
-* `source mcpgateway/toolops/testing/mcp-server-setup/mcp_server_setup.sh` running this script will start example MCP server at port 9009 , which can be used for testing.
-* If required install `pip install fastmcp>=2.13.1` for testing other test MCP servers.
+```
+python3 -m mcpgateway.translate \
+     --stdio "uvx mcp-server-git" \
+     --expose-sse \
+     --expose-streamable-http \
+     --port 9000
+```
