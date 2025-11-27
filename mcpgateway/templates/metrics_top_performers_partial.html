@@ -48,7 +48,7 @@
       </td>
       <td class="px-4 py-4 whitespace-nowrap text-sm">
         {% set success_rate = item.get('successRate', 0) or 0 %}
-        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold 
+        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
           {% if success_rate >= 95 %}bg-green-100 text-green-800{% elif success_rate >= 80 %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
           {{ "%.1f"|format(success_rate) }}%
         </span>

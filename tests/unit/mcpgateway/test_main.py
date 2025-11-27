@@ -751,7 +751,7 @@ class TestResourceEndpoints:
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
         resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe/{resource_id}", headers=auth_headers)
+        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
