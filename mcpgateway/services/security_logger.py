@@ -45,7 +45,7 @@ class SecurityEventType(str, Enum):
     SUSPICIOUS_ACTIVITY = "suspicious_activity"
     RATE_LIMIT_EXCEEDED = "rate_limit_exceeded"
     BRUTE_FORCE_ATTEMPT = "brute_force_attempt"
-    TOKEN_MANIPULATION = "token_manipulation"
+    TOKEN_MANIPULATION = "token_manipulation"  # nosec B105 - Not a password, security event type constant
     DATA_EXFILTRATION = "data_exfiltration"
     PRIVILEGE_ESCALATION = "privilege_escalation"
     INJECTION_ATTEMPT = "injection_attempt"
