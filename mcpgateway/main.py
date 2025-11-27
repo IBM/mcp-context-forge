@@ -911,6 +911,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
     the request is rejected with a 401 or 403 error.
 
     Note:
+        OPTIONS requests are exempt from authentication to support CORS preflight
+        as per RFC 7231 Section 4.3.7 (OPTIONS must not require authentication).
+
+    Note:
         When DOCS_ALLOW_BASIC_AUTH is enabled, Basic Authentication
         is also accepted using BASIC_AUTH_USER and BASIC_AUTH_PASSWORD credentials.
     """
@@ -950,6 +954,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             True
         """
         protected_paths = ["/docs", "/redoc", "/openapi.json"]
+
+        # Allow OPTIONS requests to pass through for CORS preflight (RFC 7231)
+        if request.method == "OPTIONS":
+            return await call_next(request)
 
         if any(request.url.path.startswith(p) for p in protected_paths):
             try:
