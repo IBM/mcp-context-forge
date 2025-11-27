@@ -290,11 +290,11 @@ class TestEventService:
                     async def consume():
                         async for event in service.subscribe_events():
                             pass
-                    
+
                     task = asyncio.create_task(consume())
                     await asyncio.sleep(0.3)
                     task.cancel()
-                    
+
                     try:
                         await task
                     except asyncio.CancelledError:
@@ -490,10 +490,10 @@ class TestEventService:
 
             sub_task = asyncio.create_task(subscriber())
             pub_task = asyncio.create_task(publisher())
-            
+
             await pub_task
             await asyncio.sleep(0.2)
-            
+
             sub_task.cancel()
             try:
                 await sub_task
@@ -580,10 +580,10 @@ class TestEventService:
 
             gen_task = asyncio.create_task(generator_consumer())
             pub_task = asyncio.create_task(publisher())
-            
+
             await pub_task
             await asyncio.sleep(0.2)
-            
+
             gen_task.cancel()
             try:
                 await gen_task

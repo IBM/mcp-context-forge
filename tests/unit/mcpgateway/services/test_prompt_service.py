@@ -454,10 +454,10 @@ class TestPromptService:
         """Test that _publish_event uses EventService to publish events."""
         # Mock the EventService's publish_event method
         prompt_service._event_service.publish_event = AsyncMock()
-        
+
         event = {"type": "test"}
         await prompt_service._publish_event(event)
-        
+
         # Verify that EventService.publish_event was called with the event
         prompt_service._event_service.publish_event.assert_called_once_with(event)
 

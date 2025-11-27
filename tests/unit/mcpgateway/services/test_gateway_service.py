@@ -1513,7 +1513,7 @@ class TestGatewayService:
             mock_session_instance.list_tools.return_value = mock_tools_response
 
             # Make list_resources fail
-            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed") 
+            mock_session_instance.list_resources.side_effect = Exception("Resource fetch failed")
 
             # Execute
             capabilities, tools, resources, prompts = await gateway_service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")

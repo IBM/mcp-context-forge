@@ -2717,6 +2717,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "name": gateway.name,
                 "url": gateway.url,
                 "enabled": gateway.enabled,
+                "reachable": gateway.reachable,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2735,6 +2736,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "name": gateway.name,
                 "url": gateway.url,
                 "enabled": gateway.enabled,
+                "reachable": gateway.reachable,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

@@ -2028,7 +2028,7 @@ function createStandardPaginationControls(
         get hasPrev() { return this.currentPage > 1; },
         get startItem() { return Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems); },
         get endItem() { return Math.min(this.currentPage * this.perPage, this.totalItems); },
-        
+
         goToPage(page) {
             if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
                 this.currentPage = page;

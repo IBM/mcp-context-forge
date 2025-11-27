@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """resource_rename_template_to_uri_template
 
 Revision ID: 191a2def08d7

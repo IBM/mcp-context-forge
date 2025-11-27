@@ -99,7 +99,7 @@ def mock_request():
 class TestResourceServicePluginIntegration:
     """Test ResourceService integration with plugin framework."""
 
-    
+
 
     @pytest.fixture
     def resource_service(self):
@@ -137,13 +137,13 @@ class TestResourceServicePluginIntegration:
         # Use a valid MIME type
         form_data = FakeForm(
             {
-                        "uri": "greetme://morning/{name}", 
-                        "name": "test_doc", 
-                        "content": "Test content", 
+                        "uri": "greetme://morning/{name}",
+                        "name": "test_doc",
+                        "content": "Test content",
                         "mimeType": "text/plain"
             }
         )
-        
+
         mock_request.form = AsyncMock(return_value=form_data)
 
         result = await admin_add_resource(mock_request, mock_db, "test-user")
@@ -159,7 +159,7 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_read_resource_with_pre_fetch_hook(self,resource_service_with_plugins):
         """Test read_resource executes pre-fetch hook and passes correct context."""
-        
+
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
 
@@ -223,7 +223,7 @@ class TestResourceServicePluginIntegration:
         assert first_call[0][0] == ResourceHookType.RESOURCE_PRE_FETCH # hook_type
         assert first_call[0][1].uri == "test://resource"  # payload.uri
         assert first_call[0][2].request_id == "test-123"
-    
+
 
     @pytest.mark.asyncio
     async def test_read_resource_blocked_by_plugin(self, resource_service_with_plugins, mock_db):
@@ -262,11 +262,11 @@ class TestResourceServicePluginIntegration:
 
         assert "Protocol not allowed" in str(exc_info.value)
         mock_manager.invoke_hook.assert_called()
-    
+
     @pytest.mark.asyncio
     async def test_read_resource_uri_modified_by_plugin(self, mock_db, resource_service_with_plugins):
         """Test read_resource with plugin modifying URI and a mocked SQLAlchemy Session."""
-        
+
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
 
@@ -313,7 +313,7 @@ class TestResourceServicePluginIntegration:
         # Verify interactions
         mock_db.execute.assert_called()
         mock_manager.invoke_hook.assert_awaited()
-    
+
 
 
     @pytest.mark.asyncio

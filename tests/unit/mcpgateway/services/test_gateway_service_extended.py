@@ -170,13 +170,13 @@ class TestGatewayServiceExtended:
     async def test_publish_event(self):
         """Test _publish_event method via EventService."""
         service = GatewayService()
-        
+
         # Mock EventService.publish_event
         service._event_service.publish_event = AsyncMock()
-        
+
         event = {"type": "gateway_added", "data": {"id": "123"}}
         await service._publish_event(event)
-        
+
         # Verify EventService.publish_event was called with the event
         service._event_service.publish_event.assert_called_once_with(event)
 
@@ -525,18 +525,18 @@ class TestGatewayServiceExtended:
         await service._notify_gateway_removed(mock_gateway)
         call_args = service._publish_event.call_args[0][0]
         assert call_args["type"] == "gateway_removed"
-    
+
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self):
         """Test publishing events via EventService (which handles multiple subscribers)."""
         service = GatewayService()
-        
+
         # Mock EventService.publish_event
         service._event_service.publish_event = AsyncMock()
-        
+
         event = {"type": "test"}
         await service._publish_event(event)
-        
+
         # Verify EventService.publish_event was called
         # EventService internally handles multiple subscribers
         service._event_service.publish_event.assert_called_once_with(event)

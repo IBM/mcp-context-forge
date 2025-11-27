@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import pytest
 from unittest.mock import MagicMock, patch
 from mcpgateway.services.system_stats_service import SystemStatsService

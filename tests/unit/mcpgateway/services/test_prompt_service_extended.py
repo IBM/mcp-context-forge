@@ -74,16 +74,16 @@ class TestPromptServiceExtended:
     async def test_shutdown(self):
         """Test shutdown method - verifies EventService cleanup."""
         service = PromptService()
-        
+
         # Mock the EventService shutdown method
         service._event_service.shutdown = AsyncMock()
-        
+
         with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
             await service.shutdown()
-            
+
             # Verify EventService.shutdown was called
             service._event_service.shutdown.assert_called_once()
-            
+
             # Verify logging
             mock_logger.info.assert_called_with("Prompt service shutdown complete")
 
@@ -305,13 +305,13 @@ class TestPromptServiceExtended:
     async def test_publish_event_multiple_subscribers(self):
         """Test _publish_event with multiple subscribers via EventService."""
         service = PromptService()
-        
+
         # Mock the EventService's publish_event method
         service._event_service.publish_event = AsyncMock()
-        
+
         event = {"type": "test", "data": {"message": "test"}}
         await service._publish_event(event)
-        
+
         # Verify EventService.publish_event was called with the event
         service._event_service.publish_event.assert_called_once_with(event)
 
@@ -319,22 +319,22 @@ class TestPromptServiceExtended:
     async def test_subscribe_events_uses_event_service(self):
         """Test that subscribe_events delegates to EventService."""
         service = PromptService()
-        
+
         # Create a mock async generator for EventService
         async def mock_event_generator():
             yield {"type": "test_event", "data": "test_data"}
-        
+
         # Mock the EventService's subscribe_events method
         service._event_service.subscribe_events = MagicMock(return_value=mock_event_generator())
-        
+
         # Subscribe and get one event
         event_gen = service.subscribe_events()
         event = await event_gen.__anext__()
-        
+
         # Verify the event came through
         assert event["type"] == "test_event"
         assert event["data"] == "test_data"
-        
+
         # Verify EventService.subscribe_events was called
         service._event_service.subscribe_events.assert_called_once()
 

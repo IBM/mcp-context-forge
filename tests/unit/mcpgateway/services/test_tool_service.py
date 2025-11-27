@@ -597,7 +597,7 @@ class TestToolService:
         mock_scalars.all.return_value = [mock_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
-        
+
         # Mock the db.query() call for team fetching
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
@@ -618,7 +618,7 @@ class TestToolService:
         mock_scalars.all.return_value = [active_tool, inactive_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
-        
+
         # Mock the db.query() call for team fetching
         mock_db.query.return_value.filter.return_value.all.return_value = []
 
@@ -629,7 +629,7 @@ class TestToolService:
 
         assert tools == ["active_converted", "inactive_converted"]
         assert service._convert_tool_to_read.call_count == 2
-        
+
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
         """Test getting a tool by ID."""
@@ -835,36 +835,36 @@ class TestToolService:
         """Test notification methods publish events via EventService."""
         # Mock EventService.publish_event
         tool_service._event_service.publish_event = AsyncMock()
-        
+
         # Test all notification methods
         mock_tool.enabled = True
         mock_tool.reachable = True
         await tool_service._notify_tool_activated(mock_tool)
-        
+
         mock_tool.enabled = False
         await tool_service._notify_tool_deactivated(mock_tool)
-        
+
         mock_tool.enabled = False
         await tool_service._notify_tool_removed(mock_tool)
-        
+
         tool_info = {"id": mock_tool.id, "name": mock_tool.name}
         await tool_service._notify_tool_deleted(tool_info)
-        
+
         # Verify all 4 events were published
         assert tool_service._event_service.publish_event.await_count == 4
-        
+
         # Verify event types were correct
         calls = tool_service._event_service.publish_event.call_args_list
         assert calls[0][0][0]["type"] == "tool_activated"
         assert calls[1][0][0]["type"] == "tool_deactivated"
         assert calls[2][0][0]["type"] == "tool_removed"
         assert calls[3][0][0]["type"] == "tool_deleted"
-        
+
         # Verify event data
         assert calls[0][0][0]["data"]["id"] == mock_tool.id
         assert calls[0][0][0]["data"]["name"] == mock_tool.name
         assert calls[0][0][0]["data"]["enabled"] is True
-        
+
         assert calls[3][0][0]["data"] == tool_info
 
 

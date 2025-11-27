@@ -194,9 +194,9 @@ class TestResourceServiceLifecycle:
         """Test service shutdown."""
         # Mock the EventService shutdown method
         resource_service._event_service.shutdown = AsyncMock()
-        
+
         await resource_service.shutdown()
-        
+
         # Verify EventService.shutdown was called
         resource_service._event_service.shutdown.assert_called_once()
 
@@ -936,20 +936,20 @@ class TestResourceSubscriptions:
         # Create a mock async generator for EventService
         async def mock_generator():
             yield {"type": "test", "data": "test_data"}
-        
+
         # Mock the EventService's subscribe_events method
         resource_service._event_service.subscribe_events = MagicMock(
             return_value=mock_generator()
         )
-        
+
         # Subscribe and get one event
         event_gen = resource_service.subscribe_events()
         event = await event_gen.__anext__()
-        
+
         # Verify the event came through
         assert event["type"] == "test"
         assert event["data"] == "test_data"
-        
+
         # Verify EventService.subscribe_events was called
         resource_service._event_service.subscribe_events.assert_called_once()
 
@@ -959,16 +959,16 @@ class TestResourceSubscriptions:
         # Create a mock async generator
         async def mock_generator():
             yield {"type": "resource_created", "data": {"uri": "any://resource"}}
-        
+
         # Mock the EventService method
         resource_service._event_service.subscribe_events = MagicMock(
             return_value=mock_generator()
         )
-        
+
         # Subscribe globally (no uri parameter)
         event_gen = resource_service.subscribe_events()
         event = await event_gen.__anext__()
-        
+
         assert event["type"] == "resource_created"
         resource_service._event_service.subscribe_events.assert_called_once()
 
@@ -1015,7 +1015,7 @@ class TestResourceTemplates:
     def test_uri_matches_template(self):
         from mcpgateway.services import ResourceService
         resource_service_instance = ResourceService()
-        
+
         """Test URI template matching."""
         template = "test://resource/{id}/details"
 
@@ -1305,12 +1305,12 @@ class TestNotifications:
         """Test resource added notification."""
         # Mock EventService.publish_event
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         await resource_service._notify_resource_added(mock_resource)
-        
+
         # Verify EventService.publish_event was called
         resource_service._event_service.publish_event.assert_called_once()
-        
+
         # Check the event structure
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_added"
@@ -1321,9 +1321,9 @@ class TestNotifications:
     async def test_notify_resource_updated(self, resource_service, mock_resource):
         """Test resource updated notification."""
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         await resource_service._notify_resource_updated(mock_resource)
-        
+
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_updated"
@@ -1332,9 +1332,9 @@ class TestNotifications:
     async def test_notify_resource_activated(self, resource_service, mock_resource):
         """Test resource activated notification."""
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         await resource_service._notify_resource_activated(mock_resource)
-        
+
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_activated"
@@ -1344,9 +1344,9 @@ class TestNotifications:
     async def test_notify_resource_deactivated(self, resource_service, mock_resource):
         """Test resource deactivated notification."""
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         await resource_service._notify_resource_deactivated(mock_resource)
-        
+
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_deactivated"
@@ -1356,10 +1356,10 @@ class TestNotifications:
     async def test_notify_resource_deleted(self, resource_service):
         """Test resource deleted notification."""
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         resource_info = {"id": 1, "uri": "test://resource", "name": "Test"}
         await resource_service._notify_resource_deleted(resource_info)
-        
+
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_deleted"
@@ -1369,9 +1369,9 @@ class TestNotifications:
     async def test_notify_resource_removed(self, resource_service, mock_resource):
         """Test resource removed notification."""
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         await resource_service._notify_resource_removed(mock_resource)
-        
+
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_removed"
@@ -1381,10 +1381,10 @@ class TestNotifications:
         """Test event publishing via EventService."""
         # Mock EventService.publish_event
         resource_service._event_service.publish_event = AsyncMock()
-        
+
         event = {"type": "test", "data": "test_data"}
         await resource_service._publish_event(event)
-        
+
         # Verify EventService.publish_event was called with the event
         resource_service._event_service.publish_event.assert_called_once_with(event)
 
@@ -1521,21 +1521,21 @@ class TestResourceServiceMetricsExtended:
         """Test subscribing to events - EventService handles all events globally."""
         # Note: With centralized EventService, filtering by URI is handled
         # at the application level, not at the service subscription level
-        
+
         test_event = {"type": "resource_updated", "data": {"uri": "test://resource"}}
-        
+
         # Create mock async generator
         async def mock_generator():
             yield test_event
-        
+
         resource_service._event_service.subscribe_events = MagicMock(
             return_value=mock_generator()
         )
-        
+
         # Subscribe (no uri parameter in new implementation)
         subscriber = resource_service.subscribe_events()
         received = await subscriber.__anext__()
-        
+
         assert received == test_event
         resource_service._event_service.subscribe_events.assert_called_once()
 
@@ -1543,19 +1543,19 @@ class TestResourceServiceMetricsExtended:
     async def test_subscribe_events_global(self, resource_service):
         """Test subscribing to all events via EventService."""
         test_event = {"type": "resource_created", "data": {"uri": "any://resource"}}
-        
+
         # Create mock async generator
         async def mock_generator():
             yield test_event
-        
+
         resource_service._event_service.subscribe_events = MagicMock(
             return_value=mock_generator()
         )
-        
+
         # Subscribe globally (same as specific - no uri param)
         subscriber = resource_service.subscribe_events()
         received = await subscriber.__anext__()
-        
+
         assert received == test_event
         resource_service._event_service.subscribe_events.assert_called_once()
 
