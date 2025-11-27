@@ -1537,7 +1537,7 @@ Disallow: /
 
 
 @lru_cache()
-def get_settings(**kwargs: Dict[str, Any]) -> Settings:
+def get_settings(**kwargs: Any) -> Settings:
     """Get cached settings instance.
 
     Args:
