@@ -7,6 +7,7 @@ Unit tests for request logging middleware.
 """
 import json
 import pytest
+from unittest.mock import MagicMock
 from fastapi import Request, Response
 from starlette.datastructures import Headers
 from starlette.types import Scope
@@ -28,7 +29,7 @@ class DummyLogger:
     def isEnabledFor(self, level):
         return self.enabled
 
-    def log(self, level, msg):
+    def log(self, level, msg, extra=None):
         self.logged.append((level, msg))
 
     def warning(self, msg):
@@ -39,6 +40,15 @@ def dummy_logger(monkeypatch):
     logger = DummyLogger()
     monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.logger", logger)
     return logger
+
+
+@pytest.fixture
+def mock_structured_logger(monkeypatch):
+    """Mock the structured_logger to prevent database writes."""
+    mock_logger = MagicMock()
+    mock_logger.log = MagicMock()
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.structured_logger", mock_logger)
+    return mock_logger
 
 @pytest.fixture
 def dummy_call_next():
@@ -112,8 +122,8 @@ def test_mask_sensitive_headers_non_sensitive():
 # --- RequestLoggingMiddleware tests ---
 
 @pytest.mark.asyncio
-async def test_dispatch_logs_json_body(dummy_logger, dummy_call_next):
-    middleware = RequestLoggingMiddleware(app=None)
+async def test_dispatch_logs_json_body(dummy_logger, mock_structured_logger, dummy_call_next):
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
     body = json.dumps({"password": "123", "data": "ok"}).encode()
     request = make_request(body=body, headers={"Authorization": "Bearer abc"})
     response = await middleware.dispatch(request, dummy_call_next)
@@ -122,8 +132,8 @@ async def test_dispatch_logs_json_body(dummy_logger, dummy_call_next):
     assert "******" in dummy_logger.logged[0][1]
 
 @pytest.mark.asyncio
-async def test_dispatch_logs_non_json_body(dummy_logger, dummy_call_next):
-    middleware = RequestLoggingMiddleware(app=None)
+async def test_dispatch_logs_non_json_body(dummy_logger, mock_structured_logger, dummy_call_next):
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
     body = b"token=abc"
     request = make_request(body=body)
     response = await middleware.dispatch(request, dummy_call_next)
@@ -131,8 +141,8 @@ async def test_dispatch_logs_non_json_body(dummy_logger, dummy_call_next):
     assert any("<contains sensitive data - masked>" in msg for _, msg in dummy_logger.logged)
 
 @pytest.mark.asyncio
-async def test_dispatch_large_body_truncated(dummy_logger, dummy_call_next):
-    middleware = RequestLoggingMiddleware(app=None, max_body_size=10)
+async def test_dispatch_large_body_truncated(dummy_logger, mock_structured_logger, dummy_call_next):
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=10)
     body = b"{" + b"a" * 100 + b"}"
     request = make_request(body=body)
     response = await middleware.dispatch(request, dummy_call_next)
@@ -140,8 +150,8 @@ async def test_dispatch_large_body_truncated(dummy_logger, dummy_call_next):
     assert any("[truncated]" in msg for _, msg in dummy_logger.logged)
 
 @pytest.mark.asyncio
-async def test_dispatch_logging_disabled(dummy_logger, dummy_call_next):
-    middleware = RequestLoggingMiddleware(app=None, log_requests=False)
+async def test_dispatch_logging_disabled(dummy_logger, mock_structured_logger, dummy_call_next):
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=False)
     body = b"{}"
     request = make_request(body=body)
     response = await middleware.dispatch(request, dummy_call_next)
@@ -149,9 +159,9 @@ async def test_dispatch_logging_disabled(dummy_logger, dummy_call_next):
     assert dummy_logger.logged == []
 
 @pytest.mark.asyncio
-async def test_dispatch_logger_disabled(dummy_logger, dummy_call_next):
+async def test_dispatch_logger_disabled(dummy_logger, mock_structured_logger, dummy_call_next):
     dummy_logger.enabled = False
-    middleware = RequestLoggingMiddleware(app=None)
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
     body = b"{}"
     request = make_request(body=body)
     response = await middleware.dispatch(request, dummy_call_next)
@@ -159,12 +169,12 @@ async def test_dispatch_logger_disabled(dummy_logger, dummy_call_next):
     assert dummy_logger.logged == []
 
 @pytest.mark.asyncio
-async def test_dispatch_exception_handling(dummy_logger, dummy_call_next, monkeypatch):
+async def test_dispatch_exception_handling(dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch):
     async def bad_body():
         raise ValueError("fail")
     request = make_request()
     monkeypatch.setattr(request, "body", bad_body)
-    middleware = RequestLoggingMiddleware(app=None)
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
     response = await middleware.dispatch(request, dummy_call_next)
     assert response.status_code == 200
     assert any("Failed to log request body" in msg for msg in dummy_logger.warnings)
