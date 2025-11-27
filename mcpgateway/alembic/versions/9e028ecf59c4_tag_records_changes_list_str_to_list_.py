@@ -5,23 +5,37 @@ Revises: 191a2def08d7
 Create Date: 2025-11-26 18:15:07.113528
 
 """
+
+# Standard
+import json
 from typing import Sequence, Union
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
-import json
 
 # revision identifiers, used by Alembic.
-revision: str = '9e028ecf59c4'
-down_revision: Union[str, Sequence[str], None] = '191a2def08d7'
+revision: str = "9e028ecf59c4"
+down_revision: Union[str, Sequence[str], None] = "191a2def08d7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Upgrade schema."""
-    # Data migration: convert servers.tags which are currently lists of strings
-    # into lists of dicts with keys `id` (normalized) and `label` (original).
+    """Convert string-only tag lists into dict-form tag lists.
+
+    Many tables store a JSON `tags` column. Older versions stored tags as a
+    list of plain strings. The application now expects each tag to be a
+    mapping with an `id` and a `label` (for example:
+    `{"id": "network", "label": "network"}`).
+
+    This migration iterates over a set of known tables and, for any row
+    where `tags` is a list that contains plain strings, replaces those
+    strings with dicts of the form `{"id": <string>, "label": <string>}`.
+    Non-list `tags` values and tags already in dict form are left
+    unchanged. Tables that are not present in the database are skipped.
+    """
+
     conn = op.get_bind()
     # Apply same transformation to multiple tables that use a `tags` JSON column.
     tables = [
@@ -71,13 +85,18 @@ def upgrade() -> None:
                     new_tags.append(t)
 
             # Convert back to JSON for storage
-            conn.execute(
-                sa.text(f"UPDATE {table} SET tags = :new_tags WHERE id = :id"),
-                {"new_tags": json.dumps(new_tags), "id": rec_id}
-            )
+            conn.execute(sa.text(f"UPDATE {table} SET tags = :new_tags WHERE id = :id"), {"new_tags": json.dumps(new_tags), "id": rec_id})
 
 
-def downgrade():
+def downgrade() -> None:
+    """Revert dict-form tag lists back to string-only lists.
+
+    Reverse the transformation applied in `upgrade()`: for any tag that is a
+    dict and contains an `id` key, replace the dict with its `id` string.
+    Other values are left unchanged. The operation is applied across the
+    same set of tables and skips missing tables or non-list `tags` values.
+    """
+
     conn = op.get_bind()
     # Reverse the transformation across the same set of tables.
     tables = [
@@ -122,8 +141,4 @@ def downgrade():
                 else:
                     old_tags.append(t)
 
-            conn.execute(
-                sa.text(f"UPDATE {table} SET tags = :tags WHERE id = :id"),
-                {"tags": json.dumps(old_tags), "id": rec_id}
-            )
-   
+            conn.execute(sa.text(f"UPDATE {table} SET tags = :tags WHERE id = :id"), {"tags": json.dumps(old_tags), "id": rec_id})
