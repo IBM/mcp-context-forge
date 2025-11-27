@@ -959,7 +959,6 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
         if request.method == "OPTIONS":
             return await call_next(request)
 
-
         if any(request.url.path.startswith(p) for p in protected_paths):
             try:
                 token = request.headers.get("Authorization")
