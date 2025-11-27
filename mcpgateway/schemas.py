@@ -2418,7 +2418,7 @@ class GatewayCreate(BaseModel):
     # One time auth - do not store the auth in gateway flag
     one_time_auth: Optional[bool] = Field(default=False, description="The authentication should be used only once and not stored in the gateway")
 
-    tags: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="Tags for categorizing the gateway")
+    tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     # Team scoping fields for resource organization
     team_id: Optional[str] = Field(None, description="Team ID this gateway belongs to")
@@ -2432,7 +2432,7 @@ class GatewayCreate(BaseModel):
 
     @field_validator("tags")
     @classmethod
-    def validate_tags(cls, v: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+    def validate_tags(cls, v: Optional[List[str]]) -> List[str]:
         """Validate and normalize tags.
 
         Args:
