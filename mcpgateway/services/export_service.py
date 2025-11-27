@@ -340,8 +340,8 @@ class ExportService:
         exported_gateways = []
 
         for gateway in gateways:
-            # Filter by tags if specified
-            if tags and not any(tag in (gateway.tags or []) for tag in tags):
+            # Filter by tags if specified — match by tag 'id' when tag objects present
+            if tags and not any(str(tag) in {(str(t.get('id')) if isinstance(t, dict) and t.get('id') is not None else str(t)) for t in (gateway.tags or [])} for tag in tags):
                 continue
 
             gateway_data = {
