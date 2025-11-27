@@ -340,13 +340,13 @@ class ToolService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = False) -> ToolRead:
+    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = True) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
             tool (DbTool): The ORM instance of the tool.
-            include_metrics (bool): Whether to include metrics in the result
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
