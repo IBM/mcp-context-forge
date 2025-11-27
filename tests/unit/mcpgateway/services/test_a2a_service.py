@@ -70,7 +70,7 @@ class TestA2AAgentService:
             auth_value="encoded-auth-value",
             enabled=True,
             reachable=True,
-            tags=["test", "ai"],
+            tags=[{'id': "test", "label": "test"}, {'id': "ai", "label": "ai"}],
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc),
             version=1,
@@ -445,7 +445,7 @@ class TestA2AAgentService:
         sample_db_agent.auth_type = "none"
         sample_db_agent.auth_header_key = "Authorization"
         sample_db_agent.auth_header_value = "Basic dGVzdDp2YWx1ZQ=="  # base64 for "test:value"
-
+        print(f"sample_db_agent: {sample_db_agent}")
         # Patch decode_auth to return a dummy decoded dict
         with patch("mcpgateway.schemas.decode_auth", return_value={"user": "decoded"}):
             result = service._db_to_schema(mock_db, sample_db_agent)
