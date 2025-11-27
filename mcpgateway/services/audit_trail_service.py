@@ -196,7 +196,16 @@ class AuditTrailService:
         data_classification: Optional[str],
         requires_review_param: Optional[bool],
     ) -> bool:
-        """Resolve whether an audit entry should require review."""
+        """Resolve whether an audit entry should require review.
+
+        Args:
+            action: Action being performed
+            data_classification: Data classification level
+            requires_review_param: Explicit review requirement
+
+        Returns:
+            bool: Whether the audit entry requires review
+        """
         if requires_review_param is not None:
             return requires_review_param
 

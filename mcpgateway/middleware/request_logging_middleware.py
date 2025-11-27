@@ -133,7 +133,14 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         self.max_body_size = max_body_size  # Expected to be in bytes
 
     async def _resolve_user_identity(self, request: Request):
-        """Best-effort extraction of user identity for request logs."""
+        """Best-effort extraction of user identity for request logs.
+
+        Args:
+            request: The incoming HTTP request
+
+        Returns:
+            Tuple[Optional[str], Optional[str]]: User ID and email
+        """
         # Prefer context injected by upstream middleware
         if hasattr(request.state, "user") and request.state.user is not None:
             raw_user_id = getattr(request.state.user, "id", None)
@@ -179,6 +186,9 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: The HTTP response from downstream handlers
+
+        Raises:
+            Exception: Any exception from downstream handlers is re-raised
         """
         # Track start time for total duration
         start_time = time.time()
