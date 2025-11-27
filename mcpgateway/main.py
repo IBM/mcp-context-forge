@@ -1823,33 +1823,37 @@ async def update_server(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@server_router.post("/{server_id}/toggle", response_model=ServerRead)
+@server_router.post("/{server_id}/state", response_model=ServerRead)
 @require_permission("servers.update")
-async def toggle_server_status(
+async def set_server_state(
     server_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
     """
-    Toggles the status of a server (activate or deactivate).
+    Set the state of a server (activate or deactivate).
+
+    This endpoint updates the server's active/inactive state. Prefer the
+    language "set ... state" over "toggle" to avoid ambiguity; the
+    `activate` boolean explicitly controls the resulting state.
 
     Args:
-        server_id (str): The ID of the server to toggle.
-        activate (bool): Whether to activate or deactivate the server.
+        server_id (str): The ID of the server to modify.
+        activate (bool): Whether to activate (True) or deactivate (False) the server.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        ServerRead: The server object after the status change.
+        ServerRead: The server object after the state change.
 
     Raises:
         HTTPException: If the server is not found or there is an error.
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+        logger.debug(f"User {user} is setting server {server_id} to {'active' if activate else 'inactive'}")
+        return await server_service.set_server_state(db, server_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -2300,35 +2304,39 @@ async def update_a2a_agent(
         raise HTTPException(status_code=409, detail=ErrorFormatter.format_database_error(e))
 
 
-@a2a_router.post("/{agent_id}/toggle", response_model=A2AAgentRead)
+@a2a_router.post("/{agent_id}/state", response_model=A2AAgentRead)
 @require_permission("a2a.update")
-async def toggle_a2a_agent_status(
+async def set_a2a_agent_state(
     agent_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
     """
-    Toggles the status of an A2A agent (activate or deactivate).
+    Set the state of an A2A agent (activate or deactivate).
+
+    This endpoint updates the agent's active/inactive state. Use "set ... state"
+    wording rather than "toggle"; the `activate` boolean explicitly controls the
+    resulting state.
 
     Args:
-        agent_id (str): The ID of the agent to toggle.
-        activate (bool): Whether to activate or deactivate the agent.
+        agent_id (str): The ID of the agent to modify.
+        activate (bool): Whether to activate (True) or deactivate (False) the agent.
         db (Session): The database session used to interact with the data store.
         user (str): The authenticated user making the request.
 
     Returns:
-        A2AAgentRead: The agent object after the status change.
+        A2AAgentRead: The agent object after the state change.
 
     Raises:
         HTTPException: If the agent is not found or there is an error.
     """
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {user} is setting A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+        return await a2a_service.set_a2a_agent_state(db, agent_id, activate, user_email=user_email)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -2699,9 +2707,9 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
-@tool_router.post("/{tool_id}/toggle")
+@tool_router.post("/{tool_id}/state")
 @require_permission("tools.update")
-async def toggle_tool_status(
+async def set_tool_state(
     tool_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -2711,7 +2719,7 @@ async def toggle_tool_status(
     Activates or deactivates a tool.
 
     Args:
-        tool_id (str): The ID of the tool to toggle.
+        tool_id (str): The ID of the tool whose state to set.
         activate (bool): Whether to activate (`True`) or deactivate (`False`) the tool.
         db (Session): The database session dependency.
         user (str): The authenticated user making the request.
@@ -2720,12 +2728,12 @@ async def toggle_tool_status(
         Dict[str, Any]: The status, message, and updated tool data.
 
     Raises:
-        HTTPException: If an error occurs during status toggling.
+        HTTPException: If an error occurs during the state change.
     """
     try:
-        logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
+        logger.debug(f"User {user} is setting tool with ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        tool = await tool_service.set_tool_state(db, tool_id, activate, reachable=activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -2763,9 +2771,9 @@ async def list_resource_templates(
     return ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
 
 
-@resource_router.post("/{resource_id}/toggle")
+@resource_router.post("/{resource_id}/state")
 @require_permission("resources.update")
-async def toggle_resource_status(
+async def set_resource_state(
     resource_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
@@ -2786,10 +2794,10 @@ async def toggle_resource_status(
     Raises:
         HTTPException: If toggling fails.
     """
-    logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
+    logger.debug(f"User {user} is setting resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+        resource = await resource_service.set_resource_state(db, resource_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
@@ -3122,19 +3130,19 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 ###############
 # Prompt APIs #
 ###############
-@prompt_router.post("/{prompt_id}/toggle")
+@prompt_router.post("/{prompt_id}/state")
 @require_permission("prompts.update")
-async def toggle_prompt_status(
+async def set_prompt_state(
     prompt_id: int,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
-    Toggle the activation status of a prompt.
+    Set the activation state of a prompt.
 
     Args:
-        prompt_id: ID of the prompt to toggle.
+        prompt_id: ID of the prompt whose state to set.
         activate: True to activate, False to deactivate.
         db: Database session.
         user: Authenticated user.
@@ -3143,12 +3151,12 @@ async def toggle_prompt_status(
         Status message and updated prompt details.
 
     Raises:
-        HTTPException: If the toggle fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
+        HTTPException: If the state change fails (e.g., prompt not found or database error); emitted with *400 Bad Request* status and an error message.
     """
-    logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
+    logger.debug(f"User: {user} requested set state for prompt {prompt_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+        prompt = await prompt_service.set_prompt_state(db, prompt_id, activate, user_email=user_email)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
@@ -3506,19 +3514,19 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 ################
 # Gateway APIs #
 ################
-@gateway_router.post("/{gateway_id}/toggle")
+@gateway_router.post("/{gateway_id}/state")
 @require_permission("gateways.update")
-async def toggle_gateway_status(
+async def set_gateway_state(
     gateway_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """
-    Toggle the activation status of a gateway.
+    Set the activation state of a gateway.
 
     Args:
-        gateway_id (str): String ID of the gateway to toggle.
+        gateway_id (str): String ID of the gateway whose state to set.
         activate (bool): ``True`` to activate, ``False`` to deactivate.
         db (Session): Active SQLAlchemy session.
         user (str): Authenticated username.
@@ -3527,12 +3535,12 @@ async def toggle_gateway_status(
         Dict[str, Any]: A dict containing the operation status, a message, and the updated gateway object.
 
     Raises:
-        HTTPException: Returned with **400 Bad Request** if the toggle operation fails (e.g., the gateway does not exist or the database raises an unexpected error).
+        HTTPException: Returned with **400 Bad Request** if the state change fails (e.g., the gateway does not exist or the database raises an unexpected error).
     """
-    logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
+    logger.debug(f"User '{user}' requested set state for gateway {gateway_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        gateway = await gateway_service.toggle_gateway_status(
+        gateway = await gateway_service.set_gateway_state(
             db,
             gateway_id,
             activate,

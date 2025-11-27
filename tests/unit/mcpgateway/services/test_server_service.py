@@ -704,7 +704,7 @@ class TestServerService:
 
     # -------------------------- toggle --------------------------------- #
     @pytest.mark.asyncio
-    async def test_toggle_server_status(self, server_service, mock_server, test_db):
+    async def test_set_server_state(self, server_service, mock_server, test_db):
         mock_server.team_id = 1
         test_db.get = Mock(return_value=mock_server)
         test_db.commit = Mock()
@@ -737,7 +737,7 @@ class TestServerService:
             )
         )
 
-        result = await server_service.toggle_server_status(test_db, 1, activate=False)
+        result = await server_service.set_server_state(test_db, 1, activate=False)
 
         test_db.get.assert_called_once_with(DbServer, 1)
         test_db.commit.assert_called_once()

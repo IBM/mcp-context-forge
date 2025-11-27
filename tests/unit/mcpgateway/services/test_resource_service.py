@@ -49,6 +49,15 @@ def resource_service(monkeypatch):
 def mock_db():
     """Create a mock database session."""
     db = MagicMock()
+    # Provide sensible defaults so tests that don't explicitly configure
+    # execute/scalars/scalar_one_or_none do not get MagicMock objects
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.execute.return_value.scalars.return_value = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+    db.query.return_value = MagicMock()
+    db.query.return_value.filter.return_value = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
     return db
 
 
@@ -523,7 +532,7 @@ class TestResourceManagement:
     """Test resource management operations."""
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_activate(self, resource_service, mock_db, mock_inactive_resource):
+    async def test_set_resource_state_activate(self, resource_service, mock_db, mock_inactive_resource):
         """Test activating an inactive resource."""
         mock_db.get.return_value = mock_inactive_resource
 
@@ -551,13 +560,13 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
+            result = await resource_service.set_resource_state(mock_db, 2, activate=True)
 
             assert mock_inactive_resource.is_active is True
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_deactivate(self, resource_service, mock_db, mock_resource):
+    async def test_set_resource_state_deactivate(self, resource_service, mock_db, mock_resource):
         """Test deactivating an active resource."""
         mock_db.get.return_value = mock_resource
 
@@ -585,25 +594,25 @@ class TestResourceManagement:
                 },
             )
 
-            result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
+            result = await resource_service.set_resource_state(mock_db, 1, activate=False)
 
             assert mock_resource.is_active is False
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_not_found(self, resource_service, mock_db):
-        """Test toggling status of non-existent resource."""
+    async def test_set_resource_state_not_found(self, resource_service, mock_db):
+        """Test setting status of non-existent resource."""
         mock_db.get.return_value = None
 
         with pytest.raises(ResourceError) as exc_info:  # ResourceError, not ResourceNotFoundError
-            await resource_service.toggle_resource_status(mock_db, 999, activate=True)
+            await resource_service.set_resource_state(mock_db, 999, activate=True)
 
         # The actual error message will vary, just check it mentions the resource
         assert "999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_no_change(self, resource_service, mock_db, mock_resource):
-        """Test toggling status when no change needed."""
+    async def test_set_resource_state_no_change(self, resource_service, mock_db, mock_resource):
+        """Test setting status when no change needed."""
         mock_db.get.return_value = mock_resource
         mock_resource.is_active = True
 
@@ -632,7 +641,7 @@ class TestResourceManagement:
             )
 
             # Try to activate already active resource
-            result = await resource_service.toggle_resource_status(mock_db, 1, activate=True)
+            result = await resource_service.set_resource_state(mock_db, 1, activate=True)
 
             # Should not commit or notify
             mock_db.commit.assert_not_called()
@@ -759,6 +768,31 @@ class TestResourceManagement:
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
+        # Patch conversion to return a concrete ResourceRead to avoid Pydantic
+        # validation issues when converting MagicMock DB objects.
+        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+            mock_convert.return_value = ResourceRead(
+                id=mock_resource.id,
+                uri=mock_resource.uri,
+                name=mock_resource.name,
+                description=mock_resource.description,
+                mime_type=mock_resource.mime_type,
+                size=mock_resource.size,
+                is_active=mock_resource.is_active,
+                created_at=mock_resource.created_at,
+                updated_at=mock_resource.updated_at,
+                uri_template=mock_resource.uri_template,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
 
         result = await resource_service.get_resource_by_id(mock_db, "1")
 
@@ -796,6 +830,31 @@ class TestResourceManagement:
         mock_scalar = MagicMock()
         mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.return_value = mock_scalar
+        # Patch conversion to return a concrete ResourceRead to avoid Pydantic
+        # validation issues when converting MagicMock DB objects.
+        with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
+            mock_convert.return_value = ResourceRead(
+                id=mock_inactive_resource.id,
+                uri=mock_inactive_resource.uri,
+                name=mock_inactive_resource.name,
+                description=mock_inactive_resource.description,
+                mime_type=mock_inactive_resource.mime_type,
+                size=mock_inactive_resource.size,
+                is_active=mock_inactive_resource.is_active,
+                created_at=mock_inactive_resource.created_at,
+                updated_at=mock_inactive_resource.updated_at,
+                uri_template=mock_inactive_resource.uri_template,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
 
         result = await resource_service.get_resource_by_id(mock_db, "1", include_inactive=True)
 
@@ -1416,13 +1475,13 @@ class TestErrorHandling:
             mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_toggle_resource_status_error(self, resource_service, mock_db, mock_resource):
-        """Test toggle status with error."""
+    async def test_set_resource_state_error(self, resource_service, mock_db, mock_resource):
+        """Test setting resource status with error."""
         mock_db.get.return_value = mock_resource
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.toggle_resource_status(mock_db, 1, activate=False)
+            await resource_service.set_resource_state(mock_db, 1, activate=False)
 
         mock_db.rollback.assert_called_once()
 

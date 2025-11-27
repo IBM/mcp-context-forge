@@ -1036,9 +1036,9 @@ class ToolService:
             db.rollback()
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
+    async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
         """
-        Toggle the activation status of a tool.
+        Set the activation state of a tool.
 
         Args:
             db (Session): The SQLAlchemy database session.
@@ -1070,7 +1070,7 @@ class ToolService:
             >>> service._convert_tool_to_read = MagicMock(return_value='tool_read')
             >>> ToolRead.model_validate = MagicMock(return_value='tool_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_tool_status(db, 'tool_id', True, True))
+            >>> asyncio.run(service.set_tool_state(db, 'tool_id', True, True))
             'tool_read'
         """
         try:
@@ -1117,7 +1117,10 @@ class ToolService:
             raise e
         except Exception as e:
             db.rollback()
-            raise ToolError(f"Failed to toggle tool status: {str(e)}")
+            raise ToolError(f"Failed to set tool state: {str(e)}")
+
+    # Backwards-compatible alias
+    toggle_tool_status = set_tool_state
 
     async def invoke_tool(
         self,
@@ -1684,9 +1687,9 @@ class ToolService:
             db.rollback()
             logger.error(f"Tool name conflict during update: {tnce}")
             raise tnce
-        except Exception as ex:
+        except Exception as e:
             db.rollback()
-            raise ToolError(f"Failed to update tool: {str(ex)}")
+            raise ToolError(f"Failed to update tool: {str(e)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:
         """

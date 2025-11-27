@@ -277,8 +277,8 @@ class TestUtilityFunctions:
             assert response.status_code in [404, 500, 503]
 
     def test_server_toggle_edge_cases(self, test_client, auth_headers):
-        """Test server toggle endpoint edge cases."""
-        with patch("mcpgateway.main.server_service.toggle_server_status") as mock_toggle:
+        """Test server state endpoint edge cases."""
+        with patch("mcpgateway.main.server_service.set_server_state") as mock_toggle:
             # Create a proper ServerRead model response
             # First-Party
             from mcpgateway.schemas import ServerRead
@@ -309,13 +309,13 @@ class TestUtilityFunctions:
             mock_toggle.return_value = ServerRead(**mock_server_data)
 
             # Test activate=true
-            response = test_client.post("/servers/1/toggle?activate=true", headers=auth_headers)
+            response = test_client.post("/servers/1/state?activate=true", headers=auth_headers)
             assert response.status_code == 200
 
             # Test activate=false
             mock_server_data["is_active"] = False
             mock_toggle.return_value = ServerRead(**mock_server_data)
-            response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
+            response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
             assert response.status_code == 200
 
 

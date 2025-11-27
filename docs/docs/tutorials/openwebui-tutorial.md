@@ -352,7 +352,7 @@ docker logs -f openwebui
 1. Navigate to **Workspace** → **Models**
 2. Edit each model (granite, llama, mistral)
 3. Scroll to **Tools** section
-4. Toggle on the MCP tools you want available
+4. Enable the MCP tools you want available
 5. Click **Save**
 
 ### 6.4 Add MCP Servers to Gateway

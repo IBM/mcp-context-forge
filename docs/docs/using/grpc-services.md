@@ -236,7 +236,7 @@ Click **View Methods** to see all discovered gRPC methods:
 - Output message type
 - Streaming flags (client/server streaming)
 
-### Toggle Service
+### Service State
 
 Use **Activate/Deactivate** to enable/disable a service:
 - Disabled services are not available for tool invocation
@@ -304,10 +304,10 @@ Content-Type: application/json
 }
 ```
 
-### Toggle Service
+### Service State
 
 ```bash
-POST /grpc/{service_id}/toggle
+POST /grpc/{service_id}/state
 ```
 
 ### Delete Service

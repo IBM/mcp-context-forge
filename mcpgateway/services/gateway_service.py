@@ -1547,9 +1547,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """
-        Toggle the activation status of a gateway.
+        Set the activation state of a gateway.
 
         Args:
             db: Database session
@@ -1683,10 +1683,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 if only_update_reachable:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, tool.enabled, reachable)
+                        await self.tool_service.set_tool_state(db, tool.id, tool.enabled, reachable)
                 else:
                     for tool in tools:
-                        await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
+                        await self.tool_service.set_tool_state(db, tool.id, activate, reachable)
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -1697,7 +1697,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             raise e
         except Exception as e:
             db.rollback()
-            raise GatewayError(f"Failed to toggle gateway status: {str(e)}")
+            raise GatewayError(f"Failed to set gateway state: {str(e)}")
+
+    # Backwards-compatible alias
+    toggle_gateway_status = set_gateway_state
 
     async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
         """
@@ -2079,7 +2082,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         if count >= GW_FAILURE_THRESHOLD:
             logger.error(f"Gateway {gateway.name} failed {GW_FAILURE_THRESHOLD} times. Deactivating...")
             with cast(Any, SessionLocal)() as db:
-                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, db: Session, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
@@ -2278,7 +2281,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                             # Reactivate gateway if it was previously inactive and health check passed now
                             if gateway.enabled and not gateway.reachable:
                                 logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
+                                await self.set_gateway_state(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
                             # Mark successful check
                             gateway.last_seen = datetime.now(timezone.utc)

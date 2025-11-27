@@ -162,9 +162,9 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Gateway
 
 ```bash
-# Toggle gateway enabled status
+# Set gateway state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/gateways/$GATEWAY_ID/toggle?activate=false | jq '.'
+  $BASE_URL/gateways/$GATEWAY_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Gateway
@@ -284,9 +284,9 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Tool
 
 ```bash
-# Toggle tool enabled status
+# Set tool state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/tools/$TOOL_ID/toggle?activate=false | jq '.'
+  $BASE_URL/tools/$TOOL_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Tool
@@ -407,9 +407,9 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Server
 
 ```bash
-# Toggle server enabled status
+# Set server state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/servers/$SERVER_ID/toggle?activate=false | jq '.'
+  $BASE_URL/servers/$SERVER_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Server
@@ -499,9 +499,9 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Resource
 
 ```bash
-# Toggle resource enabled status
+# Set resource state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/resources/$RESOURCE_ID/toggle?activate=false | jq '.'
+  $BASE_URL/resources/$RESOURCE_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Resource
@@ -581,9 +581,9 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
 ### Enable/Disable Prompt
 
 ```bash
-# Toggle prompt enabled status
+# Set prompt state (enable/disable)
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-  $BASE_URL/prompts/$PROMPT_ID/toggle?activate=false | jq '.'
+  $BASE_URL/prompts/$PROMPT_ID/state?activate=false | jq '.'
 ```
 
 ### Delete Prompt
@@ -1038,7 +1038,7 @@ TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
 for TOOL_ID in $TOOLS; do
   echo "Enabling tool: $TOOL_ID"
   curl -s -X POST -H "Authorization: Bearer $TOKEN" \
-    $BASE_URL/tools/$TOOL_ID/toggle > /dev/null
+    $BASE_URL/tools/$TOOL_ID/state > /dev/null
 done
 
 echo "Done!"

@@ -247,7 +247,7 @@ class TestGrpcService:
         mock_db.commit = MagicMock()
         mock_db.refresh = MagicMock()
 
-        result = await service.toggle_service(mock_db, sample_db_service.id, activate=False)
+        result = await service.set_grpc_service_state(mock_db, sample_db_service.id, activate=False)
 
         assert result.enabled is False
         mock_db.commit.assert_called()

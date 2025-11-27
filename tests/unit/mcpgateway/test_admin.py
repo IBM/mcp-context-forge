@@ -67,12 +67,12 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_stream_logs,
     admin_test_a2a_agent,
     admin_test_gateway,
-    admin_toggle_a2a_agent,
-    admin_toggle_gateway,
-    admin_toggle_prompt,
-    admin_toggle_resource,
-    admin_toggle_server,
-    admin_toggle_tool,
+    admin_set_a2a_agent_state,
+    admin_set_gateway_state,
+    admin_set_prompt_state,
+    admin_set_resource_state,
+    admin_set_server_state,
+    admin_set_tool_state,
     admin_ui,
     get_aggregated_metrics,
     get_global_passthrough_headers,
@@ -327,13 +327,13 @@ class TestAdminServerRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
 
-    @patch.object(ServerService, "toggle_server_status")
-    async def test_admin_toggle_server_with_exception(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling server status with exception handling."""
-        mock_toggle_status.side_effect = Exception("Toggle operation failed")
+    @patch.object(ServerService, "set_server_state")
+    async def test_admin_set_server_state_with_exception(self, mock_set_status, mock_request, mock_db):
+        """Test setting server state with exception handling."""
+        mock_set_status.side_effect = Exception("Toggle operation failed")
 
         # Should still return redirect
-        result = await admin_toggle_server("server-1", mock_request, mock_db, "test-user")
+        result = await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -529,31 +529,31 @@ class TestAdminToolRoutes:
         assert tool_update.headers == {}
         assert tool_update.input_schema == {}
 
-    @patch.object(ToolService, "toggle_tool_status")
-    async def test_admin_toggle_tool_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling tool with various activate values."""
+    @patch.object(ToolService, "set_tool_state")
+    async def test_admin_set_tool_state_various_activate_values(self, mock_set_status, mock_request, mock_db):
+        """Test setting tool state with various activate values."""
         tool_id = "tool-1"
 
         # Test with "false"
         form_data = FakeForm({"activate": "false"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_toggle_tool(tool_id, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
+        await admin_set_tool_state(tool_id, mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
 
 
 class TestAdminBulkImportRoutes:
@@ -873,16 +873,16 @@ class TestAdminResourceRoutes:
         mock_update_resource.assert_called_once()
         assert mock_update_resource.call_args[0][1] == uri
 
-    @patch.object(ResourceService, "toggle_resource_status")
-    async def test_admin_toggle_resource_numeric_id(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling resource with numeric ID."""
+    @patch.object(ResourceService, "set_resource_state")
+    async def test_admin_set_resource_state_numeric_id(self, mock_set_status, mock_request, mock_db):
+        """Test setting resource state with numeric ID."""
         # Test with integer ID
-        await admin_toggle_resource(123, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
+        await admin_set_resource_state(123, mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, 123, True, user_email="test-user")
 
         # Test with string number
-        await admin_toggle_resource("456", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
+        await admin_set_resource_state("456", mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, "456", True, user_email="test-user")
 
 
 class TestAdminPromptRoutes:
@@ -1029,16 +1029,16 @@ class TestAdminPromptRoutes:
         mock_update_prompt.assert_called_once()
         assert mock_update_prompt.call_args[0][1] == "old-prompt-name"
 
-    @patch.object(PromptService, "toggle_prompt_status")
-    async def test_admin_toggle_prompt_edge_cases(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling prompt with edge cases."""
+    @patch.object(PromptService, "set_prompt_state")
+    async def test_admin_set_prompt_state_edge_cases(self, mock_set_status, mock_request, mock_db):
+        """Test setting prompt state with edge cases."""
         # Test with string ID that looks like number
-        await admin_toggle_prompt("123", mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
+        await admin_set_prompt_state("123", mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, "123", True, user_email="test-user")
 
         # Test with negative number
-        await admin_toggle_prompt(-1, mock_request, mock_db, "test-user")
-        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
+        await admin_set_prompt_state(-1, mock_request, mock_db, "test-user")
+        mock_set_status.assert_called_with(mock_db, -1, True, user_email="test-user")
 
 
 class TestAdminGatewayRoutes:
@@ -1182,9 +1182,9 @@ class TestAdminGatewayRoutes:
         assert result.status_code in (400, 422)
         assert body["success"] is False
 
-    @patch.object(GatewayService, "toggle_gateway_status")
-    async def test_admin_toggle_gateway_concurrent_calls(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling gateway with simulated concurrent calls."""
+    @patch.object(GatewayService, "set_gateway_state")
+    async def test_admin_set_gateway_state_concurrent_calls(self, mock_set_status, mock_request, mock_db):
+        """Test setting gateway state with simulated concurrent calls."""
         # Simulate race condition
         call_count = 0
 
@@ -1195,14 +1195,14 @@ class TestAdminGatewayRoutes:
                 raise Exception("Gateway is being modified by another process")
             return None
 
-        mock_toggle_status.side_effect = side_effect
+        mock_set_status.side_effect = side_effect
 
         # First call should fail
-        result1 = await admin_toggle_gateway("gateway-1", mock_request, mock_db, "test-user")
+        result1 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, "test-user")
         assert isinstance(result1, RedirectResponse)
 
         # Second call should succeed
-        result2 = await admin_toggle_gateway("gateway-1", mock_request, mock_db, "test-user")
+        result2 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, "test-user")
         assert isinstance(result2, RedirectResponse)
 
 
@@ -1863,21 +1863,21 @@ class TestA2AAgentManagement:
         assert data["success"] is False
         assert "agent name already exists" in data["message"].lower()
 
-    @patch.object(A2AAgentService, "toggle_agent_status")
-    async def test_admin_toggle_a2a_agent_success(self, mock_toggle_status, mock_request, mock_db):
-        """Test toggling A2A agent status."""
+    @patch.object(A2AAgentService, "set_a2a_agent_state")
+    async def test_admin_set_a2a_agent_state_success(self, mock_set_status, mock_request, mock_db):
+        """Test setting A2A agent state."""
         # First-Party
 
         form_data = FakeForm({"activate": "true"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_toggle_a2a_agent("agent-1", mock_request, mock_db, "test-user")
+        result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, "test-user")
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
+        mock_set_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -2591,8 +2591,8 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Test with toggle operations which use boolean parsing
-        with patch.object(ServerService, "toggle_server_status", new_callable=AsyncMock) as mock_toggle:
-            await admin_toggle_server("server-1", mock_request, mock_db, "test-user")
+        with patch.object(ServerService, "set_server_state", new_callable=AsyncMock) as mock_toggle:
+            await admin_set_server_state("server-1", mock_request, mock_db, "test-user")
 
             # Check how the value was parsed
             if form_field == "activate":
