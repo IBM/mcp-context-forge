@@ -1969,7 +1969,7 @@ class ToolService:
         # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
         # extract the human-friendly label. If tags are already strings, keep them.
         normalized_tags: list[str] = []
-        for t in (agent.tags or []):
+        for t in agent.tags or []:
             if isinstance(t, dict):
                 # Prefer 'label', fall back to 'id' or stringified dict
                 normalized_tags.append(t.get("label") or t.get("id") or str(t))

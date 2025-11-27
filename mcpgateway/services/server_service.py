@@ -37,7 +37,6 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
-from mcpgateway.validation.tags import TagValidator
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -248,7 +247,7 @@ class ServerService:
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents] if server.a2a_agents else []
         server_dict["tags"] = server.tags or []
-        
+
         # Include metadata fields for proper API response
         server_dict["created_by"] = getattr(server, "created_by", None)
         server_dict["modified_by"] = getattr(server, "modified_by", None)
