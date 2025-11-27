@@ -4,22 +4,16 @@ from datetime import datetime, timezone
 
 from mcpgateway.services.observability_service import (
     ObservabilityService,
-    utc_now,
-    ensure_timezone_aware,
     parse_traceparent,
     generate_w3c_trace_id,
     generate_w3c_span_id,
     format_traceparent,
 )
 
-# Patch joinedload inside the service module itself
-import mcpgateway.services.observability_service as obs_service
-obs_service.joinedload = MagicMock(return_value=lambda x: x)
-
 
 @pytest.fixture
 def mock_db():
-    """Mocked SQLAlchemy session-like object."""
+    # Mocked SQLAlchemy session-like object
     db = MagicMock()
     query = MagicMock()
     db.query.return_value = query
@@ -33,6 +27,7 @@ def mock_db():
 @patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock())
 @patch("mcpgateway.services.observability_service.ObservabilityEvent", MagicMock())
 @patch("mcpgateway.services.observability_service.ObservabilityMetric", MagicMock())
+@patch("mcpgateway.services.observability_service.joinedload", MagicMock(return_value=lambda x: x))
 def test_get_trace_with_and_without_spans(mock_db):
     service = ObservabilityService()
     mock_query = MagicMock()
@@ -56,10 +51,13 @@ def test_add_event_commits(mock_db):
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
 def test_record_token_usage_missing_trace(mock_ctid, mock_db):
+    # Test that record_token_usage returns early when no trace is active
     service = ObservabilityService()
     mock_ctid.get.return_value = None
+    # Should return early without error when no trace is active
     service.record_token_usage(mock_db, input_tokens=5)
-    assert True
+    # Verify no metric was recorded since there's no active trace
+    mock_db.add.assert_not_called()
 
 
 @patch("mcpgateway.services.observability_service.current_trace_id")
@@ -125,11 +123,12 @@ def test_parse_traceparent_edge_invalid_version(caplog):
 
 
 def test_parse_traceparent_zero_ids(caplog):
-    bad_trace_id = "00-" + "0"*32 + "-b7ad6b7169203331-01"
-    bad_parent_id = "00-0af7651916cd43dd8448eb211c80319c-" + "0"*16 + "-01"
+    bad_trace_id = "00-" + "0" * 32 + "-b7ad6b7169203331-01"
+    bad_parent_id = "00-0af7651916cd43dd8448eb211c80319c-" + "0" * 16 + "-01"
     assert parse_traceparent(bad_trace_id) is None
     assert parse_traceparent(bad_parent_id) is None
-    assert "zero trace_id" in caplog.text or True
+    # Both should be rejected due to zero IDs
+    assert "Invalid traceparent" in caplog.text or "zero" in caplog.text.lower()
 
 
 def test_parse_traceparent_valid_but_zero_ids(caplog):
@@ -229,7 +228,7 @@ def test_record_metric_exists(mock_db):
     metric_func = getattr(service, "record_metric", None)
     if metric_func:
         metric_func(db=mock_db, name="metric.test", value=1.0, metric_type="counter",
-                    unit="test", trace_id="tid", attributes={"a":"b"})
+                    unit="test", trace_id="tid", attributes={"a": "b"})
         mock_db.add.assert_called()
 
 
@@ -307,7 +306,7 @@ def test_trace_span_exception_path(mock_db):
             raise RuntimeError("forced error")
 
 
-def test_trace_tool_invocation_success(mock_db):
+def test_trace_tool_invocation_with_status_result(mock_db):
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as ct:
         ct.get.return_value = "traceid"
@@ -326,7 +325,7 @@ def test_record_token_usage_autocalc(mock_db):
         service.record_metric.assert_called()
 
 
-def test_trace_a2a_request_success(mock_db):
+def test_trace_a2a_request_with_response_result(mock_db):
     service = ObservabilityService()
     with patch("mcpgateway.services.observability_service.current_trace_id") as ct:
         ct.get.return_value = "traceid"
@@ -361,12 +360,13 @@ def test_generate_trace_and_span_ids_lengths():
 
 def test_start_trace_parent_id_included(mock_db):
     service = ObservabilityService()
-    tid = service.start_trace(mock_db, "GET /resource",
-                              parent_span_id="p123",
-                              attributes={"foo": "bar"})
+    trace_id = service.start_trace(mock_db, "GET /resource",
+                                   parent_span_id="p123",
+                                   attributes={"foo": "bar"})
     mock_db.add.assert_called()
     # parent_span_id gets merged in attributes
     assert "parent_span_id" in (mock_db.add.call_args[0][0].attributes or {})
+    assert isinstance(trace_id, str)
 
 
 def test_end_trace_merges_additional_attributes(mock_db):
@@ -384,7 +384,8 @@ def test_end_span_no_span_found_logs_warning(mock_db, caplog):
     service = ObservabilityService()
     mock_db.query.return_value.filter_by.return_value.first.return_value = None
     service.end_span(mock_db, "missing")
-    assert "not found" in caplog.text or True
+    # The service should log a warning when span is not found
+    assert "not found" in caplog.text.lower() or mock_db.commit.call_count == 0
 
 
 def test_trace_span_exception_triggers_event(mock_db):
