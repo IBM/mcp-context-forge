@@ -872,7 +872,9 @@ class TestToolService:
     async def test_publish_event_with_real_queue(self, tool_service):
         # Arrange
         q = asyncio.Queue()
-        tool_service._event_subscribers = [q]  # seed one subscriber
+        # Force local mode (no Redis) and seed one subscriber via EventService
+        tool_service._event_service._redis_client = None
+        tool_service._event_service._event_subscribers = [q]
         event = {"type": "test", "data": 123}
 
         # Act
