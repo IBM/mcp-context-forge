@@ -1422,15 +1422,17 @@ class ToolService:
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, patch
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
             >>> tool.reachable = True
             >>> import asyncio
-            >>> result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
-            >>> isinstance(result, object)
+            >>> # Mock structured_logger to prevent database writes during doctest
+            >>> with patch('mcpgateway.services.tool_service.structured_logger'):
+            ...     result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
+            ...     isinstance(result, object)
             True
         """
         # pylint: disable=comparison-with-callable
