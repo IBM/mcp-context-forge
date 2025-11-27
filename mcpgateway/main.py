@@ -1993,6 +1993,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
+    include_metrics: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
@@ -2006,6 +2007,7 @@ async def server_get_tools(
     Args:
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
+        include_metrics (bool): Whether to include metrics in the tools results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -2013,7 +2015,7 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
-    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive)
+    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics)
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 

@@ -1278,7 +1278,7 @@ class ToolRead(BaseModelWithConfigDict):
     reachable: bool
     gateway_id: Optional[str]
     execution_count: int
-    metrics: ToolMetrics
+    metrics: Optional[ToolMetrics] = Field(None)
     name: str
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     gateway_slug: str
