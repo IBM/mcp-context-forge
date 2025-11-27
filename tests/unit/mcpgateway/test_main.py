@@ -795,7 +795,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=None)
+        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -871,7 +871,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=None)
+        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -1120,7 +1120,7 @@ class TestRPCEndpoints:
             request_headers=ANY,
             app_user_email="test_user",
             plugin_context_table=None,
-            plugin_global_context=None,
+            plugin_global_context=ANY,
         )
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1143,7 +1143,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["messages"][0]["content"]["text"] == "Rendered prompt"
-        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, plugin_context_table=None, plugin_global_context=None)
+        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.tool_service.list_tools")
     # @patch("mcpgateway.main.validate_request")

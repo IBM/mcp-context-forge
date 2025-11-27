@@ -114,7 +114,7 @@ class TestCrossHookContextSharing:
         from mcpgateway.schemas import ToolCreate
         from mcpgateway.services.tool_service import ToolService
 
-        tool_service = ToolService(plugin_manager=plugin_manager)
+        tool_service = ToolService()
 
         # Register a test tool
         tool_data = ToolCreate(
@@ -158,7 +158,7 @@ class TestCrossHookContextSharing:
         from mcpgateway.schemas import ResourceCreate
         from mcpgateway.services.resource_service import ResourceService
 
-        resource_service = ResourceService(plugin_manager=plugin_manager)
+        resource_service = ResourceService()
 
         # Register a test resource
         resource_data = ResourceCreate(
@@ -193,7 +193,7 @@ class TestCrossHookContextSharing:
         from mcpgateway.schemas import PromptCreate
         from mcpgateway.services.prompt_service import PromptService
 
-        prompt_service = PromptService(plugin_manager=plugin_manager)
+        prompt_service = PromptService()
 
         # Register a test prompt
         prompt_data = PromptCreate(
