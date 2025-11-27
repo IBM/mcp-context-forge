@@ -44,6 +44,16 @@ from mcpgateway.services.prompt_service import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def mock_prompt():
     """Create a mock prompt model."""

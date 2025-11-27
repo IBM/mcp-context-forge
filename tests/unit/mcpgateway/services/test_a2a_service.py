@@ -21,6 +21,21 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentUpdate
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 
+
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock structured_logger and audit_trail to prevent database writes during tests."""
+    with patch("mcpgateway.services.a2a_service.structured_logger") as mock_a2a_logger, \
+         patch("mcpgateway.services.tool_service.structured_logger") as mock_tool_logger, \
+         patch("mcpgateway.services.tool_service.audit_trail") as mock_tool_audit:
+        mock_a2a_logger.log = MagicMock(return_value=None)
+        mock_a2a_logger.info = MagicMock(return_value=None)
+        mock_tool_logger.log = MagicMock(return_value=None)
+        mock_tool_logger.info = MagicMock(return_value=None)
+        mock_tool_audit.log_action = MagicMock(return_value=None)
+        yield {"structured_logger": mock_a2a_logger, "tool_logger": mock_tool_logger, "tool_audit": mock_tool_audit}
+
+
 class TestA2AAgentService:
     """Test suite for A2A Agent Service."""
 

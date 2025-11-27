@@ -103,10 +103,18 @@ async def test_authentication_failure(monkeypatch):
     request.url.path = "/api/data"
     request.cookies = {"jwt_token": "bad_token"}
     request.headers = {}
+    # Mock request.client for security_logger
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+
+    # Mock security_logger to prevent database operations
+    mock_security_logger = MagicMock()
+    mock_security_logger.log_authentication_attempt = MagicMock(return_value=None)
 
     with patch("mcpgateway.middleware.auth_middleware.SessionLocal", return_value=MagicMock()) as mock_session, \
          patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=Exception("Invalid token"))), \
-         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger:
+         patch("mcpgateway.middleware.auth_middleware.logger") as mock_logger, \
+         patch("mcpgateway.middleware.auth_middleware.security_logger", mock_security_logger):
         response = await middleware.dispatch(request, call_next)
 
     call_next.assert_awaited_once_with(request)
