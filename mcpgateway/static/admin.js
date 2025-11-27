@@ -2617,7 +2617,8 @@ async function editTool(toolId) {
         // Set tags field
         const tagsField = safeGetElement("edit-tool-tags");
         if (tagsField) {
-            tagsField.value = tool.tags ? tool.tags.join(", ") : "";
+            const rawTags = tool.tags ? tool.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -3267,7 +3268,8 @@ async function editA2AAgent(agentId) {
         // Set tags field
         const tagsField = safeGetElement("a2a-agent-tags-edit");
         if (tagsField) {
-            tagsField.value = agent.tags ? agent.tags.join(", ") : "";
+            const rawTags = agent.tags ? agent.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -3903,7 +3905,8 @@ async function editResource(resourceUri) {
         // Set tags field
         const tagsField = safeGetElement("edit-resource-tags");
         if (tagsField) {
-            tagsField.value = resource.tags ? resource.tags.join(", ") : "";
+            const rawTags = resource.tags ? resource.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (contentField) {
@@ -4005,7 +4008,8 @@ async function viewPrompt(promptName) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw = (typeof tag === 'object' && tag !== null) ? (tag.id || tag.label) : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -4315,7 +4319,8 @@ async function editPrompt(promptId) {
         // Set tags field
         const tagsField = safeGetElement("edit-prompt-tags");
         if (tagsField) {
-            tagsField.value = prompt.tags ? prompt.tags.join(", ") : "";
+            const rawTags = prompt.tags ? prompt.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (templateField) {
@@ -4624,7 +4629,8 @@ async function editGateway(gatewayId) {
         // Set tags field
         const tagsField = safeGetElement("edit-gateway-tags");
         if (tagsField) {
-            tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
+            const rawTags = gateway.tags ? gateway.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -5463,7 +5469,8 @@ async function editServer(serverId) {
         // Set tags field
         const tagsField = safeGetElement("edit-server-tags");
         if (tagsField) {
-            tagsField.value = server.tags ? server.tags.join(", ") : "";
+            const rawTags = server.tags ? server.tags.map(tag => (typeof tag === 'object' && tag !== null) ? (tag.label || tag.id) : tag) : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         // Set icon field
