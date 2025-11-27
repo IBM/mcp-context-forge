@@ -465,9 +465,92 @@ When using a MCP Client such as Claude with stdio:
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
+### 🚀 Quick Start - Docker Compose
+
+Get a full stack running with MariaDB and Redis in under 30 seconds:
+
+```bash
+# Clone and start the stack
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge
+
+# Start with MariaDB (recommended for production)
+docker compose up -d
+
+# Or start with PostgreSQL
+# Uncomment postgres in docker-compose.yml and comment mariadb section
+# docker compose up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f gateway
+
+# Access Admin UI: http://localhost:4444/admin (admin/changeme)
+# Generate API token
+docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret my-test-key
+```
+
+**What you get:**
+- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
+- 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
+- 📊 **Redis** - High-performance caching and session storage
+- 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
+- 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
+
+### ☸️ Quick Start - Helm (Kubernetes)
+
+Deploy to Kubernetes with enterprise-grade features:
+
+```bash
+# Add Helm repository (when available)
+# helm repo add mcp-context-forge https://ibm.github.io/mcp-context-forge
+# helm repo update
+
+# For now, use local chart
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge/charts/mcp-stack
+
+# Install with MariaDB
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
+  --set postgres.enabled=false \
+  --set mariadb.enabled=true
+
+# Or install with PostgreSQL (default)
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
+
+# Check deployment status
+kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
+
+# Port forward to access Admin UI
+kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
+# Access: http://localhost:4444/admin
+
+# Generate API token
+kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
+  python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@yourcompany.com --exp 10080 --secret your-secret-key
+```
+
+**Enterprise Features:**
+- 🔄 **Auto-scaling** - HPA with CPU/memory targets
+- 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
+- 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
+- 🔒 **Security** - RBAC, network policies, secret management
+- 🚀 **High Availability** - Multi-replica deployments with Redis clustering
+- 📈 **Monitoring** - Built-in Grafana dashboards and alerting
+
 ---
 
-### 🐳 Docker
+### 🐳 Docker (Single Container)
 
 #### 1 - Minimum viable run
 
