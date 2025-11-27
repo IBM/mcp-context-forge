@@ -11,7 +11,7 @@ all MCP Gateway entities (tools, resources, prompts, servers, gateways).
 
 # Standard
 import re
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
 
 
 class TagValidator:
@@ -213,7 +213,8 @@ class TagValidator:
                 errors.append(f'Tag "{normalized}" contains invalid characters or format')
 
         return errors
-   
+
+
 def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
     """Pydantic field validator for tags.
 

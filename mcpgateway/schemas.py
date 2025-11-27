@@ -4489,7 +4489,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     last_interaction: Optional[datetime]
-    tags: List[Dict[str,str]] = Field(default_factory=list, description="Tags for categorizing the agent")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: A2AAgentMetrics
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
@@ -6250,7 +6250,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[Dict[str,str]] = Field(default_factory=list, description="Service tags")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")
