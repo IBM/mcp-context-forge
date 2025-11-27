@@ -217,7 +217,7 @@ class ResourceService:
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
             >>> r = SimpleNamespace(
             ...     id=1, uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
-            ...     created_at=now, updated_at=now, is_active=True, tags=['t'], metrics=[m1, m2]
+            ...     created_at=now, updated_at=now, is_active=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
             >>> out = svc._convert_resource_to_read(r)
             >>> out.metrics.total_executions

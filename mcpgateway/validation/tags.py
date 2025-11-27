@@ -34,7 +34,7 @@ class TagValidator:
         >>> TagValidator.validate("a")
         False
         >>> TagValidator.validate_list(["Finance", "FINANCE", " finance "])
-        ['finance']
+        [{'id': 'finance', 'label': 'Finance'}]
 
     Attributes:
         MIN_LENGTH (int): Minimum allowed tag length (2).
@@ -229,15 +229,15 @@ def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
 
     Examples:
         >>> validate_tags_field(["Analytics", "ml"])
-        ['analytics', 'ml']
+        [{'id': 'analytics', 'label': 'Analytics'}, {'id': 'ml', 'label': 'ml'}]
         >>> validate_tags_field(["valid", "", "a", "invalid-"])
-        ['valid']
+        [{'id': 'valid', 'label': 'valid'}]
         >>> validate_tags_field(None)
         []
         >>> validate_tags_field(["API", "api", "  API  "])
-        ['api']
+        [{'id': 'api', 'label': 'API'}]
         >>> validate_tags_field(["machine learning", "Machine-Learning", "ML"])
-        ['machine-learning', 'ml']
+        [{'id': 'machine-learning', 'label': 'machine learning'}, {'id': 'ml', 'label': 'ML'}]
     """
     # Handle None, empty lists, and any other falsy values
     if not tags:
