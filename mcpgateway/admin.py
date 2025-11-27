@@ -528,23 +528,36 @@ def serialize_datetime(obj):
 def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets strength requirements.
 
+    Uses configurable settings from config.py for password policy.
+
     Args:
         password: Password to validate
 
     Returns:
         tuple: (is_valid, error_message)
     """
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long"
+    min_length = getattr(settings, "password_min_length", 8)
+    require_uppercase = getattr(settings, "password_require_uppercase", False)
+    require_lowercase = getattr(settings, "password_require_lowercase", False)
+    require_numbers = getattr(settings, "password_require_numbers", False)
+    require_special = getattr(settings, "password_require_special", False)
 
-    if not any(c.isupper() for c in password):
+    if len(password) < min_length:
+        return False, f"Password must be at least {min_length} characters long"
+
+    if require_uppercase and not any(c.isupper() for c in password):
         return False, "Password must contain at least one uppercase letter (A-Z)"
 
-    if not any(c.islower() for c in password):
+    if require_lowercase and not any(c.islower() for c in password):
         return False, "Password must contain at least one lowercase letter (a-z)"
 
-    if not any(c in "@#$%&*" for c in password):
-        return False, "Password must contain at least one special character (@#$%&*)"
+    if require_numbers and not any(c.isdigit() for c in password):
+        return False, "Password must contain at least one number (0-9)"
+
+    # Match the special character set used in EmailAuthService
+    special_chars = '!@#$%^&*(),.?":{}|<>'
+    if require_special and not any(c in special_chars for c in password):
+        return False, f"Password must contain at least one special character ({special_chars})"
 
     return True, ""
 
@@ -4898,88 +4911,67 @@ async def admin_get_user_edit(
                             <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
                                 <div class="flex items-center" id="req-length">
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>At least 8 characters long</span>
+                                    <span>At least {settings.password_min_length} characters long</span>
                                 </div>
-                                <div class="flex items-center" id="req-uppercase">
-                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>Contains uppercase letters (A-Z)</span>
-                                </div>
-                                <div class="flex items-center" id="req-lowercase">
-                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>Contains lowercase letters (a-z)</span>
-                                </div>
-                                <div class="flex items-center" id="req-special">
-                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>Contains special characters (@#$%&*)</span>
-                                </div>
+                                {'<div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>' if settings.password_require_uppercase else ''}
+                                {'<div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>' if settings.password_require_lowercase else ''}
+                                {'<div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>' if settings.password_require_numbers else ''}
+                                {'<div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>' if settings.password_require_special else ''}
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <script>
+                // Password policy settings injected from backend
+                const passwordPolicy = {{
+                    minLength: {settings.password_min_length},
+                    requireUppercase: {'true' if settings.password_require_uppercase else 'false'},
+                    requireLowercase: {'true' if settings.password_require_lowercase else 'false'},
+                    requireNumbers: {'true' if settings.password_require_numbers else 'false'},
+                    requireSpecial: {'true' if settings.password_require_special else 'false'}
+                }};
+
+                function updateRequirementIcon(elementId, isValid) {{
+                    const req = document.getElementById(elementId);
+                    if (req) {{
+                        const icon = req.querySelector('span');
+                        if (isValid) {{
+                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
+                            icon.textContent = '✓';
+                        }} else {{
+                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
+                            icon.textContent = '✗';
+                        }}
+                    }}
+                }}
+
                 function validatePasswordRequirements() {{
                     const password = document.getElementById('password-field')?.value || '';
 
-                    // Check length requirement
-                    const lengthReq = document.getElementById('req-length');
-                    const lengthCheck = password.length >= 8;
-                    if (lengthReq) {{
-                        const icon = lengthReq.querySelector('span');
-                        if (lengthCheck) {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✓';
-                        }} else {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✗';
-                        }}
-                    }}
+                    // Check length requirement (always required)
+                    const lengthCheck = password.length >= passwordPolicy.minLength;
+                    updateRequirementIcon('req-length', lengthCheck);
 
-                    // Check uppercase requirement
-                    const uppercaseReq = document.getElementById('req-uppercase');
-                    const uppercaseCheck = /[A-Z]/.test(password);
-                    if (uppercaseReq) {{
-                        const icon = uppercaseReq.querySelector('span');
-                        if (uppercaseCheck) {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✓';
-                        }} else {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✗';
-                        }}
-                    }}
+                    // Check uppercase requirement (if enabled)
+                    const uppercaseCheck = !passwordPolicy.requireUppercase || /[A-Z]/.test(password);
+                    updateRequirementIcon('req-uppercase', /[A-Z]/.test(password));
 
-                    // Check lowercase requirement
-                    const lowercaseReq = document.getElementById('req-lowercase');
-                    const lowercaseCheck = /[a-z]/.test(password);
-                    if (lowercaseReq) {{
-                        const icon = lowercaseReq.querySelector('span');
-                        if (lowercaseCheck) {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✓';
-                        }} else {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✗';
-                        }}
-                    }}
+                    // Check lowercase requirement (if enabled)
+                    const lowercaseCheck = !passwordPolicy.requireLowercase || /[a-z]/.test(password);
+                    updateRequirementIcon('req-lowercase', /[a-z]/.test(password));
 
-                    // Check special character requirement
-                    const specialReq = document.getElementById('req-special');
-                    const specialCheck = /[@#$%&*]/.test(password);
-                    if (specialReq) {{
-                        const icon = specialReq.querySelector('span');
-                        if (specialCheck) {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✓';
-                        }} else {{
-                            icon.className = 'inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2';
-                            icon.textContent = '✗';
-                        }}
-                    }}
+                    // Check numbers requirement (if enabled)
+                    const numbersCheck = !passwordPolicy.requireNumbers || /[0-9]/.test(password);
+                    updateRequirementIcon('req-numbers', /[0-9]/.test(password));
 
-                    // Enable/disable submit button based on requirements
+                    // Check special character requirement (if enabled) - matches backend set
+                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*(),.?":{{}}|<>]/.test(password);
+                    updateRequirementIcon('req-special', /[!@#$%^&*(),.?":{{}}|<>]/.test(password));
+
+                    // Enable/disable submit button based on active requirements
                     const submitButton = document.querySelector('#user-edit-modal-content button[type="submit"]');
-                    const allRequirementsMet = lengthCheck && uppercaseCheck && lowercaseCheck && specialCheck;
+                    const allRequirementsMet = lengthCheck && uppercaseCheck && lowercaseCheck && numbersCheck && specialCheck;
                     const passwordEmpty = password.length === 0;
 
                     if (submitButton) {{
@@ -5082,15 +5074,15 @@ async def admin_update_user(
         fn_val = form.get("full_name")
         pw_val = form.get("password")
         full_name = fn_val if isinstance(fn_val, str) else None
-        password = pw_val if isinstance(pw_val, str) else None
+        password = pw_val.strip() if isinstance(pw_val, str) and pw_val.strip() else None
 
         # Validate password if provided
-        if password and password.strip():
-            is_valid, error_msg = validate_password_strength(password.strip())
+        if password:
+            is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password if password else None)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
 
         # Return success message with auto-close and refresh
         success_html = """
