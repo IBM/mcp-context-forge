@@ -213,16 +213,7 @@ class TagValidator:
                 errors.append(f'Tag "{normalized}" contains invalid characters or format')
 
         return errors
-    @staticmethod
-    def to_tag_objects(tags: Optional[List[str]]) -> List[Dict[str,str]]:
-        if not tags:
-            return []
-        # Use existing normalization & validation but return dicts
-        normalized = TagValidator.validate_list(tags)  # if validate_list returns strings
-        # If validate_list returns dicts in current code, adapt accordingly
-        return [{"id": TagValidator.normalize(t) if isinstance(t, str) else t["id"],
-                "label": t if isinstance(t, str) else t["label"]} for t in normalized]
-
+   
 def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
     """Pydantic field validator for tags.
 
