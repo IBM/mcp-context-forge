@@ -951,10 +951,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   # MariaDB (recommended MySQL-compatible option):
   DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
-  # Docker deployment with MariaDB 12.0.2-ubi10:
+  # Docker deployment with MariaDB:
   DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
   ```
-  - **36+ database tables** fully compatible with MariaDB 12.0+ and MySQL 8.4+
+  - **36+ database tables** fully compatible with MariaDB 10.6+ and MySQL 8.0+
   - All **VARCHAR length issues** resolved for MySQL compatibility
   - **Container support**: MariaDB and MySQL drivers included in all container images
   - **Complete feature parity** with SQLite and PostgreSQL backends
