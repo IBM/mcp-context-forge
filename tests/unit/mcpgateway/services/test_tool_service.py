@@ -593,10 +593,13 @@ class TestToolService:
     async def test_list_server_tools_active_only(self):
         mock_db = Mock()
         mock_scalars = Mock()
-        mock_tool = Mock(enabled=True)
+        mock_tool = Mock(enabled=True, team_id=None)
         mock_scalars.all.return_value = [mock_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
+        
+        # Mock the db.query() call for team fetching
+        mock_db.query.return_value.filter.return_value.all.return_value = []
 
         service = ToolService()
         service._convert_tool_to_read = Mock(return_value="converted_tool")
@@ -604,17 +607,20 @@ class TestToolService:
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
         assert tools == ["converted_tool"]
-        service._convert_tool_to_read.assert_called_once_with(mock_tool)
+        service._convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False)
 
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):
         mock_db = Mock()
         mock_scalars = Mock()
-        active_tool = Mock(enabled=True, reachable=True)
-        inactive_tool = Mock(enabled=False, reachable=True)
+        active_tool = Mock(enabled=True, reachable=True, team_id=None)
+        inactive_tool = Mock(enabled=False, reachable=True, team_id=None)
         mock_scalars.all.return_value = [active_tool, inactive_tool]
 
         mock_db.execute.return_value.scalars.return_value = mock_scalars
+        
+        # Mock the db.query() call for team fetching
+        mock_db.query.return_value.filter.return_value.all.return_value = []
 
         service = ToolService()
         service._convert_tool_to_read = Mock(side_effect=["active_converted", "inactive_converted"])
@@ -623,7 +629,7 @@ class TestToolService:
 
         assert tools == ["active_converted", "inactive_converted"]
         assert service._convert_tool_to_read.call_count == 2
-
+        
     @pytest.mark.asyncio
     async def test_get_tool(self, tool_service, mock_tool, test_db):
         """Test getting a tool by ID."""

@@ -36,7 +36,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.common.models import Gateway as PydanticGateway
@@ -340,20 +340,27 @@ class ToolService:
         team = db.query(EmailTeam).filter(EmailTeam.id == team_id, EmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
-    def _convert_tool_to_read(self, tool: DbTool) -> ToolRead:
+    def _convert_tool_to_read(self, tool: DbTool, include_metrics: bool = True) -> ToolRead:
         """Converts a DbTool instance into a ToolRead model, including aggregated metrics and
         new API gateway fields: request_type and authentication credentials (masked).
 
         Args:
             tool (DbTool): The ORM instance of the tool.
+            include_metrics (bool): Whether to include metrics in the result. Defaults to True.
 
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
         """
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
+
+        if include_metrics:
+            tool_dict["metrics"] = tool.metrics_summary
+        else:
+            tool_dict["metrics"] = None
+
         tool_dict["execution_count"] = tool.execution_count
-        tool_dict["metrics"] = tool.metrics_summary
+
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
 
@@ -791,7 +798,9 @@ class ToolService:
 
         return (result, next_cursor)
 
-    async def list_server_tools(self, db: Session, server_id: str, include_inactive: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None) -> List[ToolRead]:
+    async def list_server_tools(
+        self, db: Session, server_id: str, include_inactive: bool = False, include_metrics: bool = False, cursor: Optional[str] = None, _request_headers: Optional[Dict[str, str]] = None
+    ) -> List[ToolRead]:
         """
         Retrieve a list of registered tools from the database.
 
@@ -799,6 +808,8 @@ class ToolService:
             db (Session): The SQLAlchemy database session.
             server_id (str): Server ID
             include_inactive (bool): If True, include inactive tools in the result.
+                Defaults to False.
+            include_metrics (bool): If True, all tool metrics included in result otherwise null.
                 Defaults to False.
             cursor (Optional[str], optional): An opaque cursor token for pagination. Currently,
                 this parameter is ignored. Defaults to None.
@@ -821,17 +832,33 @@ class ToolService:
             >>> isinstance(result, list)
             True
         """
-        query = select(DbTool).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+
+        query = select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
         cursor = None  # Placeholder for pagination; ignore for now
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
+
         if not include_inactive:
             query = query.where(DbTool.enabled)
+
+        # Execute the query and retrieve tools
         tools = db.execute(query).scalars().all()
+
+        team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+
+        # If there are team_ids, fetch all corresponding team names at once
+        if team_ids:
+            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+            team_name_map = {team.id: team.name for team in teams}
+        else:
+            team_name_map = {}
+
+        # Add team names to tools based on the map
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = team_name_map.get(getattr(t, "team_id", None))
             t.team = team_name
-            result.append(self._convert_tool_to_read(t))
+            result.append(self._convert_tool_to_read(t, include_metrics=include_metrics))
+
         return result
 
     async def list_tools_for_user(
