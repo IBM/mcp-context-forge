@@ -577,6 +577,21 @@ def serialize_datetime(obj):
         return obj.isoformat()
     return obj
 
+async def get_allowed_team_ids(request: Request) -> List[str]:
+    """Extract allowed team IDs from request state."""
+    user_permissions = getattr(request.state, "user_permissions", [])
+    allowed_teams: List[str] = []
+    
+    if not user_permissions:
+        return []
+        
+    for scope in user_permissions:
+        if scope.get("scope") == "team":
+            team_id = scope.get("scope_id")
+            if team_id:
+                allowed_teams.append(team_id)
+                
+    return allowed_teams
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets strength requirements.
