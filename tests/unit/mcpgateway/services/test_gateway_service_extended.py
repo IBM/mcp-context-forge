@@ -946,11 +946,16 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
+        # Mock database batch query return empty
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
         # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
 
-        # Test with empty lists - no database calls should be made for empty inputs
+        # Test with empty lists
         tools_result = service._update_or_create_tools(mock_db, [], mock_gateway, "empty_test")
         resources_result = service._update_or_create_resources(mock_db, [], mock_gateway, "empty_test")
         prompts_result = service._update_or_create_prompts(mock_db, [], mock_gateway, "empty_test")
@@ -968,9 +973,9 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
-        # Mock database execute to return None (no existing items found)
+        # Mock database execute to return empty list (no existing items)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         # Mock gateway with specific metadata
@@ -1042,9 +1047,9 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
-        # Mock database execute to return None (no existing tools found)
+        # Mock database execute to return empty list
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         # Mock gateway
@@ -1121,13 +1126,10 @@ class TestGatewayServiceExtended:
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "public"
 
-        # Create multiple mock execute calls - one for each tool lookup
-        mock_db.execute.side_effect = [
-            # First call for tool_to_keep (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool1)),
-            # Second call for tool_to_update (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool3)),
-        ]
+        # Mock batch fetch to return existing tools
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_tool1, existing_tool3]
+        mock_db.execute.return_value = mock_result
 
         # Mock tools from MCP server (only 2 tools - one removed, one updated, one unchanged)
         keep_tool = MagicMock()
@@ -1201,13 +1203,10 @@ class TestGatewayServiceExtended:
         mock_gateway.name = "test-gateway"
         mock_gateway.visibility = "public"
 
-        # Create multiple mock execute calls - one for each resource lookup
-        mock_db.execute.side_effect = [
-            # First call for keep.txt (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_resource1)),
-            # Second call for update.txt (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_resource3)),
-        ]
+        # Mock batch fetch to return existing resources
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_resource1, existing_resource3]
+        mock_db.execute.return_value = mock_result
 
         # Mock resources from MCP server (only 2 resources - one removed)
         keep_resource = MagicMock()
@@ -1271,13 +1270,10 @@ class TestGatewayServiceExtended:
         mock_gateway.name = "test-gateway"
         mock_gateway.visibility = "public"
 
-        # Create multiple mock execute calls - one for each prompt lookup
-        mock_db.execute.side_effect = [
-            # First call for keep_prompt (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_prompt1)),
-            # Second call for update_prompt (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_prompt3)),
-        ]
+        # Mock batch fetch to return existing prompts
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_prompt1, existing_prompt3]
+        mock_db.execute.return_value = mock_result
 
         # Mock prompts from MCP server (only 2 prompts - one removed)
         keep_prompt = MagicMock()
@@ -1334,6 +1330,11 @@ class TestGatewayServiceExtended:
         mock_gateway.tools = [existing_tool]
         mock_gateway.resources = [existing_resource]
         mock_gateway.prompts = [existing_prompt]
+
+        # Mock batch fetch results (empty list is fine for input since we pass empty list to helper)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
 
         # Mock empty responses from MCP server
         empty_tools = []
