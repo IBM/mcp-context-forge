@@ -2088,7 +2088,7 @@
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div
                   class="p-4 bg-white dark:bg-gray-800 rounded-lg shadow-lg border border-gray-300 dark:border-gray-700"
-                > 
+                >
                   <label
                     class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2"
                     for="associatedGateways"
@@ -4094,7 +4094,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700"
               >
                 {% for gateway in gateways %}
-                <tr>
+                <tr id="gateway-row-{{ gateway.id }}">
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100"
                   >

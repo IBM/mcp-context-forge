@@ -95,6 +95,12 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                 violations_as_exceptions=False,  # Don't block on pre-request violations
             )
 
+            if context_table:
+                request.state.plugin_context_table = context_table
+
+            if global_context:
+                request.state.plugin_global_context = global_context
+
             # Apply modified headers if plugin returned them
             if pre_result.modified_payload:
                 # Modify request headers by updating request.scope["headers"]
