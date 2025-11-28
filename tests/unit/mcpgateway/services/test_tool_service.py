@@ -1845,23 +1845,23 @@ class TestToolService:
         # Verify only 1 query was executed (optimization check)
         assert mock_db.execute.call_count == 1
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            0,  # total count
-            0,  # successful count
-            0,  # failed count
-            None,  # min response time
-            None,  # max response time
-            None,  # avg response time
-            None,  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object for empty results (None values)
+        mock_row = MagicMock()
+        mock_row.total = 0
+        mock_row.successful = 0
+        mock_row.failed = 0
+        mock_row.min_rt = None
+        mock_row.max_rt = None
+        mock_row.avg_rt = None
+        mock_row.last_time = None
+
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1875,6 +1875,9 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
+        
+        # Verify optimization
+        assert mock_db.execute.call_count == 1
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""
@@ -1969,6 +1972,7 @@ class TestToolService:
             assert event["type"] == "tool_removed"
             assert event["data"]["id"] == mock_tool.id
 
+    @pytest.mark.asyncio
     async def test_get_top_tools(self, tool_service, test_db):
         """Test get_top_tools method."""
         # Mock database query result
@@ -1977,18 +1981,20 @@ class TestToolService:
             (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
         ]
 
-        # Create a proper mock chain for the query
-        mock_query_chain = Mock()
-        mock_query_chain.outerjoin.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = mock_results
-        test_db.query = Mock(return_value=mock_query_chain)
+        # The new implementation uses db.execute(query).all()
+        # We simply mock the return value of that chain.
+        test_db.execute.return_value.all.return_value = mock_results
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
+            
             result = await tool_service.get_top_tools(test_db, limit=5)
 
             assert result == ["top_performer1", "top_performer2"]
             mock_build.assert_called_once_with(mock_results)
-            test_db.query.assert_called_once()
+            
+            # Verify execute was called instead of query
+            test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_tags(self, tool_service, mock_tool):
