@@ -2144,161 +2144,181 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
+            # Create tasks for concurrent health checks
+            tasks = []
             for gateway in gateways:
-
                 if gateway.auth_type == "one_time_auth":
-                    continue  # Skip health check for one-time auth gateways as these are authenticated with passthrough headers only
+                    continue  # Skip health check for one_time auth gateways
+                tasks.append(self._check_single_gateway_health(db, gateway, user_email))
+            
+            # Execute all health checks concurrently
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            
+            elapsed = time.monotonic() - start_time
 
-                # Create span for individual gateway health check
-                with create_span(
-                    "gateway.health_check",
-                    {
-                        "gateway.name": gateway.name,
-                        "gateway.id": str(gateway.id),
-                        "gateway.url": gateway.url,
-                        "gateway.transport": gateway.transport,
-                        "gateway.enabled": gateway.enabled,
-                        "http.method": "GET",
-                        "http.url": gateway.url,
-                    },
-                ) as span:
-                    valid = False
-                    if gateway.ca_certificate:
-                        if settings.enable_ed25519_signing:
-                            public_key_pem = settings.ed25519_public_key
-                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+            if batch_span:
+                batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
+                batch_span.set_attribute("check.completed", True)
+            
+            logger.info(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
+        
+        return True
+
+    async def _check_single_gateway_health(self, db: Session, gateway: DbGateway, user_email: Optional[str] = None) -> None:
+        """Check health of a single gateway.
+        
+        Args:
+            db: Database session
+            gateway: Gateway to check
+            user_email: Optional user email for OAuth token lookup
+        """
+        # Create span for individual gateway health check
+        with create_span(
+            "gateway.health_check",
+            {
+                "gateway.name": gateway.name,
+                "gateway.id": str(gateway.id),
+                "gateway.url": gateway.url,
+                "gateway.transport": gateway.transport,
+                "gateway.enabled": gateway.enabled,
+                "http.method": "GET",
+                "http.url": gateway.url,
+            },
+        ) as span:
+            valid = False
+            if gateway.ca_certificate:
+                if settings.enable_ed25519_signing:
+                    public_key_pem = settings.ed25519_public_key
+                    valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                else:
+                    valid = True
+            if valid:
+                ssl_context = self.create_ssl_context(gateway.ca_certificate)
+            else:
+                ssl_context = None
+
+            def get_httpx_client_factory(
+                headers: dict[str, str] | None = None,
+                timeout: httpx.Timeout | None = None,
+                auth: httpx.Auth | None = None,
+            ) -> httpx.AsyncClient:
+                """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                Args:
+                    headers: Optional headers for the client
+                    timeout: Optional timeout for the client
+                    auth: Optional auth for the client
+
+                Returns:
+                    httpx.AsyncClient: Configured HTTPX async client
+                """
+                return httpx.AsyncClient(
+                    verify=ssl_context if ssl_context else True,
+                    follow_redirects=True,
+                    headers=headers,
+                    timeout=timeout or httpx.Timeout(30.0),
+                    auth=auth,
+                )
+
+            async with httpx.AsyncClient(verify=ssl_context if ssl_context else True) as client:
+                logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
+                try:
+                    # Handle different authentication types
+                    headers = {}
+
+                    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                        if grant_type == "authorization_code":
+                            # For Authorization Code flow, try to get stored tokens
+                            try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                token_storage = TokenStorageService(db)
+
+                                # Get user-specific OAuth token
+                                if not user_email:
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "User email required for OAuth token")
+                                    await self._handle_gateway_failure(gateway)
+                                    return
+
+                                access_token = await token_storage.get_user_token(gateway.id, user_email)
+
+                                if access_token:
+                                    headers["Authorization"] = f"Bearer {access_token}"
+                                else:
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "No valid OAuth token for user")
+                                    await self._handle_gateway_failure(gateway)
+                                    return
+                            except Exception as e:
+                                logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                if span:
+                                    span.set_attribute("health.status", "unhealthy")
+                                    span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                await self._handle_gateway_failure(gateway)
+                                return
                         else:
-                            valid = True
-                    if valid:
-                        ssl_context = self.create_ssl_context(gateway.ca_certificate)
+                            # For Client Credentials flow, get token directly
+                            try:
+                                access_token = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                headers["Authorization"] = f"Bearer {access_token}"
+                            except Exception as e:
+                                if span:
+                                    span.set_attribute("health.status", "unhealthy")
+                                    span.set_attribute("error.message", str(e))
+                                await self._handle_gateway_failure(gateway)
+                                return
                     else:
-                        ssl_context = None
-
-                    def get_httpx_client_factory(
-                        headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
-
-                        Args:
-                            headers: Optional headers for the client
-                            timeout: Optional timeout for the client
-                            auth: Optional auth for the client
-
-                        Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
-                        """
-                        return httpx.AsyncClient(
-                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
-                            follow_redirects=True,
-                            headers=headers,
-                            timeout=timeout or httpx.Timeout(30.0),
-                            auth=auth,
-                        )
-
-                    async with httpx.AsyncClient(verify=ssl_context) as client:
-                        logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
-                        try:
-                            # Handle different authentication types
+                        # Handle non-OAuth authentication (existing logic)
+                        auth_data = gateway.auth_value or {}
+                        if isinstance(auth_data, str):
+                            headers = decode_auth(auth_data)
+                        elif isinstance(auth_data, dict):
+                            headers = {str(k): str(v) for k, v in auth_data.items()}
+                        else:
                             headers = {}
 
-                            if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                                grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
-
-                                if grant_type == "authorization_code":
-                                    # For Authorization Code flow, try to get stored tokens
-                                    try:
-                                        # First-Party
-                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                                        token_storage = TokenStorageService(db)
-
-                                        # Get user-specific OAuth token
-                                        if not user_email:
-                                            if span:
-                                                span.set_attribute("health.status", "unhealthy")
-                                                span.set_attribute("error.message", "User email required for OAuth token")
-                                            await self._handle_gateway_failure(gateway)
-
-                                        access_token: str = await token_storage.get_user_token(gateway.id, user_email)
-
-                                        if access_token:
-                                            headers["Authorization"] = f"Bearer {access_token}"
-                                        else:
-                                            if span:
-                                                span.set_attribute("health.status", "unhealthy")
-                                                span.set_attribute("error.message", "No valid OAuth token for user")
-                                            await self._handle_gateway_failure(gateway)
-                                    except Exception as e:
-                                        logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
-                                        if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "Failed to obtain stored OAuth token")
-                                        await self._handle_gateway_failure(gateway)
-                                else:
-                                    # For Client Credentials flow, get token directly
-                                    try:
-                                        access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
-                                        headers["Authorization"] = f"Bearer {access_token}"
-                                    except Exception as e:
-                                        if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", str(e))
-                                        await self._handle_gateway_failure(gateway)
-                            else:
-                                # Handle non-OAuth authentication (existing logic)
-                                auth_data = gateway.auth_value or {}
-                                if isinstance(auth_data, str):
-                                    headers = decode_auth(auth_data)
-                                elif isinstance(auth_data, dict):
-                                    headers = {str(k): str(v) for k, v in auth_data.items()}
-                                else:
-                                    headers = {}
-
-                            # Perform the GET and raise on 4xx/5xx
-                            if (gateway.transport).lower() == "sse":
-                                timeout = httpx.Timeout(settings.health_check_timeout)
-                                async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
-                                    # This will raise immediately if status is 4xx/5xx
-                                    response.raise_for_status()
-                                    if span:
-                                        span.set_attribute("http.status_code", response.status_code)
-                            elif (gateway.transport).lower() == "streamablehttp":
-                                async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                                    read_stream,
-                                    write_stream,
-                                    _get_session_id,
-                                ):
-                                    async with ClientSession(read_stream, write_stream) as session:
-                                        # Initialize the session
-                                        response = await session.initialize()
-
-                            # Reactivate gateway if it was previously inactive and health check passed now
-                            if gateway.enabled and not gateway.reachable:
-                                logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
-                                await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
-
-                            # Mark successful check
-                            gateway.last_seen = datetime.now(timezone.utc)
-
+                    # Perform the GET and raise on 4xx/5xx
+                    if (gateway.transport).lower() == "sse":
+                        timeout = httpx.Timeout(settings.health_check_timeout)
+                        async with client.stream("GET", gateway.url, headers=headers, timeout=timeout) as response:
+                            # This will raise immediately if status is 4xx/5xx
+                            response.raise_for_status()
                             if span:
-                                span.set_attribute("health.status", "healthy")
-                                span.set_attribute("success", True)
+                                span.set_attribute("http.status_code", response.status_code)
+                    elif (gateway.transport).lower() == "streamablehttp":
+                        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                            read_stream,
+                            write_stream,
+                            _get_session_id,
+                        ):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                # Initialize the session
+                                response = await session.initialize()
 
-                        except Exception as e:
-                            if span:
-                                span.set_attribute("health.status", "unhealthy")
-                                span.set_attribute("error.message", str(e))
-                            await self._handle_gateway_failure(gateway)
+                    # Reactivate gateway if it was previously inactive and health check passed now
+                    if gateway.enabled and not gateway.reachable:
+                        logger.info(f"Reactivating gateway: {gateway.name}, as it is healthy now")
+                        await self.toggle_gateway_status(db, gateway.id, activate=True, reachable=True, only_update_reachable=True)
 
-            # Set batch span success metrics
-            if batch_span:
-                batch_span.set_attribute("success", True)
-                batch_span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    # Mark successful check
+                    gateway.last_seen = datetime.now(timezone.utc)
 
-            # All gateways passed
-            return True
+                    if span:
+                        span.set_attribute("health.status", "healthy")
+                        span.set_attribute("success", True)
+
+                except Exception as e:
+                    if span:
+                        span.set_attribute("health.status", "unhealthy")
+                        span.set_attribute("error.message", str(e))
+                    await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """
