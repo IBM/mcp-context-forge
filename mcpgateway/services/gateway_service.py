@@ -2885,7 +2885,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Returns:
             List of new tools to be added to the database
         """
+        if not tools:
+            return []
+        
         tools_to_add = []
+        
+        # Batch fetch all existing tools for this gateway
+        tool_names = [tool.name for tool in tools if tool is not None]
+        if not tool_names:
+            return []
+        
+        existing_tools_query = select(DbTool).where(
+            DbTool.gateway_id == gateway.id,
+            DbTool.original_name.in_(tool_names)
+        )
+        existing_tools = db.execute(existing_tools_query).scalars().all()
+        existing_tools_map = {tool.original_name: tool for tool in existing_tools}
 
         for tool in tools:
             if tool is None:
@@ -2893,8 +2908,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 continue
 
             try:
-                # Check if tool already exists for this gateway
-                existing_tool = db.execute(select(DbTool).where(DbTool.original_name == tool.name).where(DbTool.gateway_id == gateway.id)).scalar_one_or_none()
+                # Check if tool already exists for this gateway from the tools_map
+                existing_tool = existing_tools_map.get(tool.name)
                 if existing_tool:
                     # Update existing tool if there are changes
                     fields_to_update = False
@@ -2954,7 +2969,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Returns:
             List of new resources to be added to the database
         """
+        if not resources:
+            return []
+        
         resources_to_add = []
+        
+        # Batch fetch all existing resources for this gateway
+        resource_uris = [resource.uri for resource in resources if resource is not None]
+        if not resource_uris:
+            return []
+        
+        existing_resources_query = select(DbResource).where(
+            DbResource.gateway_id == gateway.id,
+            DbResource.uri.in_(resource_uris)
+        )
+        existing_resources = db.execute(existing_resources_query).scalars().all()
+        existing_resources_map = {resource.uri: resource for resource in existing_resources}
 
         for resource in resources:
             if resource is None:
@@ -2962,8 +2992,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 continue
 
             try:
-                # Check if resource already exists for this gateway
-                existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri).where(DbResource.gateway_id == gateway.id)).scalar_one_or_none()
+                # Check if resource already exists for this gateway from the resources_map
+                existing_resource = existing_resources_map.get(resource.uri)
 
                 if existing_resource:
                     # Update existing resource if there are changes
@@ -3018,7 +3048,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         Returns:
             List of new prompts to be added to the database
         """
+        if not prompts:
+            return []
+        
         prompts_to_add = []
+        
+        # Batch fetch all existing prompts for this gateway
+        prompt_names = [prompt.name for prompt in prompts if prompt is not None]
+        if not prompt_names:
+            return []
+        
+        existing_prompts_query = select(DbPrompt).where(
+            DbPrompt.gateway_id == gateway.id,
+            DbPrompt.name.in_(prompt_names)
+        )
+        existing_prompts = db.execute(existing_prompts_query).scalars().all()
+        existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
 
         for prompt in prompts:
             if prompt is None:
@@ -3026,8 +3071,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 continue
 
             try:
-                # Check if prompt already exists for this gateway
-                existing_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt.name).where(DbPrompt.gateway_id == gateway.id)).scalar_one_or_none()
+                # Check if resource already exists for this gateway from the prompts_map
+                existing_prompt = existing_prompts_map.get(prompt.name)
 
                 if existing_prompt:
                     # Update existing prompt if there are changes
