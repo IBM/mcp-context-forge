@@ -392,7 +392,7 @@ class ToolService:
                     "token": "********" if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
-                # Get first key once instead of twice
+                # Get first key 
                 first_key = next(iter(decoded_auth_value))
                 tool_dict["auth"] = {
                     "auth_type": "authheaders",
@@ -800,10 +800,17 @@ class ToolService:
         if has_more:
             tools = tools[:page_size]  # Trim to page_size
 
+        # Batch fetch team names for all tools at once
+        team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+        team_name_map = {}
+        if team_ids:
+            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+            team_name_map = {team.id: team.name for team in teams}
+
         # Convert to ToolRead objects
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = team_name_map.get(getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
 
@@ -953,9 +960,17 @@ class ToolService:
         # query = query.offset(skip).limit(limit)
 
         tools = db.execute(query).scalars().all()
+        
+        # Batch fetch team names for all tools at once
+        tool_team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+        team_name_map = {}
+        if tool_team_ids:
+            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(tool_team_ids), EmailTeam.is_active.is_(True)).all()
+            team_name_map = {team.id: team.name for team in teams}
+        
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = team_name_map.get(getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
         return result
