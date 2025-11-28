@@ -309,7 +309,7 @@ class ToolService:
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
 
-        # Safe success rate calculation 
+        # Optimize: Safe success rate calculation (avoids division by zero)
         success_rate = case(
             (
                 func.count(ToolMetric.id) > 0,
@@ -320,6 +320,7 @@ class ToolService:
             else_=None
         )
 
+        # Optimize: Apply limit directly in query construction, remove redundant limit check
         query = (
             select(
                 DbTool.id,
@@ -368,36 +369,38 @@ class ToolService:
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
-        if include_metrics:
-            tool_dict["metrics"] = tool.metrics_summary
-        else:
-            tool_dict["metrics"] = None
-
         tool_dict["execution_count"] = tool.execution_count
+        tool_dict["metrics"] = tool.metrics_summary if include_metrics else None
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
 
-        decoded_auth_value = decode_auth(tool.auth_value)
-        if tool.auth_type == "basic":
-            decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
-            username, password = decoded_bytes.decode("utf-8").split(":")
-            tool_dict["auth"] = {
-                "auth_type": "basic",
-                "username": username,
-                "password": "********" if password else None,
-            }
-        elif tool.auth_type == "bearer":
-            tool_dict["auth"] = {
-                "auth_type": "bearer",
-                "token": "********" if decoded_auth_value["Authorization"] else None,
-            }
-        elif tool.auth_type == "authheaders":
-            tool_dict["auth"] = {
-                "auth_type": "authheaders",
-                "auth_header_key": next(iter(decoded_auth_value)),
-                "auth_header_value": "********" if decoded_auth_value[next(iter(decoded_auth_value))] else None,
-            }
+        # Only decode auth if auth_type is set
+        if tool.auth_type and tool.auth_value:
+            decoded_auth_value = decode_auth(tool.auth_value)
+            if tool.auth_type == "basic":
+                decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
+                username, password = decoded_bytes.decode("utf-8").split(":")
+                tool_dict["auth"] = {
+                    "auth_type": "basic",
+                    "username": username,
+                    "password": "********" if password else None,
+                }
+            elif tool.auth_type == "bearer":
+                tool_dict["auth"] = {
+                    "auth_type": "bearer",
+                    "token": "********" if decoded_auth_value["Authorization"] else None,
+                }
+            elif tool.auth_type == "authheaders":
+                # Get first key once instead of twice
+                first_key = next(iter(decoded_auth_value))
+                tool_dict["auth"] = {
+                    "auth_type": "authheaders",
+                    "auth_header_key": first_key,
+                    "auth_header_value": "********" if decoded_auth_value[first_key] else None,
+                }
+            else:
+                tool_dict["auth"] = None
         else:
             tool_dict["auth"] = None
 
@@ -412,6 +415,7 @@ class ToolService:
         tool_dict["tags"] = getattr(tool, "tags", []) or []
         tool_dict["team"] = getattr(tool, "team", None)
         return ToolRead.model_validate(tool_dict)
+
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
