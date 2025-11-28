@@ -56,7 +56,8 @@ def upgrade() -> None:
             # Skip non-existent tables in older DBs
             continue
 
-        rows = conn.execute(sa.text(f"SELECT id, tags FROM {table}")).fetchall()
+        tbl = sa.table(table, sa.column("id"), sa.column("tags"))
+        rows = conn.execute(sa.select(tbl.c.id, tbl.c.tags)).fetchall()
 
         for row in rows:
             rec_id = row[0]
@@ -84,8 +85,9 @@ def upgrade() -> None:
                 else:
                     new_tags.append(t)
 
-            # Convert back to JSON for storage
-            conn.execute(sa.text(f"UPDATE {table} SET tags = :new_tags WHERE id = :id"), {"new_tags": json.dumps(new_tags), "id": rec_id})
+            # Convert back to JSON for storage using SQLAlchemy constructs
+            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=json.dumps(new_tags))
+            conn.execute(stmt)
 
 
 def downgrade() -> None:
@@ -116,7 +118,8 @@ def downgrade() -> None:
         if table not in available:
             continue
 
-        rows = conn.execute(sa.text(f"SELECT id, tags FROM {table}")).fetchall()
+        tbl = sa.table(table, sa.column("id"), sa.column("tags"))
+        rows = conn.execute(sa.select(tbl.c.id, tbl.c.tags)).fetchall()
 
         for row in rows:
             rec_id = row[0]
@@ -141,4 +144,5 @@ def downgrade() -> None:
                 else:
                     old_tags.append(t)
 
-            conn.execute(sa.text(f"UPDATE {table} SET tags = :tags WHERE id = :id"), {"tags": json.dumps(old_tags), "id": rec_id})
+            stmt = sa.update(tbl).where(tbl.c.id == rec_id).values(tags=json.dumps(old_tags))
+            conn.execute(stmt)
