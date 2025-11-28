@@ -2161,7 +2161,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
                 batch_span.set_attribute("check.completed", True)
 
-            logger.info(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
+            logger.debug(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
 
         return True
 
