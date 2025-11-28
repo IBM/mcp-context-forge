@@ -24,14 +24,25 @@ import json
 import os
 from typing import Any
 
+try:
+    # Third-Party
+    from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
+    from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
+    from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
+    from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
+    from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
+    from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
+    from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
+except ImportError as e:
+    prompt_utils = None
+    ToolOpsMCPCFToolEnrichment = None
+    NlUtteranceGeneration = None
+    nlg_util = None
+    TestcaseGeneration = None
+    prompt_execution = None
+    llm_util = None
+
 # Third-Party
-from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment import prompt_utils
-from altk.build_time.test_case_generation_toolkit.src.toolops.enrichment.mcp_cf_tool_enrichment.enrichment import ToolOpsMCPCFToolEnrichment
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation import NlUtteranceGeneration
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.nl_utterance_generation.nl_utterance_generation_utils import nlg_util
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
-from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
-from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -99,10 +110,17 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
 
 
 # overriding methods (replace ALTK llm inferencing methods with MCP CF methods)
-llm_util.execute_prompt = custom_mcp_cf_execute_prompt
-prompt_execution.execute_prompt = custom_mcp_cf_execute_prompt
-nlg_util.execute_prompt = custom_mcp_cf_execute_prompt
-prompt_utils.execute_prompt = custom_mcp_cf_execute_prompt
+if llm_util:
+    llm_util.execute_prompt = custom_mcp_cf_execute_prompt
+
+if prompt_execution:
+    prompt_execution.execute_prompt = custom_mcp_cf_execute_prompt
+
+if nlg_util:
+    nlg_util.execute_prompt = custom_mcp_cf_execute_prompt
+
+if prompt_utils:
+    prompt_utils.execute_prompt = custom_mcp_cf_execute_prompt
 
 
 # Test case generation service method
