@@ -1900,11 +1900,24 @@ class ToolService:
             >>> from unittest.mock import MagicMock
             >>> service = ToolService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar.return_value = 0
+            >>> # Mock the row result object returned by db.execute().one()
+            >>> mock_result_row = MagicMock()
+            >>> mock_result_row.total = 10
+            >>> mock_result_row.successful = 8
+            >>> mock_result_row.failed = 2
+            >>> mock_result_row.min_rt = 50.0
+            >>> mock_result_row.max_rt = 250.0
+            >>> mock_result_row.avg_rt = 150.0
+            >>> mock_result_row.last_time = "2023-01-01T12:00:00"
+            >>> db.execute.return_value.one.return_value = mock_result_row
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> isinstance(result, dict)
             True
+            >>> result['total_executions']
+            10
+            >>> result['failure_rate']
+            0.2
         """
 
         # Query to get all aggregated metrics at once
