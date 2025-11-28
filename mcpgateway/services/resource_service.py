@@ -16,16 +16,11 @@ It handles:
 Examples:
     >>> from mcpgateway.services.resource_service import ResourceService, ResourceError
     >>> service = ResourceService()
-    >>> hasattr(service, '_event_subscribers')
-    True
-    >>> hasattr(service, '_template_cache')
-    True
-    >>> isinstance(service._event_subscribers, dict)
+    >>> isinstance(service._event_service, EventService)
     True
 """
 
 # Standard
-import asyncio
 from datetime import datetime, timezone
 import mimetypes
 import os
@@ -50,6 +45,7 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -59,7 +55,7 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Plugin support imports (conditional)
 try:
     # First-Party
-    from mcpgateway.plugins.framework import GlobalContext, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -117,7 +113,7 @@ class ResourceService:
 
     def __init__(self) -> None:
         """Initialize the resource service."""
-        self._event_subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
 
         # Initialize plugin manager if plugins are enabled in settings
@@ -151,7 +147,7 @@ class ResourceService:
     async def shutdown(self) -> None:
         """Shutdown the service."""
         # Clear subscriptions
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         logger.info("Resource service shutdown complete")
 
     async def get_top_resources(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
@@ -364,7 +360,7 @@ class ResourceService:
                 name=resource.name,
                 description=resource.description,
                 mime_type=mime_type,
-                template=resource.template,
+                uri_template=resource.uri_template,
                 text_content=resource.content if is_text else None,
                 binary_content=(resource.content.encode() if is_text and isinstance(resource.content, str) else resource.content if isinstance(resource.content, bytes) else None),
                 size=len(resource.content) if resource.content else 0,
@@ -449,7 +445,7 @@ class ResourceService:
             True
         """
         page_size = settings.pagination_default_page_size
-        query = select(DbResource).order_by(DbResource.id)  # Consistent ordering for cursor pagination
+        query = select(DbResource).where(DbResource.uri_template.is_(None)).order_by(DbResource.id)  # Consistent ordering for cursor pagination
 
         # Decode cursor to get last_id if provided
         last_id = None
@@ -636,7 +632,12 @@ class ResourceService:
             >>> isinstance(result, list)
             True
         """
-        query = select(DbResource).join(server_resource_association, DbResource.id == server_resource_association.c.resource_id).where(server_resource_association.c.server_id == server_id)
+        query = (
+            select(DbResource)
+            .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
+            .where(DbResource.uri_template.is_(None))
+            .where(server_resource_association.c.server_id == server_id)
+        )
         if not include_inactive:
             query = query.where(DbResource.is_active)
         # Cursor-based pagination logic can be implemented here in the future.
@@ -671,15 +672,30 @@ class ResourceService:
         db.add(metric)
         db.commit()
 
-    async def read_resource(self, db: Session, resource_id: Union[int, str], request_id: Optional[str] = None, user: Optional[str] = None, server_id: Optional[str] = None) -> ResourceContent:
+    async def read_resource(
+        self,
+        db: Session,
+        resource_id: Optional[Union[int, str]] = None,
+        resource_uri: Optional[str] = None,
+        request_id: Optional[str] = None,
+        user: Optional[str] = None,
+        server_id: Optional[str] = None,
+        include_inactive: bool = False,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+    ) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
         Args:
-            db: Database session
-            resource_id: ID of the resource to read
-            request_id: Optional request ID for tracing
-            user: Optional user making the request
-            server_id: Optional server ID for context
+            db: Database session.
+            resource_id: Optional ID of the resource to read.
+            resource_uri: Optional URI of the resource to read.
+            request_id: Optional request ID for tracing.
+            user: Optional user making the request.
+            server_id: Optional server ID for context.
+            include_inactive: Whether to include inactive resources. Defaults to False.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
 
         Returns:
             Resource content object
@@ -689,29 +705,32 @@ class ResourceService:
             ResourceError: If blocked by plugin
             PluginError: If encounters issue with plugin
             PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
+            ValueError: If neither resource_id nor resource_uri is provided
 
         Examples:
+            >>> from mcpgateway.common.models import ResourceContent
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
-            >>> from mcpgateway.common.models import ResourceContent
             >>> service = ResourceService()
             >>> db = MagicMock()
             >>> uri = 'http://example.com/resource.txt'
             >>> import types
-            >>> mock_resource = types.SimpleNamespace(content='test', uri=uri)
+            >>> mock_resource = types.SimpleNamespace(id=123,content='test', uri=uri)
             >>> db.execute.return_value.scalar_one_or_none.return_value = mock_resource
-            >>> db.get.return_value = mock_resource  # Ensure uri is a string, not None
+            >>> db.get.return_value = mock_resource
             >>> import asyncio
-            >>> result = asyncio.run(service.read_resource(db, uri))
-            >>> isinstance(result, ResourceContent)
+            >>> result = asyncio.run(service.read_resource(db, resource_uri=uri))
+            >>> result.__class__.__name__ == 'ResourceContent'
             True
 
-            Not found case returns ResourceNotFoundError:
+        Not found case returns ResourceNotFoundError:
+
             >>> db2 = MagicMock()
             >>> db2.execute.return_value.scalar_one_or_none.return_value = None
+            >>> import asyncio
             >>> def _nf():
             ...     try:
-            ...         asyncio.run(service.read_resource(db2, 'abc'))
+            ...         asyncio.run(service.read_resource(db2, resource_uri='abc'))
             ...     except ResourceNotFoundError:
             ...         return True
             >>> _nf()
@@ -720,9 +739,12 @@ class ResourceService:
         start_time = time.monotonic()
         success = False
         error_message = None
-        resource = None
-        resource_db = db.get(DbResource, resource_id)
-        uri = resource_db.uri if resource_db else None
+        resource_db = None
+        content = None
+        uri = resource_uri or "unknown"
+        if resource_id:
+            resource_db = db.get(DbResource, resource_id)
+            uri = resource_db.uri if resource_db else None
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -737,7 +759,7 @@ class ResourceService:
                     trace_id=trace_id,
                     name="resource.read",
                     attributes={
-                        "resource.uri": str(uri) if uri else "unknown",
+                        "resource.uri": str(resource_uri) if resource_uri else "unknown",
                         "user": user or "anonymous",
                         "server_id": server_id,
                         "request_id": request_id,
@@ -750,11 +772,10 @@ class ResourceService:
                 logger.warning(f"Failed to start observability span for resource reading: {e}")
                 db_span_id = None
 
-        # Create trace span for OpenTelemetry export (Jaeger, Zipkin, etc.)
         with create_span(
             "resource.read",
             {
-                "resource.uri": uri,
+                "resource.uri": resource_uri or "unknown",
                 "user": user or "anonymous",
                 "server_id": server_id,
                 "request_id": request_id,
@@ -769,7 +790,6 @@ class ResourceService:
 
                 original_uri = uri
                 contexts = None
-
                 # Call pre-fetch hooks if plugin manager is available
                 plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and ("://" in uri))
                 if plugin_eligible:
@@ -791,13 +811,29 @@ class ResourceService:
                             # Attempt to fallback to attribute access
                             user_id = getattr(user, "email", None)
 
-                    global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
+                    # Use existing global_context from middleware or create new one
+                    if plugin_global_context:
+                        global_context = plugin_global_context
+                        # Update fields with resource-specific information
+                        if user_id:
+                            global_context.user = user_id
+                        if server_id:
+                            global_context.server_id = server_id
+                    else:
+                        # Create new context (fallback when middleware didn't run)
+                        global_context = GlobalContext(request_id=request_id, user=user_id, server_id=server_id)
 
                     # Create pre-fetch payload
                     pre_payload = ResourcePreFetchPayload(uri=uri, metadata={})
 
-                    # Execute pre-fetch hooks
-                    pre_result, contexts = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_PRE_FETCH, pre_payload, global_context, violations_as_exceptions=True)
+                    # Execute pre-fetch hooks with context from previous hooks
+                    pre_result, contexts = await self._plugin_manager.invoke_hook(
+                        ResourceHookType.RESOURCE_PRE_FETCH,
+                        pre_payload,
+                        global_context,
+                        local_contexts=plugin_context_table,  # Pass context from previous hooks
+                        violations_as_exceptions=True,
+                    )
                     # Use modified URI if plugin changed it
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
@@ -806,26 +842,60 @@ class ResourceService:
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
                 # Check for template
-                if uri is not None and "{" in uri and "}" in uri:
-                    content = await self._read_template_resource(uri)
-                else:
-                    # Find resource
-                    resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(DbResource.is_active)).scalar_one_or_none()
-                    if not resource:
-                        # Check if inactive resource exists
-                        inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
-                        if inactive_resource:
+
+                if uri is not None:  # and "{" in uri and "}" in uri:
+                    # Matches uri (modified value from pluggins if applicable)
+                    # with uri from resource DB
+                    # if uri is of type resource template then resource is retreived from DB
+                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.is_active)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.uri == str(uri))
+                    resource_db = db.execute(query).scalar_one_or_none()
+                    if resource_db:
+                        # resource_id = resource_db.id
+                        content = resource_db.content
+                    else:
+                        # Check the inactivity first
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.is_active))).scalar_one_or_none()
+                        if check_inactivity:
+                            raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
+
+                if resource_db is None:
+                    if resource_uri:
+                        # if resource_uri is provided
+                        # modified uri have templatized resource with prefilled value
+                        # triggers _read_template_resource
+                        # it internally checks which uri matches the pattern of modified uri and fetches
+                        # the one which matches else raises ResourceNotFoundError
+                        try:
+                            content = await self._read_template_resource(db, uri) or None
+                        except Exception as e:
+                            raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'") from e
+
+                if resource_uri:
+                    if content is None and resource_db is None:
+                        raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'")
+
+                if resource_id:
+                    # if resource_id provided instead of resource_uri
+                    # retrieves resource based on resource_id
+                    query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.is_active)
+                    if include_inactive:
+                        query = select(DbResource).where(DbResource.id == str(resource_id))
+                    resource_db = db.execute(query).scalar_one_or_none()
+                    if resource_db:
+                        original_uri = resource_db.uri or None
+                        content = resource_db.content
+                    else:
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.is_active))).scalar_one_or_none()
+                        if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
-
-                        raise ResourceNotFoundError(f"Resource not found: {resource_id}")
-
-                    content = resource.content
+                        raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
                     # Create post-fetch payload
                     post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-
                     # Execute post-fetch hooks
                     post_result, _ = await self._plugin_manager.invoke_hook(
                         ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
@@ -834,6 +904,7 @@ class ResourceService:
                     # Use modified content if plugin changed it
                     if post_result.modified_payload:
                         content = post_result.modified_payload.content
+
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -842,7 +913,6 @@ class ResourceService:
                         span.set_attribute("content.size", len(str(content)))
 
                 success = True
-
                 # Return standardized content without breaking callers that expect passthrough
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
@@ -853,25 +923,23 @@ class ResourceService:
                 # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
                 if hasattr(content, "text") or hasattr(content, "blob"):
                     return content
-
                 # Normalize primitive types to ResourceContent
                 if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, blob=content)
+                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
                 if isinstance(content, str):
-                    return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=content)
+                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
 
                 # Fallback to stringified content
-                return ResourceContent(type="resource", id=resource_id, uri=original_uri, text=str(content))
-
+                return ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
             except Exception as e:
                 success = False
                 error_message = str(e)
                 raise
             finally:
                 # Record metrics only if we found a resource (not for templates)
-                if resource:
+                if resource_db:
                     try:
-                        await self._record_resource_metric(db, resource, start_time, success, error_message)
+                        await self._record_resource_metric(db, resource_db, start_time, success, error_message)
                     except Exception as metrics_error:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
@@ -1133,8 +1201,8 @@ class ResourceService:
                 resource.description = resource_update.description
             if resource_update.mime_type is not None:
                 resource.mime_type = resource_update.mime_type
-            if resource_update.template is not None:
-                resource.template = resource_update.template
+            if resource_update.uri_template is not None:
+                resource.uri_template = resource_update.uri_template
             if resource_update.visibility is not None:
                 resource.visibility = resource_update.visibility
 
@@ -1328,7 +1396,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deactivated(self, resource: DbResource) -> None:
         """
@@ -1347,7 +1415,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_deleted(self, resource_info: Dict[str, Any]) -> None:
         """
@@ -1361,7 +1429,7 @@ class ResourceService:
             "data": resource_info,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource_info["uri"], event)
+        await self._publish_event(event)
 
     async def _notify_resource_removed(self, resource: DbResource) -> None:
         """
@@ -1380,40 +1448,16 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def subscribe_events(self, uri: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Subscribe to resource events.
-
-        Args:
-            uri: Optional URI to filter events
+    async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:
+        """Subscribe to Resource events via the EventService.
 
         Yields:
-            Resource event messages
+            Resource event messages.
         """
-        queue: asyncio.Queue = asyncio.Queue()
-
-        if uri:
-            if uri not in self._event_subscribers:
-                self._event_subscribers[uri] = []
-            self._event_subscribers[uri].append(queue)
-        else:
-            self._event_subscribers["*"] = self._event_subscribers.get("*", [])
-            self._event_subscribers["*"].append(queue)
-
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            if uri:
-                self._event_subscribers[uri].remove(queue)
-                if not self._event_subscribers[uri]:
-                    del self._event_subscribers[uri]
-            else:
-                self._event_subscribers["*"].remove(queue)
-                if not self._event_subscribers["*"]:
-                    del self._event_subscribers["*"]
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     def _detect_mime_type(self, uri: str, content: Union[str, bytes]) -> str:
         """Detect mime type from URI and content.
@@ -1436,73 +1480,133 @@ class ResourceService:
 
         return "application/octet-stream"
 
-    async def _read_template_resource(self, uri: str) -> ResourceContent:
-        """Read a templated resource.
+    async def _read_template_resource(self, db: Session, uri: str, include_inactive: Optional[bool] = False) -> ResourceContent:
+        """
+        Read a templated resource.
 
         Args:
-            uri: Template URI with parameters
+            db: Database session.
+            uri: Template URI with parameters.
+            include_inactive: Whether to include inactive resources in DB lookups.
 
         Returns:
-            Resource content
+            ResourceContent: The resolved content from the matching template.
 
         Raises:
-            ResourceNotFoundError: If template not found
-            ResourceError: For other template errors
-            NotImplementedError: When binary template is passed
+            ResourceNotFoundError: If no matching template is found.
+            ResourceError: For other template resolution errors.
+            NotImplementedError: If a binary template resource is encountered.
         """
-        # Find matching template
+        # Find matching template # DRT BREAKPOINT
         template = None
+        if not self._template_cache:
+            logger.info("_template_cache is empty, fetching exisitng resource templates")
+            resource_templates = await self.list_resource_templates(db=db, include_inactive=include_inactive)
+            for i in resource_templates:
+                self._template_cache[i.name] = i
         for cached in self._template_cache.values():
             if self._uri_matches_template(uri, cached.uri_template):
                 template = cached
                 break
 
-        if not template:
+        if template:
+            check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.is_active))).scalar_one_or_none()
+            if check_inactivity:
+                raise ResourceNotFoundError(f"Resource '{template.id}' exists but is inactive")
+        else:
             raise ResourceNotFoundError(f"No template matches URI: {uri}")
 
         try:
             # Extract parameters
             params = self._extract_template_params(uri, template.uri_template)
-
             # Generate content
             if template.mime_type and template.mime_type.startswith("text/"):
                 content = template.uri_template.format(**params)
-                return TextContent(type="text", text=content)
-
-            # Handle binary template
+                return ResourceContent(type="resource", id=str(template.id) or None, uri=template.uri_template or None, mime_type=template.mime_type or None, text=content)
+            # # Handle binary template
             raise NotImplementedError("Binary resource templates not yet supported")
 
         except Exception as e:
             raise ResourceError(f"Failed to process template: {str(e)}")
 
-    def _uri_matches_template(self, uri: str, template: str) -> bool:
-        """Check if URI matches a template pattern.
+    def _build_regex(self, template: str) -> re.Pattern:
+        """
+        Convert a URI template into a compiled regular expression.
+
+        This parser supports a subset of RFC 6570–style templates for path
+        matching. It extracts path parameters and converts them into named
+        regex groups.
+
+        Supported template features:
+        - `{var}`
+        A simple path parameter. Matches a single URI segment
+        (i.e., any characters except `/`).
+        → Translates to `(?P<var>[^/]+)`
+        - `{var*}`
+        A wildcard parameter. Matches one or more URI segments,
+        including `/`.
+        → Translates to `(?P<var>.+)`
+        - `{?var1,var2}`
+        Query-parameter expressions. These are ignored when building
+        the regex for path matching and are stripped from the template.
+
+        Example:
+            Template: "files://root/{path*}/meta/{id}{?expand,debug}"
+            Regex: r"^files://root/(?P<path>.+)/meta/(?P<id>[^/]+)$"
 
         Args:
-            uri: URI to check
-            template: Template pattern
+            template: The URI template string containing parameter expressions.
 
         Returns:
-            True if URI matches template
+            A compiled regular expression (re.Pattern) that can be used to
+            match URIs and extract parameter values.
         """
-        # Convert template to regex pattern
+        # Remove query parameter syntax for path matching
+        template_without_query = re.sub(r"\{\?[^}]+\}", "", template)
 
-        pattern = re.escape(template).replace(r"\{.*?\}", r"[^/]+")
-        return bool(re.match(pattern, uri))
+        parts = re.split(r"(\{[^}]+\})", template_without_query)
+        pattern = ""
+        for part in parts:
+            if part.startswith("{") and part.endswith("}"):
+                name = part[1:-1]
+                if name.endswith("*"):
+                    name = name[:-1]
+                    pattern += f"(?P<{name}>.+)"
+                else:
+                    pattern += f"(?P<{name}>[^/]+)"
+            else:
+                pattern += re.escape(part)
+        return re.compile(f"^{pattern}$")
 
     def _extract_template_params(self, uri: str, template: str) -> Dict[str, str]:
-        """Extract parameters from URI based on template.
+        """
+        Extract parameters from a URI based on a template.
 
         Args:
-            uri: URI with parameter values
-            template: Template pattern
+            uri: The actual URI containing parameter values.
+            template: The template pattern (e.g. "file:///{name}/{id}").
 
         Returns:
-            Dict of parameter names and values
+            Dict of parameter names and extracted values.
         """
-
         result = parse.parse(template, uri)
         return result.named if result else {}
+
+    def _uri_matches_template(self, uri: str, template: str) -> bool:
+        """
+        Check whether a URI matches a given template pattern.
+
+        Args:
+            uri: The URI to check.
+            template: The template pattern.
+
+        Returns:
+            True if the URI matches the template, otherwise False.
+        """
+
+        uri_path, _, _ = uri.partition("?")
+        regex = self._build_regex(template)
+        return bool(regex.match(uri_path))
 
     async def _notify_resource_added(self, resource: DbResource) -> None:
         """
@@ -1522,7 +1626,7 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
     async def _notify_resource_updated(self, resource: DbResource) -> None:
         """
@@ -1541,24 +1645,16 @@ class ResourceService:
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
-        await self._publish_event(resource.uri, event)
+        await self._publish_event(event)
 
-    async def _publish_event(self, uri: str, event: Dict[str, Any]) -> None:
-        """Publish event to relevant subscribers.
+    async def _publish_event(self, event: Dict[str, Any]) -> None:
+        """
+        Publish event to all subscribers via the EventService.
 
         Args:
-            uri: Resource URI event relates to
-            event: Event data to publish
+            event: Event to publish
         """
-        # Notify resource-specific subscribers
-        if uri in self._event_subscribers:
-            for queue in self._event_subscribers[uri]:
-                await queue.put(event)
-
-        # Notify global subscribers
-        if "*" in self._event_subscribers:
-            for queue in self._event_subscribers["*"]:
-                await queue.put(event)
+        await self._event_service.publish_event(event)
 
     # --- Resource templates ---
     async def list_resource_templates(self, db: Session, include_inactive: bool = False) -> List[ResourceTemplate]:
@@ -1586,12 +1682,13 @@ class ResourceService:
             ...     result == ['resource_template']
             True
         """
-        query = select(DbResource).where(DbResource.template.isnot(None))
+        query = select(DbResource).where(DbResource.uri_template.isnot(None))
         if not include_inactive:
             query = query.where(DbResource.is_active)
         # Cursor-based pagination logic can be implemented here in the future.
         templates = db.execute(query).scalars().all()
-        return [ResourceTemplate.model_validate(t) for t in templates]
+        result = [ResourceTemplate.model_validate(t) for t in templates]
+        return result
 
     # --- Metrics ---
     async def aggregate_metrics(self, db: Session) -> ResourceMetrics:

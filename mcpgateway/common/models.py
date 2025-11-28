@@ -715,11 +715,14 @@ class ResourceTemplate(BaseModelWithConfigDict):
                                         Serialized as '_meta' in JSON.
     """
 
-    uri_template: str
+    # ✅ DB field name: uri_template
+    # ✅ API (JSON) alias:
+    id: Optional[int] = None
+    uri_template: str = Field(..., alias="uriTemplate")
     name: str
     description: Optional[str] = None
     mime_type: Optional[str] = None
-    annotations: Optional[Annotations] = None
+    annotations: Optional[Dict[str, Any]] = None
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta")
 
 

@@ -355,7 +355,7 @@ Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.exam
 <summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
 
 ```bash
-# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
+# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker (replace docker with podman if needed)
 python3 -m mcpgateway.translate \
      --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --expose-sse \
@@ -389,21 +389,21 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:444
 # 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
+     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":[<ID_OF_TOOLS>]}}' \
      http://localhost:4444/servers | jq
 
 # Example curl
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
      -H "Content-Type: application/json"
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
+     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":["6018ca46d32a4ac6b4c054c13a1726a2"]}}' \
      http://localhost:4444/servers | jq
 
 # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
 
-# 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
+# 6️⃣  Client HTTP endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
 npx -y @modelcontextprotocol/inspector
-# Transport Type: SSE, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse,  Header Name: "Authorization", Bearer Token
+# Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp,  Header Name: "Authorization", Bearer Token
 ```
 
 </details>
@@ -465,9 +465,92 @@ When using a MCP Client such as Claude with stdio:
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
+### 🚀 Quick Start - Docker Compose
+
+Get a full stack running with MariaDB and Redis in under 30 seconds:
+
+```bash
+# Clone and start the stack
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge
+
+# Start with MariaDB (recommended for production)
+docker compose up -d
+
+# Or start with PostgreSQL
+# Uncomment postgres in docker-compose.yml and comment mariadb section
+# docker compose up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f gateway
+
+# Access Admin UI: http://localhost:4444/admin (admin/changeme)
+# Generate API token
+docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret my-test-key
+```
+
+**What you get:**
+- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
+- 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
+- 📊 **Redis** - High-performance caching and session storage
+- 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
+- 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
+
+### ☸️ Quick Start - Helm (Kubernetes)
+
+Deploy to Kubernetes with enterprise-grade features:
+
+```bash
+# Add Helm repository (when available)
+# helm repo add mcp-context-forge https://ibm.github.io/mcp-context-forge
+# helm repo update
+
+# For now, use local chart
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge/charts/mcp-stack
+
+# Install with MariaDB
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
+  --set postgres.enabled=false \
+  --set mariadb.enabled=true
+
+# Or install with PostgreSQL (default)
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
+
+# Check deployment status
+kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
+
+# Port forward to access Admin UI
+kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
+# Access: http://localhost:4444/admin
+
+# Generate API token
+kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
+  python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@yourcompany.com --exp 10080 --secret your-secret-key
+```
+
+**Enterprise Features:**
+- 🔄 **Auto-scaling** - HPA with CPU/memory targets
+- 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
+- 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
+- 🔒 **Security** - RBAC, network policies, secret management
+- 🚀 **High Availability** - Multi-replica deployments with Redis clustering
+- 📈 **Monitoring** - Built-in Grafana dashboards and alerting
+
 ---
 
-### 🐳 Docker
+### 🐳 Docker (Single Container)
 
 #### 1 - Minimum viable run
 

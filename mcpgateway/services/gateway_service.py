@@ -80,6 +80,7 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.services.event_service import EventService
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.logging_service import LoggingService
@@ -280,11 +281,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """Initialize the gateway service.
 
         Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
+            >>> from mcpgateway.services.event_service import EventService
             >>> service = GatewayService()
-            >>> isinstance(service._event_subscribers, list)
+            >>> isinstance(service._event_service, EventService)
             True
-            >>> len(service._event_subscribers)
-            0
             >>> isinstance(service._http_client, ResilientHttpClient)
             True
             >>> service._health_check_interval == GW_HEALTH_CHECK_INTERVAL
@@ -309,10 +310,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             0
             >>> hasattr(service, 'redis_url')
             True
-            >>> hasattr(service, '_instance_id') or True  # May not exist if no Redis
-            True
         """
-        self._event_subscribers: List[asyncio.Queue] = []
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
         self._health_check_task: Optional[asyncio.Task] = None
@@ -322,6 +320,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         self.tool_service = ToolService()
         self._gateway_failure_counts: dict[str, int] = {}
         self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+        self._event_service = EventService(channel_name="mcpgateway:gateway_events")
 
         # For health checks, we determine the leader instance.
         self.redis_url = settings.redis_url if settings.cache_type == "redis" else None
@@ -427,12 +426,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> service = GatewayService()
-            >>> service._event_subscribers = ['test']
+            >>> # Mock internal components
+            >>> from unittest.mock import AsyncMock
+            >>> service._event_service = AsyncMock()
             >>> service._active_gateways = {'test_gw'}
             >>> import asyncio
             >>> asyncio.run(service.shutdown())
-            >>> len(service._event_subscribers)
-            0
+            >>> # Verify event service shutdown was called
+            >>> service._event_service.shutdown.assert_awaited_once()
             >>> len(service._active_gateways)
             0
         """
@@ -444,7 +445,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 pass
 
         await self._http_client.aclose()
-        self._event_subscribers.clear()
+        await self._event_service.shutdown()
         self._active_gateways.clear()
         logger.info("Gateway service shutdown complete")
 
@@ -722,7 +723,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     name=r.name,
                     description=r.description,
                     mime_type=(mime_type := (mimetypes.guess_type(r.uri)[0] or ("text/plain" if isinstance(r.content, str) else "application/octet-stream"))),
-                    template=r.template,
+                    uri_template=r.uri_template or None,
                     text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
                     binary_content=(
                         r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
@@ -1667,6 +1668,17 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db.commit()
                 db.refresh(gateway)
 
+                # Notify Subscribers
+                if not gateway.enabled:
+                    # Inactive
+                    await self._notify_gateway_deactivated(gateway)
+                elif gateway.enabled and not gateway.reachable:
+                    # Offline (Enabled but Unreachable)
+                    await self._notify_gateway_offline(gateway)
+                else:
+                    # Active (Enabled and Reachable)
+                    await self._notify_gateway_activated(gateway)
+
                 tools = db.query(DbTool).filter(DbTool.gateway_id == gateway_id).all()
 
                 if only_update_reachable:
@@ -1675,12 +1687,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 else:
                     for tool in tools:
                         await self.tool_service.toggle_tool_status(db, tool.id, activate, reachable)
-
-                # Notify subscribers
-                if activate:
-                    await self._notify_gateway_activated(gateway)
-                else:
-                    await self._notify_gateway_deactivated(gateway)
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
@@ -2387,30 +2393,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> service = GatewayService()
-            >>> len(service._event_subscribers)
-            0
-            >>> async_gen = service.subscribe_events()
-            >>> hasattr(async_gen, '__aiter__')
-            True
-            >>> # Test event publishing works
             >>> import asyncio
-            >>> async def test_event():
-            ...     queue = asyncio.Queue()
-            ...     service._event_subscribers.append(queue)
-            ...     await service._publish_event({"type": "test"})
-            ...     event = await queue.get()
-            ...     return event["type"]
-            >>> asyncio.run(test_event())
-            'test'
+            >>> from unittest.mock import MagicMock
+            >>> # Create a mock async generator for the event service
+            >>> async def mock_event_gen():
+            ...     yield {"type": "test_event", "data": "payload"}
+            >>>
+            >>> # Mock the event service to return our generator
+            >>> service._event_service = MagicMock()
+            >>> service._event_service.subscribe_events.return_value = mock_event_gen()
+            >>>
+            >>> # Test the subscription
+            >>> async def test_sub():
+            ...     async for event in service.subscribe_events():
+            ...         return event
+            >>>
+            >>> result = asyncio.run(test_sub())
+            >>> result
+            {'type': 'test_event', 'data': 'payload'}
         """
-        queue: asyncio.Queue = asyncio.Queue()
-        self._event_subscribers.append(queue)
-        try:
-            while True:
-                event = await queue.get()
-                yield event
-        finally:
-            self._event_subscribers.remove(queue)
+        async for event in self._event_service.subscribe_events():
+            yield event
 
     async def _initialize_gateway(
         self,
@@ -2714,6 +2717,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "name": gateway.name,
                 "url": gateway.url,
                 "enabled": gateway.enabled,
+                "reachable": gateway.reachable,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2732,6 +2736,27 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "name": gateway.name,
                 "url": gateway.url,
                 "enabled": gateway.enabled,
+                "reachable": gateway.reachable,
+            },
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        await self._publish_event(event)
+
+    async def _notify_gateway_offline(self, gateway: DbGateway) -> None:
+        """
+        Notify subscribers that gateway is offline (Enabled but Unreachable).
+
+        Args:
+            gateway: Gateway database object
+        """
+        event = {
+            "type": "gateway_offline",
+            "data": {
+                "id": gateway.id,
+                "name": gateway.name,
+                "url": gateway.url,
+                "enabled": True,
+                "reachable": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -2929,7 +2954,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_resource.name != resource.name
                         or existing_resource.description != resource.description
                         or existing_resource.mime_type != resource.mime_type
-                        or existing_resource.template != resource.template
+                        or existing_resource.uri_template != resource.uri_template
                         or existing_resource.visibility != gateway.visibility
                     ):
                         fields_to_update = True
@@ -2938,7 +2963,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         existing_resource.name = resource.name
                         existing_resource.description = resource.description
                         existing_resource.mime_type = resource.mime_type
-                        existing_resource.template = resource.template
+                        existing_resource.uri_template = resource.uri_template
                         existing_resource.visibility = gateway.visibility
                         logger.debug(f"Updated existing resource: {resource.uri}")
                 else:
@@ -2948,7 +2973,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         name=resource.name,
                         description=resource.description,
                         mime_type=resource.mime_type,
-                        template=resource.template,
+                        uri_template=resource.uri_template,
                         gateway_id=gateway.id,
                         created_by="system",
                         created_via=created_via,
@@ -3029,28 +3054,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         Examples:
             >>> import asyncio
+            >>> from unittest.mock import AsyncMock
             >>> service = GatewayService()
-            >>> test_queue = asyncio.Queue()
-            >>> service._event_subscribers = [test_queue]
+            >>> # Mock the underlying event service
+            >>> service._event_service = AsyncMock()
             >>> test_event = {"type": "test", "data": {}}
+            >>>
             >>> asyncio.run(service._publish_event(test_event))
-            >>> # Verify event was published
-            >>> asyncio.run(test_queue.get()) == test_event
-            True
-
-            >>> # Test with multiple subscribers
-            >>> queue1 = asyncio.Queue()
-            >>> queue2 = asyncio.Queue()
-            >>> service._event_subscribers = [queue1, queue2]
-            >>> event = {"type": "multi_test"}
-            >>> asyncio.run(service._publish_event(event))
-            >>> asyncio.run(queue1.get())["type"]
-            'multi_test'
-            >>> asyncio.run(queue2.get())["type"]
-            'multi_test'
+            >>>
+            >>> # Verify the event was passed to the event service
+            >>> service._event_service.publish_event.assert_awaited_with(test_event)
         """
-        for queue in self._event_subscribers:
-            await queue.put(event)
+        await self._event_service.publish_event(event)
 
     async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
@@ -3085,8 +3100,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if tools:
                         logger.info(f"Fetched {len(tools)} tools from gateway")
                     # Fetch resources if supported
-                    resources = []
+
                     logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    resources = []
                     if capabilities.get("resources"):
                         try:
                             response = await session.list_resources()
@@ -3108,14 +3124,35 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                             uri=str(resource_data.get("uri", "")),
                                             name=resource_data.get("name", ""),
                                             description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mime_type"),
-                                            template=resource_data.get("template"),
+                                            mime_type=resource_data.get("mimeType"),
+                                            uri_template=resource_data.get("uriTemplate") or None,
                                             content="",
                                         )
                                     )
-                                logger.info(f"Fetched {len(resources)} resources from gateway")
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
                         except Exception as e:
                             logger.warning(f"Failed to fetch resources: {e}")
+
+                        # resource template URI
+                        try:
+                            response_templates = await session.list_resource_templates()
+                            raw_resources_templates = response_templates.resourceTemplates
+                            resource_templates = []
+                            for resource_template in raw_resources_templates:
+                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+
+                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+
+                                if "content" not in resource_template_data:
+                                    resource_template_data["content"] = ""
+
+                                resources.append(ResourceCreate.model_validate(resource_template_data))
+                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                            logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resource templates: {e}")
 
                     # Fetch prompts if supported
                     prompts = []
@@ -3140,7 +3177,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                             template=prompt_data.get("template", ""),
                                         )
                                     )
-                                logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
                         except Exception as e:
                             logger.warning(f"Failed to fetch prompts: {e}")
 
@@ -3229,14 +3266,35 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         uri=str(resource_data.get("uri", "")),
                                         name=resource_data.get("name", ""),
                                         description=resource_data.get("description"),
-                                        mime_type=resource_data.get("mime_type"),
-                                        template=resource_data.get("template"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
                                         content="",
                                     )
                                 )
-                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                        logger.info(f"Fetched {len(resources)} resources from gateway")
                     except Exception as e:
                         logger.warning(f"Failed to fetch resources: {e}")
+
+                        # resource template URI
+                        try:
+                            response_templates = await session.list_resource_templates()
+                            raw_resources_templates = response_templates.resourceTemplates
+                            resource_templates = []
+                            for resource_template in raw_resources_templates:
+                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+
+                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+
+                                if "content" not in resource_template_data:
+                                    resource_template_data["content"] = ""
+
+                                resources.append(ResourceCreate.model_validate(resource_template_data))
+                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                            logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
+                        except Exception as ei:
+                            logger.warning(f"Failed to fetch resource templates: {ei}")
 
                 # Fetch prompts if supported
                 prompts = []
@@ -3261,7 +3319,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                                         template=prompt_data.get("template", ""),
                                     )
                                 )
-                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                        logger.info(f"Fetched {len(prompts)} prompts from gateway")
                     except Exception as e:
                         logger.warning(f"Failed to fetch prompts: {e}")
 
@@ -3327,43 +3385,76 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if tools:
                     logger.info(f"Fetched {len(tools)} tools from gateway")
 
-                # Fetch resources if supported
-                resources = []
-                logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
-                if capabilities.get("resources"):
-                    try:
-                        response = await session.list_resources()
-                        raw_resources = response.resources
-                        resources = []
-                        for resource in raw_resources:
-                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                            # Convert AnyUrl to string if present
-                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                resource_data["uri"] = str(resource_data["uri"])
-                            # Add default content if not present
-                            if "content" not in resource_data:
-                                resource_data["content"] = ""
-                            resources.append(ResourceCreate.model_validate(resource_data))
-                        logger.info(f"Fetched {len(resources)} resources from gateway")
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch resources: {e}")
+                    # Fetch resources if supported
+                    resources = []
+                    logger.debug(f"Checking for resources support: {capabilities.get('resources')}")
+                    if capabilities.get("resources"):
+                        try:
+                            response = await session.list_resources()
+                            raw_resources = response.resources
+                            for resource in raw_resources:
+                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                                # Convert AnyUrl to string if present
+                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                    resource_data["uri"] = str(resource_data["uri"])
+                                # Add default content if not present
+                                if "content" not in resource_data:
+                                    resource_data["content"] = ""
+                                try:
+                                    resources.append(ResourceCreate.model_validate(resource_data))
+                                except Exception:
+                                    # If validation fails, create minimal resource
+                                    resources.append(
+                                        ResourceCreate(
+                                            uri=str(resource_data.get("uri", "")),
+                                            name=resource_data.get("name", ""),
+                                            description=resource_data.get("description"),
+                                            mime_type=resource_data.get("mimeType"),
+                                            uri_template=resource_data.get("uriTemplate") or None,
+                                            content="",
+                                        )
+                                    )
+                            logger.info(f"Fetched {len(resources)} resources from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resources: {e}")
 
-                # Fetch prompts if supported
-                prompts = []
-                logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
-                if capabilities.get("prompts"):
-                    try:
-                        response = await session.list_prompts()
-                        raw_prompts = response.prompts
-                        prompts = []
-                        for prompt in raw_prompts:
-                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                            # Add default template if not present
-                            if "template" not in prompt_data:
-                                prompt_data["template"] = ""
-                            prompts.append(PromptCreate.model_validate(prompt_data))
-                    except Exception as e:
-                        logger.warning(f"Failed to fetch prompts: {e}")
+                        # resource template URI
+                        try:
+                            response_templates = await session.list_resource_templates()
+                            raw_resources_templates = response_templates.resourceTemplates
+                            resource_templates = []
+                            for resource_template in raw_resources_templates:
+                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+
+                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+
+                                if "content" not in resource_template_data:
+                                    resource_template_data["content"] = ""
+
+                                resources.append(ResourceCreate.model_validate(resource_template_data))
+                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                            logger.info(f"Fetched {len(resource_templates)} resource templates from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch resource templates: {e}")
+
+                    # Fetch prompts if supported
+                    prompts = []
+                    logger.debug(f"Checking for prompts support: {capabilities.get('prompts')}")
+                    if capabilities.get("prompts"):
+                        try:
+                            response = await session.list_prompts()
+                            raw_prompts = response.prompts
+                            for prompt in raw_prompts:
+                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                                # Add default template if not present
+                                if "template" not in prompt_data:
+                                    prompt_data["template"] = ""
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            logger.info(f"Fetched {len(prompts)} prompts from gateway")
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch prompts: {e}")
 
                 return capabilities, tools, resources, prompts
         raise GatewayConnectionError(f"Failed to initialize gateway at{server_url}")

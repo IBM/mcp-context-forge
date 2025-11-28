@@ -711,7 +711,7 @@ class PIIFilterPlugin(Plugin):
                 all_detections[path] = detections
                 self.detection_count += sum(len(items) for items in detections.values())
                 has_detections = True
-
+                modified = True
                 if self.pii_config.log_detections:
                     logger.warning(f"PII detected in tool result at '{path}': {', '.join(detections.keys())}")
 

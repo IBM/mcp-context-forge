@@ -315,30 +315,57 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     results = [match.value for match in main_matches]
 
     if mappings:
-        mapped_results = []
-        for item in results:
-            mapped_item = {}
-            for new_key, mapping_expr_str in mappings.items():
-                try:
-                    mapping_expr = parse(mapping_expr_str)
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
-                try:
-                    mapping_matches = mapping_expr.find(item)
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
-                if not mapping_matches:
-                    mapped_item[new_key] = None
-                elif len(mapping_matches) == 1:
-                    mapped_item[new_key] = mapping_matches[0].value
-                else:
-                    mapped_item[new_key] = [m.value for m in mapping_matches]
-            mapped_results.append(mapped_item)
-        results = mapped_results
+        results = transform_data_with_mappings(results, mappings)
 
     if len(results) == 1 and isinstance(results[0], dict):
         return results[0]
+
     return results
+
+
+def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> list[Any]:
+    """
+    Applies the given JSONPath expression and mappings to the data.
+    Only return data that is required by the user dynamically.
+
+    Args:
+        data: The set of data to apply mappings to.
+        mappings: dictionary of mappings where keys are new field names
+
+    Returns:
+        list[Any]: A list (or mapped list) of re-mapped data
+
+    Raises:
+        HTTPException: If there's an error parsing or executing the JSONPath expressions.
+
+    Examples:
+        >>> transform_data_with_mappings([{'first_name': "Bruce", 'second_name': "Wayne"},{'first_name': "Diana", 'second_name': "Prince"}], {"n": "$.first_name"})
+        [{'n': 'Bruce'}, {'n': 'Diana'}]
+    """
+
+    mapped_results = []
+    for item in data:
+        mapped_item = {}
+        for new_key, mapping_expr_str in mappings.items():
+            try:
+                mapping_expr = parse(mapping_expr_str)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Invalid mapping JSONPath for key '{new_key}': {e}")
+
+            try:
+                mapping_matches = mapping_expr.find(item)
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Error executing mapping JSONPath for key '{new_key}': {e}")
+
+            if not mapping_matches:
+                mapped_item[new_key] = None
+            elif len(mapping_matches) == 1:
+                mapped_item[new_key] = mapping_matches[0].value
+            else:
+                mapped_item[new_key] = [m.value for m in mapping_matches]
+        mapped_results.append(mapped_item)
+
+    return mapped_results
 
 
 ####################
@@ -374,24 +401,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     try:
         # Validate security configuration
-        await validate_security_configuration()
+        validate_security_configuration()
 
         if plugin_manager:
             await plugin_manager.initialize()
             logger.info(f"Plugin manager initialized with {plugin_manager.plugin_count} plugins")
 
         if settings.enable_header_passthrough:
-            logger.info(f"🔄 Header Passthrough: ENABLED (default headers: {settings.default_passthrough_headers})")
-            if settings.enable_overwrite_base_headers:
-                logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
-            else:
-                logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
-            db_gen = get_db()
-            db = next(db_gen)  # pylint: disable=stop-iteration-return
-            try:
-                await set_global_passthrough_headers(db)
-            finally:
-                db.close()
+            await setup_passthrough_headers()
         else:
             logger.info("🔒 Header Passthrough: DISABLED")
 
@@ -422,14 +439,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Bootstrap SSO providers from environment configuration
         if settings.sso_enabled:
-            try:
-                # First-Party
-                from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
-
-                bootstrap_sso_providers()
-                logger.info("SSO providers bootstrapped successfully")
-            except Exception as e:
-                logger.warning(f"Failed to bootstrap SSO providers: {e}")
+            attempt_to_bootstrap_sso_providers()
 
         logger.info("All services initialized successfully")
 
@@ -485,12 +495,54 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             elicitation_service = get_elicitation_service()
             services_to_shutdown.insert(5, elicitation_service)
 
-        for service in services_to_shutdown:
-            try:
-                await service.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
+        await shutdown_services(services_to_shutdown)
+
         logger.info("Shutdown complete")
+
+
+async def shutdown_services(services_to_shutdown: list[Any]):
+    """
+    Awaits shutdown of services provided in a list
+
+    Args:
+        services_to_shutdown (list[Any]): list of services to shutdown
+    """
+    for service in services_to_shutdown:
+        try:
+            await service.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down {service.__class__.__name__}: {str(e)}")
+
+
+async def setup_passthrough_headers():
+    """
+    Enables configuration and logs active settings as needed for when passthrough headers are enabled.
+    """
+    logger.info(f"🔄 Header Passthrough: ENABLED (default headers: {settings.default_passthrough_headers})")
+    if settings.enable_overwrite_base_headers:
+        logger.warning("⚠️  Base Header Override: ENABLED - Client headers can override gateway headers")
+    else:
+        logger.info("🔒 Base Header Override: DISABLED - Gateway headers take precedence")
+    db_gen = get_db()
+    db = next(db_gen)  # pylint: disable=stop-iteration-return
+    try:
+        await set_global_passthrough_headers(db)
+    finally:
+        db.close()
+
+
+def attempt_to_bootstrap_sso_providers():
+    """
+    Try to bootstrap SSO provider services based on settings.
+    """
+    try:
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+        bootstrap_sso_providers()
+        logger.info("SSO providers bootstrapped successfully")
+    except Exception as e:
+        logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
 
 # Initialize FastAPI app with orjson for 2-3x faster JSON serialization
@@ -507,22 +559,25 @@ app = FastAPI(
 setup_metrics(app)
 
 
-async def validate_security_configuration():
-    """Validate security configuration on startup."""
+def validate_security_configuration():
+    """
+    Validate security configuration on startup.
+    This function encapsulates:
+     - verifying the configuration,
+     - logging the output for warnings,
+     - critical issues
+     - security recommendations
+
+     Args: None
+     Raises: Passthrough Errors/Exceptions but doesn't raise any of its own.
+    """
     logger.info("🔒 Validating security configuration...")
 
     # Get security status
-    security_status = settings.get_security_status()
+    security_status: settings.SecurityStatus = settings.get_security_status()
     warnings = security_status["warnings"]
 
-    # Log warnings
-    if warnings:
-        logger.warning("=" * 60)
-        logger.warning("🚨 SECURITY WARNINGS DETECTED:")
-        logger.warning("=" * 60)
-        for warning in warnings:
-            logger.warning(f"  {warning}")
-        logger.warning("=" * 60)
+    log_warnings(warnings)
 
     # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
     critical_issues = []
@@ -536,6 +591,37 @@ async def validate_security_configuration():
     if not settings.auth_required and settings.federation_enabled and not settings.dev_mode:
         critical_issues.append("Federation enabled without authentication in non-dev mode. This is a critical security risk!")
 
+    log_critical_issues(critical_issues)
+
+    log_security_recommendations(security_status)
+
+
+def log_warnings(warnings: list[str]):
+    """
+    Log warnings from list of warnings provided
+
+    Args:
+        warnings: List
+    """
+    if warnings:
+        logger.warning("=" * 60)
+        logger.warning("🚨 SECURITY WARNINGS DETECTED:")
+        logger.warning("=" * 60)
+        for warning in warnings:
+            logger.warning(f"  {warning}")
+        logger.warning("=" * 60)
+
+
+def log_critical_issues(critical_issues: list[Any]):
+    """
+    Log critical based on configuration settings
+    If REQUIRE_STRONG_SECRETS set, this will output critical errors and exit the mcpgateway server.
+
+    Args:
+        critical_issues: List
+
+    Returns: None
+    """
     # Handle critical issues based on REQUIRE_STRONG_SECRETS setting
     if critical_issues:
         if settings.require_strong_secrets:
@@ -557,7 +643,16 @@ async def validate_security_configuration():
                 logger.warning(f"  • {issue}")
             logger.warning("=" * 60)
 
-    # Log security recommendations
+
+def log_security_recommendations(security_status: settings.SecurityStatus):
+    """
+    Log security recommendations based on configuration settings
+
+    Args:
+        security_status (settings.SecurityStatus): The SecurityStatus object for checking and logging current security settings from MCPGateway.
+
+    Returns: None
+    """
     if not security_status["secure_secrets"] or not security_status["auth_enabled"]:
         logger.info("=" * 60)
         logger.info("📋 SECURITY RECOMMENDATIONS:")
@@ -816,6 +911,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
     the request is rejected with a 401 or 403 error.
 
     Note:
+        OPTIONS requests are exempt from authentication to support CORS preflight
+        as per RFC 7231 Section 4.3.7 (OPTIONS must not require authentication).
+
+    Note:
         When DOCS_ALLOW_BASIC_AUTH is enabled, Basic Authentication
         is also accepted using BASIC_AUTH_USER and BASIC_AUTH_PASSWORD credentials.
     """
@@ -855,6 +954,10 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             True
         """
         protected_paths = ["/docs", "/redoc", "/openapi.json"]
+
+        # Allow OPTIONS requests to pass through for CORS preflight (RFC 7231)
+        if request.method == "OPTIONS":
+            return await call_next(request)
 
         if any(request.url.path.startswith(p) for p in protected_paths):
             try:
@@ -1898,6 +2001,7 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 async def server_get_tools(
     server_id: str,
     include_inactive: bool = False,
+    include_metrics: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
@@ -1911,6 +2015,7 @@ async def server_get_tools(
     Args:
         server_id (str): ID of the server
         include_inactive (bool): Whether to include inactive tools in the results.
+        include_metrics (bool): Whether to include metrics in the tools results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -1918,7 +2023,7 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
-    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive)
+    tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics)
     return [tool.model_dump(by_alias=True) for tool in tools]
 
 
@@ -2863,9 +2968,21 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     if cached := resource_cache.get(resource_id):
         return cached
 
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
     try:
         # Call service with context for plugin support
-        content = await resource_service.read_resource(db, resource_id, request_id=request_id, user=user, server_id=server_id)
+        content = await resource_service.read_resource(
+            db,
+            resource_id=resource_id,
+            request_id=request_id,
+            user=user,
+            server_id=server_id,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
@@ -2986,21 +3103,20 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@resource_router.post("/subscribe/{resource_id}")
+@resource_router.post("/subscribe")
 @require_permission("resources.read")
-async def subscribe_resource(resource_id: str, user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
+async def subscribe_resource(user=Depends(get_current_user_with_permissions)) -> StreamingResponse:
     """
     Subscribe to server-sent events (SSE) for a specific resource.
 
     Args:
-        resource_id (str): ID of the resource to subscribe to.
         user (str): Authenticated user.
 
     Returns:
         StreamingResponse: A streaming response with event updates.
     """
-    logger.debug(f"User {user} is subscribing to resource with resource_id {resource_id}")
-    return StreamingResponse(resource_service.subscribe_events(resource_id), media_type="text/event-stream")
+    logger.debug(f"User {user} is subscribing to resource")
+    return StreamingResponse(resource_service.subscribe_events(), media_type="text/event-stream")
 
 
 ###############
@@ -3192,6 +3308,7 @@ async def create_prompt(
 @prompt_router.post("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt(
+    request: Request,
     prompt_id: str,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
@@ -3204,6 +3321,7 @@ async def get_prompt(
 
 
     Args:
+        request: FastAPI request object.
         prompt_id: ID of the prompt.
         args: Template arguments.
         db: Database session.
@@ -3217,9 +3335,19 @@ async def get_prompt(
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with args={args}")
 
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
     try:
         PromptExecuteArgs(args=args)
-        result = await prompt_service.get_prompt(db, prompt_id, args)
+        result = await prompt_service.get_prompt(
+            db,
+            prompt_id,
+            args,
+            plugin_context_table=plugin_context_table,
+            plugin_global_context=plugin_global_context,
+        )
         logger.debug(f"Prompt execution successful for '{prompt_id}'")
     except Exception as ex:
         logger.error(f"Could not retrieve prompt {prompt_id}: {ex}")
@@ -3237,6 +3365,7 @@ async def get_prompt(
 @prompt_router.get("/{prompt_id}")
 @require_permission("prompts.read")
 async def get_prompt_no_args(
+    request: Request,
     prompt_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3246,6 +3375,7 @@ async def get_prompt_no_args(
     This endpoint is for convenience when no arguments are needed.
 
     Args:
+        request: FastAPI request object.
         prompt_id: The ID of the prompt to retrieve
         db: Database session
         user: Authenticated user
@@ -3257,7 +3387,18 @@ async def get_prompt_no_args(
         Exception: Re-raised from prompt service.
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
-    return await prompt_service.get_prompt(db, prompt_id, {})
+
+    # Get plugin contexts from request.state for cross-hook sharing
+    plugin_context_table = getattr(request.state, "plugin_context_table", None)
+    plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
+    return await prompt_service.get_prompt(
+        db,
+        prompt_id,
+        {},
+        plugin_context_table=plugin_context_table,
+        plugin_global_context=plugin_global_context,
+    )
 
 
 @prompt_router.put("/{prompt_id}", response_model=PromptRead)
@@ -3824,8 +3965,18 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
             # Get user email for OAuth token selection
             user_email = get_user_email(user)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await resource_service.read_resource(db, uri, request_id=request_id, user=user_email)
+                result = await resource_service.read_resource(
+                    db,
+                    resource_uri=uri,
+                    request_id=request_id,
+                    user=user_email,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                )
                 if hasattr(result, "model_dump"):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
                 else:
@@ -3869,7 +4020,16 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             arguments = params.get("arguments", {})
             if not name:
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
-            result = await prompt_service.get_prompt(db, name, arguments)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
+            result = await prompt_service.get_prompt(
+                db,
+                name,
+                arguments,
+                plugin_context_table=plugin_context_table,
+                plugin_global_context=plugin_global_context,
+            )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)
         elif method == "ping":
@@ -3884,8 +4044,19 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 raise JSONRPCError(-32602, "Missing tool name in parameters", params)
             # Get user email for OAuth token selection
             user_email = get_user_email(user)
+            # Get plugin contexts from request.state for cross-hook sharing
+            plugin_context_table = getattr(request.state, "plugin_context_table", None)
+            plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
-                result = await tool_service.invoke_tool(db=db, name=name, arguments=arguments, request_headers=headers, app_user_email=user_email)
+                result = await tool_service.invoke_tool(
+                    db=db,
+                    name=name,
+                    arguments=arguments,
+                    request_headers=headers,
+                    app_user_email=user_email,
+                    plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except ValueError:
