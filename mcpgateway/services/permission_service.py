@@ -76,7 +76,7 @@ class PermissionService:
         Returns:
             List[Dict]: List of scopes, e.g. [{'scope': 'global', 'scope_id': None, 'permissions': [...]}, {'scope': 'team', 'scope_id': 'team-123', 'permissions': [...]}]
         """
-        if self._is_user_admin(user_email):
+        if await self._is_user_admin(user_email):
             # Admin has permission everywhere (conceptually global covers everything)
             return [{"scope": "global", "scope_id": None, "permissions": [Permissions.ALL_PERMISSIONS]}]
 
