@@ -33,7 +33,7 @@ try:
     from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation import TestcaseGeneration
     from altk.build_time.test_case_generation_toolkit.src.toolops.generation.test_case_generation.test_case_generation_utils import prompt_execution
     from altk.build_time.test_case_generation_toolkit.src.toolops.utils import llm_util
-except ImportError as e:
+except ImportError:
     prompt_utils = None
     ToolOpsMCPCFToolEnrichment = None
     NlUtteranceGeneration = None
