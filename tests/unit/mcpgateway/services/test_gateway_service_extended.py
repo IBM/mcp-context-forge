@@ -549,9 +549,9 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
-        # Mock database execute to return None (no existing tool found)
+        # Mock database execute to return empty list (no existing tools)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         # Mock gateway
@@ -613,9 +613,9 @@ class TestGatewayServiceExtended:
         existing_tool.auth_value = ""
         existing_tool.visibility = "private"
 
-        # Mock database execute to return existing tool
+        # Mock database execute to return existing tool (Batch fetch simulation)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing_tool
+        mock_result.scalars.return_value.all.return_value = [existing_tool]
         mock_db.execute.return_value = mock_result
 
         # Mock gateway with new values
@@ -666,9 +666,9 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
-        # Mock database execute to return None (no existing resource found)
+        # Mock database execute to return empty list (no existing resources)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         # Mock gateway
@@ -692,10 +692,7 @@ class TestGatewayServiceExtended:
         context = "test"
 
         # Call the helper method
-        try:
-            result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
-        except Exception as e:
-            print (str(e))
+        result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
 
         # Should return one new resource
         assert len(result) == 1
@@ -707,17 +704,14 @@ class TestGatewayServiceExtended:
         assert new_resource.created_via == "test"
         assert new_resource.visibility == "team"
 
-    import pytest
-    from unittest.mock import MagicMock
-
     @pytest.mark.asyncio
     async def test_update_or_create_resources_existing_resources(self):
-        from mcpgateway.services import GatewayService
-
+        """Test _update_or_create_resources updates existing resources."""
         service = GatewayService()
 
         mock_db = MagicMock()
 
+        # Mock existing resource in database
         existing_resource = MagicMock()
         existing_resource.uri = "file:///test.txt"
         existing_resource.name = "test.txt"
@@ -726,15 +720,18 @@ class TestGatewayServiceExtended:
         existing_resource.uri_template = None
         existing_resource.visibility = "private"
 
+        # Mock database execute to return existing resource (Batch fetch simulation)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing_resource
+        mock_result.scalars.return_value.all.return_value = [existing_resource]
         mock_db.execute.return_value = mock_result
 
+        # Mock gateway
         mock_gateway = MagicMock()
         mock_gateway.id = "test-gateway-id"
         mock_gateway.visibility = "public"
         mock_gateway.resources = [existing_resource]
 
+        # Mock updated resource from MCP server
         mock_resource = MagicMock()
         mock_resource.uri = "file:///test.txt"
         mock_resource.name = "test.txt"
@@ -748,12 +745,14 @@ class TestGatewayServiceExtended:
         # Call method
         result = service._update_or_create_resources(mock_db, resources, mock_gateway, context)
 
+        # Should return empty list (no new resources)
         assert len(result) == 0
+
+        # Existing resource should be updated
         assert existing_resource.description == "Updated description"
         assert existing_resource.mime_type == "application/json"
         assert existing_resource.uri_template == "template_content"
         assert existing_resource.visibility == "public"
-
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Skipping this test temporarily - will be handled in PR related to #PROMPTS")
@@ -764,9 +763,9 @@ class TestGatewayServiceExtended:
         # Mock database
         mock_db = MagicMock()
 
-        # Mock database execute to return None (no existing prompt found)
+        # Mock database execute to return empty list (no existing prompts)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
         # Mock gateway
@@ -790,8 +789,6 @@ class TestGatewayServiceExtended:
         # Call the helper method
         result = service._update_or_create_prompts(mock_db, prompts, mock_gateway, context)
 
-        print ("TEST RESULTS: \n",result,"\n\n")
-        print ("TEST RESULTS MODEL DUMP: \n",result.model_dump(),"\n\n")
         # Should return one new prompt
         assert len(result) == 1
         new_prompt = result[0]
@@ -817,9 +814,9 @@ class TestGatewayServiceExtended:
         existing_prompt.template = "Old template"
         existing_prompt.visibility = "private"
 
-        # Mock database execute to return existing prompt
+        # Mock database execute to return existing prompt (Batch fetch simulation)
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = existing_prompt
+        mock_result.scalars.return_value.all.return_value = [existing_prompt]
         mock_db.execute.return_value = mock_result
 
         # Mock gateway with new values
@@ -892,15 +889,10 @@ class TestGatewayServiceExtended:
         mock_gateway.owner_email = "test@example.com"
         mock_gateway.visibility = "public"
 
-        # Create multiple mock execute calls - one for each tool lookup
-        mock_db.execute.side_effect = [
-            # First call for new_tool (not found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-            # Second call for update_tool (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool2)),
-            # Third call for existing_tool (found)
-            MagicMock(scalar_one_or_none=MagicMock(return_value=existing_tool1)),
-        ]
+        # Mock database execute to return both existing tools in a single batch query
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_tool1, existing_tool2]
+        mock_db.execute.return_value = mock_result
 
         # Mock tools from MCP server: one new, one update, one existing unchanged
         new_tool = MagicMock()
