@@ -1118,14 +1118,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         query = query.offset(skip).limit(limit)
 
         gateways = db.execute(query).scalars().all()
-        
+
         # Batch fetch team names to avoid N+1 queries
         gateway_team_ids = {g.team_id for g in gateways if g.team_id}
         team_names = {}
         if gateway_team_ids:
             teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
             team_names = {team.id: team.name for team in teams}
-        
+
         result = []
         for g in gateways:
             g.team = team_names.get(g.team_id) if g.team_id else None
@@ -2150,24 +2150,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if gateway.auth_type == "one_time_auth":
                     continue  # Skip health check for one_time auth gateways
                 tasks.append(self._check_single_gateway_health(db, gateway, user_email))
-            
+
             # Execute all health checks concurrently
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             elapsed = time.monotonic() - start_time
 
             if batch_span:
                 batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
                 batch_span.set_attribute("check.completed", True)
-            
+
             logger.info(f"Health check batch completed for {len(gateways)} gateways in {elapsed:.2f}s")
-        
+
         return True
 
     async def _check_single_gateway_health(self, db: Session, gateway: DbGateway, user_email: Optional[str] = None) -> None:
         """Check health of a single gateway.
-        
+
         Args:
             db: Database session
             gateway: Gateway to check
@@ -2887,18 +2887,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if not tools:
             return []
-        
+
         tools_to_add = []
-        
+
         # Batch fetch all existing tools for this gateway
         tool_names = [tool.name for tool in tools if tool is not None]
         if not tool_names:
             return []
-        
-        existing_tools_query = select(DbTool).where(
-            DbTool.gateway_id == gateway.id,
-            DbTool.original_name.in_(tool_names)
-        )
+
+        existing_tools_query = select(DbTool).where(DbTool.gateway_id == gateway.id, DbTool.original_name.in_(tool_names))
         existing_tools = db.execute(existing_tools_query).scalars().all()
         existing_tools_map = {tool.original_name: tool for tool in existing_tools}
 
@@ -2971,18 +2968,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if not resources:
             return []
-        
+
         resources_to_add = []
-        
+
         # Batch fetch all existing resources for this gateway
         resource_uris = [resource.uri for resource in resources if resource is not None]
         if not resource_uris:
             return []
-        
-        existing_resources_query = select(DbResource).where(
-            DbResource.gateway_id == gateway.id,
-            DbResource.uri.in_(resource_uris)
-        )
+
+        existing_resources_query = select(DbResource).where(DbResource.gateway_id == gateway.id, DbResource.uri.in_(resource_uris))
         existing_resources = db.execute(existing_resources_query).scalars().all()
         existing_resources_map = {resource.uri: resource for resource in existing_resources}
 
@@ -3050,18 +3044,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         if not prompts:
             return []
-        
+
         prompts_to_add = []
-        
+
         # Batch fetch all existing prompts for this gateway
         prompt_names = [prompt.name for prompt in prompts if prompt is not None]
         if not prompt_names:
             return []
-        
-        existing_prompts_query = select(DbPrompt).where(
-            DbPrompt.gateway_id == gateway.id,
-            DbPrompt.name.in_(prompt_names)
-        )
+
+        existing_prompts_query = select(DbPrompt).where(DbPrompt.gateway_id == gateway.id, DbPrompt.name.in_(prompt_names))
         existing_prompts = db.execute(existing_prompts_query).scalars().all()
         existing_prompts_map = {prompt.name: prompt for prompt in existing_prompts}
 
