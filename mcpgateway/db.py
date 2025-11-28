@@ -483,6 +483,11 @@ class EmailUser(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    
+    # Password expiration fields
+    password_created_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=True)
+    password_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expiry_notification_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -601,6 +606,115 @@ class EmailUser(Base):
             return True
 
         return False
+
+    def set_password_created(self, password_expiry_days: int = 90) -> None:
+        """Set password creation timestamp and calculate expiration date.
+
+        Args:
+            password_expiry_days: Number of days until password expires
+
+        Examples:
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.set_password_created(90)
+            >>> user.password_created_at is not None
+            True
+            >>> user.password_expires_at is not None
+            True
+        """
+        now = utc_now()
+        self.password_created_at = now
+        self.password_expires_at = now + timedelta(days=password_expiry_days)
+        self.expiry_notification_sent = False
+
+    def is_password_expired(self) -> bool:
+        """Check if password has expired.
+
+        Returns:
+            bool: True if password is expired, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.password_expires_at = utc_now() - timedelta(days=1)
+            >>> user.is_password_expired()
+            True
+            >>> user.password_expires_at = utc_now() + timedelta(days=30)
+            >>> user.is_password_expired()
+            False
+        """
+        if self.password_expires_at is None:
+            return False
+        return utc_now() >= self.password_expires_at
+
+    def is_password_expiring_soon(self, notification_days: int = 14) -> bool:
+        """Check if password is expiring soon.
+
+        Args:
+            notification_days: Number of days before expiry to trigger notification
+
+        Returns:
+            bool: True if password expires within notification_days, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.password_expires_at = utc_now() + timedelta(days=7)
+            >>> user.is_password_expiring_soon(14)
+            True
+            >>> user.is_password_expiring_soon(3)
+            False
+        """
+        if self.password_expires_at is None:
+            return False
+        
+        notification_cutoff = utc_now() + timedelta(days=notification_days)
+        return self.password_expires_at <= notification_cutoff
+
+    def days_until_password_expires(self) -> Optional[int]:
+        """Calculate days until password expires.
+
+        Returns:
+            int: Number of days until expiration, None if no expiration set
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.password_expires_at = utc_now() + timedelta(days=30)
+            >>> days = user.days_until_password_expires()
+            >>> 29 <= days <= 30
+            True
+        """
+        if self.password_expires_at is None:
+            return None
+        
+        delta = self.password_expires_at - utc_now()
+        return max(0, delta.days)
+
+    def should_send_expiry_notification(self, notification_days: int = 14) -> bool:
+        """Check if expiry notification should be sent.
+
+        Args:
+            notification_days: Number of days before expiry to send notification
+
+        Returns:
+            bool: True if notification should be sent, False otherwise
+
+        Examples:
+            >>> from datetime import timedelta
+            >>> user = EmailUser(email="test@example.com")
+            >>> user.password_expires_at = utc_now() + timedelta(days=7)
+            >>> user.expiry_notification_sent = False
+            >>> user.should_send_expiry_notification(14)
+            True
+            >>> user.expiry_notification_sent = True
+            >>> user.should_send_expiry_notification(14)
+            False
+        """
+        return (
+            not self.expiry_notification_sent and
+            self.is_password_expiring_soon(notification_days) and
+            not self.is_password_expired()
+        )
 
     # Team relationships
     team_memberships: Mapped[List["EmailTeamMember"]] = relationship("EmailTeamMember", foreign_keys="EmailTeamMember.user_email", back_populates="user")

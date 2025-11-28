@@ -1185,9 +1185,12 @@ if settings.observability_enabled:
     # Add authentication context middleware (runs BEFORE observability in execution)
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+    from mcpgateway.middleware.password_expiry_middleware import PasswordExpiryMiddleware
 
     app.add_middleware(AuthContextMiddleware)
+    app.add_middleware(PasswordExpiryMiddleware)
     logger.info("🔐 Authentication context middleware enabled - extracting user info for observability")
+    logger.info("🔒 Password expiry middleware enabled - checking password expiration status")
 else:
     logger.info("🔍 Observability middleware disabled")
 

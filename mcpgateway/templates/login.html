@@ -570,6 +570,13 @@
             case "sso_cancelled":
               errorMessage = "SSO authentication was cancelled";
               break;
+            case "password_expired":
+              errorMessage = "Your password has expired. Please change your password to continue.";
+              break;
+            case "password_expiring":
+              const days = urlParams.get("days") || "soon";
+              errorMessage = `Your password expires in ${days} days. Please consider changing it soon.`;
+              break;
             default:
               errorMessage = error
                 .replace(/_/g, " ")

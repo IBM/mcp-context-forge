@@ -317,6 +317,9 @@ class EmailAuthService:
 
         # Create new user
         user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider)
+        
+        # Set password expiration (90 days from creation)
+        user.set_password_created(password_expiry_days=90)
 
         try:
             self.db.add(user)
@@ -479,6 +482,9 @@ class EmailAuthService:
             # Hash new password and update
             new_password_hash = self.password_service.hash_password(new_password)
             user.password_hash = new_password_hash
+            
+            # Reset password expiration (90 days from now)
+            user.set_password_created(password_expiry_days=90)
 
             self.db.commit()
             success = True
@@ -663,6 +669,8 @@ class EmailAuthService:
                 if not self.validate_password(password):
                     raise ValueError("Password does not meet security requirements")
                 user.password_hash = self.password_service.hash_password(password)
+                # Reset password expiration when admin changes password
+                user.set_password_created(password_expiry_days=90)
 
             user.updated_at = datetime.now(timezone.utc)
 
@@ -848,3 +856,117 @@ class EmailAuthService:
         # Count total active admins
         admin_count = await self.count_active_admin_users()
         return admin_count == 1
+
+    async def check_and_send_password_expiry_notifications(self, notification_days: int = 14) -> int:
+        """Check all users and send password expiry notifications where needed.
+
+        Args:
+            notification_days: Number of days before expiry to send notification
+
+        Returns:
+            int: Number of notifications sent
+
+        Examples:
+            # notifications_sent = await service.check_and_send_password_expiry_notifications()
+            # notifications_sent >= 0  # Returns: True
+        """
+        # Get users who need expiry notifications
+        stmt = select(EmailUser).where(
+            EmailUser.is_active.is_(True),
+            EmailUser.expiry_notification_sent.is_(False),
+            EmailUser.password_expires_at.isnot(None)
+        )
+        result = self.db.execute(stmt)
+        users = result.scalars().all()
+
+        notifications_sent = 0
+        
+        for user in users:
+            if user.should_send_expiry_notification(notification_days):
+                # Mark notification as sent
+                user.expiry_notification_sent = True
+                notifications_sent += 1
+                
+                # Log the notification
+                logger.info(f"Password expiry notification sent to {user.email}, expires in {user.days_until_password_expires()} days")
+                
+                # Create an auth event for the notification
+                notification_event = EmailAuthEvent(
+                    user_email=user.email,
+                    event_type="password_expiry_notification",
+                    success=True,
+                    failure_reason=None,
+                    ip_address="system",
+                    user_agent="system",
+                    additional_info=f"Notification sent {user.days_until_password_expires()} days before expiry"
+                )
+                self.db.add(notification_event)
+
+        if notifications_sent > 0:
+            self.db.commit()
+            logger.info(f"Sent {notifications_sent} password expiry notifications")
+        
+        return notifications_sent
+
+    async def get_users_with_expired_passwords(self) -> list[EmailUser]:
+        """Get all users with expired passwords.
+
+        Returns:
+            list[EmailUser]: List of users with expired passwords
+
+        Examples:
+            # expired_users = await service.get_users_with_expired_passwords()
+            # isinstance(expired_users, list)  # Returns: True
+        """
+        stmt = select(EmailUser).where(
+            EmailUser.is_active.is_(True),
+            EmailUser.password_expires_at.isnot(None)
+        )
+        result = self.db.execute(stmt)
+        users = result.scalars().all()
+
+        return [user for user in users if user.is_password_expired()]
+
+    async def get_users_with_expiring_passwords(self, notification_days: int = 14) -> list[EmailUser]:
+        """Get all users with passwords expiring soon.
+
+        Args:
+            notification_days: Number of days before expiry to consider "expiring soon"
+
+        Returns:
+            list[EmailUser]: List of users with expiring passwords
+
+        Examples:
+            # expiring_users = await service.get_users_with_expiring_passwords()
+            # isinstance(expiring_users, list)  # Returns: True
+        """
+        stmt = select(EmailUser).where(
+            EmailUser.is_active.is_(True),
+            EmailUser.password_expires_at.isnot(None)
+        )
+        result = self.db.execute(stmt)
+        users = result.scalars().all()
+
+        return [user for user in users if user.is_password_expiring_soon(notification_days)]
+
+    async def reset_password_expiry_notification(self, email: str) -> bool:
+        """Reset the expiry notification flag for a user.
+
+        Args:
+            email: User's email address
+
+        Returns:
+            bool: True if reset successful, False if user not found
+
+        Examples:
+            # success = await service.reset_password_expiry_notification("user@example.com")
+            # isinstance(success, bool)  # Returns: True
+        """
+        user = await self.get_user_by_email(email)
+        if not user:
+            return False
+
+        user.expiry_notification_sent = False
+        self.db.commit()
+        logger.info(f"Reset password expiry notification flag for {email}")
+        return True

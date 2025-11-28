@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, UTC
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -247,13 +247,36 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 status_code=status.HTTP_403_FORBIDDEN, detail="Password change required. Please change your password before continuing.", headers={"X-Password-Change-Required": "true"}
             )
 
+        # Check password expiration
+        if user.is_password_expired():
+            logger.warning(f"User {user.email} attempted login with expired password")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your password has expired. Please change your password to continue.",
+                headers={
+                    "X-Password-Expired": "true",
+                    "X-Days-Expired": str(abs(user.days_until_password_expires() or 0))
+                }
+            )
+
         # Create access token
         access_token, expires_in = await create_access_token(user)
 
+        # Check if password is expiring soon and add headers
+        response_headers = {}
+        if user.is_password_expiring_soon(notification_days=14):
+            days_until_expiry = user.days_until_password_expires()
+            logger.info(f"User {user.email} password expiring in {days_until_expiry} days")
+            response_headers["X-Password-Expiring"] = "true"
+            response_headers["X-Days-Until-Expiry"] = str(days_until_expiry)
+
         # Return authentication response
-        return AuthenticationResponse(
+        response = AuthenticationResponse(
             access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user)
         )  # nosec B106 - OAuth2 token type, not a password
+        
+        # Add headers if needed (this is a limitation of FastAPI - headers need to be added differently)
+        return response
 
     except Exception as e:
         logger.error(f"Login error for {login_request.email}: {e}")
@@ -668,3 +691,79 @@ async def delete_user(user_email: str, current_user: EmailUser = Depends(get_cur
     except Exception as e:
         logger.error(f"Error deleting user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
+
+
+@email_auth_router.get("/admin/password-expiry/summary")
+@require_permission("admin.user_management")
+async def get_password_expiry_summary(
+    notification_days: int = Query(14, description="Days before expiry to consider 'expiring soon'"),
+    current_user: EmailUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get password expiry summary for all users (admin only).
+
+    Args:
+        notification_days: Number of days before expiry to consider "expiring soon"
+        current_user: Currently authenticated admin user
+        db: Database session
+
+    Returns:
+        dict: Summary of password expiration status
+
+    Raises:
+        HTTPException: If user is not admin or error occurs
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.password_notification_service import PasswordNotificationService
+        
+        notification_service = PasswordNotificationService(db)
+        summary = await notification_service.get_expiry_summary(notification_days)
+        
+        logger.info(f"Admin {current_user.email} requested password expiry summary")
+        return summary
+        
+    except Exception as e:
+        logger.error(f"Error getting password expiry summary: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to get password expiry summary")
+
+
+@email_auth_router.post("/admin/password-expiry/send-notifications")
+@require_permission("admin.user_management")
+async def send_password_expiry_notifications(
+    notification_days: int = Query(14, description="Days before expiry to send notification"),
+    current_user: EmailUser = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Send password expiry notifications to all eligible users (admin only).
+
+    Args:
+        notification_days: Number of days before expiry to send notification
+        current_user: Currently authenticated admin user
+        db: Database session
+
+    Returns:
+        dict: Result of notification sending
+
+    Raises:
+        HTTPException: If user is not admin or error occurs
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.password_notification_service import PasswordNotificationService
+        
+        notification_service = PasswordNotificationService(db)
+        notifications_sent = await notification_service.send_expiry_notifications(notification_days)
+        
+        logger.info(f"Admin {current_user.email} sent {notifications_sent} password expiry notifications")
+        
+        return {
+            "success": True,
+            "message": f"Sent {notifications_sent} password expiry notifications",
+            "notifications_sent": notifications_sent,
+            "notification_days": notification_days
+        }
+        
+    except Exception as e:
+        logger.error(f"Error sending password expiry notifications: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send password expiry notifications")

@@ -4866,6 +4866,10 @@ class EmailUserResponse(BaseModel):
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
+    password_expires_at: Optional[datetime] = Field(None, description="When password expires")
+    password_expired: bool = Field(False, description="Whether password has expired")
+    password_expiring_soon: bool = Field(False, description="Whether password is expiring within 14 days")
+    days_until_password_expires: Optional[int] = Field(None, description="Days until password expires")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -4887,6 +4891,10 @@ class EmailUserResponse(BaseModel):
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
             password_change_required=user.password_change_required,
+            password_expires_at=user.password_expires_at,
+            password_expired=user.is_password_expired(),
+            password_expiring_soon=user.is_password_expiring_soon(14),
+            days_until_password_expires=user.days_until_password_expires(),
         )
 
 
