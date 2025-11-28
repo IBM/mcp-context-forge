@@ -1907,24 +1907,33 @@ class ToolService:
             True
         """
 
-        total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
+        # Query to get all aggregated metrics at once
+        result = db.execute(
+            select(
+                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
+                func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
+                func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
+                func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
+            )
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
         failure_rate = failed / total if total > 0 else 0.0
-        min_rt = db.execute(select(func.min(ToolMetric.response_time))).scalar()
-        max_rt = db.execute(select(func.max(ToolMetric.response_time))).scalar()
-        avg_rt = db.execute(select(func.avg(ToolMetric.response_time))).scalar()
-        last_time = db.execute(select(func.max(ToolMetric.timestamp))).scalar()
 
         return {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
             "failure_rate": failure_rate,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": avg_rt,
-            "last_execution_time": last_time,
+            "min_response_time": result.min_rt,
+            "max_response_time": result.max_rt,
+            "avg_response_time": result.avg_rt,
+            "last_execution_time": result.last_time,
         }
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
