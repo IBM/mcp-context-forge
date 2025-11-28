@@ -1809,23 +1809,25 @@ class TestToolService:
                 mock_db.add.assert_called_once_with(mock_metric_instance)
                 mock_db.commit.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service):
         """Test aggregating metrics across all tools."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            10,  # total count
-            8,  # successful count
-            2,  # failed count
-            0.5,  # min response time
-            5.0,  # max response time
-            2.3,  # avg response time
-            "2025-01-10T12:00:00",  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object that behaves like the SQLAlchemy Row result
+        # The new implementation calls .one() and accesses attributes .total, .successful, etc.
+        mock_row = MagicMock()
+        mock_row.total = 10
+        mock_row.successful = 8
+        mock_row.failed = 2
+        mock_row.min_rt = 0.5
+        mock_row.max_rt = 5.0
+        mock_row.avg_rt = 2.3
+        mock_row.last_time = "2025-01-10T12:00:00"
+
+        # Setup the chain: db.execute(...).one() -> returns the mock_row
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1840,8 +1842,8 @@ class TestToolService:
             "last_execution_time": "2025-01-10T12:00:00",
         }
 
-        # Verify all expected queries were made
-        assert mock_db.execute.call_count == 7
+        # Verify only 1 query was executed (optimization check)
+        assert mock_db.execute.call_count == 1
 
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
