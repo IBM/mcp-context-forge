@@ -385,7 +385,8 @@ class A2AAgentService:
         return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
 
     async def list_agents_for_user(
-        self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100,
+        allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None,
     ) -> List[A2AAgentRead]:
         """
         List A2A agents user has access to with team filtering.

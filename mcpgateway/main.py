@@ -272,6 +272,13 @@ def get_user_email(user):
     return str(user) if user else "unknown"
 
 
+async def get_allowed_team_ids(request: Request) -> Optional[List[str]]:
+    """Helper to get allowed team IDs from request state."""
+    if hasattr(request.state, "allowed_team_ids"):
+        return request.state.allowed_team_ids
+    return None
+
+
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
 
@@ -1758,20 +1765,21 @@ async def list_servers(
     team_id = team_id or token_team_id
 
     # Use team-filtered server listing
+    allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        data = await server_service.list_servers_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
             data = [server for server in data if any(tag in server.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data = await server_service.list_servers(db, include_inactive=include_inactive, tags=tags_list)
+        data = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive, tags=tags_list, allowed_team_ids=allowed_team_ids)
     return data
 
 
 @server_router.get("/{server_id}", response_model=ServerRead)
 @require_permission("servers.read")
-async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
+async def get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> ServerRead:
     """
     Retrieves a server by its ID.
 
@@ -1788,7 +1796,9 @@ async def get_server(server_id: str, db: Session = Depends(get_db), user=Depends
     """
     try:
         logger.debug(f"User {user} requested server with ID {server_id}")
-        return await server_service.get_server(db, server_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        return await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -1841,6 +1851,7 @@ async def create_server(
         team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new server for team {team_id}")
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await server_service.register_server(
             db,
             server,
@@ -1851,6 +1862,7 @@ async def create_server(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except ServerNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -1895,6 +1907,7 @@ async def update_server(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email: str = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
 
         return await server_service.update_server(
             db,
@@ -1905,6 +1918,7 @@ async def update_server(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -1927,6 +1941,7 @@ async def update_server(
 async def toggle_server_status(
     server_id: str,
     activate: bool = True,
+    request: Request = None,  # Added request for allowed_team_ids
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ServerRead:
@@ -1948,7 +1963,8 @@ async def toggle_server_status(
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         logger.debug(f"User {user} is toggling server with ID {server_id} to {'active' if activate else 'inactive'}")
-        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        return await server_service.toggle_server_status(db, server_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except ServerNotFoundError as e:
@@ -1959,7 +1975,7 @@ async def toggle_server_status(
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
-async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_server(server_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes a server by its ID.
 
@@ -1977,7 +1993,8 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
     try:
         logger.debug(f"User {user} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await server_service.delete_server(db, server_id, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        await server_service.delete_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Server {server_id} deleted successfully",
@@ -2099,22 +2116,24 @@ async def message_endpoint(request: Request, server_id: str, user=Depends(get_cu
 @require_permission("servers.read")
 async def server_get_tools(
     server_id: str,
+    request: Request,
     include_inactive: bool = False,
     include_metrics: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> List[ToolRead]:
     """
-    List tools for the server  with an option to include inactive tools.
+    List tools for the server with an option to include inactive tools.
 
     This endpoint retrieves a list of tools from the database, optionally including
-    those that are inactive. The inactive filter helps administrators manage tools
-    that have been deactivated but not deleted from the system.
+    those that are inactive. The inactive filter is useful for administrators who need
+    to view or manage tools that have been deactivated but not deleted.
 
     Args:
         server_id (str): ID of the server
+        request (Request): The incoming request.
         include_inactive (bool): Whether to include inactive tools in the results.
-        include_metrics (bool): Whether to include metrics in the tools results.
+        include_metrics (bool): Whether to include metrics in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -2122,6 +2141,17 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
+    
+    # Check server access
+    try:
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     tools = await tool_service.list_server_tools(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics)
     return [tool.model_dump(by_alias=True) for tool in tools]
 
@@ -2130,10 +2160,11 @@ async def server_get_tools(
 @require_permission("servers.read")
 async def server_get_resources(
     server_id: str,
+    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> List[ResourceRead]:
     """
     List resources for the server with an option to include inactive resources.
 
@@ -2151,6 +2182,17 @@ async def server_get_resources(
         List[ResourceRead]: A list of resource records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed resources for the server_id: {server_id}")
+
+    # Check server access
+    try:
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     resources = await resource_service.list_server_resources(db, server_id=server_id, include_inactive=include_inactive)
     return [resource.model_dump(by_alias=True) for resource in resources]
 
@@ -2159,10 +2201,11 @@ async def server_get_resources(
 @require_permission("servers.read")
 async def server_get_prompts(
     server_id: str,
+    request: Request,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-) -> List[Dict[str, Any]]:
+) -> List[PromptRead]:
     """
     List prompts for the server with an option to include inactive prompts.
 
@@ -2180,6 +2223,17 @@ async def server_get_prompts(
         List[PromptRead]: A list of prompt records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
+
+    # Check server access
+    try:
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
@@ -2191,6 +2245,7 @@ async def server_get_prompts(
 @a2a_router.get("/", response_model=List[A2AAgentRead])
 @require_permission("a2a.read")
 async def list_a2a_agents(
+    request: Request,
     include_inactive: bool = False,
     tags: Optional[str] = None,
     team_id: Optional[str] = Query(None, description="Filter by team ID"),
@@ -2236,12 +2291,13 @@ async def list_a2a_agents(
     # Use team-aware filtering
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
-    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit)
+    allowed_team_ids = await get_allowed_team_ids(request)
+    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit, allowed_team_ids=allowed_team_ids)
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
 @require_permission("a2a.read")
-async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
+async def get_a2a_agent(agent_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> A2AAgentRead:
     """
     Retrieves an A2A agent by its ID.
 
@@ -2260,7 +2316,9 @@ async def get_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depen
         logger.debug(f"User {user} requested A2A agent with ID {agent_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.get_agent(db, agent_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        return await a2a_service.get_agent(db, agent_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -2315,6 +2373,7 @@ async def create_a2a_agent(
         logger.debug(f"User {user_email} is creating a new A2A agent for team {team_id}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await a2a_service.register_agent(
             db,
             agent,
@@ -2327,6 +2386,7 @@ async def create_a2a_agent(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except A2AAgentNameConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -2373,6 +2433,7 @@ async def update_a2a_agent(
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await a2a_service.update_agent(
             db,
             agent_id,
@@ -2382,6 +2443,7 @@ async def update_a2a_agent(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2404,6 +2466,7 @@ async def update_a2a_agent(
 async def toggle_a2a_agent_status(
     agent_id: str,
     activate: bool = True,
+    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> A2AAgentRead:
@@ -2427,7 +2490,8 @@ async def toggle_a2a_agent_status(
         logger.debug(f"User {user} is toggling A2A agent with ID {agent_id} to {'active' if activate else 'inactive'}")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        return await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
     except A2AAgentNotFoundError as e:
@@ -2438,7 +2502,7 @@ async def toggle_a2a_agent_status(
 
 @a2a_router.delete("/{agent_id}", response_model=Dict[str, str])
 @require_permission("a2a.delete")
-async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_a2a_agent(agent_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Deletes an A2A agent by its ID.
 
@@ -2458,7 +2522,8 @@ async def delete_a2a_agent(agent_id: str, db: Session = Depends(get_db), user=De
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await a2a_service.delete_agent(db, agent_id, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        await a2a_service.delete_agent(db, agent_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"A2A Agent {agent_id} deleted successfully",
@@ -2578,15 +2643,16 @@ async def list_tools(
     team_id = team_id or token_team_id
 
     # Use team-filtered tool listing
+    allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
             data = [tool for tool in data if any(tag in tool.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await tool_service.list_tools(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, allowed_team_ids=allowed_team_ids)
 
     # Apply gateway_id filtering if provided
     if gateway_id:
@@ -2646,6 +2712,7 @@ async def create_tool(
         team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new tool for team {team_id}")
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await tool_service.register_tool(
             db,
             tool,
@@ -2657,9 +2724,9 @@ async def create_tool(
             federation_source=metadata["federation_source"],
             team_id=team_id,
             owner_email=user_email,
-            allowed_team_ids=allowed_team_ids,
             user_email=user_email,
             visibility=tool.visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
@@ -2686,6 +2753,7 @@ async def create_tool(
 @require_permission("tools.read")
 async def get_tool(
     tool_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: JsonPathModifier = Body(None),
@@ -2708,7 +2776,9 @@ async def get_tool(
     """
     try:
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
-        data = await tool_service.get_tool(db, tool_id)
+        user_email = get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
+        data = await tool_service.get_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         if apijsonpath is None:
             return data
 
@@ -2754,6 +2824,7 @@ async def update_tool(
 
         logger.debug(f"User {user} is updating tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await tool_service.update_tool(
             db,
             tool_id,
@@ -2763,6 +2834,7 @@ async def update_tool(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -2783,7 +2855,7 @@ async def update_tool(
 
 @tool_router.delete("/{tool_id}")
 @require_permission("tools.delete")
-async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_tool(tool_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Permanently deletes a tool by ID.
 
@@ -2801,7 +2873,8 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
     try:
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2816,6 +2889,7 @@ async def delete_tool(tool_id: str, db: Session = Depends(get_db), user=Depends(
 async def toggle_tool_status(
     tool_id: str,
     activate: bool = True,
+    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -2837,7 +2911,8 @@ async def toggle_tool_status(
     try:
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -2880,6 +2955,7 @@ async def list_resource_templates(
 async def toggle_resource_status(
     resource_id: int,
     activate: bool = True,
+    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -2901,7 +2977,8 @@ async def toggle_resource_status(
     logger.debug(f"User {user} is toggling resource with ID {resource_id} to {'active' if activate else 'inactive'}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        resource = await resource_service.toggle_resource_status(db, resource_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
@@ -2963,8 +3040,9 @@ async def list_resources(
     team_id = team_id or token_team_id
 
     # Use team-filtered resource listing
+    allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
             data = [resource for resource in data if any(tag in resource.tags for tag in tags_list)]
@@ -2973,7 +3051,7 @@ async def list_resources(
         logger.debug(f"User {user_email} requested resource list with cursor {cursor}, include_inactive={include_inactive}, tags={tags_list}")
         if cached := resource_cache.get("resource_list"):
             return cached
-        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await resource_service.list_resources(db, include_inactive=include_inactive, tags=tags_list, allowed_team_ids=allowed_team_ids)
         resource_cache.set("resource_list", data)
     return data
 
@@ -3026,6 +3104,7 @@ async def create_resource(
         team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new resource for team {team_id}")
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await resource_service.register_resource(
             db,
             resource,
@@ -3038,6 +3117,7 @@ async def create_resource(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except ResourceURIConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -3086,6 +3166,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
 
     try:
         # Call service with context for plugin support
+        allowed_team_ids = await get_allowed_team_ids(request)
         content = await resource_service.read_resource(
             db,
             resource_id=resource_id,
@@ -3094,6 +3175,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             server_id=server_id,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
+            allowed_team_ids=allowed_team_ids,
         )
     except (ResourceNotFoundError, ResourceError) as exc:
         # Translate to FastAPI HTTP error
@@ -3158,6 +3240,7 @@ async def update_resource(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
         result = await resource_service.update_resource(
             db,
             resource_id,
@@ -3167,6 +3250,7 @@ async def update_resource(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -3186,7 +3270,7 @@ async def update_resource(
 
 @resource_router.delete("/{resource_id}")
 @require_permission("resources.delete")
-async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_resource(resource_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a resource by its ID.
 
@@ -3204,7 +3288,8 @@ async def delete_resource(resource_id: str, db: Session = Depends(get_db), user=
     try:
         logger.debug(f"User {user} is deleting resource with id {resource_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await resource_service.delete_resource(db, resource_id, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        await resource_service.delete_resource(db, resource_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         await invalidate_resource_cache(resource_id)
         return {"status": "success", "message": f"Resource {resource_id} deleted"}
     except PermissionError as e:
@@ -3239,6 +3324,7 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 async def toggle_prompt_status(
     prompt_id: int,
     activate: bool = True,
+    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -3260,7 +3346,8 @@ async def toggle_prompt_status(
     logger.debug(f"User: {user} requested toggle for prompt {prompt_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        prompt = await prompt_service.toggle_prompt_status(db, prompt_id, activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
@@ -3322,15 +3409,16 @@ async def list_prompts(
     team_id = team_id or token_team_id
 
     # Use team-filtered prompt listing
+    allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        data = await prompt_service.list_prompts_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
             data = [prompt for prompt in data if any(tag in prompt.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
         logger.debug(f"User: {user_email} requested prompt list with include_inactive={include_inactive}, cursor={cursor}, tags={tags_list}")
-        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list)
+        data, _ = await prompt_service.list_prompts(db, cursor=cursor, include_inactive=include_inactive, tags=tags_list, allowed_team_ids=allowed_team_ids)
     return data
 
 
@@ -3384,6 +3472,7 @@ async def create_prompt(
         team_id = team_id or token_team_id
 
         logger.debug(f"User {user_email} is creating a new prompt for team {team_id}")
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await prompt_service.register_prompt(
             db,
             prompt,
@@ -3396,6 +3485,7 @@ async def create_prompt(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as e:
         if isinstance(e, PromptNameConflictError):
@@ -3422,7 +3512,6 @@ async def create_prompt(
 async def get_prompt(
     request: Request,
     prompt_id: str,
-    request: Request,
     args: Dict[str, str] = Body({}),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3550,6 +3639,7 @@ async def update_prompt(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await prompt_service.update_prompt(
             db,
             prompt_id,
@@ -3559,6 +3649,7 @@ async def update_prompt(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -3584,7 +3675,7 @@ async def update_prompt(
 
 @prompt_router.delete("/{prompt_id}")
 @require_permission("prompts.delete")
-async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_prompt(prompt_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a prompt by ID.
 
@@ -3602,7 +3693,8 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
     logger.debug(f"User: {user} requested deletion of prompt {prompt_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        await prompt_service.delete_prompt(db, prompt_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         return {"status": "success", "message": f"Prompt {prompt_id} deleted"}
     except Exception as e:
         if isinstance(e, PermissionError):
@@ -3628,6 +3720,7 @@ async def delete_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depe
 async def toggle_gateway_status(
     gateway_id: str,
     activate: bool = True,
+    request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
@@ -3649,11 +3742,13 @@ async def toggle_gateway_status(
     logger.debug(f"User '{user}' requested toggle for gateway {gateway_id}, activate={activate}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
         gateway = await gateway_service.toggle_gateway_status(
             db,
             gateway_id,
             activate,
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
         return {
             "status": "success",
@@ -3707,11 +3802,12 @@ async def list_gateways(
 
     # Determine final team ID
     team_id = team_id or token_team_id
+    allowed_team_ids = await get_allowed_team_ids(request)
 
     if team_id or visibility:
-        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive)
+        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
-    return await gateway_service.list_gateways(db, include_inactive=include_inactive)
+    return await gateway_service.list_gateways(db, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
 
 @gateway_router.post("", response_model=GatewayRead)
@@ -3758,6 +3854,7 @@ async def register_gateway(
         visibility = gateway.visibility
 
         logger.debug(f"User {user_email} is creating a new gateway for team {team_id}")
+        allowed_team_ids = await get_allowed_team_ids(request)
 
         return await gateway_service.register_gateway(
             db,
@@ -3769,6 +3866,7 @@ async def register_gateway(
             team_id=team_id,
             owner_email=user_email,
             visibility=visibility,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
@@ -3790,7 +3888,7 @@ async def register_gateway(
 
 @gateway_router.get("/{gateway_id}", response_model=GatewayRead)
 @require_permission("gateways.read")
-async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
+async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Union[GatewayRead, JSONResponse]:
     """
     Retrieve a gateway by ID.
 
@@ -3803,7 +3901,9 @@ async def get_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depen
         Gateway data.
     """
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
-    return await gateway_service.get_gateway(db, gateway_id)
+    user_email = get_user_email(user)
+    allowed_team_ids = await get_allowed_team_ids(request)
+    return await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
@@ -3834,6 +3934,7 @@ async def update_gateway(
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)  # Version will be incremented in service
 
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
         return await gateway_service.update_gateway(
             db,
             gateway_id,
@@ -3843,6 +3944,7 @@ async def update_gateway(
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
+            allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -3868,7 +3970,7 @@ async def update_gateway(
 
 @gateway_router.delete("/{gateway_id}")
 @require_permission("gateways.delete")
-async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
+async def delete_gateway(gateway_id: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, str]:
     """
     Delete a gateway by ID.
 
@@ -3886,9 +3988,10 @@ async def delete_gateway(gateway_id: str, db: Session = Depends(get_db), user=De
     logger.debug(f"User '{user}' requested deletion of gateway {gateway_id}")
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
-        current = await gateway_service.get_gateway(db, gateway_id)
+        allowed_team_ids = await get_allowed_team_ids(request) if request else None
+        current = await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email)
+        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both
@@ -4034,6 +4137,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
         server_id = params.get("server_id", None)
         cursor = params.get("cursor")  # Extract cursor parameter
 
+        # Check server access if server_id is provided
+        if server_id:
+            try:
+                allowed_team_ids = await get_allowed_team_ids(request)
+                user_email = get_user_email(user)
+                await server_service.get_server(db, server_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+            except (ServerNotFoundError, PermissionError):
+                raise JSONRPCError(-32000, "Server not found or access denied", {"server_id": server_id})
+
         RPCRequest(jsonrpc="2.0", method=method, params=params)  # Validate the request body against the RPCRequest model
 
         if method == "initialize":
@@ -4047,7 +4159,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                allowed_team_ids = await get_allowed_team_ids(request)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, allowed_team_ids=allowed_team_ids)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4056,12 +4169,14 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 tools = await tool_service.list_server_tools(db, server_id, cursor=cursor)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
             else:
-                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor)
+                allowed_team_ids = await get_allowed_team_ids(request)
+                tools, next_cursor = await tool_service.list_tools(db, cursor=cursor, allowed_team_ids=allowed_team_ids)
                 result = {"tools": [t.model_dump(by_alias=True, exclude_none=True) for t in tools]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
         elif method == "list_gateways":
-            gateways = await gateway_service.list_gateways(db, include_inactive=False)
+            allowed_team_ids = await get_allowed_team_ids(request)
+            gateways = await gateway_service.list_gateways(db, include_inactive=False, allowed_team_ids=allowed_team_ids)
             result = {"gateways": [g.model_dump(by_alias=True, exclude_none=True) for g in gateways]}
         elif method == "list_roots":
             roots = await root_service.list_roots()
@@ -4071,7 +4186,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 resources = await resource_service.list_server_resources(db, server_id)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
             else:
-                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor)
+                allowed_team_ids = await get_allowed_team_ids(request)
+                resources, next_cursor = await resource_service.list_resources(db, cursor=cursor, allowed_team_ids=allowed_team_ids)
                 result = {"resources": [r.model_dump(by_alias=True, exclude_none=True) for r in resources]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4086,6 +4202,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
             try:
+                allowed_team_ids = await get_allowed_team_ids(request)
                 result = await resource_service.read_resource(
                     db,
                     resource_uri=uri,
@@ -4093,6 +4210,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     user=user_email,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    allowed_team_ids=allowed_team_ids,
                 )
                 if hasattr(result, "model_dump"):
                     result = {"contents": [result.model_dump(by_alias=True, exclude_none=True)]}
@@ -4128,7 +4246,8 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
             else:
-                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor)
+                allowed_team_ids = await get_allowed_team_ids(request)
+                prompts, next_cursor = await prompt_service.list_prompts(db, cursor=cursor, allowed_team_ids=allowed_team_ids)
                 result = {"prompts": [p.model_dump(by_alias=True, exclude_none=True) for p in prompts]}
                 if next_cursor:
                     result["nextCursor"] = next_cursor
@@ -4140,12 +4259,15 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
+            allowed_team_ids = await get_allowed_team_ids(request)
             result = await prompt_service.get_prompt(
                 db,
                 name,
                 arguments,
+                user_email=get_user_email(user),
                 plugin_context_table=plugin_context_table,
                 plugin_global_context=plugin_global_context,
+                allowed_team_ids=allowed_team_ids,
             )
             if hasattr(result, "model_dump"):
                 result = result.model_dump(by_alias=True, exclude_none=True)

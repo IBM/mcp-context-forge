@@ -315,10 +315,10 @@ class Settings(BaseSettings):
 
     # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
-    platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
-    platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
+    platform_owner_email: str = Field(default="admin@example.com", description="Platform owner email address")
+    platform_owner_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform owner password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
-    platform_admin_full_name: str = Field(default="Platform Administrator", description="Platform administrator full name")
+    platform_owner_full_name: str = Field(default="Platform Owner", description="Platform owner full name")
 
     # Argon2id Password Hashing Configuration
     argon2id_time_cost: int = Field(default=3, description="Argon2id time cost (number of iterations)")
@@ -1603,7 +1603,7 @@ Disallow: /
         return self
 
     # Default roles for users
-    default_global_role_admin: str = Field(default="platform_admin", description="Default platform role for admin users")
+    default_global_role_admin: str = Field(default="platform_owner", description="Default platform role for admin users")
     default_global_role_member: str = Field(default="platform_member", description="Default platform role for member users")
     default_role_name_owner: str = Field(default="team_owner", description="Default team role name for owner users")
     default_role_name_admin: str = Field(default="team_admin", description="Default team role name for admin users")
