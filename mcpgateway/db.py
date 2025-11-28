@@ -29,7 +29,8 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, select, String, Table, Text, UniqueConstraint
+from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index, Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -89,30 +90,57 @@ elif backend == "sqlite":
 # ---------------------------------------------------------------------------
 # 5. Build the Engine with a single, clean connect_args mapping.
 # ---------------------------------------------------------------------------
-if backend == "sqlite":
-    # SQLite supports connection pooling with proper configuration
-    # For SQLite, we use a smaller pool size since it's file-based
-    sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
-    sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
 
-    logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
 
-    engine = create_engine(
-        settings.database_url,
-        pool_pre_ping=True,  # quick liveness check per checkout
-        pool_size=sqlite_pool_size,
-        max_overflow=sqlite_max_overflow,
-        pool_timeout=settings.db_pool_timeout,
-        pool_recycle=settings.db_pool_recycle,
-        # SQLite specific optimizations
-        poolclass=QueuePool,  # Explicit pool class
-        connect_args=connect_args,
-        # Log pool events in debug mode
-        echo_pool=settings.log_level == "DEBUG",
-    )
-else:
+def build_engine() -> Engine:
+    """Build the SQLAlchemy engine with appropriate settings.
+
+    This function constructs the SQLAlchemy engine using the database URL
+    and connection arguments determined by the backend type. It also configures
+    the connection pool size and timeout based on application settings.
+
+    Returns:
+        SQLAlchemy Engine instance configured for the specified database.
+    """
+    if backend == "sqlite":
+        # SQLite supports connection pooling with proper configuration
+        # For SQLite, we use a smaller pool size since it's file-based
+        sqlite_pool_size = min(settings.db_pool_size, 50)  # Cap at 50 for SQLite
+        sqlite_max_overflow = min(settings.db_max_overflow, 20)  # Cap at 20 for SQLite
+
+        logger.info("Configuring SQLite with pool_size=%s, max_overflow=%s", sqlite_pool_size, sqlite_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,  # quick liveness check per checkout
+            pool_size=sqlite_pool_size,
+            max_overflow=sqlite_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            # SQLite specific optimizations
+            poolclass=QueuePool,  # Explicit pool class
+            connect_args=connect_args,
+            # Log pool events in debug mode
+            echo_pool=settings.log_level == "DEBUG",
+        )
+
+    if backend in ("mysql", "mariadb"):
+        # MariaDB/MySQL specific configuration
+        logger.info("Configuring MariaDB/MySQL with pool_size=%s, max_overflow=%s", settings.db_pool_size, settings.db_max_overflow)
+
+        return create_engine(
+            settings.database_url,
+            pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_max_overflow,
+            pool_timeout=settings.db_pool_timeout,
+            pool_recycle=settings.db_pool_recycle,
+            connect_args=connect_args,
+            isolation_level="READ_COMMITTED",  # Fix PyMySQL sync issues
+        )
+
     # Other databases support full pooling configuration
-    engine = create_engine(
+    return create_engine(
         settings.database_url,
         pool_pre_ping=True,  # quick liveness check per checkout
         pool_size=settings.db_pool_size,
@@ -121,6 +149,9 @@ else:
         pool_recycle=settings.db_pool_recycle,
         connect_args=connect_args,
     )
+
+
+engine = build_engine()
 
 # Initialize SQLAlchemy instrumentation for observability
 if settings.observability_enabled:
@@ -190,37 +221,60 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def refresh_slugs_on_startup():
     """Refresh slugs for all gateways and names of tools on startup."""
+    try:
+        with cast(Any, SessionLocal)() as session:
+            # Skip if tables don't exist yet (fresh database)
+            try:
+                gateways = session.query(Gateway).all()
+            except Exception:
+                logger.info("Gateway table not found, skipping slug refresh")
+                return
 
-    with cast(Any, SessionLocal)() as session:
-        gateways = session.query(Gateway).all()
-        updated = False
-        for gateway in gateways:
-            new_slug = slugify(gateway.name)
-            if gateway.slug != new_slug:
-                gateway.slug = new_slug
-                updated = True
-        if updated:
-            session.commit()
+            updated = False
+            for gateway in gateways:
+                new_slug = slugify(gateway.name)
+                if gateway.slug != new_slug:
+                    gateway.slug = new_slug
+                    updated = True
+            if updated:
+                session.commit()
 
-        tools = session.query(Tool).all()
-        for tool in tools:
-            session.expire(tool, ["gateway"])
+            try:
+                tools = session.query(Tool).all()
+                for tool in tools:
+                    session.expire(tool, ["gateway"])
 
-        updated = False
-        for tool in tools:
-            if tool.gateway:
-                new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
-            else:
-                new_name = slugify(tool.original_name)
-            if tool.name != new_name:
-                tool.name = new_name
-                updated = True
-        if updated:
-            session.commit()
+                updated = False
+                for tool in tools:
+                    if tool.gateway:
+                        new_name = f"{tool.gateway.slug}{settings.gateway_tool_name_separator}{slugify(tool.original_name)}"
+                    else:
+                        new_name = slugify(tool.original_name)
+                    if tool.name != new_name:
+                        tool.name = new_name
+                        updated = True
+                if updated:
+                    session.commit()
+            except Exception:
+                logger.info("Tool table not found, skipping tool name refresh")
+
+    except Exception as e:
+        logger.warning("Failed to refresh slugs on startup: %s", e)
 
 
 class Base(DeclarativeBase):
     """Base class for all models."""
+
+    # MariaDB-compatible naming convention for foreign keys
+    metadata = MetaData(
+        naming_convention={
+            "fk": "fk_%(table_name)s_%(column_0_name)s",
+            "pk": "pk_%(table_name)s",
+            "ix": "ix_%(table_name)s_%(column_0_name)s",
+            "uq": "uq_%(table_name)s_%(column_0_name)s",
+            "ck": "ck_%(table_name)s_%(constraint_name)s",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3703,6 +3757,25 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
+def patch_string_columns_for_mariadb(base, engine_) -> None:
+    """
+    MariaDB requires VARCHAR to have an explicit length.
+    Auto-assign VARCHAR(255) to any String() columns without a length.
+
+    Args:
+        base (DeclarativeBase): SQLAlchemy Declarative Base containing metadata.
+        engine_ (Engine): SQLAlchemy engine, used to detect MariaDB dialect.
+    """
+    if engine_.dialect.name != "mariadb":
+        return
+
+    for table in base.metadata.tables.values():
+        for column in table.columns:
+            if isinstance(column.type, String) and column.type.length is None:
+                # Replace with VARCHAR(255)
+                column.type = VARCHAR(255)
+
+
 # Create all tables
 def init_db():
     """
@@ -3712,6 +3785,9 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Apply MariaDB compatibility fix
+        patch_string_columns_for_mariadb(Base, engine)
+
         # Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
     except SQLAlchemyError as e:

@@ -38,11 +38,27 @@ from mcpgateway.plugins.framework.hooks.http import (
 from mcpgateway.plugins.framework.hooks.prompts import PromptHookType, PromptPosthookPayload, PromptPosthookResult, PromptPrehookPayload, PromptPrehookResult
 from mcpgateway.plugins.framework.hooks.registry import HookRegistry, get_hook_registry
 from mcpgateway.plugins.framework.hooks.resources import ResourceHookType, ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
-from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokePayload, ToolPreInvokeResult
-from mcpgateway.plugins.framework.loader.config import ConfigLoader
-from mcpgateway.plugins.framework.loader.plugin import PluginLoader
-from mcpgateway.plugins.framework.manager import PluginManager
-from mcpgateway.plugins.framework.models import GlobalContext, MCPServerConfig, PluginCondition, PluginConfig, PluginContext, PluginErrorModel, PluginMode, PluginPayload, PluginResult, PluginViolation
+from mcpgateway.plugins.framework.hooks.prompts import (
+    PromptHookType,
+    PromptPosthookPayload,
+    PromptPosthookResult,
+    PromptPrehookPayload,
+    PromptPrehookResult,
+)
+from mcpgateway.plugins.framework.hooks.tools import ToolHookType, ToolPostInvokePayload, ToolPostInvokeResult, ToolPreInvokeResult, ToolPreInvokePayload
+from mcpgateway.plugins.framework.models import (
+    GlobalContext,
+    MCPServerConfig,
+    PluginCondition,
+    PluginConfig,
+    PluginContext,
+    PluginContextTable,
+    PluginErrorModel,
+    PluginMode,
+    PluginPayload,
+    PluginResult,
+    PluginViolation,
+)
 
 # Plugin manager singleton (lazy initialization)
 _plugin_manager: Optional[PluginManager] = None
@@ -103,6 +119,7 @@ __all__ = [
     "PluginCondition",
     "PluginConfig",
     "PluginContext",
+    "PluginContextTable",
     "PluginError",
     "PluginErrorModel",
     "PluginLoader",

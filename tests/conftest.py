@@ -27,17 +27,41 @@ from mcpgateway.db import Base
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
 
+def resolve_test_db_url():
+    """Return DB URL based on GitHub Actions matrix or default to SQLite."""
+    db = os.getenv("DB", "sqlite").lower()
+
+    if db == "sqlite":
+        return "sqlite:///:memory:"
+
+    if db == "postgres":
+        # Matches GitHub Service container
+        return "postgresql://postgres:test@localhost:5432/test"
+
+    if db == "mariadb":
+        # Matches gitHub service container + compatible driver
+        return "mysql+pymysql://root:test@localhost:3306/test"
+
+    raise ValueError(f"Unsupported test DB type: {db}")
+
 
 @pytest.fixture(scope="session")
 def test_db_url():
-    """Return the URL for the test database."""
-    return "sqlite:///:memory:"
+    return resolve_test_db_url()
 
 
 @pytest.fixture(scope="session")
 def test_engine(test_db_url):
     """Create a SQLAlchemy engine for testing."""
-    engine = create_engine(test_db_url, connect_args={"check_same_thread": False})
+    if test_db_url.startswith("sqlite"):
+        engine = create_engine(
+            test_db_url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    else:
+        engine = create_engine(test_db_url)
+
     Base.metadata.create_all(bind=engine)
     yield engine
     Base.metadata.drop_all(bind=engine)

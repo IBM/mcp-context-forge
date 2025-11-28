@@ -15,15 +15,3 @@ __description__ = "IBM Consulting Assistants - Extensions API Library"
 __url__ = "https://ibm.github.io/mcp-context-forge/"
 __download_url__ = "https://github.com/IBM/mcp-context-forge"
 __packages__ = ["mcpgateway"]
-
-from mcpgateway import reverse_proxy, translate, wrapper
-
-# Export main components for easier imports
-__all__ = [
-    "__version__",
-    "__author__",
-    "__license__",
-    "reverse_proxy",
-    "wrapper",
-    "translate",
-]

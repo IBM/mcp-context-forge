@@ -168,20 +168,18 @@ class TestGatewayServiceExtended:
 
     @pytest.mark.asyncio
     async def test_publish_event(self):
-        """Test _publish_event method."""
+        """Test _publish_event method via EventService."""
         service = GatewayService()
 
-        # Create a subscriber queue manually
-        test_queue = asyncio.Queue()
-        service._event_subscribers.append(test_queue)
+        # Mock EventService.publish_event
+        service._event_service.publish_event = AsyncMock()
 
         event = {"type": "gateway_added", "data": {"id": "123"}}
         await service._publish_event(event)
 
-        # Verify event was sent to subscriber queue
-        assert not test_queue.empty()
-        queued_event = await test_queue.get()
-        assert queued_event == event
+        # Verify EventService.publish_event was called with the event
+        service._event_service.publish_event.assert_called_once_with(event)
+
 
     @pytest.mark.asyncio
     async def test_notify_gateway_added(self):
@@ -530,23 +528,18 @@ class TestGatewayServiceExtended:
 
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self):
-        """Test _publish_event with multiple subscribers (lines 1567-1568)."""
+        """Test publishing events via EventService (which handles multiple subscribers)."""
         service = GatewayService()
 
-        # Create multiple subscriber queues
-        queue1 = asyncio.Queue()
-        queue2 = asyncio.Queue()
-        service._event_subscribers = [queue1, queue2]
+        # Mock EventService.publish_event
+        service._event_service.publish_event = AsyncMock()
 
-        event = {"type": "test", "data": {"message": "test"}}
+        event = {"type": "test"}
         await service._publish_event(event)
 
-        # Both queues should receive the event
-        event1 = await asyncio.wait_for(queue1.get(), timeout=1.0)
-        event2 = await asyncio.wait_for(queue2.get(), timeout=1.0)
-
-        assert event1 == event
-        assert event2 == event
+        # Verify EventService.publish_event was called
+        # EventService internally handles multiple subscribers
+        service._event_service.publish_event.assert_called_once_with(event)
 
     @pytest.mark.asyncio
     async def test_update_or_create_tools_new_tools(self):
