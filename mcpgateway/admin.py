@@ -1220,9 +1220,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
 
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
-
         # Extract metadata for server creation
         creation_metadata = MetadataCapture.extract_creation_metadata(request, user)
 
@@ -1389,9 +1386,6 @@ async def admin_edit_server(
         user_email = get_user_email(user)
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
 
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
 
@@ -6773,8 +6767,7 @@ async def admin_add_tool(
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
+
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: list[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
@@ -7045,8 +7038,6 @@ async def admin_edit_tool(
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
     LOGGER.info(f"before Verifying team for user {user_email} with team_id {team_id}")
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     headers_raw2 = form.get("headers")
     input_schema_raw2 = form.get("input_schema")
@@ -7724,9 +7715,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
     user_email = get_user_email(user)
     team_id = form.get("team_id", None)
 
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
-
     try:
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
@@ -7988,9 +7976,6 @@ async def admin_edit_gateway(
         # Determine personal team for default assignment
         team_id_raw = form.get("team_id", None)
         team_id = str(team_id_raw) if team_id_raw is not None else None
-
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
 
         # Auto-detect OAuth: if oauth_config is present and auth_type not explicitly set, use "oauth"
         auth_type_from_form = str(form.get("auth_type", ""))
@@ -8319,8 +8304,6 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     try:
         # Handle template field: convert empty string to None for optional field
@@ -8896,8 +8879,6 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
     user_email = get_user_email(user)
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
 
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
@@ -9039,9 +9020,6 @@ async def admin_edit_prompt(
     # Determine personal team for default assignment
     team_id = form.get("team_id", None)
     LOGGER.info(f"befor Verifying team for user {user_email} with team_id {team_id}")
-    team_service = TeamManagementService(db)
-    team_id = await team_service.verify_team_for_user(user_email, team_id)
-    LOGGER.info(f"Verifying team for user {user_email} with team_id {team_id}")
 
     args_json: str = str(form.get("arguments")) or "[]"
     arguments = json.loads(args_json)
@@ -11330,8 +11308,6 @@ async def admin_add_a2a_agent(
         user_email = get_user_email(user)
         # Determine personal team for default assignment
         team_id = form.get("team_id", None)
-        team_service = TeamManagementService(db)
-        team_id = await team_service.verify_team_for_user(user_email, team_id)
 
         # Process tags
         ts_val = form.get("tags", "")
