@@ -1038,24 +1038,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         gateways = db.execute(query).scalars().all()
 
-        # print("******************************************************************")
-        # for g in gateways:
-        #         print("----------------------------")
-        #         for attr in dir(g):
-        #             if not attr.startswith("_"):
-        #                 try:
-        #                     value = getattr(g, attr)
-        #                 except Exception:
-        #                     value = "<unreadable>"
-        #                 print(f"{attr}: {value}")
-        #         # print(f"Gateway oauth_config: {g}")
-        #         # print(f"Gateway auth_type: {g['auth_type']}")
-        # print("******************************************************************")
+        # Batch fetch team names
+        team_ids = {g.team_id for g in gateways if g.team_id}
+        team_names = {}
+        if team_ids:
+            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+            team_names = {team.id: team.name for team in teams}
 
         result = []
         for g in gateways:
-            team_name = self._get_team_name(db, getattr(g, "team_id", None))
-            g.team = team_name
+            g.team = team_names.get(g.team_id) if g.team_id else None
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
         return result
 
@@ -1126,11 +1118,18 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         query = query.offset(skip).limit(limit)
 
         gateways = db.execute(query).scalars().all()
+        
+        # Batch fetch team names to avoid N+1 queries
+        gateway_team_ids = {g.team_id for g in gateways if g.team_id}
+        team_names = {}
+        if gateway_team_ids:
+            teams = db.query(EmailTeam).filter(EmailTeam.id.in_(gateway_team_ids), EmailTeam.is_active.is_(True)).all()
+            team_names = {team.id: team.name for team in teams}
+        
         result = []
         for g in gateways:
-            team_name = self._get_team_name(db, getattr(g, "team_id", None))
-            g.team = team_name
-            logger.info(f"Gateway: {g.team_id}, Team: {team_name}")
+            g.team = team_names.get(g.team_id) if g.team_id else None
+            logger.info(f"Gateway: {g.team_id}, Team: {g.team}")
             result.append(GatewayRead.model_validate(self._prepare_gateway_for_read(g)).masked())
         return result
 
