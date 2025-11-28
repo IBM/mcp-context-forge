@@ -1954,7 +1954,6 @@ class ToolService:
             ToolNameConflictError: If a tool with the same name already exists.
         """
         # Check if tool already exists for this agent
-        logger.info(f"testing Creating tool for A2A agent: {vars(agent)}")
         tool_name = f"a2a_{agent.slug}"
         existing_query = select(DbTool).where(DbTool.original_name == tool_name)
         existing_tool = db.execute(existing_query).scalar_one_or_none()
