@@ -287,6 +287,7 @@ class ToolService:
         await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
+
     async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
@@ -307,30 +308,34 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
-        query = (
-            db.query(
-                DbTool.id,
-                DbTool.name,
-                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
-            )
-            .outerjoin(ToolMetric)
-            .group_by(DbTool.id, DbTool.name)
-            .order_by(desc("execution_count"))
+
+        # Safe success rate calculation 
+        success_rate = case(
+            (
+                func.count(ToolMetric.id) > 0,
+                func.sum(
+                    case((ToolMetric.is_success.is_(True), 1), else_=0)
+                ).cast(Float) * 100 / func.count(ToolMetric.id)
+            ),
+            else_=None
         )
 
-        if limit is not None:
-            query = query.limit(limit)
+        query = (
+            select(
+                DbTool.id,
+                DbTool.name,
+                func.count(ToolMetric.id).label("execution_count"),
+                func.avg(ToolMetric.response_time).label("avg_response_time"),
+                success_rate.label("success_rate"),
+                func.max(ToolMetric.timestamp).label("last_execution"),
+            )
+            .outerjoin(ToolMetric, ToolMetric.tool_id == DbTool.id)
+            .group_by(DbTool.id, DbTool.name)
+            .order_by(desc("execution_count"))
+            .limit(limit or 5)
+        )
 
-        results = query.all()
+        results = db.execute(query).all()
 
         return build_top_performers(results)
 
