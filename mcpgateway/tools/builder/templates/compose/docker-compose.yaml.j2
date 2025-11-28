@@ -1,0 +1,198 @@
+# Location: ./mcpgateway/tools/builder/templates/compose/docker-compose.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# Docker Compose manifest for MCP Stack
+# Generated from mcp-stack.yaml
+
+version: '3.8'
+
+networks:
+  mcp-network:
+    driver: bridge
+
+volumes:
+  gateway-data:
+    driver: local
+  pgdata:
+    driver: local
+{% for plugin in plugins %}
+  {{ plugin.name | lower }}-data:
+    driver: local
+{% endfor %}
+
+services:
+  # MCP Gateway
+  mcpgateway:
+    image: {{ gateway.image }}
+    container_name: mcpgateway
+    hostname: mcpgateway
+
+    {% if gateway.env_file is defined %}
+    env_file:
+      - {{ gateway.env_file }}
+    {% endif %}
+
+    environment:
+      {% if gateway.env_vars is defined and gateway.env_vars %}
+      # User-defined environment variables
+      {% for key, value in gateway.env_vars.items() %}
+      - {{ key }}={{ value }}
+      {% endfor %}
+      {% endif %}
+      # Database configuration
+      - DATABASE_URL=postgresql://postgres:$${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
+      - REDIS_URL=redis://redis:6379/0
+      {% if gateway.mtls_enabled | default(true) %}
+      # mTLS client configuration (gateway connects to external plugins)
+      - PLUGINS_CLIENT_MTLS_CA_BUNDLE=/app/certs/mcp/ca/ca.crt
+      - PLUGINS_CLIENT_MTLS_CERTFILE=/app/certs/mcp/gateway/client.crt
+      - PLUGINS_CLIENT_MTLS_KEYFILE=/app/certs/mcp/gateway/client.key
+      - PLUGINS_CLIENT_MTLS_VERIFY={{ gateway.mtls_verify | default('true') }}
+      - PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME={{ gateway.mtls_check_hostname | default('false') }}
+      {% endif %}
+
+    ports:
+      - "{{ gateway.host_port | default(4444) }}:{{ gateway.port | default(4444) }}"
+
+    volumes:
+      - gateway-data:/app/data
+      {% if gateway.mtls_enabled | default(true) %}
+      - {{ cert_paths.gateway_cert_dir }}:/app/certs/mcp/gateway:ro
+      - {{ cert_paths.ca_cert_file }}:/app/certs/mcp/ca/ca.crt:ro
+      {% endif %}
+      # Auto-generated plugin configuration
+      - ./plugins-config.yaml:/app/config/plugins.yaml:ro
+
+    networks:
+      - mcp-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:{{ gateway.port | default(4444) }}/health').read()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+{% for plugin in plugins %}      {{ plugin.name | lower }}:
+        condition: service_started
+{% endfor %}
+
+{% for plugin in plugins %}
+  # Plugin: {{ plugin.name }}
+  {{ plugin.name | lower }}:
+    image: {{ plugin.image | default('mcpgateway-' + plugin.name | lower + ':latest') }}
+    container_name: mcp-plugin-{{ plugin.name | lower }}
+    hostname: {{ plugin.name | lower }}
+
+    {% if plugin.env_file is defined %}
+    env_file:
+      - {{ plugin.env_file }}
+    {% endif %}
+
+    environment:
+      {% if plugin.env_vars is defined and plugin.env_vars %}
+      # User-defined environment variables
+      {% for key, value in plugin.env_vars.items() %}
+      - {{ key }}={{ value }}
+      {% endfor %}
+      {% endif %}
+      {% if plugin.mtls_enabled | default(true) %}
+      # mTLS server configuration (plugin accepts gateway connections)
+      - PLUGINS_TRANSPORT=http
+      - PLUGINS_SERVER_HOST=0.0.0.0
+      - PLUGINS_SERVER_PORT={{ plugin.port | default(8000) }}
+      - PLUGINS_SERVER_SSL_ENABLED=true
+      - PLUGINS_SERVER_SSL_KEYFILE=/app/certs/mcp/server.key
+      - PLUGINS_SERVER_SSL_CERTFILE=/app/certs/mcp/server.crt
+      - PLUGINS_SERVER_SSL_CA_CERTS=/app/certs/mcp/ca.crt
+      - PLUGINS_SERVER_SSL_CERT_REQS=2  # CERT_REQUIRED - enforce client certificates
+      {% endif %}
+
+    {% if plugin.expose_port | default(false) %}
+    ports:
+      - "{{ plugin.host_port }}:{{ plugin.port | default(8000) }}"
+    {% endif %}
+
+    volumes:
+      - {{ plugin.name | lower }}-data:/app/data
+      {% if plugin.mtls_enabled | default(true) %}
+      - {{ cert_paths.plugins_cert_base }}/{{ plugin.name }}:/app/certs/mcp:ro
+      {% endif %}
+
+    networks:
+      - mcp-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      {% if plugin.mtls_enabled | default(true) %}
+      # When mTLS is enabled, health check uses separate HTTP server on port+1000
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:{{ (plugin.port | default(8000)) + 1000 }}/health').read()"]
+      {% else %}
+      # When mTLS is disabled, health check uses main server
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:{{ plugin.port | default(8000) }}/health').read()"]
+      {% endif %}
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    {% if plugin.depends_on is defined %}
+    depends_on:
+    {% for dep in plugin.depends_on %}
+      - {{ dep }}
+    {% endfor %}
+    {% endif %}
+
+{% endfor %}
+  # PostgreSQL Database
+  postgres:
+    image: postgres:17
+    container_name: mcp-postgres
+    hostname: postgres
+
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=$${POSTGRES_PASSWORD:-mysecretpassword}
+      - POSTGRES_DB=mcp
+
+    ports:
+      - "5432:5432"
+
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+    networks:
+      - mcp-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Redis Cache
+  redis:
+    image: redis:latest
+    container_name: mcp-redis
+    hostname: redis
+
+    ports:
+      - "6379:6379"
+
+    networks:
+      - mcp-network
+
+    restart: unless-stopped
+
