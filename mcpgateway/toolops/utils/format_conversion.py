@@ -27,13 +27,13 @@ def convert_to_toolops_spec(mcp_cf_tool):
     """
     Converts an MCP tool JSON format to ToolOps-specific internal format.
 
-    This method takes a JSON representation of an MCP tool and converts it into a 
-    format that is compatible with ToolOps' internal specification, while keeping 
+    This method takes a JSON representation of an MCP tool and converts it into a
+    format that is compatible with ToolOps' internal specification, while keeping
     the general structure similar to the MCP tool format.
 
     Args:
-        mcp_cf_tool (dict): The MCP tool in JSON format. It must contain the 
-                            fields: 'description', 'displayName', 'id', 
+        mcp_cf_tool (dict): The MCP tool in JSON format. It must contain the
+                            fields: 'description', 'displayName', 'id',
                             'inputSchema', and optionally 'outputSchema'.
 
     Returns:
@@ -87,11 +87,11 @@ def post_process_nl_test_cases(nl_test_cases):
     """
     Post-processes generated test cases to remove unwanted parameters.
 
-    This method processes the test cases by removing unnecessary parameters, such as 
+    This method processes the test cases by removing unnecessary parameters, such as
     "scenario_type" and "input", from the input test case dictionary.
 
     Args:
-        nl_test_cases (dict): A dictionary containing test cases under the key "Test_scenarios". 
+        nl_test_cases (dict): A dictionary containing test cases under the key "Test_scenarios".
                                Each test case may contain parameters like "scenario_type", "input", etc.
 
     Returns:

@@ -40,11 +40,11 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
         >>> mock_db = MagicMock()
         >>> # Simulate query returning None (record does not exist)
         >>> mock_db.query.return_value.filter_by.return_value.first.return_value = None
-        
+
         >>> # Patch the TestCaseRecord class specifically in THIS module
         >>> with patch(f"{mod_path}.TestCaseRecord") as MockRecord:
         ...     populate_testcases_table("tool-123", [{"test": "case"}], "in-progress", mock_db)
-        ...     
+        ...
         ...     # Verify the class was instantiated
         ...     MockRecord.assert_called_with(tool_id="tool-123", test_cases=[{"test": "case"}], run_status="in-progress")
         ...     # Verify DB interactions
@@ -55,11 +55,11 @@ def populate_testcases_table(tool_id, test_cases, run_status, db: Session):
         >>> mock_db_update = MagicMock()
         >>> existing_record = MagicMock()
         >>> mock_db_update.query.return_value.filter_by.return_value.first.return_value = existing_record
-        
+
         >>> # We still patch TestCaseRecord to ensure no side effects, though it's not instantiated here
         >>> with patch(f"{mod_path}.TestCaseRecord"):
         ...     populate_testcases_table("tool-123", [{"test": "new"}], "completed", mock_db_update)
-        ...     
+        ...
         ...     # Verify fields were updated on existing record
         ...     assert existing_record.test_cases == [{"test": "new"}]
         ...     assert existing_record.run_status == "completed"
@@ -97,18 +97,18 @@ def query_testcases_table(tool_id, db: Session):
     Examples:
         >>> from unittest.mock import MagicMock, patch
         >>> mock_db = MagicMock()
-        
+
         >>> # Create a dummy record to return
         >>> mock_record = MagicMock()
         >>> mock_record.tool_id = "tool-abc"
         >>> mock_record.test_cases = [{"input": "test"}]
-        
+
         >>> # Mock the chain: db.query(...).filter_by(...).first()
         >>> mock_db.query.return_value.filter_by.return_value.first.return_value = mock_record
-        
+
         >>> # Execute
         >>> result = query_testcases_table("tool-abc", mock_db)
-        
+
         >>> # Verify result and calls
         >>> result.tool_id
         'tool-abc'
@@ -139,7 +139,7 @@ def query_tool_auth(tool_id, db: Session):
         >>> mock_tool_record = MagicMock()
         >>> mock_tool_record.auth_value = "encoded-val"
         >>> mock_db.query.return_value.filter_by.return_value.first.return_value = mock_tool_record
-        
+
         >>> # We nest the patches to avoid SyntaxError in doctest multiline 'with' statements
         >>> with patch(f"{mod_path}.decode_auth", side_effect=lambda x: f"decoded-{x}"):
         ...     with patch(f"{mod_path}.Tool"):
@@ -150,7 +150,7 @@ def query_tool_auth(tool_id, db: Session):
         >>> # Case 2: Exception Handling
         >>> mock_db_fail = MagicMock()
         >>> mock_db_fail.query.side_effect = Exception("DB Connection Error")
-        
+
         >>> with patch(f"{mod_path}.Tool"):
         ...     auth = query_tool_auth("tool-2", mock_db_fail)
         ...     print(auth)
