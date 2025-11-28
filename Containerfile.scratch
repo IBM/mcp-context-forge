@@ -3,13 +3,14 @@
 ###############################################################################
 # MCP Gateway (lite) - OCI-compliant container build
 #
-# This multi-stage Dockerfile produces a minimal runtime image using
-# ubi10-minimal as the base, supporting multiplatform builds (amd64, arm64,
-# s390x) including QEMU emulation for cross-platform builds.
+# This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
+# image that automatically tracks the latest Python 3.12.x patch release
+# from the RHEL 10 repositories and is fully patched on each rebuild.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
-#   - Runtime stage uses ubi10-minimal for cross-platform compatibility
+#   - Runtime stage is scratch: only the Python runtime and app
+#   - Both builder and runtime rootfs receive `dnf upgrade -y`
 #   - Development headers are dropped from the final image
 #   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 ###############################################################################
@@ -17,6 +18,8 @@
 ###########################
 # Build-time arguments
 ###########################
+# Temporary dir for assembling the scratch rootfs
+ARG ROOTFS_PATH=/tmp/rootfs
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
@@ -72,6 +75,7 @@ FROM registry.access.redhat.com/ubi10/ubi:10.0-1760519443 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
+ARG ROOTFS_PATH
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 
 # ----------------------------------------------------------------------------
@@ -178,26 +182,118 @@ RUN chmod +x /app/run-gunicorn.sh /app/run.sh
 # Pre-compile Python bytecode with -OO optimization
 #  - Strips docstrings and assertions
 #  - Improves startup performance
+#  - Must be done before copying to rootfs
 #  - Remove __pycache__ directories after compilation
 # ----------------------------------------------------------------------------
 RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
     && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 # ----------------------------------------------------------------------------
-# Set ownership for non-root user (1001)
-# - OpenShift compatible (accepts any UID in group 0)
+# Build a minimal, fully-patched rootfs containing only the runtime Python
+# Include ca-certificates for HTTPS connections
 # ----------------------------------------------------------------------------
-RUN chown -R 1001:0 /app \
-    && chmod -R g=u /app
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && mkdir -p "${ROOTFS_PATH:?}" \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 upgrade -y \
+    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=10 install -y \
+         --setopt=install_weak_deps=0 \
+         --setopt=tsflags=nodocs \
+         python${PYTHON_VERSION} \
+         ca-certificates \
+         procps-ng \
+    && dnf clean all --installroot="${ROOTFS_PATH:?}"
+
+# ----------------------------------------------------------------------------
+# Create `python3` symlink in the rootfs for compatibility
+# ----------------------------------------------------------------------------
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
+
+# ----------------------------------------------------------------------------
+# Clean up unnecessary files from rootfs (if they exist)
+#  - Remove development headers, documentation
+#  - Use ${var:?} to prevent accidental deletion of host directories
+# ----------------------------------------------------------------------------
+RUN set -euo pipefail \
+    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
+    ${ROOTFS_PATH:?}/usr/share/man/* \
+    ${ROOTFS_PATH:?}/usr/share/doc/* \
+    ${ROOTFS_PATH:?}/usr/share/info/* \
+    ${ROOTFS_PATH:?}/usr/share/locale/* \
+    ${ROOTFS_PATH:?}/var/log/* \
+    ${ROOTFS_PATH:?}/boot \
+    ${ROOTFS_PATH:?}/media \
+    ${ROOTFS_PATH:?}/srv \
+    ${ROOTFS_PATH:?}/usr/games \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
+    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
+    && rm -rf ${ROOTFS_PATH:?}/usr/lib*/python*/ensurepip \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/idlelib \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/turtle* \
+    ${ROOTFS_PATH:?}/usr/lib*/python*/distutils/command/*.exe
+
+# ----------------------------------------------------------------------------
+# Remove package managers and unnecessary system tools from rootfs
+# - Keep RPM database for security scanning with Trivy/Dockle
+# - This keeps the final image size minimal while allowing vulnerability scanning
+# ----------------------------------------------------------------------------
+RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
+    ${ROOTFS_PATH:?}/usr/bin/yum* \
+    ${ROOTFS_PATH:?}/usr/bin/rpm* \
+    ${ROOTFS_PATH:?}/usr/bin/microdnf \
+    ${ROOTFS_PATH:?}/usr/lib/rpm \
+    ${ROOTFS_PATH:?}/usr/lib/dnf \
+    ${ROOTFS_PATH:?}/usr/lib/yum* \
+    ${ROOTFS_PATH:?}/etc/dnf \
+    ${ROOTFS_PATH:?}/etc/yum*
+
+# ----------------------------------------------------------------------------
+# Strip unneeded symbols from shared libraries and remove binutils
+# - This reduces the final image size and removes the build tool in one step
+# ----------------------------------------------------------------------------
+RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
+    && dnf remove -y binutils \
+    && dnf clean all
+
+# ----------------------------------------------------------------------------
+# Remove setuid/setgid binaries for security
+# ----------------------------------------------------------------------------
+RUN find ${ROOTFS_PATH:?} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null || true
+
+# ----------------------------------------------------------------------------
+# Create minimal passwd/group files for user 1001
+# - Using GID 1001 to match UID for consistency
+# - OpenShift compatible (accepts any UID in group 1001)
+# ----------------------------------------------------------------------------
+RUN printf 'app:x:1001:1001:app:/app:/sbin/nologin\n' > "${ROOTFS_PATH:?}/etc/passwd" && \
+    printf 'app:x:1001:\n' > "${ROOTFS_PATH:?}/etc/group"
+
+# ----------------------------------------------------------------------------
+# Create necessary directories in the rootfs
+#  - /tmp and /var/tmp with sticky bit for security
+# ----------------------------------------------------------------------------
+RUN chmod 1777 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp 2>/dev/null || true \
+    && chown 1001:1001 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp
+
+# ----------------------------------------------------------------------------
+# Copy application directory into the rootfs and fix permissions for non-root
+# - Set ownership to 1001:1001 (matching passwd/group)
+# - Allow group write permissions for OpenShift compatibility
+# ----------------------------------------------------------------------------
+RUN cp -r /app ${ROOTFS_PATH:?}/app \
+    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app \
+    && chmod -R g=u ${ROOTFS_PATH:?}/app
 
 ###########################
-# Final runtime stage
+# Final runtime (squashed)
 ###########################
-# Using ubi10-minimal for cross-platform compatibility (works with QEMU emulation)
-# hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal AS runtime
+FROM scratch AS runtime
 
-ARG PYTHON_VERSION=3.12
+ARG PYTHON_VERSION
+ARG ROOTFS_PATH
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
@@ -209,33 +305,9 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.version="0.9.0"
 
 # ----------------------------------------------------------------------------
-# Install minimal runtime dependencies
-# - Python runtime (no devel packages)
-# - ca-certificates for HTTPS
-# - procps-ng for process management (ps command)
+# Copy the entire prepared root filesystem from the builder stage
 # ----------------------------------------------------------------------------
-# hadolint ignore=DL3041
-RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
-        python${PYTHON_VERSION} \
-        ca-certificates \
-        procps-ng \
-    && microdnf clean all \
-    && rm -rf /var/cache/yum
-
-# ----------------------------------------------------------------------------
-# Create python3 symlink
-# ----------------------------------------------------------------------------
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
-
-# ----------------------------------------------------------------------------
-# Create non-root user
-# ----------------------------------------------------------------------------
-RUN echo 'app:x:1001:0:app:/app:/sbin/nologin' >> /etc/passwd
-
-# ----------------------------------------------------------------------------
-# Copy the application from the builder stage
-# ----------------------------------------------------------------------------
-COPY --from=builder --chown=1001:0 /app /app
+COPY --from=builder ${ROOTFS_PATH}/ /
 
 # ----------------------------------------------------------------------------
 # Ensure our virtual environment binaries have priority in PATH

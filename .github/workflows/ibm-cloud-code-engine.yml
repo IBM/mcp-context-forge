@@ -127,11 +127,12 @@ jobs:
           ibmcloud ce project select --name "$CODE_ENGINE_PROJECT"
 
       # -----------------------------------------------------------
-      # 5️⃣  Build & tag image (cache-aware)
+      # 5️⃣  Build & tag image (cache-aware, amd64 platform)
       # -----------------------------------------------------------
       - name: 🏗️  Build Docker image (with cache)
         run: |
           docker buildx build \
+            --platform linux/amd64 \
             --file Containerfile.lite \
             --tag "$REGISTRY_HOSTNAME/$ICR_NAMESPACE/$IMAGE_NAME:$IMAGE_TAG" \
             --cache-from type=local,src=${{ env.CACHE_DIR }} \
