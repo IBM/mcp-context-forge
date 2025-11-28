@@ -21202,6 +21202,8 @@ function updateEntityStatus(type, data) {
         const isEnabled =
             data.enabled !== undefined ? data.enabled : data.isActive;
         updateEntityActionButtons(actionCell, type, data.id, isEnabled);
+    }
+}
 // ============================================================================
 // Structured Logging UI Functions
 // ============================================================================
