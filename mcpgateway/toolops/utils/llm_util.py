@@ -51,6 +51,66 @@ def get_llm_instance(model_type="completion"):
     Returns:
         llm_instance : LLM model instance used for inferencing the prompts/user inputs
         llm_config: LLM provider configuration provided in the environment variables
+
+    Examples:
+        >>> import os
+        >>> from unittest.mock import patch, MagicMock
+        >>> # Setup: Define the global variable used in the function for the test context
+        >>> global TOOLOPS_TEMPERATURE
+        >>> TOOLOPS_TEMPERATURE = 0.7
+
+        >>> # Case 1: OpenAI Provider Configuration
+        >>> # We patch os.environ to simulate specific provider settings
+        >>> env_vars = {
+        ...     "LLM_PROVIDER": "openai",
+        ...     "OPENAI_API_KEY": "sk-mock-key",
+        ...     "OPENAI_BASE_URL": "https://api.openai.com",
+        ...     "OPENAI_MODEL": "gpt-4"
+        ... }
+        >>> with patch.dict(os.environ, env_vars):
+        ...     # Assuming OpenAIProvider and OpenAIConfig are available in the module scope
+        ...     # We simulate the function call. Note: This tests the Config creation logic.
+        ...     llm_instance, llm_config = get_llm_instance("completion")
+        ...     llm_config.__class__.__name__
+        'OpenAIConfig'
+
+        >>> # Case 2: Azure OpenAI Provider Configuration
+        >>> env_vars = {
+        ...     "LLM_PROVIDER": "azure_openai",
+        ...     "AZURE_OPENAI_API_KEY": "az-mock-key",
+        ...     "AZURE_OPENAI_ENDPOINT": "https://mock.azure.com",
+        ...     "AZURE_OPENAI_MODEL": "gpt-35-turbo"
+        ... }
+        >>> with patch.dict(os.environ, env_vars):
+        ...     llm_instance, llm_config = get_llm_instance("chat")
+        ...     llm_config.__class__.__name__
+        'AzureOpenAIConfig'
+
+        >>> # Case 3: AWS Bedrock Provider Configuration
+        >>> env_vars = {
+        ...     "LLM_PROVIDER": "aws_bedrock",
+        ...     "AWS_BEDROCK_MODEL_ID": "anthropic.claude-v2",
+        ...     "AWS_BEDROCK_REGION": "us-east-1",
+        ...     "AWS_ACCESS_KEY_ID": "mock-access",
+        ...     "AWS_SECRET_ACCESS_KEY": "mock-secret"
+        ... }
+        >>> with patch.dict(os.environ, env_vars):
+        ...     llm_instance, llm_config = get_llm_instance("chat")
+        ...     llm_config.__class__.__name__
+        'AWSBedrockConfig'
+
+        >>> # Case 4: WatsonX Provider Configuration
+        >>> env_vars = {
+        ...     "LLM_PROVIDER": "watsonx",
+        ...     "WATSONX_APIKEY": "wx-mock-key",
+        ...     "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
+        ...     "WATSONX_PROJECT_ID": "mock-project-id",
+        ...     "WATSONX_MODEL_ID": "ibm/granite-13b"
+        ... }
+        >>> with patch.dict(os.environ, env_vars):
+        ...     llm_instance, llm_config = get_llm_instance("completion")
+        ...     llm_config.__class__.__name__
+        'WatsonxConfig'
     """
     llm_provider = os.getenv("LLM_PROVIDER", "")
     llm_instance, llm_config = None, None
@@ -162,6 +222,8 @@ def get_llm_instance(model_type="completion"):
                 max_new_tokens=wx_max_tokens,
                 decoding_method=wx_decoding_method,
             )
+        else:
+            return None, None
 
         llm_service = provider_class(llm_config)
         llm_instance = llm_service.get_llm(model_type=model_type)
@@ -169,10 +231,6 @@ def get_llm_instance(model_type="completion"):
     except Exception as e:
         logger.info("Error in configuring LLM instance for ToolOps -" + str(e))
     return llm_instance, llm_config
-
-
-completion_llm_instance, _ = get_llm_instance(model_type="completion")
-chat_llm_instance, _ = get_llm_instance(model_type="chat")
 
 
 def execute_prompt(prompt):
@@ -187,6 +245,8 @@ def execute_prompt(prompt):
     """
     try:
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
+        completion_llm_instance, _ = get_llm_instance(model_type="completion")
+        chat_llm_instance, _ = get_llm_instance(model_type="chat")
         llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()
         # logger.info("Successful - Inferencing OpenAI provider LLM")
