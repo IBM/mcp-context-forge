@@ -16,26 +16,12 @@ from pathlib import Path
 from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar
 
 # Third-Party
-from pydantic import (
-    BaseModel,
-    Field,
-    field_serializer,
-    field_validator,
-    model_validator,
-    PrivateAttr,
-    ValidationInfo,
-)
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
 
 # First-Party
 from mcpgateway.common.models import TransportType
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.plugins.framework.constants import (
-    EXTERNAL_PLUGIN_TYPE,
-    IGNORE_CONFIG_EXTERNAL,
-    PYTHON_SUFFIX,
-    SCRIPT,
-    URL,
-)
+from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, URL
 
 T = TypeVar("T")
 

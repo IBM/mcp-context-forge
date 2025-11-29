@@ -166,6 +166,7 @@ else:
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
 plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
 
+
 # Initialize services
 tool_service = ToolService()
 resource_service = ResourceService()
@@ -368,6 +369,20 @@ def transform_data_with_mappings(data: list[Any], mappings: dict[str, str]) -> l
     return mapped_results
 
 
+def attempt_to_bootstrap_sso_providers():
+    """
+    Try to bootstrap SSO provider services based on settings.
+    """
+    try:
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
+
+        bootstrap_sso_providers()
+        logger.info("SSO providers bootstrapped successfully")
+    except Exception as e:
+        logger.warning(f"Failed to bootstrap SSO providers: {e}")
+
+
 ####################
 # Startup/Shutdown #
 ####################
@@ -529,20 +544,6 @@ async def setup_passthrough_headers():
         await set_global_passthrough_headers(db)
     finally:
         db.close()
-
-
-def attempt_to_bootstrap_sso_providers():
-    """
-    Try to bootstrap SSO provider services based on settings.
-    """
-    try:
-        # First-Party
-        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers  # pylint: disable=import-outside-toplevel
-
-        bootstrap_sso_providers()
-        logger.info("SSO providers bootstrapped successfully")
-    except Exception as e:
-        logger.warning(f"Failed to bootstrap SSO providers: {e}")
 
 
 # Initialize FastAPI app with orjson for 2-3x faster JSON serialization
@@ -5095,6 +5096,17 @@ if settings.llmchat_enabled:
         logger.info("LLM Chat router included")
     except ImportError:
         logger.debug("LLM Chat router not available")
+
+# Include Toolops router
+if settings.toolops_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.toolops_router import toolops_router
+
+        app.include_router(toolops_router)
+        logger.info("Toolops router included")
+    except ImportError:
+        logger.debug("Toolops router not available")
 
 # Feature flags for admin UI and API
 UI_ENABLED = settings.mcpgateway_ui_enabled

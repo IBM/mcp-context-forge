@@ -403,6 +403,7 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
+    toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
