@@ -102,7 +102,6 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         logger.info("LLM Inference call using MCP-CF LLM provider")
         # To suppress pylint errors creating dummy altk params and asserting
         altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens, "stop_sequences": stop_sequences}
-        assert altk_dummy_params is not None
         chat_llm_instance, _ = get_llm_instance(model_type="chat")
         llm_response = chat_llm_instance.invoke(prompt)
         response = llm_response.content
