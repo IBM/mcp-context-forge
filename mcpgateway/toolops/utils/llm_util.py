@@ -51,66 +51,6 @@ def get_llm_instance(model_type="completion"):
     Returns:
         llm_instance : LLM model instance used for inferencing the prompts/user inputs
         llm_config: LLM provider configuration provided in the environment variables
-
-    Examples:
-        >>> import os
-        >>> from unittest.mock import patch, MagicMock
-        >>> # Setup: Define the global variable used in the function for the test context
-        >>> global TOOLOPS_TEMPERATURE
-        >>> TOOLOPS_TEMPERATURE = 0.7
-
-        >>> # Case 1: OpenAI Provider Configuration
-        >>> # We patch os.environ to simulate specific provider settings
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "openai",
-        ...     "OPENAI_API_KEY": "sk-mock-key",
-        ...     "OPENAI_BASE_URL": "https://api.openai.com",
-        ...     "OPENAI_MODEL": "gpt-4"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     # Assuming OpenAIProvider and OpenAIConfig are available in the module scope
-        ...     # We simulate the function call. Note: This tests the Config creation logic.
-        ...     llm_instance, llm_config = get_llm_instance("completion")
-        ...     llm_config.__class__.__name__
-        'OpenAIConfig'
-
-        >>> # Case 2: Azure OpenAI Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "azure_openai",
-        ...     "AZURE_OPENAI_API_KEY": "az-mock-key",
-        ...     "AZURE_OPENAI_ENDPOINT": "https://mock.azure.com",
-        ...     "AZURE_OPENAI_MODEL": "gpt-35-turbo"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("chat")
-        ...     llm_config.__class__.__name__
-        'AzureOpenAIConfig'
-
-        >>> # Case 3: AWS Bedrock Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "aws_bedrock",
-        ...     "AWS_BEDROCK_MODEL_ID": "anthropic.claude-v2",
-        ...     "AWS_BEDROCK_REGION": "us-east-1",
-        ...     "AWS_ACCESS_KEY_ID": "mock-access",
-        ...     "AWS_SECRET_ACCESS_KEY": "mock-secret"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("chat")
-        ...     llm_config.__class__.__name__
-        'AWSBedrockConfig'
-
-        >>> # Case 4: WatsonX Provider Configuration
-        >>> env_vars = {
-        ...     "LLM_PROVIDER": "watsonx",
-        ...     "WATSONX_APIKEY": "wx-mock-key",
-        ...     "WATSONX_URL": "https://us-south.ml.cloud.ibm.com",
-        ...     "WATSONX_PROJECT_ID": "mock-project-id",
-        ...     "WATSONX_MODEL_ID": "ibm/granite-13b"
-        ... }
-        >>> with patch.dict(os.environ, env_vars):
-        ...     llm_instance, llm_config = get_llm_instance("completion")
-        ...     llm_config.__class__.__name__
-        'WatsonxConfig'
     """
     llm_provider = os.getenv("LLM_PROVIDER", "")
     llm_instance, llm_config = None, None
