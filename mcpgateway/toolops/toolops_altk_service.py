@@ -59,7 +59,8 @@ from mcpgateway.toolops.utils.llm_util import chat_llm_instance, get_llm_instanc
 
 toolops_llm_provider = os.getenv("LLM_PROVIDER")
 toolops_llm, toolops_llm_provider_config = get_llm_instance()
-toolops_llm_config = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
+if toolops_llm is not None and toolops_llm_provider_config is not None:
+    toolops_llm_config = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
