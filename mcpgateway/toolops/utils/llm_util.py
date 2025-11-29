@@ -245,8 +245,8 @@ def execute_prompt(prompt):
     """
     try:
         logger.info("Inferencing OpenAI provider LLM with the given prompt")
+
         completion_llm_instance, _ = get_llm_instance(model_type="completion")
-        chat_llm_instance, _ = get_llm_instance(model_type="chat")
         llm_response = completion_llm_instance.invoke(prompt, stop=["\n\n", "<|endoftext|>", "###STOP###"])
         response = llm_response.replace("<|eom_id|>", "").strip()
         # logger.info("Successful - Inferencing OpenAI provider LLM")
@@ -257,6 +257,8 @@ def execute_prompt(prompt):
 
 
 # if __name__ == "__main__":
+#     chat_llm_instance, _ = get_llm_instance(model_type="chat")
+#     completion_llm_instance, _ = get_llm_instance(model_type="completion")
 #     prompt = "what is India capital city?"
 #     print("Prompt : ", prompt)
 #     print("Text completion output : ")

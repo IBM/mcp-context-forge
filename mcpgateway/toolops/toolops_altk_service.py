@@ -52,18 +52,19 @@ from mcpgateway.services.mcp_client_chat_service import LLMConfig, MCPChatServic
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.utils.db_util import populate_testcases_table, query_testcases_table, query_tool_auth
 from mcpgateway.toolops.utils.format_conversion import convert_to_toolops_spec, post_process_nl_test_cases
-from mcpgateway.toolops.utils.llm_util import chat_llm_instance, get_llm_instance
+from mcpgateway.toolops.utils.llm_util import get_llm_instance
 
-# importing toolops modules from ALTK
+logging_service = LoggingService()
+logger = logging_service.get_logger(__name__)
 
 
 toolops_llm_provider = os.getenv("LLM_PROVIDER")
 toolops_llm, toolops_llm_provider_config = get_llm_instance()
 if toolops_llm is not None and toolops_llm_provider_config is not None:
-    toolops_llm_config = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
-
-logging_service = LoggingService()
-logger = logging_service.get_logger(__name__)
+    TOOLOPS_LLM_CONFIG = LLMConfig(provider=toolops_llm_provider, config=toolops_llm_provider_config)
+else:
+    logger.error("Error in obtaining LLM instance for Toolops services")
+    TOOLOPS_LLM_CONFIG = None
 
 LLM_MODEL_ID = os.getenv("OPENAI_MODEL", "")
 provider = os.getenv("OPENAI_BASE_URL", "")
@@ -102,6 +103,7 @@ def custom_mcp_cf_execute_prompt(prompt, client=None, gen_mode=None, parameters=
         # To suppress pylint errors creating dummy altk params and asserting
         altk_dummy_params = {"client": client, "gen_mode": gen_mode, "parameters": parameters, "max_new_tokens": max_new_tokens, "stop_sequences": stop_sequences}
         assert altk_dummy_params is not None
+        chat_llm_instance, _ = get_llm_instance(model_type="chat")
         llm_response = chat_llm_instance.invoke(prompt)
         response = llm_response.content
         return response
@@ -203,11 +205,11 @@ async def execute_tool_nl_test_cases(tool_id, tool_nl_test_cases, tool_service: 
     tool_auth = query_tool_auth(tool_id, db)
     # handling transport based on protocol type
     if "/mcp" in tool_url:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=toolops_llm_config)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="streamable_http", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
     elif "/sse" in tool_url:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="sse", headers=tool_auth), llm=toolops_llm_config)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="sse", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
     else:
-        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="stdio", headers=tool_auth), llm=toolops_llm_config)
+        config = MCPClientConfig(mcp_server=MCPServerConfig(url=tool_url, transport="stdio", headers=tool_auth), llm=TOOLOPS_LLM_CONFIG)
 
     service = MCPChatService(config)
     await service.initialize()
