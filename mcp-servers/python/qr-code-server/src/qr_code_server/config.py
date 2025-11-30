@@ -63,3 +63,5 @@ def load_config() -> ConfigModel:
         raise
 
     return cfg
+
+config = load_config()
