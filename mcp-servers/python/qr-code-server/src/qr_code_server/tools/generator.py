@@ -1,8 +1,16 @@
 import base64
 from io import BytesIO
-
+import os
+import logging
+from typing import Optional
 import qrcode
+from qrcode import QRCode
 from pydantic import BaseModel
+import numpy as np
+
+from qr_code_server.config import config
+
+logger = logging.getLogger(__name__)
 
 
 class QRGenerationRequest(BaseModel):
@@ -13,11 +21,11 @@ class QRGenerationRequest(BaseModel):
     error_correction: str = "M"
     fill_color: str = "black"
     back_color: str = "white"
-    save_path: str | None = None
+    save_path: Optional[str] = None
     return_base64: bool = False
 
 
-def create_qr(req: QRGenerationRequest):
+def create_qr(request: QRGenerationRequest):
 
     ec_map = {
         "L": qrcode.constants.ERROR_CORRECT_L,
@@ -26,43 +34,70 @@ def create_qr(req: QRGenerationRequest):
         "H": qrcode.constants.ERROR_CORRECT_H,
     }
 
-    qr = qrcode.QRCode(
+    qr = QRCode(
         version=None,
-        error_correction=ec_map[req.error_correction],
-        box_size=req.size,
-        border=req.border,
+        error_correction=ec_map[request.error_correction],
+        box_size=request.size,
+        border=request.border,
     )
 
-    qr.add_data(req.data)
+    qr.add_data(request.data)
     qr.make(fit=True)
 
-    img = qr.make_image(fill_color=req.fill_color, back_color=req.back_color)
+    img = qr.make_image(fill_color=request.fill_color, back_color=request.back_color)
 
-    if req.save_path:
-        img.save(req.save_path, format=req.format.upper())
+    if request.return_base64:
+        try:
+            buffer = BytesIO()
+            img.save(buffer, format=request.format)
+            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+            return {
+                "success": True,
+                "output_format": request.format,
+                "image_base64": img_base64,
+                "message": "QR code generated as base64 image",
+            }
+        except Exception as e:
+            logger.error(f"Error encoding qr code to base 64: {e}")
+            return {"success": False, "error": str(e)}
 
-    if req.return_base64:
-        buffer = BytesIO()
-        img.save(buffer, format=req.format.upper())
-        return base64.b64encode(buffer.getvalue()).decode()
+    if request.save_path:
+        save_path = request.save_path
+    else:
+        save_path = os.path.join(config.output.default_directory, f"qr_code.{request.format}")
 
-    return img
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(save_path)
+    os.makedirs(output_dir, exist_ok=True)
+
+    if request.format == "ascii":
+        arr = np.array(img)
+        block = np.array(["  ", "██"])
+        mapped = block[arr.astype(int)]
+        ascii_qr = "\n".join("".join(row) for row in mapped)
+        try:
+            with open(save_path, "w", encoding="utf8") as f:
+                f.write(ascii_qr)
+        except Exception as e:
+            logger.error(f"Error saving qr code image: {e}")
+        return {"success": False, "error": str(e)}
+
+    try:
+        img.save(save_path, format=request.format)
+        return {
+            "success": True,
+            "output_format": request.format,
+            "message": f"QR code image saved at {save_path}",
+        }
+    except Exception as e:
+        logger.error(f"Error saving qr code image: {e}")
+        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":
-
     req = QRGenerationRequest(
-        data="https://github.com/IBM/mcp-context-forge",
-        format="png",
-        size=10,
-        border=4,
-        error_correction="M",
-        fill_color="black",
-        back_color="white",
-        save_path=None,
-        return_base64=False,
+        data="https://test.com",
+        format="tiff"
     )
-
-    img = create_qr(req)
-
-    img.show()
+    result = create_qr(req)
+    print(result)
