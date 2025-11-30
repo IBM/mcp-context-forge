@@ -309,7 +309,6 @@ class ToolService:
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
 
-        # Optimize: Safe success rate calculation (avoids division by zero)
         success_rate = case(
             (
                 func.count(ToolMetric.id) > 0,
@@ -320,7 +319,6 @@ class ToolService:
             else_=None
         )
 
-        # Optimize: Apply limit directly in query construction, remove redundant limit check
         query = (
             select(
                 DbTool.id,

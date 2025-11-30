@@ -1981,19 +1981,23 @@ class TestToolService:
             (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
         ]
 
-        # The new implementation uses db.execute(query).all()
-        # We simply mock the return value of that chain.
+        # Mock the execute method on the test_db (which is likely a MagicMock)
+        test_db.execute = MagicMock()
         test_db.execute.return_value.all.return_value = mock_results
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
             
+            # Run the method
             result = await tool_service.get_top_tools(test_db, limit=5)
 
+            # Assert the result is as expected
             assert result == ["top_performer1", "top_performer2"]
+
+            # Assert build_top_performers was called with the mock results
             mock_build.assert_called_once_with(mock_results)
             
-            # Verify execute was called instead of query
+            # Verify that the execute method was called once
             test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
