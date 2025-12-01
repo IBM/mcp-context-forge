@@ -968,7 +968,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> ServerRead:
         """Toggle the activation status of a server.
 
         Args:
@@ -1008,6 +1008,26 @@ class ServerService:
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
+            # Access control validation for toggle (Write Access)
+            if user_email or allowed_team_ids:
+                has_write_access = False
+                if server.visibility == "private":
+                    if server.owner_email == user_email:
+                        has_write_access = True
+                elif server.visibility == "team":
+                    if allowed_team_ids and server.team_id in allowed_team_ids:
+                        has_write_access = True
+                    elif user_email and server.owner_email == user_email:
+                        has_write_access = True
+                elif server.visibility == "public":
+                     if server.owner_email == user_email:
+                         has_write_access = True
+                     elif allowed_team_ids and server.team_id in allowed_team_ids:
+                         has_write_access = True
+                
+                if not has_write_access:
+                     raise PermissionError(f"User does not have permission to toggle status of server {server_id}")
+
             if server.is_active != activate:
                 server.is_active = activate
                 server.updated_at = datetime.now(timezone.utc)
@@ -1040,7 +1060,7 @@ class ServerService:
             db.rollback()
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
-    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
         """Permanently delete a server.
 
         Args:
@@ -1070,6 +1090,26 @@ class ServerService:
             server = db.get(DbServer, server_id)
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
+
+            # Access control validation for delete
+            if user_email or allowed_team_ids:
+                has_permission = False
+                if server.visibility == "private":
+                    if server.owner_email == user_email:
+                        has_permission = True
+                elif server.visibility == "team":
+                    if allowed_team_ids and server.team_id in allowed_team_ids:
+                        has_permission = True
+                    elif user_email and server.owner_email == user_email:
+                        has_permission = True
+                elif server.visibility == "public":
+                    if server.owner_email == user_email:
+                        has_permission = True
+                    elif allowed_team_ids and server.team_id in allowed_team_ids:
+                        has_permission = True
+                
+                if not has_permission:
+                    raise PermissionError(f"User {user_email} does not have permission to delete server {server_id}")
 
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)

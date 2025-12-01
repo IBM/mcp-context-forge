@@ -179,6 +179,9 @@ class TestResourceServicePluginIntegration:
         mock_db_row.content = fake_resource_content
         mock_db_row.uri = fake_resource_content.uri
         mock_db_row.uri_template = None
+        mock_db_row.visibility = "public"
+        mock_db_row.team_id = None
+        mock_db_row.owner_email = "owner@example.com"
 
         # Configure scalar_one_or_none to always return the mocked row
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
@@ -242,6 +245,9 @@ class TestResourceServicePluginIntegration:
             text="Sensitive file content",
         )
         mock_resource.uri = "file:///etc/passwd"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
@@ -283,6 +289,9 @@ class TestResourceServicePluginIntegration:
         mock_db_row.content = fake_resource_content
         mock_db_row.uri = fake_resource_content.uri
         mock_db_row.uri_template = None
+        mock_db_row.visibility = "public"
+        mock_db_row.team_id = None
+        mock_db_row.owner_email = "owner@example.com"
 
         # Configure scalar_one_or_none to return the mocked row
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
@@ -338,6 +347,9 @@ class TestResourceServicePluginIntegration:
         )
         mock_resource.content = original_content
         mock_resource.uri = "test://config"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         # Return the mock resource for both original and filtered id lookups
         def scalar_one_or_none_side_effect(*args, **kwargs):
             return mock_resource
@@ -399,6 +411,9 @@ class TestResourceServicePluginIntegration:
             text="Test content",
         )
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         resource_id = mock_resource.content.id
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
@@ -433,6 +448,9 @@ class TestResourceServicePluginIntegration:
                 text="Sensitive content",
             )
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
@@ -481,6 +499,9 @@ class TestResourceServicePluginIntegration:
         )
         mock_resource.content = mock_template_content
         mock_resource.uri = "test://123/data"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
@@ -515,6 +536,9 @@ class TestResourceServicePluginIntegration:
             text="Test content",
         )
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
@@ -594,6 +618,9 @@ class TestResourceServicePluginIntegration:
         mock_resource = MagicMock()
         mock_resource.content = ResourceContent(type="resource", id="test://resource", uri="test://resource", text="Test")
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
+        mock_resource.visibility = "public"
+        mock_resource.team_id = None
+        mock_resource.owner_email = "owner@example.com"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
