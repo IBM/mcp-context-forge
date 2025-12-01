@@ -14,7 +14,6 @@ from typing import Any, TypeAlias
 from urllib.parse import urlparse
 
 # Third-Party
-from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 import requests
 
 # First-Party
@@ -43,6 +42,7 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.models import AppliedTo
 from mcpgateway.services.logging_service import LoggingService
+from opapluginfilter.schema import BaseOPAInputKeys, OPAConfig, OPAInput
 
 # Initialize logging service first
 logging_service = LoggingService()

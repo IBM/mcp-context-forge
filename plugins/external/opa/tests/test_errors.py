@@ -12,12 +12,9 @@ and started once, and further used by all test cases for policy evaluations.
 # Standard
 
 # Third-Party
-from opapluginfilter.plugin import OPAPluginFilter, OPAPluginErrorCodes
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
-# ideal way
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
@@ -27,6 +24,7 @@ from mcpgateway.plugins.framework import (
 )
 
 from mcpgateway.services.logging_service import LoggingService
+from opapluginfilter.plugin import OPAPluginFilter, OPAPluginErrorCodes
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -57,7 +55,7 @@ async def test_error_opa_server_error():
     payload = ToolPreInvokePayload(name="fast-time-git-status", args={"repo_path": "/path/IBM"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
-        result = await plugin.tool_pre_invoke(payload, context)
+        await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_ERROR.value
 
@@ -88,7 +86,7 @@ async def test_error_opa_server_invalid_endpoint():
     payload = ToolPreInvokePayload(name="fast-time-git-status", args={"repo_path": "/path/IBM"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
-        result = await plugin.tool_pre_invoke(payload, context)
+        await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.INVALID_POLICY_ENDPOINT.value
 
@@ -117,7 +115,7 @@ async def test_error_opa_server_none_response():
     payload = ToolPreInvokePayload(name="fast-time-git-status", args={"repo_path": "/path/IBM"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
-        result = await plugin.tool_pre_invoke(payload, context)
+        await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value
 
@@ -143,7 +141,7 @@ async def test_error_opa_server_unconfigured_endpoint():
     payload = ToolPreInvokePayload(name="fast-time-git-status", args={"repo_path": "/path/IBM"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
-        result = await plugin.tool_pre_invoke(payload, context)
+        await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_UNCONFIGURED_ENDPOINT.value
 
@@ -172,7 +170,7 @@ async def test_error_opa_server_unsupported_modality():
     payload = ToolPostInvokePayload(name="fast-time-git-status", result={"text": "IBM@example.com"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.UNSUPPORTED_POLICY_MODALITY.value
 

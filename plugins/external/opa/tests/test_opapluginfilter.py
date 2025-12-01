@@ -12,12 +12,10 @@ and started once, and further used by all test cases for policy evaluations.
 # Standard
 
 # Third-Party
-from opapluginfilter.plugin import OPAPluginFilter
 import pytest
 
 # First-Party
 from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
-# ideal way
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
@@ -31,6 +29,7 @@ from mcpgateway.plugins.framework import (
 )
 
 from mcpgateway.services.logging_service import LoggingService
+from opapluginfilter.plugin import OPAPluginFilter
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
