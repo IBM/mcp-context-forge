@@ -2758,7 +2758,7 @@ async def list_resource_templates(
     Returns:
         ListResourceTemplatesResult: A paginated list of resource templates.
     """
-    logger.debug(f"User {user} requested resource templates")
+    logger.info(f"User {user} requested resource templates")
     resource_templates = await resource_service.list_resource_templates(db)
     # For simplicity, we're not implementing real pagination here
     return ListResourceTemplatesResult(_meta={}, resource_templates=resource_templates, next_cursor=None)  # No pagination for now
@@ -2776,7 +2776,7 @@ async def toggle_resource_status(
     Activate or deactivate a resource by its ID.
 
     Args:
-        resource_id (int): The ID of the resource.
+        resource_id (str): The ID of the resource.
         activate (bool): True to activate, False to deactivate.
         db (Session): Database session.
         user (str): Authenticated user.
