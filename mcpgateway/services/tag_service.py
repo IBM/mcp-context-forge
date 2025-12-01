@@ -263,6 +263,13 @@ class TagService:
 
         Supports legacy string tags and new dict tags with an 'id' field.
         Falls back to 'label' or the string representation when 'id' is missing.
+
+        Args:
+            tag: Tag value which may be a string (legacy) or a dict with an
+                 'id' or 'label' key.
+
+        Returns:
+            The normalized tag id as a string.
         """
         if isinstance(tag, str):
             return tag
