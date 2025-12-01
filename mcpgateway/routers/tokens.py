@@ -18,15 +18,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import (
-    TokenCreateRequest,
-    TokenCreateResponse,
-    TokenListResponse,
-    TokenResponse,
-    TokenRevokeRequest,
-    TokenUpdateRequest,
-    TokenUsageStatsResponse,
-)
+from mcpgateway.schemas import TokenCreateRequest, TokenCreateResponse, TokenListResponse, TokenResponse, TokenRevokeRequest, TokenUpdateRequest, TokenUsageStatsResponse
 from mcpgateway.services.token_catalog_service import TokenCatalogService, TokenScope
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])

@@ -26,17 +26,8 @@ from mcp.server.fastmcp import FastMCP
 import uvicorn
 
 # First-Party
-from mcpgateway.plugins.framework import (
-    ExternalPluginServer,
-    MCPServerConfig,
-)
-from mcpgateway.plugins.framework.constants import (
-    GET_PLUGIN_CONFIG,
-    GET_PLUGIN_CONFIGS,
-    INVOKE_HOOK,
-    MCP_SERVER_INSTRUCTIONS,
-    MCP_SERVER_NAME,
-)
+from mcpgateway.plugins.framework import ExternalPluginServer, MCPServerConfig
+from mcpgateway.plugins.framework.constants import GET_PLUGIN_CONFIG, GET_PLUGIN_CONFIGS, INVOKE_HOOK, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME
 
 logger = logging.getLogger(__name__)
 
