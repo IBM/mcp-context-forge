@@ -800,7 +800,7 @@ async def get_configuration_settings(
         },
         "Email Authentication": {
             "email_auth_enabled": settings.email_auth_enabled,
-            "platform_admin_email": settings.platform_admin_email,
+            "platform_owner_email": settings.platform_owner_email,
             "platform_admin_password": mask_sensitive(settings.platform_admin_password, "password"),
         },
         "Database & Cache": {
