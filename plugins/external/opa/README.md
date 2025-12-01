@@ -275,6 +275,20 @@ make test
 The`make test` command executes a complete testing workflow: it launches an OPA server using the policy file located at ./opaserver/rego/policy.rego (as specified by `POLICY_PATH`), runs all test cases against this server, and automatically terminates the OPA server process once testing finishes.
 
 
+## Error Handling Verification
+    
+`OPA_SERVER_NONE_RESPONSE` = "OPA server returned an empty response" 
+`OPA_SERVER_ERROR` = "Error while communicating with the OPA server" 
+`OPA_SERVER_UNCONFIGURED_ENDPOINT` = "Policy endpoint not configured on the OPA server" 
+`UNSPECIFIED_REQUIRED_PARAMS` = "Required parameters missing: policy config, payload, or hook type"
+`UNSUPPORTED_HOOK_TYPE` = "Unsupported hook type (only tool, prompt, and resource are supported)"
+`INVALID_POLICY_ENDPOINT` = "Policy endpoint must be curated with the supported hooktypes" 
+`UNSPECIFIED_POLICY_MODALITY` = "Unspecified policy modality. Picking up default modality: text" 
+`UNSUPPORTED_POLICY_MODALITY` = "Unsupported policy modality (Supports text, image and resource)" 
+
+If OPA plugin encounters any of the errors above, it raises a PluginError. 
+The file `test_errors.py` includes unit tests to verify that these errors are correctly raised under the corresponding conditions.
+Run it using `make test`
 
 ## License
 
