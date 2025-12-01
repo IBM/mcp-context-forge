@@ -22839,8 +22839,11 @@ function initializeRealTimeMonitoring() {
 
     // --- Gateway Events ---
     // Handlers for specific states
-    eventSource.addEventListener("gateway_activated", (e) => handleEntityEvent("gateway", e));
+
     // eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_activated", (e) =>
+        handleEntityEvent("gateway", e),
+    );
     eventSource.addEventListener("gateway_offline", (e) =>
         handleEntityEvent("gateway", e),
     );
@@ -22848,8 +22851,10 @@ function initializeRealTimeMonitoring() {
     // --- Tool Events ---
     // Handlers for specific states
 
-    eventSource.addEventListener("tool_activated", (e) => handleEntityEvent("tool", e));
     // eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_activated", (e) =>
+        handleEntityEvent("tool", e),
+    );
     eventSource.addEventListener("tool_offline", (e) =>
         handleEntityEvent("tool", e),
     );
