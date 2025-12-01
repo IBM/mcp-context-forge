@@ -1996,6 +1996,7 @@ ENABLE_METRICS=false
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
+| `MAX_CONCURRENT_HEALTH_CHECKS` | Max Concurrent health checks        | `20`     | int > 0 |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 
