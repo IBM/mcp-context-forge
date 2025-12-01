@@ -1,0 +1,108 @@
+import logging
+import sys
+
+from fastmcp import FastMCP
+
+from qr_code_server.config import config
+from qr_code_server.tools.generator import QRGenerationRequest, create_qr_code
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stderr)],
+)
+logger = logging.getLogger("qr_code_server")
+
+
+# Initialize server
+mcp = FastMCP(name="qr-code-server", version="0.1.0")
+
+
+@mcp.tool(description="Generate QR code")
+async def generate_qr_code(
+    data: str,
+    format: str = "png",
+    size: int = config.qr_generation.default_size,
+    border: int = config.qr_generation.default_border,
+    error_correction: str = config.qr_generation.default_error_correction,
+    fill_color: str = "black",
+    back_color: str = "white",
+    save_path: str | None = config.output.default_directory,
+    return_base64: bool = False,
+) -> str | bytes:
+    request = QRGenerationRequest(
+        data=data,
+        format=format,
+        size=size,
+        border=border,
+        error_correction=error_correction,
+        fill_color=fill_color,
+        back_color=back_color,
+        save_path=save_path,
+        return_base64=return_base64,
+    )
+    try:
+        return create_qr_code(request)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@mcp.tool(description="Decode QR code from image file")
+async def decode_qr_code(
+    image_data: str,
+    image_format: str = "auto",
+    multiple_codes: bool = False,
+    return_positions: bool = False,
+    preprocessing: bool = True,
+):
+    pass
+
+
+@mcp.tool(description="Generate multiple QR codes")
+async def generate_batch_qr_codes(
+    data_list: list[str],
+    size: int = 10,
+    naming_pattern: str = "qr_{index}",
+    output_directory: str = "./qr_codes/",
+    zip_output: bool = False
+):
+    pass
+
+
+@mcp.tool(description="Validate and analyze QR code data before generation")
+async def validate_qr_data(
+    data: str,
+    target_version: int | None = None,  # QR code version (1-40),
+    error_correction: str = "M",
+    check_capacity: bool = True,
+    suggest_optimization: bool = True,
+):
+    pass
+
+
+def main():
+    """Main entry point for the FastMCP server."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="QR Code FastMCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "http"],
+        default="stdio",
+        help="Transport mode (stdio or http)",
+    )
+    parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
+    parser.add_argument("--port", type=int, default=9005, help="HTTP port")
+
+    args = parser.parse_args()
+
+    if args.transport == "http":
+        logger.info(f"Starting QR Code FastMCP Server on HTTP at {args.host}:{args.port}")
+        mcp.run(transport="http", host=args.host, port=args.port)
+    else:
+        logger.info("Starting QR Code FastMCP Server on stdio")
+        mcp.run()
+
+
+if __name__ == "__main__":
+    main()
