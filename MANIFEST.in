@@ -10,6 +10,7 @@ include pyproject.toml
 include gunicorn.config.py
 include Containerfile
 include Containerfile.lite
+include Containerfile.scratch
 include __init__
 include alembic.ini
 include tox.ini
