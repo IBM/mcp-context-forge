@@ -200,13 +200,13 @@ class EmailAuthService:
 
         Examples:
             >>> service = EmailAuthService(None)
-            >>> service.validate_password("password123")
+            >>> service.validate_password("Password123!")  # Meets all requirements
             True
             >>> service.validate_password("ValidPassword123!")
             True
-            >>> service.validate_password("shortpass")  # 8+ chars to meet default min_length
+            >>> service.validate_password("Shortpass!")  # 8+ chars with requirements
             True
-            >>> service.validate_password("verylongpasswordthatmeetsminimumrequirements")
+            >>> service.validate_password("VeryLongPasswordThatMeetsMinimumRequirements!")
             True
             >>> try:
             ...     service.validate_password("")
@@ -467,7 +467,7 @@ class EmailAuthService:
         # Validate old password is provided
         if old_password is None:
             raise AuthenticationError("Current password is required")
-            
+
         # First authenticate with old password
         user = await self.authenticate_user(email, old_password, ip_address, user_agent)
         if not user:
