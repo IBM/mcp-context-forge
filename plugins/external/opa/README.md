@@ -276,17 +276,17 @@ The`make test` command executes a complete testing workflow: it launches an OPA 
 
 
 ## Error Handling Verification
-    
-1. `OPA_SERVER_NONE_RESPONSE` = "OPA server returned an empty response" 
-2. `OPA_SERVER_ERROR` = "Error while communicating with the OPA server" 
-3. `OPA_SERVER_UNCONFIGURED_ENDPOINT` = "Policy endpoint not configured on the OPA server" 
+
+1. `OPA_SERVER_NONE_RESPONSE` = "OPA server returned an empty response"
+2. `OPA_SERVER_ERROR` = "Error while communicating with the OPA server"
+3. `OPA_SERVER_UNCONFIGURED_ENDPOINT` = "Policy endpoint not configured on the OPA server"
 4. `UNSPECIFIED_REQUIRED_PARAMS` = "Required parameters missing: policy config, payload, or hook type"
 5. `UNSUPPORTED_HOOK_TYPE` = "Unsupported hook type (only tool, prompt, and resource are supported)"
-6. `INVALID_POLICY_ENDPOINT` = "Policy endpoint must be curated with the supported hooktypes" 
-7. `UNSPECIFIED_POLICY_MODALITY` = "Unspecified policy modality. Picking up default modality: text" 
-8. `UNSUPPORTED_POLICY_MODALITY` = "Unsupported policy modality (Supports text, image and resource)" 
+6. `INVALID_POLICY_ENDPOINT` = "Policy endpoint must be curated with the supported hooktypes"
+7. `UNSPECIFIED_POLICY_MODALITY` = "Unspecified policy modality. Picking up default modality: text"
+8. `UNSUPPORTED_POLICY_MODALITY` = "Unsupported policy modality (Supports text, image and resource)"
 
-If OPA plugin encounters any of the errors above, it raises a PluginError. 
+If OPA plugin encounters any of the errors above, it raises a PluginError.
 The file `test_errors.py` includes unit tests to verify that these errors are correctly raised under the corresponding conditions.
 Run it using `make test`
 

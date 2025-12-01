@@ -22,7 +22,6 @@ from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-    PluginResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ResourcePostFetchPayload,

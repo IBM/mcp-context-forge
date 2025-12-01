@@ -12,7 +12,6 @@ from mcpgateway.common.models import Message, ResourceContent, Role, TextContent
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginManager,
-    PluginResult,
     ToolHookType,
     PromptHookType,
     ResourceHookType,
@@ -47,7 +46,7 @@ async def test_prompt_pre_hook(plugin_manager: PluginManager):
     """
     # Customize payload for testing
     payload = PromptPrehookPayload(prompt_id="test_prompt", args={"arg0": "This is an argument"})
-    global_context = GlobalContext(request_id="1")        
+    global_context = GlobalContext(request_id="1")
     result, _ = await plugin_manager.invoke_hook(PromptHookType.PROMPT_PRE_FETCH,payload, global_context)
     # Assert expected behaviors
     assert result.continue_processing
