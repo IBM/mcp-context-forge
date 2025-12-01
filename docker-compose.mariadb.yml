@@ -34,7 +34,7 @@ services:
       - JWT_SECRET_KEY=my-test-key
       - BASIC_AUTH_USER=admin
       - BASIC_AUTH_PASSWORD=changeme
-      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_OWNER_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - PLATFORM_ADMIN_FULL_NAME=Platform Administrator
       - SECURE_COOKIES=false

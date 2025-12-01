@@ -122,7 +122,7 @@ async def get_current_user_with_permissions(
         # If auth is disabled, return the stock admin user
         if not settings.auth_required:
             return {
-                "email": settings.platform_admin_email,
+                "email": settings.platform_owner_email,
                 "full_name": "Platform Admin",
                 "is_admin": True,
                 "ip_address": request.client.host if request.client else None,

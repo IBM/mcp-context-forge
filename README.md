@@ -515,7 +515,7 @@ cd mcp-context-forge/charts/mcp-stack
 
 # Install with MariaDB
 helm install mcp-gateway . \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_OWNER_EMAIL=admin@yourcompany.com \
   --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
   --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
   --set postgres.enabled=false \
@@ -523,7 +523,7 @@ helm install mcp-gateway . \
 
 # Or install with PostgreSQL (default)
 helm install mcp-gateway . \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_OWNER_EMAIL=admin@yourcompany.com \
   --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
   --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
 
