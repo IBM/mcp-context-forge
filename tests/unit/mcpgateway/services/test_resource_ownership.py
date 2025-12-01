@@ -157,17 +157,16 @@ class TestGatewayServiceOwnership:
         mock_gateway.owner_email = "owner@example.com"
         mock_gateway.name = "Test Gateway"
 
+        mock_gateway.visibility = "private"
+        mock_gateway.team_id = None
+
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
+        await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="owner@example.com")
 
-            await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="owner@example.com")
-
-            mock_db_session.delete.assert_called_once_with(mock_gateway)
-            mock_db_session.commit.assert_called_once()
+        mock_db_session.delete.assert_called_once_with(mock_gateway)
+        mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_gateway_non_owner_denied(self, gateway_service, mock_db_session):
@@ -176,17 +175,16 @@ class TestGatewayServiceOwnership:
         mock_gateway.id = "gateway-1"
         mock_gateway.owner_email = "owner@example.com"
 
+        mock_gateway.visibility = "private"
+        mock_gateway.team_id = None
+
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
+        with pytest.raises(PermissionError, match="User does not have write access to gateway"):
+            await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="other@example.com")
 
-            with pytest.raises(PermissionError, match="Only the owner can delete this gateway"):
-                await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="other@example.com")
-
-            mock_db_session.delete.assert_not_called()
+        mock_db_session.delete.assert_not_called()
 
 
 class TestServerServiceOwnership:
@@ -205,16 +203,15 @@ class TestServerServiceOwnership:
         mock_server.owner_email = "owner@example.com"
         mock_server.name = "Test Server"
 
+        mock_server.visibility = "private"
+        mock_server.team_id = None
+
         mock_db_session.get.return_value = mock_server
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
+        await server_service.delete_server(mock_db_session, "server-1", user_email="owner@example.com")
 
-            await server_service.delete_server(mock_db_session, "server-1", user_email="owner@example.com")
-
-            mock_db_session.delete.assert_called_once_with(mock_server)
-            mock_db_session.commit.assert_called_once()
+        mock_db_session.delete.assert_called_once_with(mock_server)
+        mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_server_non_owner_denied(self, server_service, mock_db_session):
@@ -223,16 +220,15 @@ class TestServerServiceOwnership:
         mock_server.id = "server-1"
         mock_server.owner_email = "owner@example.com"
 
+        mock_server.visibility = "private"
+        mock_server.team_id = None
+
         mock_db_session.get.return_value = mock_server
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
+        with pytest.raises(PermissionError, match="User other@example.com does not have permission to delete server"):
+            await server_service.delete_server(mock_db_session, "server-1", user_email="other@example.com")
 
-            with pytest.raises(PermissionError, match="Only the owner can delete this server"):
-                await server_service.delete_server(mock_db_session, "server-1", user_email="other@example.com")
-
-            mock_db_session.delete.assert_not_called()
+        mock_db_session.delete.assert_not_called()
 
 
 class TestToolServiceOwnership:
@@ -251,16 +247,15 @@ class TestToolServiceOwnership:
         mock_tool.owner_email = "owner@example.com"
         mock_tool.name = "Test Tool"
 
+        mock_tool.visibility = "private"
+        mock_tool.team_id = None
+
         mock_db_session.get.return_value = mock_tool
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=True)
+        await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
 
-            await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
-
-            mock_db_session.delete.assert_called_once_with(mock_tool)
-            mock_db_session.commit.assert_called_once()
+        mock_db_session.delete.assert_called_once_with(mock_tool)
+        mock_db_session.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_tool_non_owner_denied(self, tool_service, mock_db_session):
@@ -269,16 +264,15 @@ class TestToolServiceOwnership:
         mock_tool.id = "tool-1"
         mock_tool.owner_email = "owner@example.com"
 
+        mock_tool.visibility = "private"
+        mock_tool.team_id = None
+
         mock_db_session.get.return_value = mock_tool
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
+        with pytest.raises(PermissionError, match="User does not have permission to delete tool"):
+            await tool_service.delete_tool(mock_db_session, "tool-1", user_email="other@example.com")
 
-            with pytest.raises(PermissionError, match="Only the owner can delete this tool"):
-                await tool_service.delete_tool(mock_db_session, "tool-1", user_email="other@example.com")
-
-            mock_db_session.delete.assert_not_called()
+        mock_db_session.delete.assert_not_called()
 
 
 class TestResourcePromptA2AOwnership:
@@ -306,16 +300,16 @@ class TestResourcePromptA2AOwnership:
         mock_resource.uri = "test://resource"
         mock_resource.owner_email = "owner@example.com"
 
+        mock_resource.visibility = "private"
+        mock_resource.team_id = None
+        mock_resource.id = "resource-1"
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_resource
         mock_db_session.execute.return_value = mock_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
-
-            with pytest.raises(PermissionError, match="Only the owner can delete this resource"):
-                await resource_service.delete_resource(mock_db_session, "test://resource", user_email="other@example.com")
+        with pytest.raises(PermissionError, match="User does not have write access to resource"):
+            await resource_service.delete_resource(mock_db_session, "resource-1", user_email="other@example.com")
 
     @pytest.mark.asyncio
     async def test_delete_prompt_non_owner_denied(self, prompt_service, mock_db_session):
@@ -324,16 +318,16 @@ class TestResourcePromptA2AOwnership:
         mock_prompt.name = "test-prompt"
         mock_prompt.owner_email = "owner@example.com"
 
+        mock_prompt.visibility = "private"
+        mock_prompt.team_id = None
+        mock_prompt.id = "prompt-1"
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_prompt
-        mock_db_session.execute.return_value = mock_result
+        mock_db_session.get.return_value = mock_prompt
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
-
-            with pytest.raises(PermissionError, match="Only the owner can delete this prompt"):
-                await prompt_service.delete_prompt(mock_db_session, "test-prompt", user_email="other@example.com")
+        with pytest.raises(PermissionError, match="User does not have write access to prompt"):
+            await prompt_service.delete_prompt(mock_db_session, "prompt-1", user_email="other@example.com")
 
     @pytest.mark.asyncio
     async def test_delete_a2a_agent_non_owner_denied(self, a2a_service, mock_db_session):
@@ -342,16 +336,15 @@ class TestResourcePromptA2AOwnership:
         mock_agent.id = "agent-1"
         mock_agent.owner_email = "owner@example.com"
 
+        mock_agent.visibility = "private"
+        mock_agent.team_id = None
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_agent
         mock_db_session.execute.return_value = mock_result
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
-
-            with pytest.raises(PermissionError, match="Only the owner can delete this agent"):
-                await a2a_service.delete_agent(mock_db_session, "agent-1", user_email="other@example.com")
+        with pytest.raises(PermissionError, match="User does not have write access to agent"):
+            await a2a_service.delete_agent(mock_db_session, "agent-1", user_email="other@example.com")
 
 
 class TestUpdateOperationsOwnership:
@@ -371,17 +364,16 @@ class TestUpdateOperationsOwnership:
         mock_gateway.id = "gateway-1"
         mock_gateway.owner_email = "owner@example.com"
 
+        mock_gateway.visibility = "private"
+        mock_gateway.team_id = None
+
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
         gateway_update = GatewayUpdate(name="Updated Name")
 
-        with patch("mcpgateway.services.permission_service.PermissionService") as mock_perm_service_class:
-            mock_perm_service = mock_perm_service_class.return_value
-            mock_perm_service.check_resource_ownership = AsyncMock(return_value=False)
-
-            with pytest.raises(PermissionError, match="Only the owner can update this gateway"):
-                await gateway_service.update_gateway(mock_db_session, "gateway-1", gateway_update, user_email="other@example.com")
+        with pytest.raises(PermissionError, match="User does not have write access to gateway"):
+            await gateway_service.update_gateway(mock_db_session, "gateway-1", gateway_update, user_email="other@example.com")
 
 
 class TestTeamAdminSpecialCase:
