@@ -1229,7 +1229,16 @@ class ServerService:
             >>> from unittest.mock import MagicMock
             >>> service = ServerService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar.return_value = 0
+            >>> # Mocking the result to return values that can be compared with integers
+            >>> db.execute.return_value.one.return_value = MagicMock(
+            ...     total_executions=10,
+            ...     successful_executions=8,
+            ...     failed_executions=2,
+            ...     min_response_time=0.1,
+            ...     max_response_time=0.5,
+            ...     avg_response_time=0.3,
+            ...     last_execution_time="2023-12-01T12:00:00"
+            ... )
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> hasattr(result, 'total_executions')
