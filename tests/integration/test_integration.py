@@ -210,7 +210,7 @@ MOCK_SERVER = ServerRead(
 )
 
 MOCK_RESOURCE = ResourceRead(
-    id=1,
+    id="39334ce0ed2644d79ede8913a66930c9",
     uri="file:///tmp/hello.txt",
     name="Hello",
     description="demo text",

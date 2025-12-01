@@ -913,7 +913,7 @@ class TestAdminPromptRoutes:
     async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_db):
         """Test getting prompt with detailed metrics."""
         mock_get_prompt_details.return_value = {
-            "id": 1,
+            "id": "ca627760127d409080fdefc309147e08",
             "name": "test-prompt",
             "template": "Test {{var}}",
             "description": "Test prompt",
