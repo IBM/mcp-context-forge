@@ -17,7 +17,7 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 # First-Party
 from mcpgateway.config import settings
@@ -810,7 +810,7 @@ class RoleService:
         Returns:
             List[UserRole]: List of all active roles for the user
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).options(joinedload(UserRole.role)).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         # Filter out expired roles
         now = utc_now()
