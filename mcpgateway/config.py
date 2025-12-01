@@ -926,7 +926,7 @@ class Settings(BaseSettings):
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
     max_concurrent_health_checks: int = 20  # maximum concurrent health checks per worker
- 
+
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
     gateway_max_redirects: int = 5

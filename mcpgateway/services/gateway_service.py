@@ -2156,7 +2156,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             chunk_size = concurrency_limit
             for i in range(0, len(gateways), chunk_size):
                 # batch will be a sublist of gateways from index i to i + chunk_size
-                batch = gateways[i:i + chunk_size]
+                batch = gateways[i : i + chunk_size]
 
                 # Each task is a health check for a gateway in the batch, excluding those with auth_type == "one_time_auth"
                 tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth"]
@@ -2166,7 +2166,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await asyncio.sleep(0.05)  # small pause prevents network saturation
 
             elapsed = time.monotonic() - start_time
-            
+
             if batch_span:
                 batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
                 batch_span.set_attribute("check.completed", True)
