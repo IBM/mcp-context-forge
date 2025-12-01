@@ -221,15 +221,38 @@ class ServerService:
         """
         server_dict = server.__dict__.copy()
         server_dict.pop("_sa_instance_state", None)
-        # Compute aggregated metrics from server.metrics; default to 0/None when no records exist.
-        total = len(server.metrics) if hasattr(server, "metrics") else 0
-        successful = sum(1 for m in server.metrics if m.is_success) if total > 0 else 0
-        failed = sum(1 for m in server.metrics if not m.is_success) if total > 0 else 0
+        
+        # Compute aggregated metrics from server.metrics in a single pass; default to 0/None when no records exist.
+        total = 0
+        successful = 0
+        failed = 0
+        min_rt = None
+        max_rt = None
+        sum_rt = 0.0
+        last_time = None
+        
+        if hasattr(server, "metrics") and server.metrics:
+            for m in server.metrics:
+                total += 1
+                if m.is_success:
+                    successful += 1
+                else:
+                    failed += 1
+                
+                # Track min/max response times
+                if min_rt is None or m.response_time < min_rt:
+                    min_rt = m.response_time
+                if max_rt is None or m.response_time > max_rt:
+                    max_rt = m.response_time
+                
+                sum_rt += m.response_time
+                
+                # Track last execution time
+                if last_time is None or m.timestamp > last_time:
+                    last_time = m.timestamp
+        
         failure_rate = (failed / total) if total > 0 else 0.0
-        min_rt = min((m.response_time for m in server.metrics), default=None) if total > 0 else None
-        max_rt = max((m.response_time for m in server.metrics), default=None) if total > 0 else None
-        avg_rt = (sum(m.response_time for m in server.metrics) / total) if total > 0 else None
-        last_time = max((m.timestamp for m in server.metrics), default=None) if total > 0 else None
+        avg_rt = (sum_rt / total) if total > 0 else None
 
         server_dict["metrics"] = {
             "total_executions": total,
@@ -424,48 +447,82 @@ class ServerService:
                 db_server.id = server_in.id
             db.add(db_server)
 
-            # Associate tools, verifying each exists.
+            # Associate tools, verifying each exists using bulk query when multiple items
             if server_in.associated_tools:
-                for tool_id in server_in.associated_tools:
-                    if tool_id.strip() == "":
-                        continue
-                    tool_obj = db.get(DbTool, tool_id)
+                tool_ids = [tool_id.strip() for tool_id in server_in.associated_tools if tool_id.strip()]
+                if len(tool_ids) > 1:
+                    # Use bulk query for multiple items
+                    tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+                    found_tool_ids = {tool.id for tool in tools}
+                    missing_tool_ids = set(tool_ids) - found_tool_ids
+                    if missing_tool_ids:
+                        raise ServerError(f"Tools with ids {missing_tool_ids} do not exist.")
+                    db_server.tools.extend(tools)
+                elif tool_ids:
+                    # Use single query for single item (maintains test compatibility)
+                    tool_obj = db.get(DbTool, tool_ids[0])
                     if not tool_obj:
-                        raise ServerError(f"Tool with id {tool_id} does not exist.")
+                        raise ServerError(f"Tool with id {tool_ids[0]} does not exist.")
                     db_server.tools.append(tool_obj)
 
-            # Associate resources, verifying each exists.
+            # Associate resources, verifying each exists using bulk query when multiple items
             if server_in.associated_resources:
-                for resource_id in server_in.associated_resources:
-                    if resource_id.strip() == "":
-                        continue
-                    resource_obj = db.get(DbResource, int(resource_id))
+                resource_ids = [int(resource_id.strip()) for resource_id in server_in.associated_resources if resource_id.strip()]
+                if len(resource_ids) > 1:
+                    # Use bulk query for multiple items
+                    resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
+                    found_resource_ids = {resource.id for resource in resources}
+                    missing_resource_ids = set(resource_ids) - found_resource_ids
+                    if missing_resource_ids:
+                        raise ServerError(f"Resources with ids {missing_resource_ids} do not exist.")
+                    db_server.resources.extend(resources)
+                elif resource_ids:
+                    # Use single query for single item (maintains test compatibility)
+                    resource_obj = db.get(DbResource, resource_ids[0])
                     if not resource_obj:
-                        raise ServerError(f"Resource with id {resource_id} does not exist.")
+                        raise ServerError(f"Resource with id {resource_ids[0]} does not exist.")
                     db_server.resources.append(resource_obj)
 
-            # Associate prompts, verifying each exists.
+            # Associate prompts, verifying each exists using bulk query when multiple items
             if server_in.associated_prompts:
-                for prompt_id in server_in.associated_prompts:
-                    if prompt_id.strip() == "":
-                        continue
-                    prompt_obj = db.get(DbPrompt, int(prompt_id))
+                prompt_ids = [int(prompt_id.strip()) for prompt_id in server_in.associated_prompts if prompt_id.strip()]
+                if len(prompt_ids) > 1:
+                    # Use bulk query for multiple items
+                    prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
+                    found_prompt_ids = {prompt.id for prompt in prompts}
+                    missing_prompt_ids = set(prompt_ids) - found_prompt_ids
+                    if missing_prompt_ids:
+                        raise ServerError(f"Prompts with ids {missing_prompt_ids} do not exist.")
+                    db_server.prompts.extend(prompts)
+                elif prompt_ids:
+                    # Use single query for single item (maintains test compatibility)
+                    prompt_obj = db.get(DbPrompt, prompt_ids[0])
                     if not prompt_obj:
-                        raise ServerError(f"Prompt with id {prompt_id} does not exist.")
+                        raise ServerError(f"Prompt with id {prompt_ids[0]} does not exist.")
                     db_server.prompts.append(prompt_obj)
 
-            # Associate A2A agents, verifying each exists and creating corresponding tools
+            # Associate A2A agents, verifying each exists using bulk query when multiple items
             if server_in.associated_a2a_agents:
-                for agent_id in server_in.associated_a2a_agents:
-                    if agent_id.strip() == "":
-                        continue
-                    agent_obj = db.get(DbA2AAgent, agent_id)
-                    if not agent_obj:
-                        raise ServerError(f"A2A Agent with id {agent_id} does not exist.")
-                    db_server.a2a_agents.append(agent_obj)
+                agent_ids = [agent_id.strip() for agent_id in server_in.associated_a2a_agents if agent_id.strip()]
+                if len(agent_ids) > 1:
+                    # Use bulk query for multiple items
+                    agents = db.execute(select(DbA2AAgent).where(DbA2AAgent.id.in_(agent_ids))).scalars().all()
+                    found_agent_ids = {agent.id for agent in agents}
+                    missing_agent_ids = set(agent_ids) - found_agent_ids
+                    if missing_agent_ids:
+                        raise ServerError(f"A2A Agents with ids {missing_agent_ids} do not exist.")
+                    db_server.a2a_agents.extend(agents)
 
                     # Note: Auto-tool creation for A2A agents should be handled
                     # by a separate service or background task to avoid circular imports
+                    for agent in agents:
+                        logger.info(f"A2A agent {agent.name} associated with server {db_server.name}")
+                elif agent_ids:
+                    # Use single query for single item (maintains test compatibility)
+                    agent_obj = db.get(DbA2AAgent, agent_ids[0])
+                    if not agent_obj:
+                        raise ServerError(f"A2A Agent with id {agent_ids[0]} does not exist.")
+                    db_server.a2a_agents.append(agent_obj)
                     logger.info(f"A2A agent {agent_obj.name} associated with server {db_server.name}")
 
             # Commit the new record and refresh.
@@ -536,10 +593,20 @@ class ServerService:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
+        
+        # Fetch all team names
+        team_ids = [s.team_id for s in servers if s.team_id]
+        team_map = {}
+        if team_ids:
+            teams = db.execute(
+                select(DbEmailTeam.id, DbEmailTeam.name)
+                .where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))
+            ).all()
+            team_map = {team.id: team.name for team in teams}
+        
         result = []
         for s in servers:
-            s.team = self._get_team_name(db, s.team_id)
-
+            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s))
 
         return result
@@ -609,10 +676,20 @@ class ServerService:
         query = query.offset(skip).limit(limit)
 
         servers = db.execute(query).scalars().all()
+        
+        # Fetch all team names 
+        server_team_ids = [s.team_id for s in servers if s.team_id]
+        team_map = {}
+        if server_team_ids:
+            teams = db.execute(
+                select(DbEmailTeam.id, DbEmailTeam.name)
+                .where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))
+            ).all()
+            team_map = {team.id: team.name for team in teams}
+        
         result = []
         for s in servers:
-            s.team = self._get_team_name(db, s.team_id)
-
+            s.team = team_map.get(s.team_id) if s.team_id else None
             result.append(self._convert_server_to_read(s))
         return result
 
@@ -800,29 +877,32 @@ class ServerService:
             if server_update.owner_email is not None:
                 server.owner_email = server_update.owner_email
 
-            # Update associated tools if provided
+            # Update associated tools if provided using bulk query
             if server_update.associated_tools is not None:
                 server.tools = []
-                for tool_id in server_update.associated_tools:
-                    tool_obj = db.get(DbTool, tool_id)
-                    if tool_obj:
-                        server.tools.append(tool_obj)
+                if server_update.associated_tools:
+                    tool_ids = [tool_id for tool_id in server_update.associated_tools if tool_id]
+                    if tool_ids:
+                        tools = db.execute(select(DbTool).where(DbTool.id.in_(tool_ids))).scalars().all()
+                        server.tools = list(tools)
 
-            # Update associated resources if provided
+            # Update associated resources if provided using bulk query
             if server_update.associated_resources is not None:
                 server.resources = []
-                for resource_id in server_update.associated_resources:
-                    resource_obj = db.get(DbResource, int(resource_id))
-                    if resource_obj:
-                        server.resources.append(resource_obj)
+                if server_update.associated_resources:
+                    resource_ids = [int(resource_id) for resource_id in server_update.associated_resources if resource_id]
+                    if resource_ids:
+                        resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
+                        server.resources = list(resources)
 
-            # Update associated prompts if provided
+            # Update associated prompts if provided using bulk query
             if server_update.associated_prompts is not None:
                 server.prompts = []
-                for prompt_id in server_update.associated_prompts:
-                    prompt_obj = db.get(DbPrompt, int(prompt_id))
-                    if prompt_obj:
-                        server.prompts.append(prompt_obj)
+                if server_update.associated_prompts:
+                    prompt_ids = [int(prompt_id) for prompt_id in server_update.associated_prompts if prompt_id]
+                    if prompt_ids:
+                        prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
+                        server.prompts = list(prompts)
 
             # Update tags if provided
             if server_update.tags is not None:
@@ -1161,29 +1241,32 @@ class ServerService:
             >>> hasattr(result, 'total_executions')
             True
         """
-        total_executions = db.execute(select(func.count()).select_from(ServerMetric)).scalar() or 0  # pylint: disable=not-callable
+        # Execute a single query to get all metrics at once
+        result = db.execute(
+            select(
+                func.count().label("total_executions"),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(True), 1), else_=0)).label("successful_executions"),  # pylint: disable=not-callable
+                func.sum(case((ServerMetric.is_success.is_(False), 1), else_=0)).label("failed_executions"),  # pylint: disable=not-callable
+                func.min(ServerMetric.response_time).label("min_response_time"),  # pylint: disable=not-callable
+                func.max(ServerMetric.response_time).label("max_response_time"),  # pylint: disable=not-callable
+                func.avg(ServerMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
+                func.max(ServerMetric.timestamp).label("last_execution_time"),  # pylint: disable=not-callable
+            ).select_from(ServerMetric)
+        ).one()
 
-        successful_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
-
-        failed_executions = db.execute(select(func.count()).select_from(ServerMetric).where(ServerMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
-
-        min_response_time = db.execute(select(func.min(ServerMetric.response_time))).scalar()
-
-        max_response_time = db.execute(select(func.max(ServerMetric.response_time))).scalar()
-
-        avg_response_time = db.execute(select(func.avg(ServerMetric.response_time))).scalar()
-
-        last_execution_time = db.execute(select(func.max(ServerMetric.timestamp))).scalar()
+        total_executions = result.total_executions or 0
+        successful_executions = result.successful_executions or 0
+        failed_executions = result.failed_executions or 0
 
         return ServerMetrics(
             total_executions=total_executions,
             successful_executions=successful_executions,
             failed_executions=failed_executions,
             failure_rate=(failed_executions / total_executions) if total_executions > 0 else 0.0,
-            min_response_time=min_response_time,
-            max_response_time=max_response_time,
-            avg_response_time=avg_response_time,
-            last_execution_time=last_execution_time,
+            min_response_time=result.min_response_time,
+            max_response_time=result.max_response_time,
+            avg_response_time=result.avg_response_time,
+            last_execution_time=result.last_execution_time,
         )
 
     async def reset_metrics(self, db: Session) -> None:
