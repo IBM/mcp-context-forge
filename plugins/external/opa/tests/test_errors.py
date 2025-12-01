@@ -60,7 +60,6 @@ async def test_error_opa_server_error():
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_ERROR.value
 
 
-
 @pytest.mark.asyncio
 # Test for when opaplugin is configured with invalid endpoint
 async def test_error_opa_server_invalid_endpoint():
@@ -89,6 +88,7 @@ async def test_error_opa_server_invalid_endpoint():
         await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.INVALID_POLICY_ENDPOINT.value
+
 
 @pytest.mark.asyncio
 # Test for when opaplugin opa server sends none response
@@ -119,6 +119,7 @@ async def test_error_opa_server_none_response():
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value
 
+
 @pytest.mark.asyncio
 # Test for when opaplugin is configured with no policy endpoint
 async def test_error_opa_server_unconfigured_endpoint():
@@ -144,6 +145,7 @@ async def test_error_opa_server_unconfigured_endpoint():
         await plugin.tool_pre_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_UNCONFIGURED_ENDPOINT.value
+
 
 @pytest.mark.asyncio
 # Test for when opaplugin if not supported policy modality location has been used in configuration
@@ -173,6 +175,7 @@ async def test_error_opa_server_unsupported_modality():
         await plugin.tool_post_invoke(payload, context)
     except Exception as e:
         assert e.error.message == OPAPluginErrorCodes.UNSUPPORTED_POLICY_MODALITY.value
+
 
 @pytest.mark.asyncio
 # Test for when opaplugin has not been configured with a policy modality. The expected behavior is to pick up default policy modality as text
