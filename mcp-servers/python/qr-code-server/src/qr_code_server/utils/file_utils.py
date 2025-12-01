@@ -14,8 +14,12 @@ def resolve_output_path(output_path: str, default_path: str, file_extension: str
     - If output_path is a directory, use DEFAULT_FILE_NAME inside it.
     """
 
-    raw_path = os.path.abspath(os.path.expanduser(output_path or default_path))
-    base, filename = os.path.split(raw_path)
+    raw_path = os.path.expanduser(output_path or default_path)
+    if raw_path.endswith(os.sep):
+        base = raw_path
+        filename = ""
+    else:
+        base, filename = os.path.split(raw_path)
     try:
         os.makedirs(base, exist_ok=True)
     except (OSError, FileExistsError) as e:
@@ -24,7 +28,7 @@ def resolve_output_path(output_path: str, default_path: str, file_extension: str
 
     _, ext = os.path.splitext(filename)
     # in case the user gave path + filename.ext with correct extension
-    if ext.lstrip(".") == file_extension:
+    if ext.lstrip(".").lower() == file_extension.lower():
         return raw_path
 
     return os.path.join(base, DEFAULT_FILE_NAME)
