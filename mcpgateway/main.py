@@ -2767,7 +2767,7 @@ async def list_resource_templates(
 @resource_router.post("/{resource_id}/toggle")
 @require_permission("resources.update")
 async def toggle_resource_status(
-    resource_id: int,
+    resource_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -3126,7 +3126,7 @@ async def subscribe_resource(user=Depends(get_current_user_with_permissions)) ->
 @prompt_router.post("/{prompt_id}/toggle")
 @require_permission("prompts.update")
 async def toggle_prompt_status(
-    prompt_id: int,
+    prompt_id: str,
     activate: bool = True,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),

@@ -1771,7 +1771,7 @@ class ResourceRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the resource invocations.
     """
 
-    id: int
+    id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
     description: Optional[str]
@@ -2280,7 +2280,7 @@ class PromptRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the prompt invocations.
     """
 
-    id: int
+    id: str = Field(description="Unique ID of the prompt")
     name: str
     description: Optional[str]
     template: str

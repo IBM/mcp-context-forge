@@ -8083,7 +8083,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
 
 @admin_router.get("/resources/{resource_id}")
-async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
@@ -8532,7 +8532,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
 @admin_router.post("/resources/{resource_id}/toggle")
 async def admin_toggle_resource(
-    resource_id: int,
+    resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8656,7 +8656,7 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{prompt_id}")
-async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
@@ -8943,8 +8943,7 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
-    LOGGER.info(f"form data: {form}")
-
+    
     visibility = str(form.get("visibility", "private"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
@@ -9087,7 +9086,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
 async def admin_toggle_prompt(
-    prompt_id: int,
+    prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
