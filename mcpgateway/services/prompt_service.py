@@ -736,20 +736,7 @@ class PromptService:
         ) as span:
             try:
                 # Determine how to look up the prompt
-                prompt_id_int = None
                 prompt_name = None
-
-                if isinstance(prompt_id, int):
-                    prompt_id_int = prompt_id
-                elif isinstance(prompt_id, str):
-                    # Try to convert to int first (for backward compatibility with numeric string IDs)
-                    try:
-                        prompt_id_int = int(prompt_id)
-                    except ValueError:
-                        # Not a numeric string, treat as prompt name
-                        prompt_name = prompt_id
-                else:
-                    prompt_id_int = prompt_id
 
                 if self._plugin_manager:
                     # Use existing context_table from previous hooks if available
@@ -773,7 +760,7 @@ class PromptService:
 
                     pre_result, context_table = await self._plugin_manager.invoke_hook(
                         PromptHookType.PROMPT_PRE_FETCH,
-                        payload=PromptPrehookPayload(prompt_id=str(prompt_id), args=arguments),
+                        payload=PromptPrehookPayload(prompt_id=prompt_id, args=arguments),
                         global_context=global_context,
                         local_contexts=context_table,  # Pass context from previous hooks
                         violations_as_exceptions=True,
@@ -782,23 +769,12 @@ class PromptService:
                     # Use modified payload if provided
                     if pre_result.modified_payload:
                         payload = pre_result.modified_payload
-                        # Re-parse the modified prompt_id
-                        if isinstance(payload.prompt_id, int):
-                            prompt_id_int = payload.prompt_id
-                            prompt_name = None
-                        elif isinstance(payload.prompt_id, str):
-                            try:
-                                prompt_id_int = int(payload.prompt_id)
-                                prompt_name = None
-                            except ValueError:
-                                prompt_name = payload.prompt_id
-                                prompt_id_int = None
                         arguments = payload.args
 
                 # Find prompt by ID or name
-                if prompt_id_int is not None:
-                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(DbPrompt.is_active)).scalar_one_or_none()
-                    search_key = prompt_id_int
+                if prompt_id is not None:
+                    prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(DbPrompt.is_active)).scalar_one_or_none()
+                    search_key = prompt_id
                 else:
                     # Look up by name (active prompts only)
                     # Note: Team/owner scoping could be added here when user context is available
@@ -807,8 +783,8 @@ class PromptService:
 
                 if not prompt:
                     # Check if an inactive prompt exists
-                    if prompt_id_int is not None:
-                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id_int).where(not_(DbPrompt.is_active))).scalar_one_or_none()
+                    if prompt_id is not None:
+                        inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.id == prompt_id).where(not_(DbPrompt.is_active))).scalar_one_or_none()
                     else:
                         inactive_prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(not_(DbPrompt.is_active))).scalar_one_or_none()
 
@@ -858,6 +834,7 @@ class PromptService:
                         span.set_attribute("messages.count", len(result.messages))
 
                 success = True
+                logger.info(f"Retrieved prompt: {prompt.id} successfully")
                 return result
 
             except Exception as e:
