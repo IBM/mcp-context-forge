@@ -6,7 +6,7 @@ You can run MCP Gateway as a fully self-contained container. This is the recomme
 
 ## Quick Start (Pre-built Container Image)
 
-If you just want to run the gateway using the official OCI container image from GitHub Container Registry use the commands below.
+If you just want to run the gateway using the official OCI container image from GitHub Container Registry:
 
 ```bash
 docker run -d --name mcpgateway \
