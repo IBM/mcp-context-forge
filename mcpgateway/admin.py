@@ -8546,7 +8546,7 @@ async def admin_toggle_resource(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        resource_id (int): The ID of the resource whose status to toggle.
+        resource_id (str): The ID of the resource whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -8943,7 +8943,7 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
-    
+
     visibility = str(form.get("visibility", "private"))
     user_email = get_user_email(user)
     # Determine personal team for default assignment
@@ -9100,7 +9100,7 @@ async def admin_toggle_prompt(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        prompt_id (int): The ID of the prompt whose status to toggle.
+        prompt_id (str): The ID of the prompt whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.

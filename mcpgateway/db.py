@@ -2210,7 +2210,6 @@ class Resource(Base):
 
     __tablename__ = "resources"
 
-    #id: Mapped[int] = mapped_column(primary_key=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -2470,7 +2469,6 @@ class Prompt(Base):
 
     __tablename__ = "prompts"
 
-    #id: Mapped[int] = mapped_column(primary_key=True)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
