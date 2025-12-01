@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, UserRole, Role
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 
@@ -401,19 +401,32 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
+            mock_settings.default_global_role_admin = "platform_owner"
+            mock_settings.default_global_role_member = "platform_member"
 
             # Need to also patch where validate_password imports settings
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
-                # Create user
-                result = await service.create_user(email="newuser@example.com", password="SecurePass123", full_name="New User", is_admin=False, auth_provider="local")
+                with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                    mock_role_service = MockRoleService.return_value
+                    mock_role = MagicMock()
+                    mock_role.id = "role_id"
+                    mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+                    mock_role_service.assign_role_to_user = AsyncMock()
 
-                # Verify user was added to database
-                mock_db.add.assert_called()
-                mock_db.commit.assert_called()
-                mock_db.refresh.assert_called()
+                    # Create user
+                    result = await service.create_user(email="newuser@example.com", password="SecurePass123", full_name="New User", is_admin=False, auth_provider="local")
 
-                # Verify password was hashed
-                mock_password_service.hash_password.assert_called_once_with("SecurePass123")
+                    # Verify user was added to database
+                    mock_db.add.assert_called()
+                    mock_db.commit.assert_called()
+                    mock_db.refresh.assert_called()
+
+                    # Verify password was hashed
+                    mock_password_service.hash_password.assert_called_once_with("SecurePass123")
+                    
+                    # Verify role assignment
+                    mock_role_service.get_role_by_name.assert_called()
+                    mock_role_service.assign_role_to_user.assert_called()
 
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
@@ -431,16 +444,23 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.PersonalTeamService") as MockPersonalTeamService:
-                mock_personal_team_service = MockPersonalTeamService.return_value
-                mock_team = MagicMock()
-                mock_team.name = "Personal Team"
-                mock_personal_team_service.create_personal_team = AsyncMock(return_value=mock_team)
+                with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                    mock_role_service = MockRoleService.return_value
+                    mock_role = MagicMock()
+                    mock_role.id = "role_id"
+                    mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+                    mock_role_service.assign_role_to_user = AsyncMock()
 
-                result = await service.create_user(email="user@example.com", password="Pass123", full_name="User Name")
+                    mock_personal_team_service = MockPersonalTeamService.return_value
+                    mock_team = MagicMock()
+                    mock_team.name = "Personal Team"
+                    mock_personal_team_service.create_personal_team = AsyncMock(return_value=mock_team)
 
-                # Verify personal team service was called
-                MockPersonalTeamService.assert_called_once_with(mock_db)
-                mock_personal_team_service.create_personal_team.assert_called_once()
+                    result = await service.create_user(email="user@example.com", password="Pass123", full_name="User Name")
+
+                    # Verify personal team service was called
+                    MockPersonalTeamService.assert_called_once_with(mock_db)
+                    mock_personal_team_service.create_personal_team.assert_called_once()
 
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
@@ -458,16 +478,23 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.PersonalTeamService") as MockPersonalTeamService:
-                # Make personal team creation fail
-                mock_personal_team_service = MockPersonalTeamService.return_value
-                mock_personal_team_service.create_personal_team = AsyncMock(side_effect=Exception("Team creation failed"))
+                with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                    mock_role_service = MockRoleService.return_value
+                    mock_role = MagicMock()
+                    mock_role.id = "role_id"
+                    mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+                    mock_role_service.assign_role_to_user = AsyncMock()
 
-                # User creation should still succeed
-                result = await service.create_user(email="user@example.com", password="Pass123")
+                    # Make personal team creation fail
+                    mock_personal_team_service = MockPersonalTeamService.return_value
+                    mock_personal_team_service.create_personal_team = AsyncMock(side_effect=Exception("Team creation failed"))
 
-                # User should have been created despite team failure
-                mock_db.add.assert_called()
-                mock_db.commit.assert_called()
+                    # User creation should still succeed
+                    result = await service.create_user(email="user@example.com", password="Pass123")
+
+                    # User should have been created despite team failure
+                    mock_db.add.assert_called()
+                    mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_create_user_already_exists(self, service, mock_db, mock_user):
@@ -538,15 +565,24 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
 
-            await service.create_user(
-                email="  User@EXAMPLE.Com  ",  # Mixed case with whitespace
-                password="Pass123",
-            )
+            # Need to also patch where validate_password imports settings
+            with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
+                with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                    mock_role_service = MockRoleService.return_value
+                    mock_role = MagicMock()
+                    mock_role.id = "role_id"
+                    mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+                    mock_role_service.assign_role_to_user = AsyncMock()
 
-            # Verify the email was normalized when checking for existing user
-            called_stmt = mock_db.execute.call_args[0][0]
-            # The actual SQL would have the normalized email
-            assert mock_db.add.called
+                    await service.create_user(
+                        email="  User@EXAMPLE.Com  ",  # Mixed case with whitespace
+                        password="Pass123",
+                    )
+
+                    # Verify the email was normalized when checking for existing user
+                    called_stmt = mock_db.execute.call_args[0][0]
+                    # The actual SQL would have the normalized email
+                    assert mock_db.add.called
 
     # =========================================================================
     # Authentication Tests
@@ -721,11 +757,20 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
             mock_settings.password_require_special = False
+            mock_settings.default_global_role_admin = "platform_owner"
+            mock_settings.default_global_role_member = "platform_member"
 
-            result = await service.create_platform_owner(email="admin@example.com", password="AdminPass123!", full_name="Platform Owner")
+            with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                mock_role_service = MockRoleService.return_value
+                mock_role = MagicMock()
+                mock_role.id = "role_id"
+                mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+                mock_role_service.assign_role_to_user = AsyncMock()
 
-            mock_db.add.assert_called()
-            mock_db.commit.assert_called()
+                result = await service.create_platform_owner(email="admin@example.com", password="AdminPass123!", full_name="Platform Owner")
+
+                mock_db.add.assert_called()
+                mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_create_platform_owner_existing_update_password(self, service, mock_db, mock_user, mock_password_service):
@@ -1145,14 +1190,21 @@ class TestEmailAuthServiceUserDeletion:
         # Setup mock returns
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
-        mock_result.scalars.return_value.all.return_value = []  # No teams owned
         mock_db.execute.return_value = mock_result
 
-        result = await service.delete_user("test@example.com")
+        with patch("mcpgateway.services.email_auth_service.TeamManagementService") as MockTeamService:
+            with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                mock_team_service = MockTeamService.return_value
+                mock_team_service.get_user_teams = AsyncMock(return_value=[])
 
-        assert result is True
-        mock_db.delete.assert_called_once_with(mock_user)
-        mock_db.commit.assert_called()
+                mock_role_service = MockRoleService.return_value
+                mock_role_service.list_roles = AsyncMock(return_value=[])
+
+                result = await service.delete_user("test@example.com")
+
+                assert result is True
+                mock_db.delete.assert_called_once_with(mock_user)
+                mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_not_found(self, service, mock_db):
@@ -1167,97 +1219,110 @@ class TestEmailAuthServiceUserDeletion:
     @pytest.mark.asyncio
     async def test_delete_user_with_team_transfer(self, service, mock_db, mock_user, mock_team, mock_team_member):
         """Test deleting user who owns teams that can be transferred."""
-        # First execute: get user
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
 
-        # Second execute: get teams owned
-        mock_teams_result = MagicMock()
-        mock_teams_result.scalars.return_value.all.return_value = [mock_team]
+        with patch("mcpgateway.services.email_auth_service.TeamManagementService") as MockTeamService:
+            with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                mock_team_service = MockTeamService.return_value
+                mock_team_service.get_user_teams = AsyncMock(return_value=[mock_team])
 
-        # Third execute: get potential new owners
-        mock_members_result = MagicMock()
-        mock_members_result.scalars.return_value.all.return_value = [mock_team_member]
+                mock_role_service = MockRoleService.return_value
+                
+                # Mock roles
+                mock_role = MagicMock(spec=Role)
+                mock_role.id = "role_id"
+                mock_role.scope = "team"
+                mock_role.permissions = ["teams.manage_members"]
+                mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
 
-        # Fourth execute: auth events (empty)
-        # Fifth execute: team members (empty)
-        mock_empty_result = MagicMock()
+                # Mock potential new owner
+                new_owner_role = MagicMock(spec=UserRole)
+                new_owner_role.user_email = "other@example.com"
+                new_owner_role.role_id = "role_id"
+                
+                mock_role_service.list_scope_role_assignments = AsyncMock(return_value=[new_owner_role])
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
+                result = await service.delete_user("test@example.com")
 
-        result = await service.delete_user("test@example.com")
-
-        assert result is True
-        assert mock_team.created_by == "other@example.com"  # Ownership transferred
-        mock_db.delete.assert_called_once_with(mock_user)
-        mock_db.commit.assert_called()
+                assert result is True
+                assert mock_team.created_by == "other@example.com"  # Ownership transferred
+                mock_db.delete.assert_called_once_with(mock_user)
+                mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_with_personal_team(self, service, mock_db, mock_user, mock_team):
         """Test deleting user with single-member personal team."""
-        # Setup single team member (just the user)
-        single_member = MagicMock(spec=EmailTeamMember)
-        single_member.user_email = "test@example.com"
-        single_member.team_id = 1
-        single_member.role = "team_owner"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
 
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
+        with patch("mcpgateway.services.email_auth_service.TeamManagementService") as MockTeamService:
+            with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                mock_team_service = MockTeamService.return_value
+                mock_team_service.get_user_teams = AsyncMock(return_value=[mock_team])
+                mock_team_service.delete_team = AsyncMock()
 
-        mock_teams_result = MagicMock()
-        mock_teams_result.scalars.return_value.all.return_value = [mock_team]
+                mock_role_service = MockRoleService.return_value
+                
+                # Mock roles
+                mock_role = MagicMock(spec=Role)
+                mock_role.id = "role_id"
+                mock_role.scope = "team"
+                mock_role.permissions = ["teams.manage_members"]
+                mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
 
-        # No other owners available
-        mock_no_owners = MagicMock()
-        mock_no_owners.scalars.return_value.all.return_value = []
+                # Mock single member (the user themselves)
+                user_role = MagicMock(spec=UserRole)
+                user_role.user_email = "test@example.com"
+                user_role.role_id = "role_id"
+                
+                mock_role_service.list_scope_role_assignments = AsyncMock(return_value=[user_role])
 
-        # Single member in team
-        mock_single_member = MagicMock()
-        mock_single_member.scalars.return_value.all.return_value = [single_member]
+                result = await service.delete_user("test@example.com")
 
-        mock_empty = MagicMock()
-
-        mock_db.execute.side_effect = [
-            mock_user_result,
-            mock_teams_result,
-            mock_no_owners,  # No other owners
-            mock_single_member,  # Just the user as member
-            mock_empty,  # Delete team members
-            mock_empty,  # Delete auth events
-            mock_empty,  # Delete user team members
-        ]
-
-        result = await service.delete_user("test@example.com")
-
-        assert result is True
-        mock_db.delete.assert_any_call(mock_team)  # Team should be deleted
-        mock_db.delete.assert_any_call(mock_user)  # User should be deleted
-        mock_db.commit.assert_called()
+                assert result is True
+                mock_team_service.delete_team.assert_called_once()  # Team should be deleted via service
+                mock_db.delete.assert_any_call(mock_user)  # User should be deleted
+                mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_with_team_no_transfer_possible(self, service, mock_db, mock_user, mock_team):
         """Test deleting user who owns team with members but no other owners."""
-        # Setup multiple members but no other owners
-        members = [MagicMock(user_email="test@example.com", role="team_owner"), MagicMock(user_email="member1@example.com", role="team_member"), MagicMock(user_email="member2@example.com", role="team_member")]
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
 
-        mock_user_result = MagicMock()
-        mock_user_result.scalar_one_or_none.return_value = mock_user
+        with patch("mcpgateway.services.email_auth_service.TeamManagementService") as MockTeamService:
+            with patch("mcpgateway.services.email_auth_service.RoleService") as MockRoleService:
+                mock_team_service = MockTeamService.return_value
+                mock_team_service.get_user_teams = AsyncMock(return_value=[mock_team])
 
-        mock_teams_result = MagicMock()
-        mock_teams_result.scalars.return_value.all.return_value = [mock_team]
+                mock_role_service = MockRoleService.return_value
+                
+                # Mock roles
+                mock_role = MagicMock(spec=Role)
+                mock_role.id = "role_id"
+                mock_role.scope = "team"
+                mock_role.permissions = ["teams.manage_members"]
+                mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
 
-        mock_no_owners = MagicMock()
-        mock_no_owners.scalars.return_value.all.return_value = []  # No other owners
+                # Mock members: user (owner) + others (not owners/admins)
+                user_role = MagicMock(spec=UserRole)
+                user_role.user_email = "test@example.com"
+                user_role.role_id = "role_id"
+                
+                other_role = MagicMock(spec=UserRole)
+                other_role.user_email = "member@example.com"
+                other_role.role_id = "member_role_id" # Different role, no manage_members perm
 
-        mock_members_result = MagicMock()
-        mock_members_result.scalars.return_value.all.return_value = members
+                mock_role_service.list_scope_role_assignments = AsyncMock(return_value=[user_role, other_role])
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_no_owners, mock_members_result]
+                with pytest.raises(ValueError, match="no other owners to transfer"):
+                    await service.delete_user("test@example.com")
 
-        with pytest.raises(ValueError, match="no other owners to transfer"):
-            await service.delete_user("test@example.com")
-
-        mock_db.rollback.assert_called()
+                mock_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_database_error(self, service, mock_db, mock_user):
