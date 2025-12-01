@@ -2145,6 +2145,22 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def limited_check(gateway: DbGateway):
+            """
+            Checks the health of a single gateway while respecting a concurrency limit.
+
+            This function checks the health of the given database gateway, ensuring that
+            the number of concurrent checks does not exceed a predefined limit. The check
+            is performed asynchronously and uses a semaphore to manage concurrency.
+
+            Args:
+                gateway (DbGateway): The database gateway whose health is to be checked.
+
+            Returns:
+                None: This function performs an action (checking health) but does not return any value.
+
+            Raises:
+                Any exceptions raised during the health check will be propagated to the caller.
+            """
             async with semaphore:
                 await self._check_single_gateway_health(db, gateway, user_email)
 
