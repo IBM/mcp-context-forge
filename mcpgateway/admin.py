@@ -1713,7 +1713,7 @@ async def admin_list_resources(
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
-        ...     id=1,
+        ...     id="39334ce0ed2644d79ede8913a66930c9",
         ...     uri="test://resource/1",
         ...     name="Test Resource",
         ...     description="A test resource",
@@ -1744,7 +1744,7 @@ async def admin_list_resources(
         >>>
         >>> # Test listing with inactive resources (if mock includes them)
         >>> mock_inactive_resource = ResourceRead(
-        ...     id=2, uri="test://resource/2", name="Inactive Resource",
+        ...     id="39334ce0ed2644d79ede8913a66930c9", uri="test://resource/2", name="Inactive Resource",
         ...     description="Another test", mime_type="application/json", size=50,
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
         ...     is_active=False, metrics=ResourceMetrics(
@@ -1823,7 +1823,7 @@ async def admin_list_prompts(
         >>>
         >>> # Mock prompt data
         >>> mock_prompt = PromptRead(
-        ...     id=1,
+        ...     id="ca627760127d409080fdefc309147e08",
         ...     name="Test Prompt",
         ...     description="A test prompt",
         ...     template="Hello {{name}}!",
@@ -1853,7 +1853,7 @@ async def admin_list_prompts(
         >>>
         >>> # Test listing with inactive prompts (if mock includes them)
         >>> mock_inactive_prompt = PromptRead(
-        ...     id=2, name="Inactive Prompt", description="Another test", template="Bye!",
+        ...     id="39334ce0ed2644d79ede8913a66930c9", name="Inactive Prompt", description="Another test", template="Bye!",
         ...     arguments=[], created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
         ...     is_active=False, metrics=PromptMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
@@ -8109,7 +8109,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
         >>> resource_uri = "test://resource/get"
-        >>> resource_id = 1
+        >>> resource_id = "ca627760127d409080fdefc309147e08"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
@@ -8142,7 +8142,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
         >>> async def test_admin_get_resource_not_found():
         ...     try:
-        ...         await admin_get_resource(999, mock_db, mock_user)
+        ...         await admin_get_resource("39334ce0ed2644d79ede8913a66930c9", mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
@@ -8695,7 +8695,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
         ...     last_execution_time=datetime.now(timezone.utc)
         ... )
         >>> mock_prompt_details = {
-        ...     "id": 1,
+        ...     "id": "ca627760127d409080fdefc309147e08",
         ...     "name": prompt_name,
         ...     "description": "A test prompt",
         ...     "template": "Hello {{name}}!",
