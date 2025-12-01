@@ -262,6 +262,7 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # Create message classes
+        # pylint: disable=no-member
         request_class = self._factory.GetPrototype(input_desc)
         response_class = self._factory.GetPrototype(output_desc)
 
@@ -278,6 +279,7 @@ class GrpcEndpoint:
         )
 
         # Convert protobuf response to JSON
+        # pylint: disable=unexpected-keyword-arg
         response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
 
         logger.debug(f"Successfully invoked {service}.{method}")
@@ -335,6 +337,7 @@ class GrpcEndpoint:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
         # Create message classes
+        # pylint: disable=no-member
         request_class = self._factory.GetPrototype(input_desc)
         response_class = self._factory.GetPrototype(output_desc)
 
@@ -350,6 +353,7 @@ class GrpcEndpoint:
         # Yield responses as they arrive
         try:
             for response_msg in stream_call:
+                # pylint: disable=unexpected-keyword-arg
                 response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, including_default_value_fields=True)
                 yield response_dict
         except grpc.RpcError as e:

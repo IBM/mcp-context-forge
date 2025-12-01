@@ -223,7 +223,17 @@ asyncpg = [
 
 # Agent Lifecycle Toolkit(optional)
 altk = [
-    "agent-lifecycle-toolkit>=0.4.1",
+    "agent-lifecycle-toolkit==0.7.0",
+]
+
+# Agent Lifecycle Toolkit(optional)
+toolops = [
+    "langchain-core>=1.0.4",
+    "langchain-mcp-adapters>=0.1.12",
+    "langchain-ollama>=1.0.0",
+    "langchain-openai>=1.0.2",
+    "langgraph>=1.0.2",
+    "agent-lifecycle-toolkit==0.7.0",
 ]
 
 # gRPC Support (EXPERIMENTAL - optional, disabled by default)
