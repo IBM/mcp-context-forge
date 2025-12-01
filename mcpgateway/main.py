@@ -1773,7 +1773,9 @@ async def list_servers(
             data = [server for server in data if any(tag in server.tags for tag in tags_list)]
     else:
         # Use existing method for backward compatibility when no team filtering
-        data = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive, tags=tags_list, allowed_team_ids=allowed_team_ids)
+        data = await server_service.list_servers_for_user(db, user_email, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+        if tags_list:
+            data = [server for server in data if any(tag in server.tags for tag in tags_list)]
     return data
 
 

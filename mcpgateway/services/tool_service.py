@@ -1929,6 +1929,7 @@ class ToolService:
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -1975,6 +1976,26 @@ class ToolService:
             tool = db.get(DbTool, tool_id)
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
+            # Access control validation for update (Write Access)
+            if user_email or allowed_team_ids:
+                has_write_access = False
+                if tool.visibility == "private":
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "team":
+                    if allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+                    elif user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                elif tool.visibility == "public":
+                     if user_email and tool.owner_email == user_email:
+                         has_write_access = True
+                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                         has_write_access = True
+                
+                if not has_write_access:
+                     raise PermissionError(f"User does not have permission to update tool {tool_id}")
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:

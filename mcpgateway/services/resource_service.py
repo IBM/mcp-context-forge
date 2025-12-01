@@ -1180,6 +1180,7 @@ class ResourceService:
         include_inactive: bool = False,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> ResourceContent:
         """Read a resource's content with plugin hook support.
 
@@ -1288,7 +1289,11 @@ class ResourceService:
                 original_uri = uri
                 contexts = None
                 # Call pre-fetch hooks if plugin manager is available
-                plugin_eligible = bool(self._plugin_manager and PLUGINS_AVAILABLE and uri and (":://" in uri))
+                # Call pre-fetch hooks if plugin manager is available
+                plugin_eligible = False
+                if self._plugin_manager and PLUGINS_AVAILABLE and uri:
+                    if "://" in uri:
+                        plugin_eligible = True
                 if plugin_eligible:
                     # Initialize plugin manager if needed
                     # pylint: disable=protected-access
@@ -1395,6 +1400,32 @@ class ResourceService:
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
+
+                if resource_db:
+                     # Access control validation
+                     if allowed_team_ids is not None or user is not None:
+                         has_access = False
+                         # Determine user email from user object or string
+                         user_email = None
+                         if isinstance(user, dict):
+                             user_email = user.get("email") or user.get("sub")
+                         elif isinstance(user, str):
+                             user_email = user
+
+                         if resource_db.visibility == "public":
+                             has_access = True
+                         elif resource_db.visibility == "team":
+                             if allowed_team_ids and resource_db.team_id in allowed_team_ids:
+                                 has_access = True
+                             elif user_email and resource_db.owner_email == user_email:
+                                 has_access = True
+                         elif resource_db.visibility == "private":
+                             if user_email and resource_db.owner_email == user_email:
+                                 has_access = True
+                         
+                         if not has_access:
+                             logger.warning(f"Access denied to resource {resource_db.id} (visibility={resource_db.visibility}, team={resource_db.team_id}) for user {user_email}")
+                             raise PermissionError(f"Access denied to resource {resource_db.id}")
 
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
