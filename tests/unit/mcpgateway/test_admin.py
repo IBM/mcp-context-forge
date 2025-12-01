@@ -235,7 +235,7 @@ class TestAdminServerRoutes:
     """Test admin routes for server management with enhanced coverage."""
 
     @patch.object(ServerService, "list_servers_for_user")
-    async def test_admin_list_servers_with_various_states(self, mock_list_servers_for_user, mock_db):
+    async def test_admin_list_servers_with_various_states(self, mock_list_servers_for_user, mock_request, mock_db):
         """Test listing servers with various states and configurations."""
         # Setup servers with different states
         mock_server_active = MagicMock()
@@ -246,36 +246,36 @@ class TestAdminServerRoutes:
 
         # Test with include_inactive=False
         mock_list_servers_for_user.return_value = [mock_server_active]
-        result = await admin_list_servers(False, mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_list_servers(mock_request, False, mock_db, {"email": "test-user", "db": mock_db})
 
         assert len(result) == 1
         assert result[0]["name"] == "Active Server"
-        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=False)
+        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=False, allowed_team_ids=[])
 
         # Test with include_inactive=True
         mock_list_servers_for_user.return_value = [mock_server_active, mock_server_inactive]
-        result = await admin_list_servers(True, mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_list_servers(mock_request, True, mock_db, {"email": "test-user", "db": mock_db})
 
         assert len(result) == 2
         assert result[1]["name"] == "Inactive Server"
-        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=True)
+        mock_list_servers_for_user.assert_called_with(mock_db, "test-user", include_inactive=True, allowed_team_ids=[])
 
     @patch.object(ServerService, "get_server")
-    async def test_admin_get_server_edge_cases(self, mock_get_server, mock_db):
+    async def test_admin_get_server_edge_cases(self, mock_get_server, mock_request, mock_db):
         """Test getting server with edge cases."""
         # Test with non-string ID (should work)
         mock_server = MagicMock()
         mock_server.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
         mock_get_server.return_value = mock_server
 
-        result = await admin_get_server(123, mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_get_server(123, mock_request, mock_db, {"email": "test-user", "db": mock_db})
         assert result["id"] == 123
 
         # Test with generic exception
         mock_get_server.side_effect = RuntimeError("Database connection lost")
 
         with pytest.raises(RuntimeError) as excinfo:
-            await admin_get_server("error-id", mock_db, {"email": "test-user", "db": mock_db})
+            await admin_get_server("error-id", mock_request, mock_db, {"email": "test-user", "db": mock_db})
         assert "Database connection lost" in str(excinfo.value)
 
     @patch.object(ServerService, "register_server")
@@ -368,7 +368,7 @@ class TestAdminToolRoutes:
     """Test admin routes for tool management with enhanced coverage."""
 
     @patch.object(ToolService, "list_tools_for_user")
-    async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_db):
+    async def test_admin_list_tools_empty_and_exception(self, mock_list_tools, mock_request, mock_db):
         """Test listing tools with empty results and exceptions."""
         # Test empty list
         # Arrange: make db.execute return an object whose scalar() -> 0 and scalars().all() -> []
@@ -378,7 +378,7 @@ class TestAdminToolRoutes:
         mock_db.execute.return_value = mock_result
 
         # Call the function with explicit pagination params
-        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_tools(mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         # Expect structure with 'data' key and empty list
         assert isinstance(result, dict)
@@ -389,23 +389,23 @@ class TestAdminToolRoutes:
         mock_db.execute.side_effect = RuntimeError("Service unavailable")
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_list_tools(mock_request, page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
     @patch.object(ToolService, "get_tool")
-    async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):
+    async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_request, mock_db):
         """Test getting tool with various exception types."""
         # Test with ToolNotFoundError
         mock_get_tool.side_effect = ToolNotFoundError("Tool not found")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_tool("missing-tool", mock_db, {"email": "test-user", "db": mock_db})
+            await admin_get_tool("missing-tool", mock_request, mock_db, {"email": "test-user", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         # Test with generic exception
         mock_get_tool.side_effect = ValueError("Invalid tool ID format")
 
         with pytest.raises(ValueError):
-            await admin_get_tool("bad-id", mock_db, {"email": "test-user", "db": mock_db})
+            await admin_get_tool("bad-id", mock_request, mock_db, {"email": "test-user", "db": mock_db})
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_invalid_json(self, mock_register_tool, mock_request, mock_db):
@@ -539,27 +539,28 @@ class TestAdminToolRoutes:
     async def test_admin_toggle_tool_various_activate_values(self, mock_toggle_status, mock_request, mock_db):
         """Test toggling tool with various activate values."""
         tool_id = "tool-1"
+        mock_request.state.user_permissions = []
 
         # Test with "false"
         form_data = FakeForm({"activate": "false"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", allowed_team_ids=[])
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", allowed_team_ids=[])
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_toggle_tool(tool_id, mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user", allowed_team_ids=[])
 
 
 class TestAdminBulkImportRoutes:
@@ -789,7 +790,7 @@ class TestAdminResourceRoutes:
     """Test admin routes for resource management with enhanced coverage."""
 
     @patch.object(ResourceService, "list_resources_for_user")
-    async def test_admin_list_resources_with_complex_data(self, mock_list_resources, mock_db):
+    async def test_admin_list_resources_with_complex_data(self, mock_list_resources, mock_request, mock_db):
         """Test listing resources with complex data structures."""
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {
@@ -802,14 +803,15 @@ class TestAdminResourceRoutes:
         }
 
         mock_list_resources.return_value = [mock_resource]
-        result = await admin_list_resources(False, mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_list_resources(mock_request, False, mock_db, {"email": "test-user", "db": mock_db})
 
         assert len(result) == 1
         assert result[0]["uri"] == "complex://resource"
 
     @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
-    async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
+    async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_request, mock_db):
+        # Resource exists
         """Test: read_resource should not be called at all."""
 
         mock_resource = MagicMock()
@@ -819,7 +821,7 @@ class TestAdminResourceRoutes:
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
         with pytest.raises(IOError):
-            result = await admin_get_resource("1", mock_db, {"email": "test-user", "db": mock_db})
+            result = await admin_get_resource("1", mock_request, mock_db, {"email": "test-user", "db": mock_db})
 
             assert result["resource"]["id"] == 1
             mock_read_resource.assert_not_called()
@@ -887,11 +889,11 @@ class TestAdminResourceRoutes:
         """Test toggling resource with numeric ID."""
         # Test with integer ID
         await admin_toggle_resource(123, mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user", allowed_team_ids=[])
 
         # Test with string number
         await admin_toggle_resource("456", mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user", allowed_team_ids=[])
 
 
 class TestAdminPromptRoutes:
@@ -919,7 +921,7 @@ class TestAdminPromptRoutes:
         assert len(result[0]["arguments"]) == 3
 
     @patch.object(PromptService, "get_prompt_details")
-    async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_db):
+    async def test_admin_get_prompt_with_detailed_metrics(self, mock_get_prompt_details, mock_request, mock_db):
         """Test getting prompt with detailed metrics."""
         mock_get_prompt_details.return_value = {
             "id": "ca627760127d409080fdefc309147e08",
@@ -944,7 +946,7 @@ class TestAdminPromptRoutes:
             },
         }
 
-        result = await admin_get_prompt("test-prompt", mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_get_prompt("test-prompt", mock_request, mock_db, {"email": "test-user", "db": mock_db})
 
         assert result["name"] == "test-prompt"
         assert "metrics" in result
@@ -1043,18 +1045,18 @@ class TestAdminPromptRoutes:
         """Test toggling prompt with edge cases."""
         # Test with string ID that looks like number
         await admin_toggle_prompt("123", mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user", allowed_team_ids=[])
 
         # Test with negative number
         await admin_toggle_prompt(-1, mock_request, mock_db, {"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user", allowed_team_ids=[])
 
 
 class TestAdminGatewayRoutes:
     """Test admin routes for gateway management with enhanced coverage."""
 
     @patch.object(GatewayService, "list_gateways_for_user")
-    async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_db):
+    async def test_admin_list_gateways_with_auth_info(self, mock_list_gateways, mock_request, mock_db):
         """Test listing gateways with authentication information."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {
@@ -1069,12 +1071,12 @@ class TestAdminGatewayRoutes:
         }
 
         mock_list_gateways.return_value = [mock_gateway]
-        result = await admin_list_gateways(False, mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_list_gateways(mock_request, False, mock_db, {"email": "test-user", "db": mock_db})
 
         assert result[0]["auth_type"] == "bearer"
 
     @patch.object(GatewayService, "get_gateway")
-    async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_db):
+    async def test_admin_get_gateway_all_transports(self, mock_get_gateway, mock_request, mock_db):
         """Test getting gateway with different transport types."""
         transports = ["HTTP", "SSE", "WebSocket"]
 
@@ -1088,7 +1090,7 @@ class TestAdminGatewayRoutes:
             }
             mock_get_gateway.return_value = mock_gateway
 
-            result = await admin_get_gateway(f"gateway-{transport}", mock_db, {"email": "test-user", "db": mock_db})
+            result = await admin_get_gateway(f"gateway-{transport}", mock_request, mock_db, {"email": "test-user", "db": mock_db})
             assert result["transport"] == transport
 
     @patch.object(GatewayService, "register_gateway")
@@ -1471,14 +1473,13 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                result = await admin_test_gateway(request, {"email": "test-user", "db": mock_db})
+                result = await admin_test_gateway(request, None, {"email": "test-user", "db": mock_db})
 
                 assert result.status_code == 200
                 # result.body is already a dict because admin_test_gateway returns GatewayTestResponse (Pydantic model)
                 # and we are calling the function directly, not via TestClient
                 body = result.body
-                assert body["status_code"] == 200
-                assert body["body"] == {"details": response_text}
+                assert body == {"details": response_text}
 
 
 class TestAdminUIRoute:
@@ -1791,7 +1792,7 @@ class TestA2AAgentManagement:
     """Test A2A agent management endpoints."""
 
     @patch.object(A2AAgentService, "list_agents")
-    async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_db):
+    async def _test_admin_list_a2a_agents_enabled(self, mock_list_agents, mock_request, mock_db):
         """Test listing A2A agents when A2A is enabled."""
         # First-Party
 
@@ -1800,19 +1801,19 @@ class TestA2AAgentManagement:
         mock_agent.model_dump.return_value = {"id": "agent-1", "name": "Test Agent", "description": "Test A2A agent", "is_active": True}
         mock_list_agents.return_value = [mock_agent]
 
-        result = await admin_list_a2a_agents(False, [], mock_db, {"email": "test-user", "db": mock_db})
+        result = await admin_list_a2a_agents(mock_request, False, mock_db, {"email": "test-user", "db": mock_db})
 
         assert len(result) == 1
         assert result[0]["name"] == "Test Agent"
-        mock_list_agents.assert_called_with(mock_db, include_inactive=False, tags=[])
+        mock_list_agents.assert_called_with(mock_db, user_email="test-user", include_inactive=False, allowed_team_ids=None)
 
     @patch("mcpgateway.admin.settings.mcpgateway_a2a_enabled", False)
     @patch("mcpgateway.admin.a2a_service", None)
-    async def test_admin_list_a2a_agents_disabled(self, mock_db):
+    async def test_admin_list_a2a_agents_disabled(self, mock_request, mock_db):
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
 
-        result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_a2a_agents(mock_request, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
 
         assert isinstance(result, list)
         assert len(result) == 0
@@ -1893,7 +1894,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, "agent-1", True, user_email="test-user", allowed_team_ids=[])
 
     @patch.object(A2AAgentService, "delete_agent")
     async def test_admin_delete_a2a_agent_success(self, mock_delete_agent, mock_request, mock_db):
@@ -1909,7 +1910,7 @@ class TestA2AAgentManagement:
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert "#a2a-agents" in result.headers["location"]
-        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user")
+        mock_delete_agent.assert_called_with(mock_db, "agent-1", user_email="test-user", allowed_team_ids=[])
 
     @patch.object(A2AAgentService, "get_agent")
     @patch.object(A2AAgentService, "invoke_agent")
@@ -1933,7 +1934,7 @@ class TestA2AAgentManagement:
         body = json.loads(result.body)
         assert body["success"] is True
         assert "result" in body
-        mock_get_agent.assert_called_with(mock_db, "agent-1")
+        mock_get_agent.assert_called_with(mock_db, "agent-1", allowed_team_ids=[], user_email="test-user")
         mock_invoke_agent.assert_called_once()
 
 

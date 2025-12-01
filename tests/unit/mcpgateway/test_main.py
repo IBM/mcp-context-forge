@@ -188,8 +188,8 @@ def test_client(app):
         auth_provider="test",
     )
 
-    # Override old auth system
-    app.dependency_overrides[require_auth] = lambda: "test_user"
+    # Override old auth system - return dict for consistency with get_current_user_with_permissions
+    app.dependency_overrides[require_auth] = lambda: {"email": "test_user@example.com", "db": None}
 
     # Patch the auth function used by DocsAuthMiddleware
     # Standard
@@ -232,7 +232,7 @@ def test_client(app):
             payload = jwt_lib.decode(token, key, algorithms=[settings.jwt_algorithm], options={"verify_aud": False})
             username = payload.get("sub")
             if username:
-                return username
+                return {"email": username, "db": None}
             else:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         except jwt_lib.ExpiredSignatureError:
@@ -259,20 +259,47 @@ def test_client(app):
     # First-Party
     from mcpgateway.services.permission_service import PermissionService
 
-    # Store original method
+    # Store original methods
     if not hasattr(PermissionService, "_original_check_permission"):
         PermissionService._original_check_permission = PermissionService.check_permission
+    if not hasattr(PermissionService, "_original_get_user_scopes"):
+        PermissionService._original_get_user_scopes = PermissionService.get_user_scopes
 
     # Mock with correct async signature matching the real method
     async def mock_check_permission(self, user_email: str, permission: str, resource_type=None, resource_id=None, team_id=None, ip_address=None, user_agent=None) -> bool:
         return True
 
+    # Mock get_user_scopes to return test permissions
+    # This prevents TokenScopingMiddleware from rejecting requests with "User has no permissions"
+    # get_user_scopes should return: [{'scope': 'global', 'scope_id': None, 'permissions': [...]}]
+    async def mock_get_user_scopes(self, user_email: str, roles=None):
+        # Return dummy scope with test permissions
+        return [{"scope": "global", "scope_id": None, "permissions": ["*", "test.permission", "admin.metrics", "servers.read", "tools.read", "resources.read", "prompts.read", "gateways.read"]}]
+
     PermissionService.check_permission = mock_check_permission
+    PermissionService.get_user_scopes = mock_get_user_scopes
+
+    # Patch the Request class to populate state for tests
+    # This simulates what TokenScopingMiddleware does in production
+    # Third-Party
+    from starlette.requests import Request
+    
+    original_init = Request.__init__
+
+    def patched_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        # Populate request.state with test values
+        self.state.allowed_team_ids = None  # Tests don't use team filtering by default
+        self.state.user_permissions = []  # Empty list for tests
+        self.state.user_roles = {}  # Empty dict for tests
+
+    Request.__init__ = patched_init
 
     client = TestClient(app)
     yield client
 
     # Clean up overrides and restore original methods
+    Request.__init__ = original_init
     app.dependency_overrides.pop(require_auth, None)
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
@@ -280,6 +307,8 @@ def test_client(app):
     sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
+    if hasattr(PermissionService, "_original_get_user_scopes"):
+        PermissionService.get_user_scopes = PermissionService._original_get_user_scopes
 
 
 @pytest.fixture
@@ -471,7 +500,7 @@ class TestServerEndpoints:
 
     """Tests for virtual server management: CRUD operations, status toggles, etc."""
 
-    @patch("mcpgateway.main.server_service.list_servers")
+    @patch("mcpgateway.main.server_service.list_servers_for_user")
     def test_list_servers_endpoint(self, mock_list_servers, test_client, auth_headers):
         """Test listing all servers."""
         mock_list_servers.return_value = [ServerRead(**MOCK_SERVER_READ)]
@@ -540,11 +569,13 @@ class TestServerEndpoints:
         assert "Server not found" in response.json()["detail"]
 
     @patch("mcpgateway.main.tool_service.list_server_tools")
-    def test_server_get_tools(self, mock_list_tools, test_client, auth_headers):
+    def test_server_get_tools(self, mock_list_tools, mock_get_server, test_client, auth_headers):
         """Test listing tools associated with a server."""
         mock_tool = MagicMock()
         mock_tool.model_dump.return_value = MOCK_TOOL_READ
         mock_list_tools.return_value = [mock_tool]
+        # Mock get_server to avoid 404
+        mock_get_server.return_value = MagicMock()
 
         response = test_client.get("/servers/1/tools", headers=auth_headers)
         assert response.status_code == 200
@@ -552,12 +583,15 @@ class TestServerEndpoints:
         assert len(data) == 1
         mock_list_tools.assert_called_once()
 
+    @patch("mcpgateway.main.server_service.get_server")
     @patch("mcpgateway.main.resource_service.list_server_resources")
-    def test_server_get_resources(self, mock_list_resources, test_client, auth_headers):
+    def test_server_get_resources(self, mock_list_resources, mock_get_server, test_client, auth_headers):
         """Test listing resources associated with a server."""
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = MOCK_RESOURCE_READ
         mock_list_resources.return_value = [mock_resource]
+        # Mock get_server to avoid 404
+        mock_get_server.return_value = MagicMock()
 
         response = test_client.get("/servers/1/resources", headers=auth_headers)
         assert response.status_code == 200
@@ -565,13 +599,16 @@ class TestServerEndpoints:
         assert len(data) == 1
         mock_list_resources.assert_called_once()
 
+    @patch("mcpgateway.main.server_service.get_server")
     @patch("mcpgateway.main.prompt_service.list_server_prompts")
-    def test_server_get_prompts(self, mock_list_prompts, test_client, auth_headers):
+    def test_server_get_prompts(self, mock_list_prompts, mock_get_server, test_client, auth_headers):
         """Test listing prompts associated with a server."""
         # First-Party
         from mcpgateway.schemas import PromptRead
 
         mock_list_prompts.return_value = [PromptRead(**MOCK_PROMPT_READ)]
+        # Mock get_server to avoid 404
+        mock_get_server.return_value = MagicMock()
 
         response = test_client.get("/servers/1/prompts", headers=auth_headers)
         assert response.status_code == 200
@@ -815,7 +852,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get.assert_called_once_with(ANY, "test", {}, allowed_team_ids=ANY, user_email=ANY, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -1138,9 +1175,10 @@ class TestRPCEndpoints:
             name="test_tool",
             arguments={"param": "value"},
             request_headers=ANY,
-            app_user_email="test_user",
+            app_user_email="test_user@example.com",
             plugin_context_table=None,
             plugin_global_context=ANY,
+            allowed_team_ids=ANY
         )
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
@@ -1163,7 +1201,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["messages"][0]["content"]["text"] == "Rendered prompt"
-        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, plugin_context_table=None, plugin_global_context=ANY)
+        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, allowed_team_ids=ANY, user_email=ANY, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.tool_service.list_tools")
     # @patch("mcpgateway.main.validate_request")

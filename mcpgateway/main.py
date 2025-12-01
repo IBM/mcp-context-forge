@@ -3544,7 +3544,7 @@ async def get_prompt(
     try:
         PromptExecuteArgs(args=args)
         user_email = get_user_email(user)
-        allowed_team_ids = get_allowed_team_ids(request)
+        allowed_team_ids = await get_allowed_team_ids(request)
         result = await prompt_service.get_prompt(
             db,
             prompt_id,
@@ -3592,7 +3592,7 @@ async def get_prompt_no_args(
     """
     logger.debug(f"User: {user} requested prompt: {prompt_id} with no arguments")
     user_email = get_user_email(user)
-    allowed_team_ids = get_allowed_team_ids(request)
+    allowed_team_ids = await get_allowed_team_ids(request)
 
     # Get plugin contexts from request.state for cross-hook sharing
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -4286,6 +4286,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
             plugin_global_context = getattr(request.state, "plugin_global_context", None)
+            allowed_team_ids = await get_allowed_team_ids(request)
             try:
                 result = await tool_service.invoke_tool(
                     db=db,
@@ -4295,6 +4296,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     app_user_email=user_email,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
+                    allowed_team_ids=allowed_team_ids,
                 )
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)

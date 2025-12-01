@@ -331,7 +331,7 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
-    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
+    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None, team_id: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
 
         Args:
@@ -357,12 +357,33 @@ class A2AAgentService:
             tag_conditions = []
             for tag in tags:
                 tag_conditions.append(func.json_extract(DbA2AAgent.tags, "$").contains(tag))
-
             if tag_conditions:
                 query = query.where(*tag_conditions)
 
         # Access Control Filtering
-        if allowed_team_ids is not None or user_email is not None:
+        if team_id:
+            # If a specific team is selected, filter by that team
+            # We still need to check if the user has access to this team (allowed_team_ids)
+            if allowed_team_ids is not None and team_id not in allowed_team_ids:
+                 return []
+
+            access_conditions = []
+            # Filter by specific team
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
+            
+            # Also include global public agents if they should be visible in team view (optional, but usually team view focuses on team + public)
+            # For now, let's stick to team-scoped items + public items associated with that team context if any
+            # But typically "team_id" filter means "show me things belonging to this team".
+            # However, public items are global.
+            # Let's follow the pattern: Team View = Team Items + Public Items (maybe?)
+            # Existing services pattern:
+            # access_conditions.append(and_(Model.team_id == team_id, Model.visibility.in_(["team", "public"])))
+            # access_conditions.append(and_(Model.team_id == team_id, Model.owner_email == user_email))
+            
+            query = query.where(or_(*access_conditions))
+
+        elif allowed_team_ids is not None or user_email is not None:
              access_conditions = []
              # 1. Public agents
              access_conditions.append(DbA2AAgent.visibility == "public")
