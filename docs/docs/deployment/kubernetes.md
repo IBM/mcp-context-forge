@@ -447,7 +447,7 @@ roleRef:
 !!! info "MariaDB & MySQL Kubernetes Support"
     MariaDB and MySQL are **fully supported** in Kubernetes deployments:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Use connection string: `mysql+pymysql://mysql:changeme@mariadb-service:3306/mcp`
 

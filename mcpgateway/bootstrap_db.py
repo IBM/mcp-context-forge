@@ -83,11 +83,12 @@ async def bootstrap_admin_user() -> None:
                 is_admin=True,
             )
 
-            # Mark admin user as email verified
+            # Mark admin user as email verified and require password change on first login
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
+            admin_user.password_change_required = True  # Force admin to change default password
             db.commit()
 
             # Personal team is automatically created during user creation if enabled
@@ -263,6 +264,17 @@ async def main() -> None:
 
         if "gateways" not in insp.get_table_names():
             logger.info("Empty DB detected - creating baseline schema")
+
+            # Apply MariaDB compatibility fixes if needed
+            if settings.database_url.startswith(("mariadb", "mysql")):
+                # pylint: disable=import-outside-toplevel
+                # First-Party
+                from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
+
+                _modify_metadata_for_mariadb()
+                Base.metadata.naming_convention = mariadb_naming_convention
+                logger.info("Applied MariaDB compatibility modifications")
+
             Base.metadata.create_all(bind=conn)
             command.stamp(cfg, "head")
         else:

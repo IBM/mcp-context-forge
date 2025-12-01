@@ -451,13 +451,16 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_publish_event_puts_in_all_queues(self, prompt_service):
-        q1 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        q2 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        prompt_service._event_subscribers.extend([q1, q2])
+        """Test that _publish_event uses EventService to publish events."""
+        # Mock the EventService's publish_event method
+        prompt_service._event_service.publish_event = AsyncMock()
+
         event = {"type": "test"}
         await prompt_service._publish_event(event)
-        assert await q1.get() == event
-        assert await q2.get() == event
+
+        # Verify that EventService.publish_event was called with the event
+        prompt_service._event_service.publish_event.assert_called_once_with(event)
+
 
     # ──────────────────────────────────────────────────────────────────
     #   Validation & Exception Handling

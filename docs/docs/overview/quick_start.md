@@ -240,9 +240,8 @@ Pick an install method below, generate an auth token, then walk through a real t
         - **PostgreSQL** (default): `postgresql://postgres:password@postgres:5432/mcp`
         - **MariaDB**: `mysql+pymysql://mysql:changeme@mariadb:3306/mcp` - fully supported with 36+ tables
         - **MySQL**: `mysql+pymysql://admin:changeme@mysql:3306/mcp`
-        - **MongoDB**: `mongodb://admin:changeme@mongodb:27017/mcp`
 
-        MariaDB 12.0+ and MySQL 8.4+ are fully compatible with all VARCHAR length requirements resolved.
+        MariaDB 10.6+ and MySQL 8.0+ are fully compatible with all VARCHAR length requirements resolved.
 
 ---
 

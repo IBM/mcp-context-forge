@@ -863,7 +863,7 @@ class MyPlugin(Plugin):
 
 ### Plugin Context and State
 
-Each hook function has a `context` object of type `PluginContext` which is designed to allow plugins to pass state between one another (across pre/post hook pairs) or for a plugin to pass state information to itself across pre/post hook pairs.  The plugin context looks as follows:
+Each hook function has a `context` object of type `PluginContext` which is designed to allow plugins to pass state between one another across all hook types in a request, or for a plugin to pass state information to itself across different hooks. The plugin context looks as follows:
 
 ```python
 class GlobalContext(BaseModel):
@@ -900,10 +900,9 @@ class PluginContext(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 ```
 
-As can be seen, the `PluginContext` has both a `state` dictionary and a `global_context` object that also has a `state` dictionary. A single plugin can share state between pre/post hook pairs by using the
-the `PluginContext` state dictionary. It can share state with other plugins using the `context.global_context.state` dictionary.  Metadata for the specific hook site is passed in through the `metadata` dictionaries in the `context.global_context.metadata`. It is meant to be read-only. The `context.metadata` is plugin specific metadata and can be used to store metadata information such as timing information.
+As can be seen, the `PluginContext` has both a `state` dictionary and a `global_context` object that also has a `state` dictionary. A single plugin can share state across all hooks in a request by using the `PluginContext` state dictionary. It can share state with other plugins using the `context.global_context.state` dictionary. Metadata for the specific hook site is passed in through the `metadata` dictionaries in the `context.global_context.metadata`. It is meant to be read-only. The `context.metadata` is plugin specific metadata and can be used to store metadata information such as timing information.
 
-The following shows how plugins can maintain state between pre/post hooks:
+The following shows how plugins can maintain state across different hooks:
 
 ```python
 async def prompt_pre_fetch(self, payload, context):
@@ -926,7 +925,7 @@ async def prompt_post_fetch(self, payload, context):
 
 #### Tool and Gateway Metadata
 
-Currently, the tool pre/post hooks have access to tool and gateway metadata through the global context metadata dictionary.  They are accessible as follows:
+Tool hooks have access to tool and gateway metadata through the global context metadata dictionary. They are accessible as follows:
 
 It can be accessed inside of the tool hooks through:
 

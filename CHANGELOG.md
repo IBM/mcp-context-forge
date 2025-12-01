@@ -20,6 +20,7 @@ This release delivers **Ed25519 Certificate Signing**, **REST API Passthrough Ca
 - **⚡ Performance Optimizations** - Response compression middleware (Brotli, Zstd, GZip) reducing bandwidth by 30-70% + orjson JSON serialization providing 5-6x faster JSON encoding
 - **🦀 Rust Plugin Framework** - Optional Rust-accelerated plugins with 5-100x performance improvements
 - **💻 Admin UI** - Quality of life improvements for admins when managing MCP servers
+- **🗄️ Enhanced Database Support** - Complete MariaDB/MySQL documentation, migration guides, and observability metrics
 
 ### ⚠️ BREAKING CHANGES
 
@@ -108,6 +109,25 @@ docker compose up -d
 - **Error: "Invalid cross-device link"** - Upgrade uses copy mode (not `--link`) to work across different Docker volumes
 
 ### Added
+
+#### **🗄️ Enhanced Database Support & Documentation**
+* **Complete MariaDB/MySQL Documentation** - Comprehensive documentation for MariaDB and MySQL support
+  - New "Supported Databases" page with sample connection URLs and limitations
+  - Detailed MariaDB/MySQL configuration examples with version requirements
+  - Known limitations documentation (JSONPath indexes, foreign key constraints)
+  - Performance optimization guidelines for MariaDB/MySQL deployments
+* **Simplified Database Migration** - MariaDB compatibility with existing PostgreSQL schemas
+  - No complex migration required - simply change the `DATABASE_URL`
+  - Automatic schema creation and migration handling
+  - Full compatibility between PostgreSQL and MariaDB deployments
+* **Enhanced Observability Metrics** - Database engine detection in Prometheus metrics
+  - Automatic `engine="mariadb"` labels in metrics for MariaDB deployments
+  - `database_info` gauge with engine and URL scheme labels
+  - Support for monitoring MariaDB-specific performance characteristics
+* **Quick Start Documentation Updates** - Docker Compose and Helm examples
+  - Docker Compose quick-start with MariaDB as the recommended database
+  - Helm chart deployment examples with MariaDB configuration
+  - Production-ready stack examples with Redis and admin tools
 
 #### **📄 REST API and UI Pagination** (#1224, #1277)
 * **Paginated REST API Endpoints** - All admin API endpoints now support pagination with configurable page size
@@ -931,10 +951,10 @@ This release focuses on **Advanced OAuth Integration, Plugin Ecosystem, MCP Regi
   # MariaDB (recommended MySQL-compatible option):
   DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
-  # Docker deployment with MariaDB 12.0.2-ubi10:
+  # Docker deployment with MariaDB:
   DATABASE_URL=mysql+pymysql://mysql:changeme@mariadb:3306/mcp
   ```
-  - **36+ database tables** fully compatible with MariaDB 12.0+ and MySQL 8.4+
+  - **36+ database tables** fully compatible with MariaDB 10.6+ and MySQL 8.0+
   - All **VARCHAR length issues** resolved for MySQL compatibility
   - **Container support**: MariaDB and MySQL drivers included in all container images
   - **Complete feature parity** with SQLite and PostgreSQL backends
