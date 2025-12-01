@@ -287,7 +287,6 @@ class ToolService:
         await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
-
     async def get_top_tools(self, db: Session, limit: Optional[int] = 5) -> List[TopPerformer]:
         """Retrieve the top-performing tools based on execution count.
 
@@ -309,21 +308,13 @@ class ToolService:
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
 
-        success_rate = case(
-            (
-                func.count(ToolMetric.id) > 0,
-                func.sum(
-                    case((ToolMetric.is_success.is_(True), 1), else_=0)
-                ).cast(Float) * 100 / func.count(ToolMetric.id)
-            ),
-            else_=None
-        )
+        success_rate = case((func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None)  # pylint: disable=not-callable
 
         query = (
             select(
                 DbTool.id,
                 DbTool.name,
-                func.count(ToolMetric.id).label("execution_count"),
+                func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
                 func.avg(ToolMetric.response_time).label("avg_response_time"),
                 success_rate.label("success_rate"),
                 func.max(ToolMetric.timestamp).label("last_execution"),
@@ -390,7 +381,7 @@ class ToolService:
                     "token": "********" if decoded_auth_value["Authorization"] else None,
                 }
             elif tool.auth_type == "authheaders":
-                # Get first key 
+                # Get first key
                 first_key = next(iter(decoded_auth_value))
                 tool_dict["auth"] = {
                     "auth_type": "authheaders",
@@ -413,7 +404,6 @@ class ToolService:
         tool_dict["tags"] = getattr(tool, "tags", []) or []
         tool_dict["team"] = getattr(tool, "team", None)
         return ToolRead.model_validate(tool_dict)
-
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
         """
@@ -958,14 +948,14 @@ class ToolService:
         # query = query.offset(skip).limit(limit)
 
         tools = db.execute(query).scalars().all()
-        
+
         # Batch fetch team names for all tools at once
         tool_team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
         team_name_map = {}
         if tool_team_ids:
             teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(tool_team_ids), EmailTeam.is_active.is_(True)).all()
             team_name_map = {team.id: team.name for team in teams}
-        
+
         result = []
         for t in tools:
             team_name = team_name_map.get(getattr(t, "team_id", None))

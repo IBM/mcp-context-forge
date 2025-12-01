@@ -221,7 +221,7 @@ class ServerService:
         """
         server_dict = server.__dict__.copy()
         server_dict.pop("_sa_instance_state", None)
-        
+
         # Compute aggregated metrics from server.metrics in a single pass; default to 0/None when no records exist.
         total = 0
         successful = 0
@@ -230,7 +230,7 @@ class ServerService:
         max_rt = None
         sum_rt = 0.0
         last_time = None
-        
+
         if hasattr(server, "metrics") and server.metrics:
             for m in server.metrics:
                 total += 1
@@ -238,19 +238,19 @@ class ServerService:
                     successful += 1
                 else:
                     failed += 1
-                
+
                 # Track min/max response times
                 if min_rt is None or m.response_time < min_rt:
                     min_rt = m.response_time
                 if max_rt is None or m.response_time > max_rt:
                     max_rt = m.response_time
-                
+
                 sum_rt += m.response_time
-                
+
                 # Track last execution time
                 if last_time is None or m.timestamp > last_time:
                     last_time = m.timestamp
-        
+
         failure_rate = (failed / total) if total > 0 else 0.0
         avg_rt = (sum_rt / total) if total > 0 else None
 
@@ -593,17 +593,14 @@ class ServerService:
             query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
 
         servers = db.execute(query).scalars().all()
-        
+
         # Fetch all team names
         team_ids = [s.team_id for s in servers if s.team_id]
         team_map = {}
         if team_ids:
-            teams = db.execute(
-                select(DbEmailTeam.id, DbEmailTeam.name)
-                .where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))
-            ).all()
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
-        
+
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
@@ -676,17 +673,14 @@ class ServerService:
         query = query.offset(skip).limit(limit)
 
         servers = db.execute(query).scalars().all()
-        
-        # Fetch all team names 
+
+        # Fetch all team names
         server_team_ids = [s.team_id for s in servers if s.team_id]
         team_map = {}
         if server_team_ids:
-            teams = db.execute(
-                select(DbEmailTeam.id, DbEmailTeam.name)
-                .where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))
-            ).all()
+            teams = db.execute(select(DbEmailTeam.id, DbEmailTeam.name).where(DbEmailTeam.id.in_(server_team_ids), DbEmailTeam.is_active.is_(True))).all()
             team_map = {team.id: team.name for team in teams}
-        
+
         result = []
         for s in servers:
             s.team = team_map.get(s.team_id) if s.team_id else None
