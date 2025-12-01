@@ -308,7 +308,9 @@ class ToolService:
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
 
-        success_rate = case((func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None)  # pylint: disable=not-callable
+        success_rate = case(
+            (func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None  # pylint: disable=not-callable
+        )
 
         query = (
             select(
