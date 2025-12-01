@@ -152,7 +152,8 @@ class TagService:
 
                 for entity in result.scalars():
                     tags = entity.tags if entity.tags else []
-                    for tag in tags:
+                    for raw_tag in tags:
+                        tag = self._get_tag_id(raw_tag)
                         if tag not in tag_data:
                             tag_data[tag] = {"stats": TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0), "entities": []}
 
@@ -192,7 +193,8 @@ class TagService:
 
                 for row in result:
                     tags = row[0] if row[0] else []
-                    for tag in tags:
+                    for raw_tag in tags:
+                        tag = self._get_tag_id(raw_tag)
                         if tag not in tag_data:
                             tag_data[tag] = {"stats": TagStats(tools=0, resources=0, prompts=0, servers=0, gateways=0, total=0), "entities": []}
 
@@ -255,6 +257,25 @@ class TagService:
             stats.gateways += 1
             stats.total += 1
         # Invalid entity types are ignored (no increment)
+
+    def _get_tag_id(self, tag) -> str:
+        """Return the tag id for a tag entry which may be a string or a dict.
+
+        Supports legacy string tags and new dict tags with an 'id' field.
+        Falls back to 'label' or the string representation when 'id' is missing.
+
+        Args:
+            tag: Tag value which may be a string (legacy) or a dict with an
+                 'id' or 'label' key.
+
+        Returns:
+            The normalized tag id as a string.
+        """
+        if isinstance(tag, str):
+            return tag
+        if isinstance(tag, dict):
+            return tag.get("id") or tag.get("label") or str(tag)
+        return str(tag)
 
     async def get_entities_by_tag(self, db: Session, tag_name: str, entity_types: Optional[List[str]] = None) -> List[TaggedEntity]:
         """Get all entities that have a specific tag.
@@ -343,7 +364,9 @@ class TagService:
             result = db.execute(stmt)
 
             for entity in result.scalars():
-                if tag_name in (entity.tags or []):
+                entity_tags = entity.tags or []
+                entity_tag_ids = [self._get_tag_id(t) for t in entity_tags]
+                if tag_name in entity_tag_ids:
                     # Determine the ID
                     if hasattr(entity, "id") and entity.id is not None:
                         entity_id = str(entity.id)

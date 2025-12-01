@@ -48,11 +48,11 @@ class TestTagValidator:
         """Test validation of tag lists."""
         # Basic test with duplicates
         result = TagValidator.validate_list(["Analytics", "ANALYTICS", "ml"])
-        assert result == ["analytics", "ml"]
+        assert result == [{'id':'analytics','label':'Analytics'}, {'id':'ml','label':'ml'}]
 
         # Test with invalid tags
         result = TagValidator.validate_list(["", "a", "valid-tag", "-invalid"])
-        assert result == ["valid-tag"]
+        assert result == [{'id':'valid-tag','label':'valid-tag'}]
 
         # Test with None
         assert TagValidator.validate_list(None) == []
@@ -62,7 +62,7 @@ class TestTagValidator:
 
         # Test preserving order
         result = TagValidator.validate_list(["zebra", "apple", "banana"])
-        assert result == ["zebra", "apple", "banana"]
+        assert result == [{'id':'zebra','label':'zebra'}, {'id':'apple','label':'apple'}, {'id':'banana','label':'banana'}]
 
     def test_get_validation_errors(self):
         """Test getting validation errors."""
@@ -88,7 +88,7 @@ class TestValidateTagsField:
     def test_validate_tags_field_valid(self):
         """Test field validation with valid tags."""
         result = validate_tags_field(["Analytics", "ml", "production"])
-        assert result == ["analytics", "ml", "production"]
+        assert result == [{'id':'analytics','label':'Analytics'}, {'id':'ml','label':'ml'}, {'id':'production','label':'production'}]
 
     def test_validate_tags_field_none(self):
         """Test field validation with None."""
@@ -102,7 +102,7 @@ class TestValidateTagsField:
         """Test field validation with some invalid tags."""
         # Should filter out invalid tags silently
         result = validate_tags_field(["valid", "", "a"])
-        assert result == ["valid"]
+        assert result == [{'id':'valid','label':'valid'}]
 
     def test_validate_tags_field_all_invalid(self):
         """Test field validation with all invalid tags."""
@@ -113,12 +113,12 @@ class TestValidateTagsField:
     def test_validate_tags_field_duplicates(self):
         """Test field validation removes duplicates."""
         result = validate_tags_field(["finance", "Finance", "FINANCE"])
-        assert result == ["finance"]
+        assert result == [{'id':'finance','label':'finance'}]
 
     def test_validate_tags_field_special_chars(self):
         """Test field validation with special characters."""
         result = validate_tags_field(["high-priority", "team:backend", "v2.0"])
-        assert result == ["high-priority", "team:backend", "v2.0"]
+        assert result == [{'id':'high-priority','label':'high-priority'}, {'id':'team:backend','label':'team:backend'}, {'id':'v2.0','label':'v2.0'}]
 
 
 class TestTagPatterns:
