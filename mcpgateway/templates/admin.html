@@ -1886,15 +1886,20 @@
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
-                    {% if server.tags %} {% for tag in server.tags %}
-                    <span
-                      class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
-                      >{{ tag }}</span
-                    >
-                    {% endfor %} {% else %}
-                    <span class="text-gray-500 dark:text-gray-300 text-xs"
-                      >None</span
-                    >
+                    {% if server.tags %}
+                      {% for tag in server.tags %}
+                        <span
+                          class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
+                        >
+                          {% if tag is mapping %}
+                            {{ tag.id }}
+                          {% else %}
+                            {{ tag }}
+                          {% endif %}
+                        </span>
+                      {% endfor %}
+                    {% else %}
+                      <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>
                     {% endif %}
                   </td>
                   <td class="px-6 py-4 whitespace-nowrap">
@@ -4114,7 +4119,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     {% if gateway.tags %} {% for tag in gateway.tags %}
                     <span
                       class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1"
-                      >{{ tag }}</span
+                      >{{ tag.id }}</span
                     >
                     {% endfor %} {% else %}
                     <span class="text-gray-400">No tags</span>
@@ -5492,7 +5497,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                         {% if agent.tags %}
                           {% for tag in agent.tags %}
-                            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1">{{ tag }}</span>
+                            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1">{{ tag.id }}</span>
                           {% endfor %}
                         {% endif %}
                       </td>
