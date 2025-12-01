@@ -11,7 +11,7 @@ all MCP Gateway entities (tools, resources, prompts, servers, gateways).
 
 # Standard
 import re
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class TagValidator:
@@ -34,7 +34,7 @@ class TagValidator:
         >>> TagValidator.validate("a")
         False
         >>> TagValidator.validate_list(["Finance", "FINANCE", " finance "])
-        ['finance']
+        [{'id': 'finance', 'label': 'Finance'}]
 
     Attributes:
         MIN_LENGTH (int): Minimum allowed tag length (2).
@@ -130,7 +130,7 @@ class TagValidator:
         return True
 
     @staticmethod
-    def validate_list(tags: Optional[List[str]]) -> List[str]:
+    def validate_list(tags: Optional[List[str]]) -> List[Dict[str, str]]:
         """Validate and normalize a list of tags.
 
         Filters out invalid tags, removes duplicates, and handles edge cases.
@@ -139,21 +139,21 @@ class TagValidator:
             tags: List of tags to validate and normalize.
 
         Returns:
-            List of valid, normalized, unique tags.
+            List of valid tag dicts with `id` (normalized tag) and `label` (original string).
 
         Examples:
             >>> TagValidator.validate_list(["Analytics", "ANALYTICS", "ml"])
-            ['analytics', 'ml']
+            [{'id': 'analytics', 'label': 'Analytics'}, {'id': 'ml', 'label': 'ml'}]
             >>> TagValidator.validate_list(["", "a", "valid-tag"])
-            ['valid-tag']
+            [{'id': 'valid-tag', 'label': 'valid-tag'}]
             >>> TagValidator.validate_list(None)
             []
             >>> TagValidator.validate_list([" Finance ", "FINANCE", "  finance  "])
-            ['finance']
+            [{'id': 'finance', 'label': 'Finance'}]
             >>> TagValidator.validate_list(["API", None, "", "  ", "api"])
-            ['api']
+            [{'id': 'api', 'label': 'API'}]
             >>> TagValidator.validate_list(["Machine Learning", "machine-learning"])
-            ['machine-learning']
+            [{'id': 'machine-learning', 'label': 'Machine Learning'}]
         """
         if not tags:
             return []
@@ -161,21 +161,23 @@ class TagValidator:
         # Filter out None values and convert everything to strings
         string_tags = [str(tag) for tag in tags if tag is not None]
 
-        # Normalize all tags
-        normalized_tags = []
+        # Normalize all tags while preserving the original input for the label
+        normalized_pairs: List[tuple[str, str]] = []
         for tag in string_tags:
             # Skip empty strings or strings with only whitespace
             if tag and tag.strip():
-                normalized_tags.append(TagValidator.normalize(tag))
+                original = tag.strip()
+                normalized = TagValidator.normalize(original)
+                normalized_pairs.append((normalized, original))
 
         # Filter valid tags and remove duplicates while preserving order
         seen = set()
-        valid_tags = []
-        for tag in normalized_tags:
-            # Validate and check for duplicates
-            if tag and TagValidator.validate(tag) and tag not in seen:
-                seen.add(tag)
-                valid_tags.append(tag)
+        valid_tags: List[Dict[str, str]] = []
+        for normalized, original in normalized_pairs:
+            # Validate and check for duplicates (use normalized value for uniqueness)
+            if normalized and TagValidator.validate(normalized) and normalized not in seen:
+                seen.add(normalized)
+                valid_tags.append({"id": normalized, "label": original})
 
         return valid_tags
 
@@ -228,15 +230,15 @@ def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
 
     Examples:
         >>> validate_tags_field(["Analytics", "ml"])
-        ['analytics', 'ml']
+        [{'id': 'analytics', 'label': 'Analytics'}, {'id': 'ml', 'label': 'ml'}]
         >>> validate_tags_field(["valid", "", "a", "invalid-"])
-        ['valid']
+        [{'id': 'valid', 'label': 'valid'}]
         >>> validate_tags_field(None)
         []
         >>> validate_tags_field(["API", "api", "  API  "])
-        ['api']
+        [{'id': 'api', 'label': 'API'}]
         >>> validate_tags_field(["machine learning", "Machine-Learning", "ML"])
-        ['machine-learning', 'ml']
+        [{'id': 'machine-learning', 'label': 'machine learning'}, {'id': 'ml', 'label': 'ML'}]
     """
     # Handle None, empty lists, and any other falsy values
     if not tags:

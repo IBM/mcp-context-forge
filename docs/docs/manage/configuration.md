@@ -14,16 +14,15 @@ MCP Gateway supports multiple database backends with full feature parity across 
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 12.0+ |
+| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
-| MongoDB     | ✅ Full       | `mongodb://admin:changeme@localhost:27017/mcp`              | NoSQL document store           |
 
 ### MariaDB/MySQL Setup Details
 
 !!! success "MariaDB & MySQL Full Support"
     MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
     - Supports all MCP Gateway features including federation, caching, and A2A agents
@@ -154,9 +153,8 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 ```bash
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MySQL
+DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
 DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
-DATABASE_URL=mongodb://admin:changeme@localhost:27017/mcp               # MongoDB
 
 # Connection pool settings (optional)
 DB_POOL_SIZE=200

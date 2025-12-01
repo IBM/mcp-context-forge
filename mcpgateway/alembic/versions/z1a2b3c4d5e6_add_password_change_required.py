@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add password_change_required field to EmailUser
 
 Revision ID: z1a2b3c4d5e6

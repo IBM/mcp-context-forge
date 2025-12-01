@@ -216,7 +216,7 @@
       <td class="px-2 py-4 whitespace-nowrap">
         {% if tool.tags %}
           {% for tag in tool.tags %}
-            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tag }}</span>
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{{ tag.id }}</span>
           {% endfor %}
         {% else %}
           <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>

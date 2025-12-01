@@ -186,20 +186,19 @@ class TestResourceServiceLifecycle:
     async def test_initialize(self, resource_service):
         """Test service initialization."""
         await resource_service.initialize()
-        # Service should be ready after initialization
-        assert resource_service._event_subscribers == {}
+        # EventService handles subscribers internally now
         assert resource_service._template_cache == {}
 
     @pytest.mark.asyncio
     async def test_shutdown(self, resource_service):
         """Test service shutdown."""
-        # Add some subscribers first
-        resource_service._event_subscribers["test"] = [asyncio.Queue()]
+        # Mock the EventService shutdown method
+        resource_service._event_service.shutdown = AsyncMock()
 
         await resource_service.shutdown()
 
-        # Subscribers should be cleared
-        assert resource_service._event_subscribers == {}
+        # Verify EventService.shutdown was called
+        resource_service._event_service.shutdown.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #
@@ -933,37 +932,45 @@ class TestResourceSubscriptions:
 
     @pytest.mark.asyncio
     async def test_subscribe_events(self, resource_service):
-        """Test event subscription."""
-        # Test that subscription sets up correctly
-        uri = "test://resource"
-
-        # Create a mock async generator
+        """Test event subscription via EventService."""
+        # Create a mock async generator for EventService
         async def mock_generator():
             yield {"type": "test", "data": "test_data"}
 
-        # Patch the subscribe_events method to return our mock
-        with patch.object(resource_service, "subscribe_events", return_value=mock_generator()):
-            # Consume one event
-            async for event in resource_service.subscribe_events(uri):
-                assert event["type"] == "test"
-                break
+        # Mock the EventService's subscribe_events method
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
-        # Test that the method would set up subscribers correctly
-        queue = asyncio.Queue()
-        resource_service._event_subscribers[uri] = [queue]
+        # Subscribe and get one event
+        event_gen = resource_service.subscribe_events()
+        event = await event_gen.__anext__()
 
-        # Verify subscription was set up
-        assert uri in resource_service._event_subscribers
+        # Verify the event came through
+        assert event["type"] == "test"
+        assert event["data"] == "test_data"
+
+        # Verify EventService.subscribe_events was called
+        resource_service._event_service.subscribe_events.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_subscribe_events_global(self, resource_service):
-        """Test global event subscription."""
-        # Test that global subscription sets up correctly
-        queue = asyncio.Queue()
-        resource_service._event_subscribers["*"] = [queue]
+        """Test global event subscription via EventService."""
+        # Create a mock async generator
+        async def mock_generator():
+            yield {"type": "resource_created", "data": {"uri": "any://resource"}}
 
-        # Verify global subscription was set up
-        assert "*" in resource_service._event_subscribers
+        # Mock the EventService method
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
+
+        # Subscribe globally (no uri parameter)
+        event_gen = resource_service.subscribe_events()
+        event = await event_gen.__anext__()
+
+        assert event["type"] == "resource_created"
+        resource_service._event_service.subscribe_events.assert_called_once()
 
 
 # --------------------------------------------------------------------------- #
@@ -1008,7 +1015,7 @@ class TestResourceTemplates:
     def test_uri_matches_template(self):
         from mcpgateway.services import ResourceService
         resource_service_instance = ResourceService()
-        
+
         """Test URI template matching."""
         template = "test://resource/{id}/details"
 
@@ -1290,94 +1297,96 @@ class TestUtilityMethods:
 # Notification tests                                                          #
 # --------------------------------------------------------------------------- #
 
-
 class TestNotifications:
     """Test notification functionality."""
 
     @pytest.mark.asyncio
     async def test_notify_resource_added(self, resource_service, mock_resource):
         """Test resource added notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            await resource_service._notify_resource_added(mock_resource)
+        # Mock EventService.publish_event
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][0] == mock_resource.uri
-            assert args[0][1]["type"] == "resource_added"
+        await resource_service._notify_resource_added(mock_resource)
+
+        # Verify EventService.publish_event was called
+        resource_service._event_service.publish_event.assert_called_once()
+
+        # Check the event structure
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_added"
+        assert call_args["data"]["id"] == mock_resource.id
+        assert call_args["data"]["uri"] == mock_resource.uri
 
     @pytest.mark.asyncio
     async def test_notify_resource_updated(self, resource_service, mock_resource):
         """Test resource updated notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            await resource_service._notify_resource_updated(mock_resource)
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][1]["type"] == "resource_updated"
+        await resource_service._notify_resource_updated(mock_resource)
+
+        resource_service._event_service.publish_event.assert_called_once()
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_updated"
 
     @pytest.mark.asyncio
     async def test_notify_resource_activated(self, resource_service, mock_resource):
         """Test resource activated notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            await resource_service._notify_resource_activated(mock_resource)
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][1]["type"] == "resource_activated"
-            assert args[0][1]["data"]["is_active"] is True
+        await resource_service._notify_resource_activated(mock_resource)
+
+        resource_service._event_service.publish_event.assert_called_once()
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_activated"
+        assert call_args["data"]["is_active"] is True
 
     @pytest.mark.asyncio
     async def test_notify_resource_deactivated(self, resource_service, mock_resource):
         """Test resource deactivated notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            await resource_service._notify_resource_deactivated(mock_resource)
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][1]["type"] == "resource_deactivated"
-            assert args[0][1]["data"]["is_active"] is False
+        await resource_service._notify_resource_deactivated(mock_resource)
+
+        resource_service._event_service.publish_event.assert_called_once()
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_deactivated"
+        assert call_args["data"]["is_active"] is False
 
     @pytest.mark.asyncio
     async def test_notify_resource_deleted(self, resource_service):
         """Test resource deleted notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            resource_info = {"id": 1, "uri": "test://resource", "name": "Test"}
-            await resource_service._notify_resource_deleted(resource_info)
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][1]["type"] == "resource_deleted"
+        resource_info = {"id": 1, "uri": "test://resource", "name": "Test"}
+        await resource_service._notify_resource_deleted(resource_info)
+
+        resource_service._event_service.publish_event.assert_called_once()
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_deleted"
+        assert call_args["data"] == resource_info
 
     @pytest.mark.asyncio
     async def test_notify_resource_removed(self, resource_service, mock_resource):
         """Test resource removed notification."""
-        with patch.object(resource_service, "_publish_event", new_callable=AsyncMock) as mock_publish:
-            await resource_service._notify_resource_removed(mock_resource)
+        resource_service._event_service.publish_event = AsyncMock()
 
-            mock_publish.assert_called_once()
-            args = mock_publish.call_args
-            assert args[0][1]["type"] == "resource_removed"
+        await resource_service._notify_resource_removed(mock_resource)
+
+        resource_service._event_service.publish_event.assert_called_once()
+        call_args = resource_service._event_service.publish_event.call_args[0][0]
+        assert call_args["type"] == "resource_removed"
 
     @pytest.mark.asyncio
     async def test_publish_event(self, resource_service):
-        """Test event publishing."""
-        # Set up subscribers
-        uri_queue = asyncio.Queue()
-        global_queue = asyncio.Queue()
-
-        resource_service._event_subscribers["test://resource"] = [uri_queue]
-        resource_service._event_subscribers["*"] = [global_queue]
+        """Test event publishing via EventService."""
+        # Mock EventService.publish_event
+        resource_service._event_service.publish_event = AsyncMock()
 
         event = {"type": "test", "data": "test_data"}
-        await resource_service._publish_event("test://resource", event)
+        await resource_service._publish_event(event)
 
-        # Both queues should receive the event
-        uri_event = await asyncio.wait_for(uri_queue.get(), timeout=0.1)
-        global_event = await asyncio.wait_for(global_queue.get(), timeout=0.1)
-
-        assert uri_event == event
-        assert global_event == event
-
+        # Verify EventService.publish_event was called with the event
+        resource_service._event_service.publish_event.assert_called_once_with(event)
 
 # --------------------------------------------------------------------------- #
 # Error handling tests                                                        #
@@ -1509,51 +1518,46 @@ class TestResourceServiceMetricsExtended:
 
     @pytest.mark.asyncio
     async def test_subscribe_events_with_uri(self, resource_service):
-        """Test subscribing to events for specific URI."""
-        test_uri = "test://resource"
-        test_event = {"type": "resource_updated", "data": {"uri": test_uri}}
+        """Test subscribing to events - EventService handles all events globally."""
+        # Note: With centralized EventService, filtering by URI is handled
+        # at the application level, not at the service subscription level
 
-        # Start subscription
-        subscriber = resource_service.subscribe_events(uri=test_uri)
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        test_event = {"type": "resource_updated", "data": {"uri": "test://resource"}}
 
-        # Allow subscription to register
-        await asyncio.sleep(0.01)
+        # Create mock async generator
+        async def mock_generator():
+            yield test_event
 
-        # Publish event to specific URI
-        await resource_service._publish_event(test_uri, test_event)
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
-        # Receive event
-        received = await asyncio.wait_for(subscription_task, timeout=0.1)
+        # Subscribe (no uri parameter in new implementation)
+        subscriber = resource_service.subscribe_events()
+        received = await subscriber.__anext__()
+
         assert received == test_event
-
-        # Clean up
-        await subscriber.aclose()
-
-        # Verify cleanup
-        assert test_uri not in resource_service._event_subscribers
+        resource_service._event_service.subscribe_events.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_subscribe_events_global(self, resource_service):
-        """Test subscribing to all events."""
+        """Test subscribing to all events via EventService."""
         test_event = {"type": "resource_created", "data": {"uri": "any://resource"}}
 
-        # Start global subscription
-        subscriber = resource_service.subscribe_events(uri=None)
-        subscription_task = asyncio.create_task(subscriber.__anext__())
+        # Create mock async generator
+        async def mock_generator():
+            yield test_event
 
-        await asyncio.sleep(0.01)
+        resource_service._event_service.subscribe_events = MagicMock(
+            return_value=mock_generator()
+        )
 
-        # Publish event to any URI
-        await resource_service._publish_event("any://resource", test_event)
+        # Subscribe globally (same as specific - no uri param)
+        subscriber = resource_service.subscribe_events()
+        received = await subscriber.__anext__()
 
-        received = await asyncio.wait_for(subscription_task, timeout=0.1)
         assert received == test_event
-
-        await subscriber.aclose()
-
-        # Verify cleanup of global subscribers
-        assert "*" not in resource_service._event_subscribers
+        resource_service._event_service.subscribe_events.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_read_template_resource_not_found(self):

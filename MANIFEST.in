@@ -31,6 +31,7 @@ recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
 recursive-include plugin_templates *
+recursive-include mcpgateway/toolops *.md
 
 # Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make

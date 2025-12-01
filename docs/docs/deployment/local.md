@@ -97,7 +97,7 @@ By default, MCP Gateway uses SQLite for simplicity. You can configure alternativ
 !!! tip "MariaDB & MySQL Full Compatibility"
     MariaDB and MySQL are **fully supported** with:
 
-    - **36+ database tables** working perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** working perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
 
