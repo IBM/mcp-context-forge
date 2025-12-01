@@ -2141,22 +2141,32 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             True
         """
         start_time = time.monotonic()
+        concurrency_limit = min(settings.max_concurrent_health_checks, max(10, os.cpu_count() * 5))  # adaptive concurrency
+        semaphore = asyncio.Semaphore(concurrency_limit)
+
+        async def limited_check(gateway: DbGateway):
+            async with semaphore:
+                await self._check_single_gateway_health(db, gateway, user_email)
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
-            # Create tasks for concurrent health checks
-            tasks = []
-            for gateway in gateways:
-                if gateway.auth_type == "one_time_auth":
-                    continue  # Skip health check for one_time auth gateways
-                tasks.append(self._check_single_gateway_health(db, gateway, user_email))
+            # Chunk processing to avoid overload
+            if not gateways:
+                return True
+            chunk_size = concurrency_limit
+            for i in range(0, len(gateways), chunk_size):
+                # batch will be a sublist of gateways from index i to i + chunk_size
+                batch = gateways[i:i + chunk_size]
 
-            # Execute all health checks concurrently
-            if tasks:
+                # Each task is a health check for a gateway in the batch, excluding those with auth_type == "one_time_auth"
+                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth"]
+
+                # Execute all health checks concurrently
                 await asyncio.gather(*tasks, return_exceptions=True)
+                await asyncio.sleep(0.05)  # small pause prevents network saturation
 
             elapsed = time.monotonic() - start_time
-
+            
             if batch_span:
                 batch_span.set_attribute("check.duration_ms", int(elapsed * 1000))
                 batch_span.set_attribute("check.completed", True)
