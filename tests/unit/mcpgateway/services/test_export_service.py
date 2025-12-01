@@ -933,7 +933,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
@@ -946,7 +946,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
@@ -1103,7 +1103,7 @@ async def test_export_selected_prompts(export_service, mock_db):
     # First-Party
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
@@ -1141,7 +1141,7 @@ async def test_export_selected_resources(export_service, mock_db):
     # First-Party
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",

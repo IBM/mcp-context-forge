@@ -64,7 +64,7 @@ def mock_resource():
     resource = MagicMock()
 
     # core attributes
-    resource.id = 1
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"
     resource.uri = "http://example.com/resource"
     resource.name = "Test Resource"
     resource.description = "A test resource"
@@ -101,7 +101,7 @@ def mock_resource_template():
     resource = MagicMock()
 
     # core attributes
-    resource.id = 1
+    resource.id = "39334ce0ed2644d79ede8913a66930c9"
     resource.uri = "http://example.com/resource/{name}"
     resource.name = "Test Resource"
     resource.description = "A test resource"
@@ -138,7 +138,7 @@ def mock_inactive_resource():
     resource = MagicMock()
 
     # core attributes
-    resource.id = 2
+    resource.id = "2"
     resource.uri = "http://example.com/inactive"
     resource.name = "Inactive Resource"
     resource.description = "An inactive resource"
@@ -224,7 +224,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=sample_resource_create.uri,
                 name=sample_resource_create.name,
                 description=sample_resource_create.description or "",
@@ -340,7 +340,7 @@ class TestResourceRegistration:
             patch.object(resource_service, "_convert_resource_to_read") as mock_convert,
         ):
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=binary_resource.uri,
                 name=binary_resource.name,
                 description=binary_resource.description or "",
@@ -546,7 +546,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_activated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id=2,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_inactive_resource.uri,
                 name=mock_inactive_resource.name,
                 description=mock_inactive_resource.description or "",
@@ -580,7 +580,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_deactivated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
                 name=mock_resource.name,
                 description=mock_resource.description,
@@ -626,7 +626,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
                 name=mock_resource.name,
                 description=mock_resource.description,
@@ -667,7 +667,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="39334ce0ed2644d79ede8913a66930c9",
                 uri=mock_resource.uri,
                 name="Updated Name",
                 description="Updated description",
@@ -740,7 +740,7 @@ class TestResourceManagement:
 
         with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock), patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
-                id=1,
+                id="",
                 uri=mock_resource.uri,
                 name=mock_resource.name,
                 description=mock_resource.description,
@@ -803,7 +803,7 @@ class TestResourceManagement:
         mock_db.execute.side_effect = [mock_scalar1, mock_scalar2]
 
         with pytest.raises(ResourceNotFoundError) as exc_info:
-            await resource_service.get_resource_by_id(mock_db, "1")
+            await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9")
 
         assert "exists but is inactive" in str(exc_info.value)
 
@@ -814,7 +814,7 @@ class TestResourceManagement:
         mock_scalar.scalar_one_or_none.return_value = mock_inactive_resource
         mock_db.execute.return_value = mock_scalar
 
-        result = await resource_service.get_resource_by_id(mock_db, "1", include_inactive=True)
+        result = await resource_service.get_resource_by_id(mock_db, "39334ce0ed2644d79ede8913a66930c9", include_inactive=True)
 
         assert isinstance(result, ResourceRead)
         assert result.uri == mock_inactive_resource.uri
@@ -1089,7 +1089,7 @@ class TestResourceTemplates:
 
         # Correct template object (NOT ResourceContent)
         template_obj = ResourceTemplate(
-                        id=1,
+                        id="1",
                         uriTemplate="file://search/{query}",  # alias is used in constructor
                         name="search_template",
                         description="Template for performing a file search",
@@ -1128,7 +1128,7 @@ class TestResourceTemplates:
 
         # Create a valid ResourceTemplate object
         template_obj = ResourceTemplate(
-            id=1,
+            id="1",
             uriTemplate="test://template/{id}",   # alias for uri_template
             name="template",
             description="Test template",
@@ -1173,7 +1173,7 @@ class TestResourceTemplates:
 
         # Binary MIME template
         template = MagicMock()
-        template.id = 1
+        template.id = "39334ce0ed2644d79ede8913a66930c9"
         template.uri_template = "test://template/{id}"
         template.name = "binary_template"
         template.mime_type = "application/octet-stream"
@@ -1374,7 +1374,7 @@ class TestNotifications:
         """Test resource deleted notification."""
         resource_service._event_service.publish_event = AsyncMock()
 
-        resource_info = {"id": 1, "uri": "test://resource", "name": "Test"}
+        resource_info = {"id": "39334ce0ed2644d79ede8913a66930c9", "uri": "test://resource", "name": "Test"}
         await resource_service._notify_resource_deleted(resource_info)
 
         resource_service._event_service.publish_event.assert_called_once()
@@ -1439,7 +1439,7 @@ class TestErrorHandling:
         mock_db.commit.side_effect = Exception("Database error")
 
         with pytest.raises(ResourceError):
-            await resource_service.toggle_resource_status(mock_db, 1, activate=False)
+            await resource_service.toggle_resource_status(mock_db, "39334ce0ed2644d79ede8913a66930c9", activate=False)
 
         mock_db.rollback.assert_called_once()
 
@@ -1615,7 +1615,7 @@ class TestResourceServiceMetricsExtended:
         """Test getting top performing resources."""
         # Mock query results
         mock_result1 = MagicMock()
-        mock_result1.id = 1
+        mock_result1.id = "39334ce0ed2644d79ede8913a66930c9"
         mock_result1.name = "resource1"
         mock_result1.execution_count = 10
         mock_result1.avg_response_time = 1.5
@@ -1623,7 +1623,7 @@ class TestResourceServiceMetricsExtended:
         mock_result1.last_execution = "2025-01-10T12:00:00"
 
         mock_result2 = MagicMock()
-        mock_result2.id = 2
+        mock_result2.id = "2"
         mock_result2.name = "resource2"
         mock_result2.execution_count = 7
         mock_result2.avg_response_time = 2.3

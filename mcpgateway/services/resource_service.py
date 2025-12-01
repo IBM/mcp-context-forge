@@ -1775,7 +1775,7 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: int, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
         """
         Get a resource by ID.
 
@@ -1799,7 +1799,7 @@ class ResourceService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_id(db, 999))
+            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
             'resource_read'
         """
         query = select(DbResource).where(DbResource.id == resource_id)

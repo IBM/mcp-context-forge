@@ -117,7 +117,7 @@ MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
 
 
 MOCK_RESOURCE_READ = {
-    "id": 1,
+    "id": "39334ce0ed2644d79ede8913a66930c9",
     "uri": "test/resource",
     "name": "Test Resource",
     "description": "A test resource",
@@ -130,7 +130,7 @@ MOCK_RESOURCE_READ = {
 }
 
 MOCK_PROMPT_READ = {
-    "id": 1,
+    "id": "ca627760127d409080fdefc309147e08",
     "name": "test_prompt",
     "description": "A test prompt",
     "template": "Hello {name}",
