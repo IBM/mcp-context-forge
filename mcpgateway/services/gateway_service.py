@@ -2155,9 +2155,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             Args:
                 gateway (DbGateway): The database gateway whose health is to be checked.
 
-            Returns:
-                None: This function performs an action (checking health) but does not return any value.
-
             Raises:
                 Any exceptions raised during the health check will be propagated to the caller.
             """
