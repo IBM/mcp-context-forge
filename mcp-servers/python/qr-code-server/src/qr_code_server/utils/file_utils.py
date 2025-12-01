@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -22,13 +22,13 @@ def resolve_output_path(output_path: str, default_path: str, file_extension: str
         base, filename = os.path.split(raw_path)
     try:
         os.makedirs(base, exist_ok=True)
-    except (OSError, FileExistsError) as e:
+    except OSError as e:
         logger.error("Error creating output folder '%s': %s", base, e)
-        raise
+        # img.save will handle the error
 
     _, ext = os.path.splitext(filename)
     # in case the user gave path + filename.ext with correct extension
     if ext.lstrip(".").lower() == file_extension.lower():
         return raw_path
 
-    return os.path.join(base, DEFAULT_FILE_NAME)
+    return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")
