@@ -1,7 +1,7 @@
 """tag records changes list[str] to list[Dict[str,str]]
 
 Revision ID: 9e028ecf59c4
-Revises: 191a2def08d7
+Revises: add_toolops_test_cases_table
 Create Date: 2025-11-26 18:15:07.113528
 
 """
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "9e028ecf59c4"
-down_revision: Union[str, Sequence[str], None] = "z1a2b3c4d5e6"
+down_revision: Union[str, Sequence[str], None] = "add_toolops_test_cases_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
