@@ -2043,6 +2043,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             None
 
         Examples:
+            >>> from mcpgateway.services.gateway_service import GatewayService
             >>> service = GatewayService()
             >>> gateway = type('Gateway', (), {
             ...     'id': 'gw1', 'name': 'test_gw', 'enabled': True, 'reachable': True
