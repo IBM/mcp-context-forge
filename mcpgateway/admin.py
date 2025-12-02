@@ -12357,7 +12357,7 @@ async def admin_get_grpc_methods(
 @admin_router.get("/sections/tools")
 @require_permission("admin")
 async def get_tools_section(
-    request: Request
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
