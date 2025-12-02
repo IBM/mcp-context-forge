@@ -35,20 +35,20 @@ class TestPermissionFallback:
     """Test permission fallback functionality for team management."""
 
     @pytest.mark.asyncio
-    async def test_admin_user_bypasses_all_checks(self, permission_service):
-        """Test that admin users bypass all permission checks."""
+    async def test_admin_user_does_not_bypass_check_permission(self, permission_service):
+        """Test that admin users do NOT bypass permission checks in check_permission."""
         with patch.object(permission_service, "_is_user_admin", return_value=True):
-            # Admin should have access to any permission
-            assert await permission_service.check_permission("admin@example.com", "teams.create") == True
-            assert await permission_service.check_permission("admin@example.com", "teams.delete", team_id="team-123") == True
-            assert await permission_service.check_permission("admin@example.com", "any.permission") == True
+            # Admin bypass is removed from check_permission
+            assert await permission_service.check_permission("admin@example.com", "teams.create") == False
+            assert await permission_service.check_permission("admin@example.com", "teams.delete", team_id="team-123") == False
+            assert await permission_service.check_permission("admin@example.com", "any.permission") == False
 
     @pytest.mark.asyncio
-    async def test_team_create_permission_for_regular_users(self, permission_service):
-        """Test that regular users can create teams."""
+    async def test_team_create_permission_denied_for_regular_users_without_role(self, permission_service):
+        """Test that regular users without roles cannot create teams (implicit fallback removed)."""
         with patch.object(permission_service, "_is_user_admin", return_value=False), patch.object(permission_service, "get_user_permissions", return_value=set()):
-            # Regular user should be able to create teams (global permission)
-            assert await permission_service.check_permission("user@example.com", "teams.create") == True
+            # Implicit fallback is removed
+            assert await permission_service.check_permission("user@example.com", "teams.create") == False
 
     @pytest.mark.asyncio
     async def test_team_owner_permissions(self, permission_service):
