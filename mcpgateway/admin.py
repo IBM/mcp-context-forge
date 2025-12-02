@@ -527,7 +527,14 @@ def serialize_datetime(obj):
 
 
 async def get_allowed_team_ids(request: Request) -> List[str]:
-    """Extract allowed team IDs from request state."""
+    """Extract allowed team IDs from request state.
+
+    Args:
+        request (Request): FastAPI request object, used to extract user permissions.
+
+    Returns:
+        List[str]: List of allowed team IDs for the user.
+    """
     user_permissions = getattr(request.state, "user_permissions", [])
     allowed_teams: List[str] = []
 
@@ -837,6 +844,7 @@ async def admin_list_servers(
     List servers for the admin UI with an option to include inactive servers.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive servers.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
@@ -944,6 +952,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
 
     Args:
         server_id (str): The ID of the server to retrieve.
+        request (Request): FastAPI request object, used to extract user permissions.
         db (Session): The database session dependency.
         user (str): The authenticated user dependency.
 
@@ -1728,6 +1737,7 @@ async def admin_list_resources(
     to view or manage resources that have been deactivated but not deleted.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive resources in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -1953,6 +1963,7 @@ async def admin_list_gateways(
     to view and manage gateways that have been deactivated but not deleted.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive gateways in the results.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -2066,6 +2077,7 @@ async def admin_list_gateway_ids(
     `gateway_ids` containing an array of gateway identifiers.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive gateways in the results.
         db (Session): Database session dependency.
         user: Authenticated user dependency.
@@ -5307,6 +5319,7 @@ async def admin_list_tools(
     configurable page size.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page (1-500). Default: 50.
         include_inactive (bool): Whether to include inactive tools in the results.
@@ -6334,6 +6347,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 
     Args:
         tool_id (str): The ID of the tool to retrieve.
+        request (Request): FastAPI request object, used to extract user permissions.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
 
@@ -7161,6 +7175,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
 
     Args:
         gateway_id: Gateway ID.
+        request (Request): FastAPI request object, used to extract user permissions.
         db: Database session.
         user: Authenticated user.
 
@@ -7957,6 +7972,7 @@ async def admin_get_resource(resource_id: int, request: Request, db: Session = D
 
     Args:
         resource_id: Resource ID.
+        request: FastAPI request object, used to extract user permissions.
         db: Database session.
         user: Authenticated user.
 
@@ -8535,6 +8551,7 @@ async def admin_get_prompt(prompt_id: int, request: Request, db: Session = Depen
     """Get prompt details for the admin UI.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         prompt_id: Prompt ID.
         db: Database session.
         user: Authenticated user.
@@ -10887,6 +10904,7 @@ async def admin_get_agent(
     """Get A2A agent details for the admin UI.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         agent_id: Agent ID.
         db: Database session.
         user: Authenticated user.
@@ -10993,6 +11011,7 @@ async def admin_list_a2a_agents(
     management or auditing purposes.
 
     Args:
+        request (Request): FastAPI request object, used to extract user permissions.
         include_inactive (bool): Whether to include inactive agents in the results.
         db (Session): Database session dependency.
         user (dict): Authenticated user dependency.
