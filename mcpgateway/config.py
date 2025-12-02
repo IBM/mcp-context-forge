@@ -374,7 +374,23 @@ class Settings(BaseSettings):
 
     # Security Headers Configuration
     security_headers_enabled: bool = Field(default=True)
-    x_frame_options: str = Field(default="DENY")
+    x_frame_options: Optional[str] = Field(default="DENY")
+
+    @field_validator("x_frame_options")
+    @classmethod
+    def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
+        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
+
+        Args:
+            v: The x_frame_options value from environment/config
+
+        Returns:
+            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() in ("null", "none"):
+            return None
+        return v
+
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
     x_download_options_enabled: bool = Field(default=True)
