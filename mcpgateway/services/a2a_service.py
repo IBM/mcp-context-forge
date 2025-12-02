@@ -209,7 +209,7 @@ class A2AAgentService:
         """
         try:
             target_team_id = getattr(agent_data, "team_id", None) or team_id
-            
+
             # Validate write access
             if target_team_id and allowed_team_ids is not None:
                 if target_team_id not in allowed_team_ids:
@@ -331,7 +331,18 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to register A2A agent: {str(e)}")
 
-    async def list_agents(self, db: Session, cursor: Optional[str] = None, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None, team_id: Optional[str] = None, skip: int = 0, limit: int = 100) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
+    async def list_agents(
+        self,
+        db: Session,
+        cursor: Optional[str] = None,
+        include_inactive: bool = False,
+        tags: Optional[List[str]] = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 100,
+    ) -> List[A2AAgentRead]:  # pylint: disable=unused-argument
         """List A2A agents with optional filtering.
 
         Args:
@@ -365,13 +376,13 @@ class A2AAgentService:
             # If a specific team is selected, filter by that team
             # We still need to check if the user has access to this team (allowed_team_ids)
             if allowed_team_ids is not None and team_id not in allowed_team_ids:
-                 return []
+                return []
 
             access_conditions = []
             # Filter by specific team
             access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
             access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
-            
+
             # Also include global public agents if they should be visible in team view (optional, but usually team view focuses on team + public)
             # For now, let's stick to team-scoped items + public items associated with that team context if any
             # But typically "team_id" filter means "show me things belonging to this team".
@@ -380,23 +391,23 @@ class A2AAgentService:
             # Existing services pattern:
             # access_conditions.append(and_(Model.team_id == team_id, Model.visibility.in_(["team", "public"])))
             # access_conditions.append(and_(Model.team_id == team_id, Model.owner_email == user_email))
-            
+
             query = query.where(or_(*access_conditions))
 
         elif allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public agents
-             access_conditions.append(DbA2AAgent.visibility == "public")
-             
-             # 2. Team agents where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal agents owned by user
-             if user_email:
-                 access_conditions.append(DbA2AAgent.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public agents
+            access_conditions.append(DbA2AAgent.visibility == "public")
+
+            # 2. Team agents where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbA2AAgent.visibility == "team", DbA2AAgent.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal agents owned by user
+            if user_email:
+                access_conditions.append(DbA2AAgent.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         query = query.order_by(desc(DbA2AAgent.created_at))
         query = query.offset(skip).limit(limit)
@@ -406,8 +417,16 @@ class A2AAgentService:
         return [self._db_to_schema(db=db, db_agent=agent) for agent in agents]
 
     async def list_agents_for_user(
-        self, db: Session, user_info: Dict[str, Any], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100,
-        allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None,
+        self,
+        db: Session,
+        user_info: Dict[str, Any],
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        skip: int = 0,
+        limit: int = 100,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> List[A2AAgentRead]:
         """
         List A2A agents user has access to with team filtering.
@@ -589,7 +608,7 @@ class A2AAgentService:
             elif agent.visibility == "private":
                 if user_email and agent.owner_email == user_email:
                     has_access = True
-            
+
             if not has_access:
                 logger.warning(f"Access denied to agent {agent_id} (visibility={agent.visibility}, team={agent.team_id}) for user {user_email}")
                 raise A2AAgentNotFoundError(f"A2A Agent not found with ID: {agent_id}")
@@ -662,12 +681,12 @@ class A2AAgentService:
 
             # Validate write access
             if agent.visibility == "team":
-                 if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {agent.team_id}")
+                if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {agent.team_id}")
             elif agent.visibility == "private":
-                 if user_email and agent.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to agent {agent.id}")
+                if user_email and agent.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to agent {agent.id}")
 
             # Check for name conflict if name is being updated
             if agent_data.name and agent_data.name != agent.name:
@@ -743,7 +762,9 @@ class A2AAgentService:
             db.rollback()
             raise A2AAgentError(f"Failed to update A2A agent: {str(e)}")
 
-    async def toggle_agent_status(self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> A2AAgentRead:
+    async def toggle_agent_status(
+        self, db: Session, agent_id: str, activate: bool, reachable: Optional[bool] = None, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None
+    ) -> A2AAgentRead:
         """Toggle the activation status of an A2A agent.
 
         Args:
@@ -769,12 +790,12 @@ class A2AAgentService:
 
         # Validate write access
         if agent.visibility == "team":
-             if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
-                 logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
-                 raise PermissionError(f"User does not have write access to team {agent.team_id}")
+            if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                raise PermissionError(f"User does not have write access to team {agent.team_id}")
         elif agent.visibility == "private":
-             if user_email and agent.owner_email != user_email:
-                 raise PermissionError(f"User does not have write access to agent {agent.id}")
+            if user_email and agent.owner_email != user_email:
+                raise PermissionError(f"User does not have write access to agent {agent.id}")
 
         agent.enabled = activate
         if reachable is not None:
@@ -825,12 +846,12 @@ class A2AAgentService:
 
             # Validate write access
             if agent.visibility == "team":
-                 if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {agent.team_id}")
+                if allowed_team_ids is not None and agent.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {agent.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {agent.team_id}")
             elif agent.visibility == "private":
-                 if user_email and agent.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to agent {agent.id}")
+                if user_email and agent.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to agent {agent.id}")
 
             agent_name = agent.name
             db.delete(agent)

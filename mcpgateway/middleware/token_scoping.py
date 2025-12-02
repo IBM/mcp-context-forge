@@ -13,7 +13,6 @@ and time-based restrictions.
 # Standard
 from datetime import datetime, timezone
 import ipaddress
-import re
 from typing import List, Optional
 
 # Third-Party
@@ -197,8 +196,6 @@ class TokenScopingMiddleware:
 
         return True
 
-
-
     def _check_permission_restrictions(self, request_path: str, request_method: str, permissions: list, permission_service: PermissionService) -> bool:
         """Check if request is allowed by permission restrictions.
 
@@ -233,13 +230,13 @@ class TokenScopingMiddleware:
             List[str]: List of permission strings the user has
         """
         user_email = payload.get("sub")
-        
+
         if not user_email:
             return []
-        
+
         # Get all permissions for the user
         permissions = await permission_service.get_user_permissions(user_email)
-        
+
         return permissions
 
     async def __call__(self, request: Request, call_next):
@@ -287,7 +284,9 @@ class TokenScopingMiddleware:
             permission_service = PermissionService(db)
             # Import RoleService here to avoid circular imports if any, or better at top level if safe.
             # Assuming safe to import at top level, but for now let's keep it clean.
+            # First-Party
             from mcpgateway.services.role_service import RoleService
+
             role_service = RoleService(db)
 
             try:
@@ -297,7 +296,7 @@ class TokenScopingMiddleware:
                 user_roles = []
                 if user_email:
                     user_roles = await role_service.get_all_active_user_roles(user_email)
-                
+
                 # Cache roles in request state for use by require_permission
                 request.state.user_roles = user_roles
                 request.state.user_email = user_email
@@ -309,10 +308,8 @@ class TokenScopingMiddleware:
                 if not user_permissions:
                     logger.warning("Token rejected: User has no permissions")
                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User has no permissions")
-                
+
                 request.state.user_permissions = user_permissions
-
-
 
                 # Extract scopes from payload
                 scopes = payload.get("scopes", {})
@@ -339,7 +336,7 @@ class TokenScopingMiddleware:
 
                 # All scoping checks passed, continue
                 return await call_next(request)
-            
+
             finally:
                 db.close()
 

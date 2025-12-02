@@ -413,7 +413,6 @@ class TeamManagementService:
                 logger.warning(f"User {user_email} not found")
                 return False
 
-
             role_obj: Optional[Role] = await self.role_service.get_role_by_name(role, "team")
             if role_obj is None:
                 raise ValueError(f"Role '{role}' does not exist")

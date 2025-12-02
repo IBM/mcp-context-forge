@@ -69,7 +69,6 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -641,7 +640,7 @@ class ToolService:
                 auth_value = tool.auth.auth_value
 
             target_team_id = team_id or tool.team_id
-            
+
             # Validate write access
             if target_team_id and allowed_team_ids is not None:
                 if target_team_id not in allowed_team_ids:
@@ -818,7 +817,14 @@ class ToolService:
             raise ToolError(f"Failed to register tool: {str(e)}")
 
     async def list_tools(
-        self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, _request_headers: Optional[Dict[str, str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        _request_headers: Optional[Dict[str, str]] = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
         Retrieve a list of registered tools from the database with pagination support and access control.
@@ -870,19 +876,19 @@ class ToolService:
 
         # Access Control Filtering
         if allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public tools
-             access_conditions.append(DbTool.visibility == "public")
-             
-             # 2. Team tools where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbTool.visibility == "team", DbTool.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal tools owned by user
-             if user_email:
-                 access_conditions.append(DbTool.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public tools
+            access_conditions.append(DbTool.visibility == "public")
+
+            # 2. Team tools where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbTool.visibility == "team", DbTool.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal tools owned by user
+            if user_email:
+                access_conditions.append(DbTool.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -1085,7 +1091,7 @@ class ToolService:
         tool = db.get(DbTool, tool_id)
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
-        
+
         # Access control validation
         if allowed_team_ids is not None or user_email is not None:
             has_access = False
@@ -1099,7 +1105,7 @@ class ToolService:
             elif tool.visibility == "private":
                 if user_email and tool.owner_email == user_email:
                     has_access = True
-            
+
             if not has_access:
                 logger.warning(f"Access denied to tool {tool_id} (visibility={tool.visibility}, team={tool.team_id}) for user {user_email}")
                 raise PermissionError(f"Access denied to tool {tool_id}")
@@ -1157,13 +1163,13 @@ class ToolService:
                     elif user_email and tool.owner_email == user_email:
                         has_write_access = True
                 elif tool.visibility == "public":
-                     if user_email and tool.owner_email == user_email:
-                         has_write_access = True
-                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                         has_write_access = True
-                
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+
                 if not has_write_access:
-                     raise PermissionError(f"User does not have permission to delete tool {tool_id}")
+                    raise PermissionError(f"User does not have permission to delete tool {tool_id}")
 
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
@@ -1274,13 +1280,13 @@ class ToolService:
                     elif user_email and tool.owner_email == user_email:
                         has_write_access = True
                 elif tool.visibility == "public":
-                     if user_email and tool.owner_email == user_email:
-                         has_write_access = True
-                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                         has_write_access = True
-                
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+
                 if not has_write_access:
-                     raise PermissionError(f"User does not have permission to toggle status of tool {tool_id}")
+                    raise PermissionError(f"User does not have permission to toggle status of tool {tool_id}")
 
             is_activated = is_reachable = False
             if tool.enabled != activate:
@@ -1989,13 +1995,13 @@ class ToolService:
                     elif user_email and tool.owner_email == user_email:
                         has_write_access = True
                 elif tool.visibility == "public":
-                     if user_email and tool.owner_email == user_email:
-                         has_write_access = True
-                     elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                         has_write_access = True
-                
+                    if user_email and tool.owner_email == user_email:
+                        has_write_access = True
+                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
+                        has_write_access = True
+
                 if not has_write_access:
-                     raise PermissionError(f"User does not have permission to update tool {tool_id}")
+                    raise PermissionError(f"User does not have permission to update tool {tool_id}")
 
             # Check for name change and ensure uniqueness
             if tool_update.name and tool_update.name != tool.name:

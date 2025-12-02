@@ -658,7 +658,9 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-    async def list_servers(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> List[ServerRead]:
+    async def list_servers(
+        self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
+    ) -> List[ServerRead]:
         """List all registered servers with access control filtering.
 
         Args:
@@ -681,19 +683,19 @@ class ServerService:
 
         # Access Control Filtering
         if allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public servers
-             access_conditions.append(DbServer.visibility == "public")
-             
-             # 2. Team servers where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbServer.visibility == "team", DbServer.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal servers owned by user
-             if user_email:
-                 access_conditions.append(DbServer.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public servers
+            access_conditions.append(DbServer.visibility == "public")
+
+            # 2. Team servers where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbServer.visibility == "team", DbServer.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal servers owned by user
+            if user_email:
+                access_conditions.append(DbServer.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         servers = db.execute(query).scalars().all()
 
@@ -712,7 +714,15 @@ class ServerService:
         return result
 
     async def list_servers_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100, allowed_team_ids: Optional[List[str]] = None
+        self,
+        db: Session,
+        user_email: str,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        skip: int = 0,
+        limit: int = 100,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> List[ServerRead]:
         """
         List servers user has access to with team filtering.
@@ -812,7 +822,7 @@ class ServerService:
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server not found: {server_id}")
-        
+
         # Access control validation
         if allowed_team_ids is not None or user_email is not None:
             has_access = False
@@ -826,7 +836,7 @@ class ServerService:
             elif server.visibility == "private":
                 if user_email and server.owner_email == user_email:
                     has_access = True
-            
+
             if not has_access:
                 logger.warning(f"Access denied to server {server_id} (visibility={server.visibility}, team={server.team_id}) for user {user_email}")
                 raise PermissionError(f"Access denied to server {server_id}")
@@ -961,20 +971,20 @@ class ServerService:
                 elif server.owner_email == user_email:
                     has_write_access = True
             elif server.visibility == "public":
-                 # Public servers might be editable by owner or admins. 
-                 # Assuming owner for now or if it belongs to a team the user is in.
-                 if server.owner_email == user_email:
-                     has_write_access = True
-                 elif server.team_id and allowed_team_ids and server.team_id in allowed_team_ids:
-                     has_write_access = True
-            
+                # Public servers might be editable by owner or admins.
+                # Assuming owner for now or if it belongs to a team the user is in.
+                if server.owner_email == user_email:
+                    has_write_access = True
+                elif server.team_id and allowed_team_ids and server.team_id in allowed_team_ids:
+                    has_write_access = True
+
             if not has_write_access:
-                 raise PermissionError(f"User does not have permission to update server {server_id}")
+                raise PermissionError(f"User does not have permission to update server {server_id}")
 
             # 2. If changing team_id, check access to new team
             if server_update.team_id and server_update.team_id != server.team_id:
-                 if allowed_team_ids and server_update.team_id not in allowed_team_ids:
-                      raise PermissionError(f"User does not have write access to new team {server_update.team_id}")
+                if allowed_team_ids and server_update.team_id not in allowed_team_ids:
+                    raise PermissionError(f"User does not have write access to new team {server_update.team_id}")
 
             # Check for name conflict if name is being changed and visibility is public
             if server_update.name and server_update.name != server.name:
@@ -1269,13 +1279,13 @@ class ServerService:
                     elif user_email and server.owner_email == user_email:
                         has_write_access = True
                 elif server.visibility == "public":
-                     if server.owner_email == user_email:
-                         has_write_access = True
-                     elif allowed_team_ids and server.team_id in allowed_team_ids:
-                         has_write_access = True
-                
+                    if server.owner_email == user_email:
+                        has_write_access = True
+                    elif allowed_team_ids and server.team_id in allowed_team_ids:
+                        has_write_access = True
+
                 if not has_write_access:
-                     raise PermissionError(f"User does not have permission to toggle status of server {server_id}")
+                    raise PermissionError(f"User does not have permission to toggle status of server {server_id}")
 
             if server.enabled != activate:
                 server.enabled = activate
@@ -1407,7 +1417,7 @@ class ServerService:
                         has_permission = True
                     elif allowed_team_ids and server.team_id in allowed_team_ids:
                         has_permission = True
-                
+
                 if not has_permission:
                     raise PermissionError(f"User {user_email} does not have permission to delete server {server_id}")
 

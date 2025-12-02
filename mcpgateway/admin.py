@@ -577,21 +577,23 @@ def serialize_datetime(obj):
         return obj.isoformat()
     return obj
 
+
 async def get_allowed_team_ids(request: Request) -> List[str]:
     """Extract allowed team IDs from request state."""
     user_permissions = getattr(request.state, "user_permissions", [])
     allowed_teams: List[str] = []
-    
+
     if not user_permissions:
         return []
-        
+
     for scope in user_permissions:
         if scope.get("scope") == "team":
             team_id = scope.get("scope_id")
             if team_id:
                 allowed_teams.append(team_id)
-                
+
     return allowed_teams
+
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
     """Validate password meets strength requirements.
@@ -1887,9 +1889,6 @@ async def admin_list_resources(
     return [resource.model_dump(by_alias=True) for resource in resources]
 
 
-
-
-
 @admin_router.get("/prompts", response_model=List[PromptRead])
 async def admin_list_prompts(
     include_inactive: bool = False,
@@ -2408,7 +2407,7 @@ async def admin_ui(
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
     allowed_team_ids = await get_allowed_team_ids(request)
-    user_permissions = getattr(request.state, "user_permissions", [])
+    getattr(request.state, "user_permissions", [])
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
@@ -2432,10 +2431,10 @@ async def admin_ui(
                                 if role.role:
                                     user_role = role.role.name
                                 break
-                        
+
                         # Fallback if not found in state (should not happen if middleware is active)
                         if not user_role:
-                             user_role = await team_service.get_user_role_in_team(user_email, team.id)
+                            user_role = await team_service.get_user_role_in_team(user_email, team.id)
                         team_dict = {
                             "id": str(team.id) if team.id else "",
                             "name": str(team.name) if team.name else "",
@@ -2473,61 +2472,31 @@ async def admin_ui(
     # Load resource lists directly with DB-level filtering.
     # --------------------------------------------------------------------------------
     try:
-        raw_tools = await tool_service.list_tools_for_user(
-            db, 
-            user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        raw_tools = await tool_service.list_tools_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load tools for user: %s", e)
         raw_tools = []
 
     try:
-        raw_servers = await server_service.list_servers_for_user(
-            db, 
-            user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        raw_servers = await server_service.list_servers_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load servers for user: %s", e)
         raw_servers = []
 
     try:
-        raw_resources = await resource_service.list_resources_for_user(
-            db, 
-            user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        raw_resources = await resource_service.list_resources_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load resources for user: %s", e)
         raw_resources = []
 
     try:
-        raw_prompts = await prompt_service.list_prompts_for_user(
-            db, 
-            user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        raw_prompts = await prompt_service.list_prompts_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load prompts for user: %s", e)
         raw_prompts = []
 
     try:
-        gateways_raw = await gateway_service.list_gateways_for_user(
-            db, 
-            user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        gateways_raw = await gateway_service.list_gateways_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load gateways: %s", e)
         gateways_raw = []
@@ -2535,13 +2504,7 @@ async def admin_ui(
     try:
         # A2A Agents
         # Note: A2AAgentService.list_agents now supports team_id filtering
-        raw_agents = await a2a_service.list_agents(
-            db, 
-            user_email=user_email, 
-            allowed_team_ids=allowed_team_ids, 
-            team_id=selected_team_id, 
-            include_inactive=include_inactive
-        )
+        raw_agents = await a2a_service.list_agents(db, user_email=user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load agents for user: %s", e)
         raw_agents = []
@@ -2561,7 +2524,7 @@ async def admin_ui(
                 try:
                     out.append(dict(item))
                 except Exception:
-                     pass
+                    pass
         return out
 
     tools = list(sorted(_to_dict(raw_tools), key=lambda t: ((t.get("url") or "").lower(), (t.get("original_name") or "").lower())))
@@ -3300,7 +3263,7 @@ async def admin_list_teams(
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
         root_path = request.scope.get("root_path", "")
-        allowed_team_ids = await get_allowed_team_ids(request)
+        await get_allowed_team_ids(request)
 
         if unified:
             # Generate unified team view
@@ -3537,7 +3500,9 @@ async def admin_view_team_members(
                 """
             else:
                 # Show static role badge
-                role_color = "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                role_color = (
+                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                )
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
             # Remove button - hide for current user and last owner

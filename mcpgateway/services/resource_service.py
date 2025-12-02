@@ -349,9 +349,9 @@ class ResourceService:
         """
         try:
             logger.info(f"Registering resource: {resource.uri}")
-            
+
             target_team_id = getattr(resource, "team_id", None) or team_id
-            
+
             # Validate write access
             if target_team_id and allowed_team_ids is not None:
                 if target_team_id not in allowed_team_ids:
@@ -514,7 +514,15 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
-    async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> tuple[List[ResourceRead], Optional[str]]:
+    async def list_resources(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
+    ) -> tuple[List[ResourceRead], Optional[str]]:
         """
         Retrieve a list of registered resources from the database with pagination support and access control.
 
@@ -563,19 +571,19 @@ class ResourceService:
 
         # Access Control Filtering
         if allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public resources
-             access_conditions.append(DbResource.visibility == "public")
-             
-             # 2. Team resources where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbResource.visibility == "team", DbResource.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal resources owned by user
-             if user_email:
-                 access_conditions.append(DbResource.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public resources
+            access_conditions.append(DbResource.visibility == "public")
+
+            # 2. Team resources where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbResource.visibility == "team", DbResource.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal resources owned by user
+            if user_email:
+                access_conditions.append(DbResource.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -603,7 +611,15 @@ class ResourceService:
         return (result, next_cursor)
 
     async def list_resources_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100, allowed_team_ids: Optional[List[str]] = None
+        self,
+        db: Session,
+        user_email: str,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        skip: int = 0,
+        limit: int = 100,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> List[ResourceRead]:
         """
         List resources user has access to with team filtering.
@@ -626,6 +642,7 @@ class ResourceService:
         if team_ids is None:
             # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -694,7 +711,7 @@ class ResourceService:
 
         Returns:
             List[ResourceRead]: A list of resources represented as ResourceRead objects.
-        
+
         Examples:
             >>> from mcpgateway.services.resource_service import ResourceService
             >>> from unittest.mock import MagicMock
@@ -1402,30 +1419,30 @@ class ResourceService:
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
 
                 if resource_db:
-                     # Access control validation
-                     if allowed_team_ids is not None or user is not None:
-                         has_access = False
-                         # Determine user email from user object or string
-                         user_email = None
-                         if isinstance(user, dict):
-                             user_email = user.get("email") or user.get("sub")
-                         elif isinstance(user, str):
-                             user_email = user
+                    # Access control validation
+                    if allowed_team_ids is not None or user is not None:
+                        has_access = False
+                        # Determine user email from user object or string
+                        user_email = None
+                        if isinstance(user, dict):
+                            user_email = user.get("email") or user.get("sub")
+                        elif isinstance(user, str):
+                            user_email = user
 
-                         if resource_db.visibility == "public":
-                             has_access = True
-                         elif resource_db.visibility == "team":
-                             if allowed_team_ids and resource_db.team_id in allowed_team_ids:
-                                 has_access = True
-                             elif user_email and resource_db.owner_email == user_email:
-                                 has_access = True
-                         elif resource_db.visibility == "private":
-                             if user_email and resource_db.owner_email == user_email:
-                                 has_access = True
-                         
-                         if not has_access:
-                             logger.warning(f"Access denied to resource {resource_db.id} (visibility={resource_db.visibility}, team={resource_db.team_id}) for user {user_email}")
-                             raise PermissionError(f"Access denied to resource {resource_db.id}")
+                        if resource_db.visibility == "public":
+                            has_access = True
+                        elif resource_db.visibility == "team":
+                            if allowed_team_ids and resource_db.team_id in allowed_team_ids:
+                                has_access = True
+                            elif user_email and resource_db.owner_email == user_email:
+                                has_access = True
+                        elif resource_db.visibility == "private":
+                            if user_email and resource_db.owner_email == user_email:
+                                has_access = True
+
+                        if not has_access:
+                            logger.warning(f"Access denied to resource {resource_db.id} (visibility={resource_db.visibility}, team={resource_db.team_id}) for user {user_email}")
+                            raise PermissionError(f"Access denied to resource {resource_db.id}")
 
                 # Call post-fetch hooks if plugin manager is available
                 if plugin_eligible:
@@ -1551,12 +1568,12 @@ class ResourceService:
 
             # Validate write access
             if resource.visibility == "team":
-                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+                if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {resource.team_id}")
             elif resource.visibility == "private":
-                 if user_email and resource.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to resource {resource.id}")
+                if user_email and resource.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to resource {resource.id}")
 
             # Update status if it's different
             if resource.enabled != activate:
@@ -1784,18 +1801,18 @@ class ResourceService:
 
             # Validate write access
             if resource.visibility == "team":
-                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+                if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {resource.team_id}")
             elif resource.visibility == "private":
-                 if user_email and resource.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to resource {resource.id}")
-            
+                if user_email and resource.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to resource {resource.id}")
+
             # If transferring to another team, validate access to that team
             if resource_update.team_id and resource_update.team_id != resource.team_id:
                 if allowed_team_ids is not None and resource_update.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for target team {resource_update.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to target team {resource_update.team_id}")
+                    logger.warning(f"Write access denied for target team {resource_update.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to target team {resource_update.team_id}")
 
             # # Check for uri conflict if uri is being changed and visibility is public
             if resource_update.uri and resource_update.uri != resource.uri:
@@ -2035,12 +2052,12 @@ class ResourceService:
 
             # Validate write access
             if resource.visibility == "team":
-                 if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {resource.team_id}")
+                if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {resource.team_id}")
             elif resource.visibility == "private":
-                 if user_email and resource.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to resource {resource.id}")
+                if user_email and resource.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to resource {resource.id}")
 
             # Store resource info for notification before deletion.
             resource_info = {

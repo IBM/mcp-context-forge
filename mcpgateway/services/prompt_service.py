@@ -355,7 +355,7 @@ class PromptService:
         """
         try:
             target_team_id = getattr(prompt, "team_id", None) or team_id
-            
+
             # Validate write access
             if target_team_id and allowed_team_ids is not None:
                 if target_team_id not in allowed_team_ids:
@@ -511,7 +511,15 @@ class PromptService:
             )
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
-    async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> tuple[List[PromptRead], Optional[str]]:
+    async def list_prompts(
+        self,
+        db: Session,
+        include_inactive: bool = False,
+        cursor: Optional[str] = None,
+        tags: Optional[List[str]] = None,
+        allowed_team_ids: Optional[List[str]] = None,
+        user_email: Optional[str] = None,
+    ) -> tuple[List[PromptRead], Optional[str]]:
         """
         Retrieve a list of prompt templates from the database with pagination support and access control.
 
@@ -575,19 +583,19 @@ class PromptService:
 
         # Access Control Filtering
         if allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public prompts
-             access_conditions.append(DbPrompt.visibility == "public")
-             
-             # 2. Team prompts where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbPrompt.visibility == "team", DbPrompt.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal prompts owned by user
-             if user_email:
-                 access_conditions.append(DbPrompt.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public prompts
+            access_conditions.append(DbPrompt.visibility == "public")
+
+            # 2. Team prompts where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbPrompt.visibility == "team", DbPrompt.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal prompts owned by user
+            if user_email:
+                access_conditions.append(DbPrompt.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -615,7 +623,15 @@ class PromptService:
         return (result, next_cursor)
 
     async def list_prompts_for_user(
-        self, db: Session, user_email: str, team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100, allowed_team_ids: Optional[List[str]] = None
+        self,
+        db: Session,
+        user_email: str,
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        skip: int = 0,
+        limit: int = 100,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> List[PromptRead]:
         """
         List prompts user has access to with team filtering.
@@ -638,6 +654,7 @@ class PromptService:
         if team_ids is None:
             # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -927,7 +944,7 @@ class PromptService:
                     elif prompt.visibility == "private":
                         if user_email and prompt.owner_email == user_email:
                             has_access = True
-                    
+
                     if not has_access:
                         logger.warning(f"Access denied to prompt {prompt_id} (visibility={prompt.visibility}, team={prompt.team_id}) for user {user_email}")
                         raise PermissionError(f"Access denied to prompt {prompt_id}")
@@ -1098,18 +1115,18 @@ class PromptService:
 
             # Validate write access
             if prompt.visibility == "team":
-                 if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {prompt.team_id}")
+                if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {prompt.team_id}")
             elif prompt.visibility == "private":
-                 if user_email and prompt.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to prompt {prompt.id}")
-            
+                if user_email and prompt.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to prompt {prompt.id}")
+
             # If transferring to another team, validate access to that team
             if prompt_update.team_id and prompt_update.team_id != prompt.team_id:
                 if allowed_team_ids is not None and prompt_update.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for target team {prompt_update.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to target team {prompt_update.team_id}")
+                    logger.warning(f"Write access denied for target team {prompt_update.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to target team {prompt_update.team_id}")
 
             # # Check for name conflict if name is being changed and visibility is public
             if prompt_update.name and prompt_update.name != prompt.name:
@@ -1331,12 +1348,12 @@ class PromptService:
 
             # Validate write access
             if prompt.visibility == "team":
-                 if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {prompt.team_id}")
+                if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {prompt.team_id}")
             elif prompt.visibility == "private":
-                 if user_email and prompt.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to prompt {prompt.id}")
+                if user_email and prompt.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to prompt {prompt.id}")
 
             if prompt.enabled != activate:
                 prompt.enabled = activate
@@ -1408,7 +1425,9 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def get_prompt_details(
+        self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
+    ) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.
 
@@ -1456,7 +1475,7 @@ class PromptService:
             elif prompt.visibility == "private":
                 if user_email and prompt.owner_email == user_email:
                     has_access = True
-            
+
             if not has_access:
                 logger.warning(f"Access denied to prompt {prompt_id} (visibility={prompt.visibility}, team={prompt.team_id}) for user {user_email}")
                 raise PermissionError(f"Access denied to prompt {prompt_id}")
@@ -1532,12 +1551,12 @@ class PromptService:
 
             # Validate write access
             if prompt.visibility == "team":
-                 if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {prompt.team_id}")
+                if allowed_team_ids is not None and prompt.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {prompt.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {prompt.team_id}")
             elif prompt.visibility == "private":
-                 if user_email and prompt.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to prompt {prompt.id}")
+                if user_email and prompt.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to prompt {prompt.id}")
 
             prompt_info = {"id": prompt.id, "name": prompt.name}
             prompt_name = prompt.name

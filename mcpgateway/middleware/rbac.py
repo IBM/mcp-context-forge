@@ -14,7 +14,7 @@ functions for protecting routes.
 # Standard
 from functools import wraps
 import logging
-from typing import Callable, Generator, List, Optional
+from typing import Callable, Generator, Optional
 import uuid
 
 # Third-Party
@@ -241,13 +241,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             """
             # Extract user context from args and kwargs
             user_context = None
-            
+
             # Check kwargs first
             for _, value in kwargs.items():
                 if isinstance(value, dict) and "email" in value and "db" in value:
                     user_context = value
                     break
-            
+
             # Check args if not found
             if not user_context:
                 for arg in args:
@@ -326,11 +326,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                 user_roles = None
                 if request and hasattr(request, "state") and hasattr(request.state, "user_roles"):
                     user_roles = request.state.user_roles
-                
-                user_permissions = await permission_service.get_user_scopes(
-                    user_email=user_context["email"],
-                    roles=user_roles
-                )
+
+                user_permissions = await permission_service.get_user_scopes(user_email=user_context["email"], roles=user_roles)
 
             # Filter scopes that have the required permission
             granted_scopes = []
@@ -343,7 +340,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
 
-
             # If team_id is specified in the request, we must verify that the user has permission for THAT team.
             # This preserves backward compatibility for routes that take `team_id`.
             if team_id:
@@ -354,10 +350,10 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     if scope["scope"] == "team" and scope["scope_id"] == team_id and permission in scope["permissions"] or Permissions.ALL_PERMISSIONS in scope["permissions"]:
                         has_team_access = True
                         break
-                
+
                 if not has_team_access:
-                     logger.warning(f"Permission denied for team {team_id}: user={user_context['email']}, permission={permission}")
-                     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions for team {team_id}. Required: {permission}")
+                    logger.warning(f"Permission denied for team {team_id}: user={user_context['email']}, permission={permission}")
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions for team {team_id}. Required: {permission}")
 
             # Store granted scopes in request state for downstream use
             if request:
@@ -369,12 +365,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
         return wrapper
 
     return decorator
-
-
-
-
-
-
 
 
 class PermissionChecker:
@@ -419,10 +409,6 @@ class PermissionChecker:
             ip_address=self.user_context.get("ip_address"),
             user_agent=self.user_context.get("user_agent"),
         )
-
-
-
-
 
     async def require_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> None:
         """Require specific permission, raise HTTPException if not granted.

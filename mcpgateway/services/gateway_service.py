@@ -88,7 +88,6 @@ from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
@@ -625,7 +624,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
             target_team_id = getattr(gateway, "team_id", None) or team_id
-            
+
             # Validate write access
             if target_team_id and allowed_team_ids is not None:
                 if target_team_id not in allowed_team_ids:
@@ -1141,7 +1140,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-    async def list_gateways(self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> List[GatewayRead]:
+    async def list_gateways(
+        self, db: Session, include_inactive: bool = False, tags: Optional[List[str]] = None, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
+    ) -> List[GatewayRead]:
         """List all registered gateways.
 
         Args:
@@ -1191,19 +1192,19 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         # Access Control Filtering
         if allowed_team_ids is not None or user_email is not None:
-             access_conditions = []
-             # 1. Public gateways
-             access_conditions.append(DbGateway.visibility == "public")
-             
-             # 2. Team gateways where user is a member
-             if allowed_team_ids:
-                 access_conditions.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(allowed_team_ids)))
-                 
-             # 3. Private/Personal gateways owned by user
-             if user_email:
-                 access_conditions.append(DbGateway.owner_email == user_email)
-                 
-             query = query.where(or_(*access_conditions))
+            access_conditions = []
+            # 1. Public gateways
+            access_conditions.append(DbGateway.visibility == "public")
+
+            # 2. Team gateways where user is a member
+            if allowed_team_ids:
+                access_conditions.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(allowed_team_ids)))
+
+            # 3. Private/Personal gateways owned by user
+            if user_email:
+                access_conditions.append(DbGateway.owner_email == user_email)
+
+            query = query.where(or_(*access_conditions))
 
         gateways = db.execute(query).scalars().all()
 
@@ -1221,7 +1222,15 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         return result
 
     async def list_gateways_for_user(
-        self, db: Session, user_email: str, allowed_team_ids: List[str], team_id: Optional[str] = None, visibility: Optional[str] = None, include_inactive: bool = False, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        user_email: str,
+        allowed_team_ids: List[str],
+        team_id: Optional[str] = None,
+        visibility: Optional[str] = None,
+        include_inactive: bool = False,
+        skip: int = 0,
+        limit: int = 100,
     ) -> List[GatewayRead]:
         """
         List gateways user has access to with team filtering.
@@ -1351,12 +1360,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Validate write access
             if gateway.visibility == "team":
-                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+                if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {gateway.team_id}")
             elif gateway.visibility == "private":
-                 if user_email and gateway.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
+                if user_email and gateway.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
@@ -1831,7 +1840,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 elif gateway.visibility == "private":
                     if user_email and gateway.owner_email == user_email:
                         has_access = True
-                
+
                 if not has_access:
                     logger.warning(f"Access denied to gateway {gateway_id} (visibility={gateway.visibility}, team={gateway.team_id}) for user {user_email}")
                     raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
@@ -1859,7 +1868,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
-    async def toggle_gateway_status(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> GatewayRead:
+    async def toggle_gateway_status(
+        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None
+    ) -> GatewayRead:
         """
         Toggle the activation status of a gateway.
 
@@ -1887,12 +1898,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Validate write access
             if gateway.visibility == "team":
-                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+                if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {gateway.team_id}")
             elif gateway.visibility == "private":
-                 if user_email and gateway.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
+                if user_email and gateway.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
@@ -2135,12 +2146,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Validate write access
             if gateway.visibility == "team":
-                 if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
-                     logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
-                     raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+                if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {gateway.team_id}")
             elif gateway.visibility == "private":
-                 if user_email and gateway.owner_email != user_email:
-                     raise PermissionError(f"User does not have write access to gateway {gateway.id}")
+                if user_email and gateway.owner_email != user_email:
+                    raise PermissionError(f"User does not have write access to gateway {gateway.id}")
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
