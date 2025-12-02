@@ -907,192 +907,190 @@ class ResourceService:
                             auth=auth,
                         )
 
-                    async with httpx.AsyncClient(verify=ssl_context) as _:
-                        logger.debug(f"Checking health of gateway: {gateway.name} ({gateway.url})")
-                        try:
-                            # Handle different authentication types
-                            headers = {}
-                            if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                                grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+                    try:
+                        # Handle different authentication types
+                        headers = {}
+                        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
 
-                                if grant_type == "authorization_code":
-                                    # For Authorization Code flow, try to get stored tokens
-                                    try:
-                                        # First-Party
-                                        from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                            if grant_type == "authorization_code":
+                                # For Authorization Code flow, try to get stored tokens
+                                try:
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
 
-                                        token_storage = TokenStorageService(db)
-                                        # Get user-specific OAuth token
-                                        # if not user_email:
-                                        #     if span:
-                                        #         span.set_attribute("health.status", "unhealthy")
-                                        #         span.set_attribute("error.message", "User email required for OAuth token")
-                                        #     await self._handle_gateway_failure(gateway)
+                                    token_storage = TokenStorageService(db)
+                                    # Get user-specific OAuth token
+                                    # if not user_email:
+                                    #     if span:
+                                    #         span.set_attribute("health.status", "unhealthy")
+                                    #         span.set_attribute("error.message", "User email required for OAuth token")
+                                    #     await self._handle_gateway_failure(gateway)
 
-                                        access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+                                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
 
-                                        if access_token:
-                                            headers["Authorization"] = f"Bearer {access_token}"
-                                        else:
-                                            if span:
-                                                span.set_attribute("health.status", "unhealthy")
-                                                span.set_attribute("error.message", "No valid OAuth token for user")
-                                            # await self._handle_gateway_failure(gateway)
-
-                                    except Exception as e:
-                                        logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
-                                        if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "Failed to obtain stored OAuth token")
-                                        # await self._handle_gateway_failure(gateway)
-                                else:
-                                    # For Client Credentials flow, get token directly
-                                    try:
-                                        access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                    if access_token:
                                         headers["Authorization"] = f"Bearer {access_token}"
-                                    except Exception as e:
+                                    else:
                                         if span:
                                             span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", str(e))
+                                            span.set_attribute("error.message", "No valid OAuth token for user")
                                         # await self._handle_gateway_failure(gateway)
+
+                                except Exception as e:
+                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    # await self._handle_gateway_failure(gateway)
                             else:
-                                # Handle non-OAuth authentication (existing logic)
-                                auth_data = gateway.auth_value or {}
-                                if isinstance(auth_data, str):
-                                    headers = decode_auth(auth_data)
-                                elif isinstance(auth_data, dict):
-                                    headers = {str(k): str(v) for k, v in auth_data.items()}
-                                else:
-                                    headers = {}
-
-                            async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
-                                """
-                                Connect to an SSE-based gateway and retrieve the text content of a resource.
-
-                                This helper establishes an SSE (Server-Sent Events) session with the remote
-                                gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                                given URI, and returns the textual content from the first item in the
-                                response's `contents` list.
-
-                                If any error occurs (network failure, unexpected response format, session
-                                initialization failure, etc.), the method logs the exception and returns
-                                ``None`` instead of raising.
-
-                                Args:
-                                    server_url (str):
-                                        The base URL of the SSE gateway to connect to.
-                                    uri (str):
-                                        The resource URI that should be requested from the gateway.
-                                    authentication (Optional[Dict[str, str]]):
-                                        Optional dictionary of headers (e.g., OAuth Bearer tokens) to
-                                        include in the SSE connection request. Defaults to an empty
-                                        dictionary when not provided.
-
-                                Returns:
-                                    str | None:
-                                        The text content returned by the remote resource, or ``None`` if the
-                                        SSE connection fails or the response is invalid.
-
-                                Notes:
-                                    - This function assumes the SSE client context manager yields:
-                                        ``(read_stream, write_stream, get_session_id)``.
-                                    - The expected response object from `session.read_resource()` must have a
-                                    `contents` attribute containing a list, where the first element has a
-                                    `text` attribute.
-                                """
-                                if authentication is None:
-                                    authentication = {}
+                                # For Client Credentials flow, get token directly
                                 try:
-                                    async with sse_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_response = await session.read_resource(uri=uri)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                    access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                    headers["Authorization"] = f"Bearer {access_token}"
                                 except Exception as e:
-                                    logger.debug(f"Exception while connecting to sse gateway: {e}")
-                                    return None
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", str(e))
+                                    # await self._handle_gateway_failure(gateway)
+                        else:
+                            # Handle non-OAuth authentication (existing logic)
+                            auth_data = gateway.auth_value or {}
+                            if isinstance(auth_data, str):
+                                headers = decode_auth(auth_data)
+                            elif isinstance(auth_data, dict):
+                                headers = {str(k): str(v) for k, v in auth_data.items()}
+                            else:
+                                headers = {}
 
-                            async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
-                                """
-                                Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to an SSE-based gateway and retrieve the text content of a resource.
 
-                                This helper establishes a StreamableHTTP client session with the specified
-                                gateway, initializes a `ClientSession`, invokes `read_resource()` for the
-                                given URI, and returns the textual content from the first element in the
-                                response's `contents` list.
+                            This helper establishes an SSE (Server-Sent Events) session with the remote
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first item in the
+                            response's `contents` list.
 
-                                If any exception occurs during connection, session initialization, or
-                                resource reading, the function logs the error and returns ``None`` instead
-                                of propagating the exception.
+                            If any error occurs (network failure, unexpected response format, session
+                            initialization failure, etc.), the method logs the exception and returns
+                            ``None`` instead of raising.
 
-                                Args:
-                                    server_url (str):
-                                        The endpoint URL of the StreamableHTTP gateway.
-                                    uri (str):
-                                        The resource URI to request from the gateway.
-                                    authentication (Optional[Dict[str, str]]):
-                                        Optional dictionary of authentication headers (e.g., API keys or
-                                        Bearer tokens). Defaults to an empty dictionary when not provided.
+                            Args:
+                                server_url (str):
+                                    The base URL of the SSE gateway to connect to.
+                                uri (str):
+                                    The resource URI that should be requested from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of headers (e.g., OAuth Bearer tokens) to
+                                    include in the SSE connection request. Defaults to an empty
+                                    dictionary when not provided.
 
-                                Returns:
-                                    str | None:
-                                        The text content returned by the StreamableHTTP resource, or ``None``
-                                        if the connection fails or the response format is invalid.
+                            Returns:
+                                str | None:
+                                    The text content returned by the remote resource, or ``None`` if the
+                                    SSE connection fails or the response is invalid.
 
-                                Notes:
-                                    - The `streamablehttp_client` context manager must yield a tuple:
+                            Notes:
+                                - This function assumes the SSE client context manager yields:
                                     ``(read_stream, write_stream, get_session_id)``.
-                                    - The expected `resource_response` returned by ``session.read_resource()``
-                                    must contain a `contents` list, whose first element exposes a `text`
-                                    attribute.
-                                """
-                                if authentication is None:
-                                    authentication = {}
+                                - The expected response object from `session.read_resource()` must have a
+                                `contents` attribute containing a list, where the first element has a
+                                `text` attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with sse_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to sse gateway: {e}")
+                                return None
+
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+
+                            This helper establishes a StreamableHTTP client session with the specified
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first element in the
+                            response's `contents` list.
+
+                            If any exception occurs during connection, session initialization, or
+                            resource reading, the function logs the error and returns ``None`` instead
+                            of propagating the exception.
+
+                            Args:
+                                server_url (str):
+                                    The endpoint URL of the StreamableHTTP gateway.
+                                uri (str):
+                                    The resource URI to request from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of authentication headers (e.g., API keys or
+                                    Bearer tokens). Defaults to an empty dictionary when not provided.
+
+                            Returns:
+                                str | None:
+                                    The text content returned by the StreamableHTTP resource, or ``None``
+                                    if the connection fails or the response format is invalid.
+
+                            Notes:
+                                - The `streamablehttp_client` context manager must yield a tuple:
+                                ``(read_stream, write_stream, get_session_id)``.
+                                - The expected `resource_response` returned by ``session.read_resource()``
+                                must contain a `contents` list, whose first element exposes a `text`
+                                attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with streamablehttp_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
+                                return None
+
+                        if span:
+                            span.set_attribute("success", True)
+                            span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+
+                        resource_text = ""
+                        if (gateway.transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                            return resource_text
+                        elif (gateway.transport).lower() == "streamablehttp":
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                            return resource_text
+                    except Exception as e:
+                        success = False
+                        error_message = str(e)
+                        raise
+                    finally:
+                        if resource_text:
+                            try:
+                                await self._record_invoke_resource_metric(db, resource_id, start_time, success, error_message)
+                            except Exception as metrics_error:
+                                logger.warning(f"Failed to invoke resource metric: {metrics_error}")
+
+                            # End Invoke resource span for Observability dashboard
+                            if db_span_id and observability_service and not db_span_ended:
                                 try:
-                                    async with streamablehttp_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            _ = await session.initialize()
-                                            resource_response = await session.read_resource(uri=uri)
-                                            return getattr(getattr(resource_response, "contents")[0], "text")
+                                    observability_service.end_span(
+                                        db=db,
+                                        span_id=db_span_id,
+                                        status="ok" if success else "error",
+                                        status_message=error_message if error_message else None,
+                                    )
+                                    db_span_ended = True
+                                    logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
                                 except Exception as e:
-                                    logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
-                                    return None
-
-                            if span:
-                                span.set_attribute("success", True)
-                                span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
-
-                            resource_text = ""
-                            if (gateway.transport).lower() == "sse":
-                                resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
-                                return resource_text
-                            elif (gateway.transport).lower() == "streamablehttp":
-                                resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
-                                return resource_text
-                        except Exception as e:
-                            success = False
-                            error_message = str(e)
-                            raise
-                        finally:
-                            if resource_text:
-                                try:
-                                    await self._record_invoke_resource_metric(db, resource_id, start_time, success, error_message)
-                                except Exception as metrics_error:
-                                    logger.warning(f"Failed to invoke resource metric: {metrics_error}")
-
-                                # End Invoke resource span for Observability dashboard
-                                if db_span_id and observability_service and not db_span_ended:
-                                    try:
-                                        observability_service.end_span(
-                                            db=db,
-                                            span_id=db_span_id,
-                                            status="ok" if success else "error",
-                                            status_message=error_message if error_message else None,
-                                        )
-                                        db_span_ended = True
-                                        logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
-                                    except Exception as e:
-                                        logger.warning(f"Failed to end observability span for invoking resource: {e}")
+                                    logger.warning(f"Failed to end observability span for invoking resource: {e}")
 
     async def read_resource(
         self,
