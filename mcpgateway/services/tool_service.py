@@ -1954,7 +1954,6 @@ class ToolService:
             ToolNameConflictError: If a tool with the same name already exists.
         """
         # Check if tool already exists for this agent
-        logger.info(f"testing Creating tool for A2A agent: {vars(agent)}")
         tool_name = f"a2a_{agent.slug}"
         existing_query = select(DbTool).where(DbTool.original_name == tool_name)
         existing_tool = db.execute(existing_query).scalar_one_or_none()
@@ -1964,6 +1963,23 @@ class ToolService:
             return self._convert_tool_to_read(existing_tool)
 
         # Create tool entry for the A2A agent
+        logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
+
+        # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
+        # extract the human-friendly label. If tags are already strings, keep them.
+        normalized_tags: list[str] = []
+        for t in agent.tags or []:
+            if isinstance(t, dict):
+                # Prefer 'label', fall back to 'id' or stringified dict
+                normalized_tags.append(t.get("label") or t.get("id") or str(t))
+            elif hasattr(t, "label"):
+                normalized_tags.append(getattr(t, "label"))
+            else:
+                normalized_tags.append(str(t))
+
+        # Ensure we include identifying A2A tags
+        normalized_tags = normalized_tags + ["a2a", "agent"]
+
         tool_data = ToolCreate(
             name=tool_name,
             displayName=generate_display_name(agent.name),
@@ -1986,7 +2002,7 @@ class ToolService:
             },
             auth_type=agent.auth_type,
             auth_value=agent.auth_value,
-            tags=agent.tags + ["a2a", "agent"],
+            tags=normalized_tags,
         )
 
         return await self.register_tool(

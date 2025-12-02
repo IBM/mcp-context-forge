@@ -1284,7 +1284,7 @@ class ToolRead(BaseModelWithConfigDict):
     gateway_slug: str
     custom_name: str
     custom_name_slug: str
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the tool")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -1782,7 +1782,7 @@ class ResourceRead(BaseModelWithConfigDict):
     updated_at: datetime
     is_active: bool
     metrics: ResourceMetrics
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -2288,7 +2288,7 @@ class PromptRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     is_active: bool
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the prompt")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
 
     # Comprehensive metadata for audit tracking
@@ -2947,7 +2947,7 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     auth_password_unmasked: Optional[str] = Field(default=None, description="Unmasked password for basic authentication")
     auth_token_unmasked: Optional[str] = Field(default=None, description="Unmasked bearer token for authentication")
@@ -3716,7 +3716,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_prompts: List[int] = []
     associated_a2a_agents: List[str] = []
     metrics: ServerMetrics
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -4489,7 +4489,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     last_interaction: Optional[datetime]
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: A2AAgentMetrics
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
@@ -6250,7 +6250,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[str] = Field(default_factory=list, description="Service tags")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")

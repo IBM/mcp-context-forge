@@ -18,11 +18,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SessionLocal
-from mcpgateway.schemas import (
-    ObservabilitySpanRead,
-    ObservabilityTraceRead,
-    ObservabilityTraceWithSpans,
-)
+from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
 
 router = APIRouter(prefix="/observability", tags=["Observability"])

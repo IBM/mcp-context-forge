@@ -321,6 +321,7 @@ jobs:
           SHA=${{ github.sha }}
 
           echo "Signing ${IMAGE}:latest"
+
           cosign sign --recursive --yes "${IMAGE}:latest"
 
           echo "Signing ${IMAGE}:${SHA}"

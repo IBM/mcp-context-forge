@@ -189,6 +189,9 @@ mcpContextForge:
     # ─ UI Configuration ─
     MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
 
+    # ─ ToolOps Feature ─
+    TOOLOPS_ENABLED: "false"            # enable ToolOps feature
+
     # ─ LLM Chat Feature ─
     LLMCHAT_ENABLED: "false"            # enable LLM Chat feature
 
