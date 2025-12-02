@@ -206,13 +206,16 @@ class TestGetCurrentUser:
                     mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
                     mock_auth_service_class.return_value = mock_auth_service
 
-                    # The function should succeed but log a warning
-                    user = await get_current_user(credentials=credentials, db=mock_db)
-                    assert user == mock_user
+                # The function should raise HTTPException
+                with pytest.raises(HTTPException) as exc_info:
+                    await get_current_user(credentials=credentials, db=mock_db)
+                
+                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                assert exc_info.value.detail == "Token has been revoked"
 
     @pytest.mark.asyncio
-    async def test_jwt_actually_revoked_logs_warning(self, caplog):
-        """Test that when is_token_revoked returns True, warning is logged but auth continues."""
+    async def test_jwt_actually_revoked_raises_401(self, caplog):
+        """Test that when is_token_revoked returns True, auth fails with 401."""
         mock_db = MagicMock(spec=Session)
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="revoked_jwt")
 
@@ -245,16 +248,16 @@ class TestGetCurrentUser:
                     mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
                     mock_auth_service_class.return_value = mock_auth_service
 
-                    # Authentication should succeed despite revoked token (logged as warning)
-                    user = await get_current_user(credentials=credentials, db=mock_db)
-                    assert user == mock_user
-
-                    # Check warning was logged
-                    assert "Token revocation check failed for JTI token_id_456" in caplog.text
+                    # Authentication should fail for revoked token
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
+                    
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "Token has been revoked"
 
     @pytest.mark.asyncio
-    async def test_token_revocation_check_failure_logs_warning(self, caplog):
-        """Test that token revocation check failure logs warning but doesn't fail auth."""
+    async def test_token_revocation_check_failure_raises_401(self, caplog):
+        """Test that token revocation check failure raises 401 (fail closed)."""
         mock_db = MagicMock(spec=Session)
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
 
@@ -282,9 +285,13 @@ class TestGetCurrentUser:
                     mock_auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
                     mock_auth_service_class.return_value = mock_auth_service
 
-                    user = await get_current_user(credentials=credentials, db=mock_db)
+                    # Auth should fail if revocation check fails (fail closed)
+                    # It falls back to API token auth which fails, resulting in generic 401
+                    with pytest.raises(HTTPException) as exc_info:
+                        await get_current_user(credentials=credentials, db=mock_db)
 
-                    assert user == mock_user
+                    assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                    assert exc_info.value.detail == "Invalid authentication credentials"
                     assert "Token revocation check failed for JTI token_id_456" in caplog.text
 
     @pytest.mark.asyncio
