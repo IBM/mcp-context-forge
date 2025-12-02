@@ -5,19 +5,19 @@ Revises: z1a2b3c4d5e6
 Create Date: 2025-12-01 14:52:01.957105
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 import uuid
-import logging
 
 from sqlalchemy import text
 
 
 # revision identifiers, used by Alembic.
-revision: str = '356a2d4eed6f'
-down_revision: Union[str, Sequence[str], None] = '9e028ecf59c4'
+revision: str = "356a2d4eed6f"
+down_revision: Union[str, Sequence[str], None] = "9e028ecf59c4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -71,7 +71,18 @@ def upgrade() -> None:
         " created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip,"
         " modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
     )
-    conn.execute(text(f"INSERT INTO prompts_tmp ({copy_cols}) SELECT id_new, name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"))
+    conn.execute(
+        text(
+            (
+                "INSERT INTO prompts_tmp (" + copy_cols + ") "
+                "SELECT id_new, name, description, template, argument_schema, created_at, "
+                "updated_at, is_active, tags, created_by, created_from_ip, created_via, "
+                "created_user_agent, modified_by, modified_from_ip, modified_via, "
+                "modified_user_agent, import_batch_id, federation_source, version, gateway_id, "
+                "team_id, owner_email, visibility FROM prompts"
+            )
+        )
+    )
 
     # 4) Create new prompt_metrics table with prompt_id varchar(36)
     op.create_table(
@@ -87,7 +98,11 @@ def upgrade() -> None:
     )
 
     # 5) Copy prompt_metrics mapping old integer prompt_id -> new uuid via join
-    conn.execute(text("INSERT INTO prompt_metrics_tmp (id, prompt_id, timestamp, response_time, is_success, error_message) SELECT pm.id, p.id_new, pm.timestamp, pm.response_time, pm.is_success, pm.error_message FROM prompt_metrics pm JOIN prompts p ON pm.prompt_id = p.id"))
+    conn.execute(
+        text(
+            "INSERT INTO prompt_metrics_tmp (id, prompt_id, timestamp, response_time, is_success, error_message) SELECT pm.id, p.id_new, pm.timestamp, pm.response_time, pm.is_success, pm.error_message FROM prompt_metrics pm JOIN prompts p ON pm.prompt_id = p.id"
+        )
+    )
 
     # 6) Create new server_prompt_association table with prompt_id varchar(36)
     op.create_table(
@@ -112,7 +127,7 @@ def upgrade() -> None:
     op.rename_table("prompts_tmp", "prompts")
     op.rename_table("prompt_metrics_tmp", "prompt_metrics")
     op.rename_table("server_prompt_association_tmp", "server_prompt_association")
-    
+
     # -----------------------------
     # Resources -> change id to VARCHAR(32) and remap FKs
     # -----------------------------
@@ -160,10 +175,20 @@ def upgrade() -> None:
     )
 
     # Copy data into resources_tmp using id_new
-    res_copy_cols = (
-        "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    res_copy_cols = "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    conn.execute(
+        text(
+            (
+                "INSERT INTO resources_tmp (" + res_copy_cols + ") "
+                "SELECT id_new, uri, name, description, mime_type, size, uri_template, "
+                "created_at, updated_at, is_active, tags, text_content, binary_content, "
+                "created_by, created_from_ip, created_via, created_user_agent, modified_by, "
+                "modified_from_ip, modified_via, modified_user_agent, import_batch_id, "
+                "federation_source, version, gateway_id, team_id, owner_email, visibility "
+                "FROM resources"
+            )
+        )
     )
-    conn.execute(text(f"INSERT INTO resources_tmp ({res_copy_cols}) SELECT id_new, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"))
 
     # resource_metrics_tmp with resource_id varchar(32)
     op.create_table(
@@ -179,7 +204,11 @@ def upgrade() -> None:
     )
 
     # copy resource_metrics mapping old int->new uuid
-    conn.execute(text("INSERT INTO resource_metrics_tmp (id, resource_id, timestamp, response_time, is_success, error_message) SELECT rm.id, r.id_new, rm.timestamp, rm.response_time, rm.is_success, rm.error_message FROM resource_metrics rm JOIN resources r ON rm.resource_id = r.id"))
+    conn.execute(
+        text(
+            "INSERT INTO resource_metrics_tmp (id, resource_id, timestamp, response_time, is_success, error_message) SELECT rm.id, r.id_new, rm.timestamp, rm.response_time, rm.is_success, rm.error_message FROM resource_metrics rm JOIN resources r ON rm.resource_id = r.id"
+        )
+    )
 
     # server_resource_association_tmp
     op.create_table(
@@ -191,7 +220,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_server_resource_resource_id"),
     )
 
-    conn.execute(text("INSERT INTO server_resource_association_tmp (server_id, resource_id) SELECT sra.server_id, r.id_new FROM server_resource_association sra JOIN resources r ON sra.resource_id = r.id"))
+    conn.execute(
+        text("INSERT INTO server_resource_association_tmp (server_id, resource_id) SELECT sra.server_id, r.id_new FROM server_resource_association sra JOIN resources r ON sra.resource_id = r.id")
+    )
 
     # Update observability spans that reference resources: remap integer resource IDs -> new uuid
     conn.execute(text("UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"))
@@ -207,7 +238,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_resource_subscriptions_resource_id"),
     )
 
-    conn.execute(text("INSERT INTO resource_subscriptions_tmp (id, resource_id, subscriber_id, created_at, last_notification) SELECT rs.id, r.id_new, rs.subscriber_id, rs.created_at, rs.last_notification FROM resource_subscriptions rs JOIN resources r ON rs.resource_id = r.id"))
+    conn.execute(
+        text(
+            "INSERT INTO resource_subscriptions_tmp (id, resource_id, subscriber_id, created_at, last_notification) SELECT rs.id, r.id_new, rs.subscriber_id, rs.created_at, rs.last_notification FROM resource_subscriptions rs JOIN resources r ON rs.resource_id = r.id"
+        )
+    )
 
     # Drop old resource-related tables and rename tmp tables
     op.drop_table("resource_metrics")
@@ -219,6 +254,7 @@ def upgrade() -> None:
     op.rename_table("resource_metrics_tmp", "resource_metrics")
     op.rename_table("server_resource_association_tmp", "server_resource_association")
     op.rename_table("resource_subscriptions_tmp", "resource_subscriptions")
+
 
 def downgrade() -> None:
     """Downgrade schema."""
@@ -258,11 +294,25 @@ def downgrade() -> None:
 
     # 2) Insert rows from current prompts into prompts_old letting id autoincrement.
     # We'll preserve uniqueness by using the team_id/owner_email/name triple to later remap.
-    conn.execute(text("INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"))
+    conn.execute(
+        text(
+            "INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"
+        )
+    )
 
     # 3) Build mapping from new uuid -> new integer id using the unique key (team_id, owner_email, name)
     mapping = {}
-    res = conn.execute(text("SELECT p.id as uuid_id, p.team_id, p.owner_email, p.name, old.id as int_id FROM prompts p JOIN prompts_old old ON COALESCE(p.team_id, '') = COALESCE(old.team_id, '') AND COALESCE(p.owner_email, '') = COALESCE(old.owner_email, '') AND p.name = old.name"))
+    res = conn.execute(
+        text(
+            (
+                "SELECT p.id as uuid_id, p.team_id, p.owner_email, p.name, old.id as int_id "
+                "FROM prompts p JOIN prompts_old old ON "
+                "COALESCE(p.team_id, '') = COALESCE(old.team_id, '') AND "
+                "COALESCE(p.owner_email, '') = COALESCE(old.owner_email, '') AND "
+                "p.name = old.name"
+            )
+        )
+    )
     for row in res:
         mapping[row[0]] = row[4]
 
@@ -287,7 +337,10 @@ def downgrade() -> None:
         if int_id is None:
             # skip orphaned metric
             continue
-        conn.execute(text("INSERT INTO prompt_metrics_old (id, prompt_id, timestamp, response_time, is_success, error_message) VALUES (:id, :pid, :ts, :rt, :is_s, :err)"), {"id": r[0], "pid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]})
+        conn.execute(
+            text("INSERT INTO prompt_metrics_old (id, prompt_id, timestamp, response_time, is_success, error_message) VALUES (:id, :pid, :ts, :rt, :is_s, :err)"),
+            {"id": r[0], "pid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]},
+        )
 
     # 5) Recreate server_prompt_association_old and remap prompt_id
     op.create_table(
@@ -363,11 +416,25 @@ def downgrade() -> None:
     )
 
     # 2) Insert rows from current resources into resources_old letting id autoincrement.
-    conn.execute(text("INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"))
+    conn.execute(
+        text(
+            "INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"
+        )
+    )
 
     # 3) Build mapping from new uuid -> new integer id using unique key (team_id, owner_email, uri)
     mapping_res = {}
-    res_map = conn.execute(text("SELECT r.id as uuid_id, r.team_id, r.owner_email, r.uri, old.id as int_id FROM resources r JOIN resources_old old ON COALESCE(r.team_id, '') = COALESCE(old.team_id, '') AND COALESCE(r.owner_email, '') = COALESCE(old.owner_email, '') AND r.uri = old.uri"))
+    res_map = conn.execute(
+        text(
+            (
+                "SELECT r.id as uuid_id, r.team_id, r.owner_email, r.uri, old.id as int_id "
+                "FROM resources r JOIN resources_old old ON "
+                "COALESCE(r.team_id, '') = COALESCE(old.team_id, '') AND "
+                "COALESCE(r.owner_email, '') = COALESCE(old.owner_email, '') AND "
+                "r.uri = old.uri"
+            )
+        )
+    )
     for row in res_map:
         mapping_res[row[0]] = row[4]
 
@@ -391,7 +458,10 @@ def downgrade() -> None:
         int_id = mapping_res.get(old_uuid)
         if int_id is None:
             continue
-        conn.execute(text("INSERT INTO resource_metrics_old (id, resource_id, timestamp, response_time, is_success, error_message) VALUES (:id, :rid, :ts, :rt, :is_s, :err)"), {"id": r[0], "rid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]})
+        conn.execute(
+            text("INSERT INTO resource_metrics_old (id, resource_id, timestamp, response_time, is_success, error_message) VALUES (:id, :rid, :ts, :rt, :is_s, :err)"),
+            {"id": r[0], "rid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]},
+        )
 
     # 5) Recreate server_resource_association_old and remap resource_id
     op.create_table(
@@ -426,7 +496,10 @@ def downgrade() -> None:
         int_id = mapping_res.get(r[1])
         if int_id is None:
             continue
-        conn.execute(text("INSERT INTO resource_subscriptions_old (id, resource_id, subscriber_id, created_at, last_notification) VALUES (:id, :rid, :sub, :ts, :ln)"), {"id": r[0], "rid": int_id, "sub": r[2], "ts": r[3], "ln": r[4]})
+        conn.execute(
+            text("INSERT INTO resource_subscriptions_old (id, resource_id, subscriber_id, created_at, last_notification) VALUES (:id, :rid, :sub, :ts, :ln)"),
+            {"id": r[0], "rid": int_id, "sub": r[2], "ts": r[3], "ln": r[4]},
+        )
 
     # Remap observability_spans for resources: uuid -> integer id using mapping_res built above
     span_rows = conn.execute(text("SELECT span_id, resource_id FROM observability_spans WHERE resource_type = 'resources'")).fetchall()

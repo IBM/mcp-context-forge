@@ -1780,7 +1780,8 @@ class ResourceRead(BaseModelWithConfigDict):
     size: Optional[int]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
+    #is_active: bool
+    enabled: bool
     metrics: ResourceMetrics
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
@@ -2287,7 +2288,8 @@ class PromptRead(BaseModelWithConfigDict):
     arguments: List[PromptArgument]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
+    #is_active: bool
+    enabled: bool
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
 
@@ -3710,7 +3712,8 @@ class ServerRead(BaseModelWithConfigDict):
     icon: Optional[str]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
+    #is_active: bool
+    enabled: bool
     associated_tools: List[str] = []
     associated_resources: List[int] = []
     associated_prompts: List[int] = []

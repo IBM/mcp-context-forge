@@ -1830,7 +1830,7 @@ async def admin_list_prompts(
         ...     arguments=[{"name": "name", "type": "string"}],
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     metrics=PromptMetrics(
         ...         total_executions=10, successful_executions=10, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.01, max_response_time=0.1,
@@ -1855,7 +1855,7 @@ async def admin_list_prompts(
         >>> mock_inactive_prompt = PromptRead(
         ...     id="39334ce0ed2644d79ede8913a66930c9", name="Inactive Prompt", description="Another test", template="Bye!",
         ...     arguments=[], created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=False, metrics=PromptMetrics(
+        ...     enabled=False, metrics=PromptMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
@@ -5941,7 +5941,7 @@ async def admin_prompts_partial_html(
                 LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     # Access conditions: owner, team, public
     access_conditions = [DbPrompt.owner_email == user_email]
@@ -5965,7 +5965,7 @@ async def admin_prompts_partial_html(
             else:
                 count_query = count_query.where(DbPrompt.gateway_id.in_(non_null_ids))
     if not include_inactive:
-        count_query = count_query.where(DbPrompt.is_active.is_(True))
+        count_query = count_query.where(DbPrompt.enabled.is_(True))
 
     total_items = db.scalar(count_query) or 0
 
@@ -6268,7 +6268,7 @@ async def admin_get_all_prompt_ids(
                 LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
     if team_ids:
@@ -6437,7 +6437,7 @@ async def admin_search_prompts(
 
     query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
     if team_ids:
@@ -8702,7 +8702,7 @@ async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=D
         ...     "arguments": [{"name": "name", "type": "string"}],
         ...     "created_at": datetime.now(timezone.utc),
         ...     "updated_at": datetime.now(timezone.utc),
-        ...     "is_active": True,
+        ...     "enabled": True,
         ...     "metrics": mock_metrics,
         ...     "tags": []
         ... }
@@ -12242,7 +12242,8 @@ async def get_prompts_section(
                     "description": prompt.description,
                     "arguments": prompt.arguments or [],
                     "tags": prompt.tags or [],
-                    "isActive": prompt.is_active,
+                    # Prompt enabled/disabled state is stored on the prompt as `enabled`.
+                    "isActive": getattr(prompt, "enabled", False),
                     "team_id": getattr(prompt, "team_id", None),
                     "visibility": getattr(prompt, "visibility", "private"),
                 }
