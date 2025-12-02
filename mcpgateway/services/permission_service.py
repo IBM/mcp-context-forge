@@ -17,12 +17,11 @@ import re
 from typing import Any, Dict, List, Optional, Set
 
 # Third-Party
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
-# First-Party
-from mcpgateway.db import PermissionAuditLog, Permissions, Prompt, Resource, Role, Server, Tool, UserRole, utc_now
+from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
 from mcpgateway.services.role_service import RoleService
 
 logger = logging.getLogger(__name__)
@@ -84,7 +83,7 @@ class PermissionService:
             roles = await self._get_user_roles(user_email)
 
         granted_scopes = []
-        
+
         # Check global roles first
         global_roles = [r for r in roles if r.scope == "global"]
         for role in global_roles:
@@ -100,8 +99,8 @@ class PermissionService:
         # Check personal scope
         personal_roles = [r for r in roles if r.scope == "personal"]
         for role in personal_roles:
-             effective_perms = role.role.get_effective_permissions()
-             granted_scopes.append({"scope": "personal", "scope_id": None, "permissions": list(effective_perms)})
+            effective_perms = role.role.get_effective_permissions()
+            granted_scopes.append({"scope": "personal", "scope_id": None, "permissions": list(effective_perms)})
 
         return granted_scopes
 
@@ -364,8 +363,6 @@ class PermissionService:
 
         return False
 
-
-
     def clear_user_cache(self, user_email: str) -> None:
         """Clear cached permissions for a user.
 
@@ -622,5 +619,3 @@ class PermissionService:
         has_team_roles = any(r.scope == "team" for r in roles)
 
         return has_team_roles
-
-

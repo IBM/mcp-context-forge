@@ -17,7 +17,7 @@ from typing import List, Optional
 
 # Third-Party
 from sqlalchemy import and_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
 from mcpgateway.config import settings
@@ -767,7 +767,7 @@ class RoleService:
         Returns:
             List[UserRole]: List of active roles for the user
         """
-        # First-Party
+        # Third-Party
         from sqlalchemy import or_  # pylint: disable=import-outside-toplevel
 
         query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))

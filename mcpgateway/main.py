@@ -2045,7 +2045,7 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {user} has listed tools for the server_id: {server_id}")
-    
+
     # Check server access
     try:
         user_email = get_user_email(user)
@@ -2196,7 +2196,9 @@ async def list_a2a_agents(
     if a2a_service is None:
         raise HTTPException(status_code=503, detail="A2A service not available")
     allowed_team_ids = await get_allowed_team_ids(request)
-    return await a2a_service.list_agents_for_user(db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit, allowed_team_ids=allowed_team_ids)
+    return await a2a_service.list_agents_for_user(
+        db, user_info=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, skip=skip, limit=limit, allowed_team_ids=allowed_team_ids
+    )
 
 
 @a2a_router.get("/{agent_id}", response_model=A2AAgentRead)
@@ -2934,7 +2936,9 @@ async def list_resources(
     # Use team-filtered resource listing
     allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await resource_service.list_resources_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+        data = await resource_service.list_resources_for_user(
+            db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids
+        )
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
             data = [resource for resource in data if any(tag in resource.tags for tag in tags_list)]
@@ -3440,7 +3444,9 @@ async def get_prompt(
         result = await prompt_service.get_prompt(
             db,
             prompt_id,
-            args, allowed_team_ids=allowed_team_ids, user_email=user_email,
+            args,
+            allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
             plugin_context_table=plugin_context_table,
             plugin_global_context=plugin_global_context,
         )
@@ -3493,7 +3499,9 @@ async def get_prompt_no_args(
     return await prompt_service.get_prompt(
         db,
         prompt_id,
-        {}, allowed_team_ids=allowed_team_ids, user_email=user_email,
+        {},
+        allowed_team_ids=allowed_team_ids,
+        user_email=user_email,
         plugin_context_table=plugin_context_table,
         plugin_global_context=plugin_global_context,
     )
