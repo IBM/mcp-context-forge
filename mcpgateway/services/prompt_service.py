@@ -1408,7 +1408,7 @@ class PromptService:
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
-    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False) -> Dict[str, Any]:  # pylint: disable=unused-argument
+    async def get_prompt_details(self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.
 
@@ -1416,12 +1416,15 @@ class PromptService:
             db: Database session
             prompt_id: ID of prompt
             include_inactive: Whether to include inactive prompts
+            allowed_team_ids: List of team IDs the user has write access to.
+            user_email: Email of the user requesting the prompt.
 
         Returns:
             Dictionary of prompt details
 
         Raises:
             PromptNotFoundError: If the prompt is not found
+            PermissionError: If the user does not have permission to access the prompt.
 
         Examples:
             >>> from mcpgateway.services.prompt_service import PromptService
@@ -1439,6 +1442,25 @@ class PromptService:
         prompt = db.get(DbPrompt, prompt_id)
         if not prompt:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
+
+        # Access control validation
+        if allowed_team_ids is not None or user_email is not None:
+            has_access = False
+            if prompt.visibility == "public":
+                has_access = True
+            elif prompt.visibility == "team":
+                if allowed_team_ids and prompt.team_id in allowed_team_ids:
+                    has_access = True
+                elif user_email and prompt.owner_email == user_email:
+                    has_access = True
+            elif prompt.visibility == "private":
+                if user_email and prompt.owner_email == user_email:
+                    has_access = True
+            
+            if not has_access:
+                logger.warning(f"Access denied to prompt {prompt_id} (visibility={prompt.visibility}, team={prompt.team_id}) for user {user_email}")
+                raise PermissionError(f"Access denied to prompt {prompt_id}")
+
         # Return the fully converted prompt including metrics
         prompt.team = self._get_team_name(db, prompt.team_id)
         prompt_data = self._convert_db_prompt(prompt)

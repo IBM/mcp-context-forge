@@ -6848,6 +6848,9 @@ async def admin_add_tool(
     except ToolNameConflictError as ex:
         LOGGER.error(f"ToolNameConflictError in admin_add_tool: {str(ex)}")
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except PermissionError as ex:
+        LOGGER.warning(f"PermissionError in admin_add_tool: {str(ex)}")
+        return JSONResponse(content={"message": str(ex), "success": False}, status_code=403)
     except ToolError as ex:
         return JSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:  # This block should catch ValidationError
