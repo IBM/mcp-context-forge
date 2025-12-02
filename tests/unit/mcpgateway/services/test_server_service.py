@@ -16,8 +16,10 @@ import pytest
 # First-Party
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
+from mcpgateway.db import Role as DbRole
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import UserRole as DbUserRole
 from mcpgateway.schemas import ServerCreate, ServerRead, ServerUpdate
 from mcpgateway.services.server_service import (
     ServerError,
@@ -117,26 +119,36 @@ class TestServerService:
         # Mock team exists
         mock_team = MagicMock()
 
-        # Mock no membership (user not in team)
-        def query_side_effect(model):
-            mock_query = MagicMock()
-            if model.__name__ == "EmailTeam":
-                # Team query returns a team (team exists)
-                mock_query.filter.return_value.first.return_value = mock_team
-            elif model.__name__ == "EmailTeamMember":
-                # Member query returns None (user not a member/owner)
-                mock_query.filter.return_value.first.return_value = None
-            else:
-                mock_query.filter.return_value.first.return_value = None
-            return mock_query
+        # Mock RoleService to return roles
+        mock_role = MagicMock()
+        mock_role.name = "team_owner"
+        mock_role.permissions = ["servers.update"]
+        mock_role.is_active = True
 
-        test_db.query = Mock(side_effect=query_side_effect)
+        with patch("mcpgateway.services.server_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+            mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
 
-        server_update = ServerUpdate(visibility="team", team_id="team1")
-        test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
-        assert "User membership in team not sufficient" in str(exc.value)
+            # Mock no membership (user not in team)
+            def query_side_effect(model):
+                mock_query = MagicMock()
+                if model.__name__ == "EmailTeam":
+                    # Team query returns a team (team exists)
+                    mock_query.filter.return_value.first.return_value = mock_team
+                elif model.__name__ == "UserRole":
+                    # Member query returns None (user not a member/owner)
+                    mock_query.join.return_value.filter.return_value.first.return_value = None
+                else:
+                    mock_query.filter.return_value.first.return_value = None
+                return mock_query
+
+            test_db.query = Mock(side_effect=query_side_effect)
+
+            server_update = ServerUpdate(visibility="team", team_id="team1")
+            test_user_email = "user@example.com"
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
+            assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_update_server_visibility_team_user_not_owner(self, server_service, mock_server, test_db):
@@ -154,28 +166,34 @@ class TestServerService:
         mock_query = MagicMock()
         mock_query.filter.return_value.first.return_value = mock_team
         test_db.query = Mock(return_value=mock_query)
-        # Patch db.query(DbEmailTeamMember).filter().first() to return a member with role != 'owner'
-        mock_member = MagicMock()
-        mock_member.role = "team_member"
-        member_query = MagicMock()
-        member_query.filter.return_value.first.return_value = None  # The filter for role=="team_owner" returns None
 
-        def query_side_effect(model):
-            if model.__name__ == "EmailTeam":
-                return mock_query
-            elif model.__name__ == "EmailTeamMember":
-                # Patch .filter(*args, **kwargs).first() to always return None
-                member_query.filter = Mock()
-                member_query.filter.return_value.first = Mock(return_value=None)
-                return member_query
-            return MagicMock()
+        # Mock RoleService to return roles
+        mock_role = MagicMock()
+        mock_role.name = "team_owner"
+        mock_role.permissions = ["servers.update"]
+        mock_role.is_active = True
 
-        test_db.query.side_effect = query_side_effect
-        server_update = ServerUpdate(visibility="team")
-        test_user_email = "user@example.com"
-        with pytest.raises(ServerError) as exc:
-            await server_service.update_server(test_db, 1, server_update, test_user_email)
-        assert "User membership in team not sufficient" in str(exc.value)
+        with patch("mcpgateway.services.server_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+            mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
+
+            # Patch db.query(DbUserRole).join().filter().first() to return None (user has no sufficient role)
+            member_query = MagicMock()
+            member_query.join.return_value.filter.return_value.first.return_value = None
+
+            def query_side_effect(model):
+                if model.__name__ == "EmailTeam":
+                    return mock_query
+                elif model.__name__ == "UserRole":
+                    return member_query
+                return MagicMock()
+
+            test_db.query.side_effect = query_side_effect
+            server_update = ServerUpdate(visibility="team")
+            test_user_email = "user@example.com"
+            with pytest.raises(ServerError) as exc:
+                await server_service.update_server(test_db, 1, server_update, test_user_email)
+            assert "User membership in team not sufficient" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_update_server_visibility_team_user_is_owner(self, server_service, mock_server, test_db):
@@ -192,49 +210,59 @@ class TestServerService:
         mock_query = MagicMock()
         mock_query.filter.return_value.first.return_value = mock_team
         test_db.query = Mock(return_value=mock_query)
-        # Patch db.query(DbEmailTeamMember).filter().first() to return a member with role == 'owner'
-        mock_member = MagicMock()
-        mock_member.role = "team_owner"
-        member_query = MagicMock()
-        member_query.filter.return_value.first.return_value = mock_member
 
-        def query_side_effect(model):
-            if model.__name__ == "EmailTeam":
-                return mock_query
-            elif model.__name__ == "EmailTeamMember":
-                return member_query
-            return MagicMock()
+        # Mock RoleService to return roles
+        mock_role = MagicMock()
+        mock_role.name = "team_owner"
+        mock_role.permissions = ["servers.update"]
+        mock_role.is_active = True
 
-        test_db.query.side_effect = query_side_effect
-        server_service._notify_server_updated = AsyncMock()
-        server_service._convert_server_to_read = Mock(
-            return_value=ServerRead(
-                id="1",
-                name="updated_server",
-                description="An updated server",
-                icon="http://example.com/image.jpg",
-                created_at="2023-01-01T00:00:00",
-                updated_at="2023-01-01T00:00:00",
-                enabled=True,
-                associated_tools=[],
-                associated_resources=[],
-                associated_prompts=[],
-                metrics={
-                    "total_executions": 0,
-                    "successful_executions": 0,
-                    "failed_executions": 0,
-                    "failure_rate": 0.0,
-                    "min_response_time": None,
-                    "max_response_time": None,
-                    "avg_response_time": None,
-                    "last_execution_time": None,
-                },
+        with patch("mcpgateway.services.server_service.RoleService") as MockRoleService:
+            mock_role_service = MockRoleService.return_value
+            mock_role_service.list_roles = AsyncMock(return_value=[mock_role])
+
+            # Patch db.query(DbUserRole).join().filter().first() to return a member
+            mock_member = MagicMock()
+            member_query = MagicMock()
+            member_query.join.return_value.filter.return_value.first.return_value = mock_member
+
+            def query_side_effect(model):
+                if model.__name__ == "EmailTeam":
+                    return mock_query
+                elif model.__name__ == "UserRole":
+                    return member_query
+                return MagicMock()
+
+            test_db.query.side_effect = query_side_effect
+            server_service._notify_server_updated = AsyncMock()
+            server_service._convert_server_to_read = Mock(
+                return_value=ServerRead(
+                    id="1",
+                    name="updated_server",
+                    description="An updated server",
+                    icon="http://example.com/image.jpg",
+                    created_at="2023-01-01T00:00:00",
+                    updated_at="2023-01-01T00:00:00",
+                    enabled=True,
+                    associated_tools=[],
+                    associated_resources=[],
+                    associated_prompts=[],
+                    metrics={
+                        "total_executions": 0,
+                        "successful_executions": 0,
+                        "failed_executions": 0,
+                        "failure_rate": 0.0,
+                        "min_response_time": None,
+                        "max_response_time": None,
+                        "avg_response_time": None,
+                        "last_execution_time": None,
+                    },
+                )
             )
-        )
-        server_update = ServerUpdate(visibility="team")
-        test_user_email = "user@example.com"
-        result = await server_service.update_server(test_db, 1, server_update, test_user_email)
-        assert result.name == "updated_server"
+            server_update = ServerUpdate(visibility="team")
+            test_user_email = "user@example.com"
+            result = await server_service.update_server(test_db, 1, server_update, test_user_email)
+            assert result.name == "updated_server"
 
     """Unit-tests for the ServerService class."""
 

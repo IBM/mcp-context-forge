@@ -1028,8 +1028,19 @@ class ServerService:
                     roles_with_edit_access = [r.name for r in roles if "servers.update" in r.permissions and r.is_active]
 
                     # Verify user is a member of the team
+                    # First-Party
+                    from mcpgateway.db import Role as DbRole  # pylint: disable=import-outside-toplevel
+
                     membership = (
-                        db.query(DbUserRole).filter(DbUserRole.scope_id == team_id, DbUserRole.user_email == user_email, DbUserRole.is_active, DbUserRole.role.name.in_(roles_with_edit_access)).first()
+                        db.query(DbUserRole)
+                        .join(DbRole, DbUserRole.role_id == DbRole.id)
+                        .filter(
+                            DbUserRole.scope_id == team_id,
+                            DbUserRole.user_email == user_email,
+                            DbUserRole.is_active.is_(True),
+                            DbRole.name.in_(roles_with_edit_access),
+                        )
+                        .first()
                     )
                     if not membership:
                         raise ValueError("User membership in team not sufficient for this update.")
