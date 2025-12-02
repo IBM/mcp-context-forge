@@ -40,15 +40,14 @@ def test_create_qr_saves_file_different_formats(file_format):
     output_format = "txt" if file_format == "ascii" else file_format
 
     with TemporaryDirectory() as tmpdir:
-        file_path = Path(tmpdir) / f"test.{output_format}"
+        file_path = Path(tmpdir)
 
         req = QRGenerationRequest(
             data="https://test.com",
             format=file_format,
-            file_path=file_path
+            save_path=str(file_path)
         )
         result = create_qr_code(req)
-        # Assert the file exists
         assert result["success"] is True
         assert result["output_format"] is output_format
 
@@ -57,16 +56,19 @@ def test_create_qr_saves_file_different_formats(file_format):
 def test_create_qr_fail_to_save_file():
     """Test that create_qr handles file save errors gracefully."""
 
-    req = QRGenerationRequest(
-        data="https://test.com",
-    )
-    dummy_img = MagicMock()
-    dummy_img.save.side_effect = OSError("file error")
-    with patch("qr_code_server.tools.generator.QRCode.make_image", return_value=dummy_img):
-            result = create_qr_code(req)
+    with TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir)
+        req = QRGenerationRequest(
+            data="https://test.com",
+            save_path=str(file_path)
+        )
+        dummy_img = MagicMock()
+        dummy_img.save.side_effect = OSError("file error")
+        with patch("qr_code_server.tools.generator.QRCode.make_image", return_value=dummy_img):
+                result = create_qr_code(req)
 
-    assert result["error"] == "file error"
-    assert result["success"] is False
+        assert result["error"] == "file error"
+        assert result["success"] is False
 
 
 def test_create_qr_fail_create_folder():
