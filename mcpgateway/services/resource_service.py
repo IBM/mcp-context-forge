@@ -1211,6 +1211,7 @@ class ResourceService:
             include_inactive: Whether to include inactive resources. Defaults to False.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
+            allowed_team_ids: Optional list of team IDs the user has access to.
 
         Returns:
             Resource content object
@@ -1221,6 +1222,7 @@ class ResourceService:
             PluginError: If encounters issue with plugin
             PluginViolationError: If plugin violated the request. Example - In case of OPA plugin, if the request is denied by policy.
             ValueError: If neither resource_id nor resource_uri is provided
+            PermissionError: If the user does not have access to the resource based on allowed_team_ids.
 
         Examples:
             >>> from mcpgateway.common.models import ResourceContent

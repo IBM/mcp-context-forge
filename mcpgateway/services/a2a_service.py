@@ -352,6 +352,7 @@ class A2AAgentService:
             tags: List of tags to filter by.
             allowed_team_ids: List of team IDs the user has access to.
             user_email: Email of the user requesting the list.
+            team_id: Optional team ID to filter by specific team.
             skip: Number of agents to skip for pagination.
             limit: Maximum number of agents to return.
 
@@ -439,6 +440,8 @@ class A2AAgentService:
             include_inactive: Whether to include inactive agents
             skip: Number of agents to skip for pagination
             limit: Maximum number of agents to return
+            allowed_team_ids: Optional list of team IDs the user has access to.
+            user_email: Optional email of the user requesting the agents.
 
         Returns:
             List[A2AAgentRead]: A2A agents the user has access to

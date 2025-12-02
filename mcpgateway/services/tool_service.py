@@ -1949,6 +1949,7 @@ class ToolService:
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             The updated ToolRead object.

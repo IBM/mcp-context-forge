@@ -1233,6 +1233,7 @@ class ServerService:
             server_id: The unique identifier of the server.
             activate: True to activate, False to deactivate.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            allowed_team_ids: Optional[List[str]] List of team IDs the user has write access to.
 
         Returns:
             The updated ServerRead object.
@@ -1372,6 +1373,7 @@ class ServerService:
             db: Database session.
             server_id: The unique identifier of the server.
             user_email: Email of user performing deletion (for ownership check).
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Raises:
             ServerNotFoundError: If the server is not found.
