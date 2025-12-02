@@ -188,7 +188,7 @@ class OPAPluginFilter(Plugin):
 
         if not (policy_apply_config and payload and hook_type):
             logger.error(f"{OPAPluginErrorCodes.UNSPECIFIED_REQUIRED_PARAMS.value} {policy_apply_config} and payload: {payload} and hook_type: {hook_type}")
-            raise PluginError(message=OPAPluginErrorCodes.UNSPECIFIED_REQUIRED_PARAMS.value, plugin_name="OPAPluginFilter")
+            raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.UNSPECIFIED_REQUIRED_PARAMS.value, plugin_name="OPAPluginFilter"))
 
         input_context = []
         policy_context = {}
@@ -220,7 +220,7 @@ class OPAPluginFilter(Plugin):
                     payload_name = payload.uri
                 else:
                     logger.error(f"{OPAPluginErrorCodes.UNSUPPORTED_HOOK_TYPE.value: {hook}}")
-                    raise PluginError(message=OPAPluginErrorCodes.UNSUPPORTED_HOOK_TYPE.value, plugin_name="OPAPluginFilter")
+                    raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.UNSUPPORTED_HOOK_TYPE.value, plugin_name="OPAPluginFilter"))
 
                 if payload_name == hook_name or hook_name in payload_name:
                     if hook.context:
