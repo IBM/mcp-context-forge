@@ -257,7 +257,10 @@ async def main() -> None:
 
     with engine.begin() as conn:
         cfg.attributes["connection"] = conn
-        cfg.set_main_option("sqlalchemy.url", settings.database_url)
+        # Escape '%' characters in URL to avoid configparser interpolation errors
+        # (e.g., URL-encoded passwords like %40 for '@')
+        escaped_url = settings.database_url.replace("%", "%%")
+        cfg.set_main_option("sqlalchemy.url", escaped_url)
 
         insp = inspect(conn)
 
