@@ -348,7 +348,7 @@ class TestPromptServiceExtended:
         mock_prompt = MagicMock()
         mock_prompt.id = "test-id"
         mock_prompt.name = "test-prompt"
-        mock_prompt.is_active = True
+        mock_prompt.enabled = True
 
         # Test _notify_prompt_added
         await service._notify_prompt_added(mock_prompt)

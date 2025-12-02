@@ -767,7 +767,7 @@ async def test_export_prompts_with_arguments(export_service, mock_db):
     mock_prompt.template = "Process {{user_input}} with {{context}}"
     mock_prompt.description = "Test prompt"
     mock_prompt.arguments = [mock_arg1, mock_arg2]
-    mock_prompt.is_active = True
+    mock_prompt.enabled = True
     mock_prompt.tags = ["nlp", "processing"]
 
     export_service.prompt_service.list_prompts.return_value = ([mock_prompt], None)
