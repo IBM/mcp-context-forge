@@ -11562,7 +11562,7 @@ async function runPromptTest() {
 
         // Call the prompt API endpoint
         const response = await fetch(
-            `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.name)}`,
+            `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.id)}`,
             {
                 method: "POST",
                 headers: {
