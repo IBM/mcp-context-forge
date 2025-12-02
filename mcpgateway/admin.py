@@ -854,7 +854,7 @@ async def admin_list_servers(
         ...     icon="test-icon.png",
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     associated_tools=["tool1", "tool2"],
         ...     associated_resources=[1, 2],
         ...     associated_prompts=[1],
@@ -960,7 +960,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         ...     icon="test-icon.png",
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     associated_tools=["tool1"],
         ...     associated_resources=[1],
         ...     associated_prompts=[1],
@@ -1012,7 +1012,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting gateway {server_id}: {e}")
+        LOGGER.error(f"Error getting server {server_id}: {e}")
         raise e
 
 
@@ -1721,7 +1721,7 @@ async def admin_list_resources(
         ...     size=100,
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     metrics=ResourceMetrics(
         ...         total_executions=5, successful_executions=5, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
@@ -1747,7 +1747,7 @@ async def admin_list_resources(
         ...     id="39334ce0ed2644d79ede8913a66930c9", uri="test://resource/2", name="Inactive Resource",
         ...     description="Another test", mime_type="application/json", size=50,
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=False, metrics=ResourceMetrics(
+        ...     enabled=False, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None),
@@ -2235,7 +2235,7 @@ async def admin_ui(
         True
         >>>
         >>> # Test with populated data (mocking a few items)
-        >>> mock_server = ServerRead(id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), is_active=True, associated_tools=[], associated_resources=[], associated_prompts=[], icon="i", metrics=ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0, last_execution_time=None))
+        >>> mock_server = ServerRead(id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), enabled=True, associated_tools=[], associated_resources=[], associated_prompts=[], icon="i", metrics=ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0, last_execution_time=None))
         >>> mock_tool = ToolRead(
         ...     id="t1", name="T1", original_name="T1", url="http://t1.com", description="d",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
@@ -6117,7 +6117,7 @@ async def admin_resources_partial_html(
 
     # Apply active/inactive filter
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     # Access conditions: owner, team, public
     access_conditions = [DbResource.owner_email == user_email]
@@ -6141,7 +6141,7 @@ async def admin_resources_partial_html(
             else:
                 count_query = count_query.where(DbResource.gateway_id.in_(non_null_ids))
     if not include_inactive:
-        count_query = count_query.where(DbResource.is_active.is_(True))
+        count_query = count_query.where(DbResource.enabled.is_(True))
 
     total_items = db.scalar(count_query) or 0
 
@@ -6326,7 +6326,7 @@ async def admin_get_all_resource_ids(
                 LOGGER.debug(f"Filtering resources by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
     if team_ids:
@@ -6374,7 +6374,7 @@ async def admin_search_resources(
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
     if team_ids:
@@ -8115,7 +8115,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         >>> mock_resource = ResourceRead(
         ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), is_active=True, metrics=ResourceMetrics(
+        ...     updated_at=datetime.now(timezone.utc), enabled=True, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
@@ -12297,7 +12297,7 @@ async def get_servers_section(
                     "name": server.name,
                     "description": server.description,
                     "tags": server.tags or [],
-                    "isActive": server.is_active,
+                    "isActive": server.enabled,
                     "team_id": getattr(server, "team_id", None),
                     "visibility": getattr(server, "visibility", "private"),
                 }
