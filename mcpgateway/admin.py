@@ -943,9 +943,14 @@ async def admin_list_servers(
         >>> original_list_servers_for_user = server_service.list_servers_for_user
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[mock_server])
         >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock()
+        >>> mock_request.state.user_permissions = []
+        >>>
         >>> # Test the function
         >>> async def test_admin_list_servers():
         ...     result = await admin_list_servers(
+        ...         request=mock_request,
         ...         include_inactive=False,
         ...         db=mock_db,
         ...         user=mock_user
@@ -963,6 +968,7 @@ async def admin_list_servers(
         >>> server_service.list_servers_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_servers_empty():
         ...     result = await admin_list_servers(
+        ...         request=mock_request,
         ...         include_inactive=True,
         ...         db=mock_db,
         ...         user=mock_user
@@ -978,7 +984,7 @@ async def admin_list_servers(
         >>> async def test_admin_list_servers_exception():
         ...     server_service.list_servers_for_user = AsyncMock(side_effect=Exception("Test error"))
         ...     try:
-        ...         await admin_list_servers(False, mock_db, mock_user)
+        ...         await admin_list_servers(mock_request, False, mock_db, mock_user)
         ...     except Exception as e:
         ...         return str(e) == "Test error"
         >>> asyncio.run(test_admin_list_servers_exception())
@@ -1050,10 +1056,15 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
         >>> original_get_server = server_service.get_server
         >>> server_service.get_server = AsyncMock(return_value=mock_server)
         >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock()
+        >>> mock_request.state.user_permissions = []
+        >>>
         >>> # Test successful retrieval
         >>> async def test_admin_get_server_success():
         ...     result = await admin_get_server(
         ...         server_id=server_id,
+        ...         request=mock_request,
         ...         db=mock_db,
         ...         user=mock_user
         ...     )
@@ -1070,6 +1081,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
         ...     try:
         ...         await admin_get_server(
         ...             server_id="nonexistent",
+        ...             request=mock_request,
         ...             db=mock_db,
         ...             user=mock_user
         ...         )
@@ -1813,9 +1825,13 @@ async def admin_list_resources(
         >>> original_list_resources_for_user = resource_service.list_resources_for_user
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource])
         >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock()
+        >>> mock_request.state.user_permissions = []
+        >>>
         >>> # Test listing active resources
         >>> async def test_admin_list_resources_active():
-        ...     result = await admin_list_resources(include_inactive=False, db=mock_db, user=mock_user)
+        ...     result = await admin_list_resources(request=mock_request, include_inactive=False, db=mock_db, user=mock_user)
         ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Test Resource"
         >>>
         >>> asyncio.run(test_admin_list_resources_active())
@@ -1834,7 +1850,7 @@ async def admin_list_resources(
         ... )
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
-        ...     result = await admin_list_resources(include_inactive=True, db=mock_db, user=mock_user)
+        ...     result = await admin_list_resources(request=mock_request, include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_resources_all())
@@ -1843,7 +1859,7 @@ async def admin_list_resources(
         >>> # Test empty list
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_resources_empty():
-        ...     result = await admin_list_resources(include_inactive=False, db=mock_db, user=mock_user)
+        ...     result = await admin_list_resources(request=mock_request, include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
         >>>
         >>> asyncio.run(test_admin_list_resources_empty())
@@ -1853,7 +1869,7 @@ async def admin_list_resources(
         >>> resource_service.list_resources_for_user = AsyncMock(side_effect=Exception("Resource list error"))
         >>> async def test_admin_list_resources_exception():
         ...     try:
-        ...         await admin_list_resources(False, mock_db, mock_user)
+        ...         await admin_list_resources(mock_request, False, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Resource list error"
@@ -2033,9 +2049,13 @@ async def admin_list_gateways(
         >>> original_list_gateways = gateway_service.list_gateways_for_user
         >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[mock_gateway])
         >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock()
+        >>> mock_request.state.user_permissions = []
+        >>>
         >>> # Test listing active gateways
         >>> async def test_admin_list_gateways_active():
-        ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
+        ...     result = await admin_list_gateways(request=mock_request, include_inactive=False, db=mock_db, user=mock_user)
         ...     return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Test Gateway"
         >>>
         >>> asyncio.run(test_admin_list_gateways_active())
@@ -2055,7 +2075,7 @@ async def admin_list_gateways(
         ...     mock_inactive_gateway # Return the GatewayRead objects, not pre-dumped dicts
         ... ])
         >>> async def test_admin_list_gateways_all():
-        ...     result = await admin_list_gateways(include_inactive=True, db=mock_db, user=mock_user)
+        ...     result = await admin_list_gateways(request=mock_request, include_inactive=True, db=mock_db, user=mock_user)
         ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_gateways_all())
@@ -2064,7 +2084,7 @@ async def admin_list_gateways(
         >>> # Test empty list
         >>> gateway_service.list_gateways_for_user = AsyncMock(return_value=[])
         >>> async def test_admin_list_gateways_empty():
-        ...     result = await admin_list_gateways(include_inactive=False, db=mock_db, user=mock_user)
+        ...     result = await admin_list_gateways(request=mock_request, include_inactive=False, db=mock_db, user=mock_user)
         ...     return result == []
         >>>
         >>> asyncio.run(test_admin_list_gateways_empty())
@@ -2074,7 +2094,7 @@ async def admin_list_gateways(
         >>> gateway_service.list_gateways_for_user = AsyncMock(side_effect=Exception("Gateway list error"))
         >>> async def test_admin_list_gateways_exception():
         ...     try:
-        ...         await admin_list_gateways(False, mock_db, mock_user)
+        ...         await admin_list_gateways(mock_request, False, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
         ...         return str(e) == "Gateway list error"
@@ -2301,6 +2321,7 @@ async def admin_ui(
         >>> # Mock request and template rendering
         >>> mock_request = MagicMock(spec=Request, scope={"root_path": "/admin_prefix"})
         >>> mock_request.app.state.templates = MagicMock()
+        >>> mock_request.state.user_permissions = []
         >>> mock_template_response = HTMLResponse("<html>Admin UI</html>")
         >>> mock_request.app.state.templates.TemplateResponse.return_value = mock_template_response
         >>>
@@ -2316,7 +2337,7 @@ async def admin_ui(
         >>> async def test_admin_ui_include_inactive():
         ...     response = await admin_ui(mock_request, None, True, mock_db, mock_user)
         ...     # Verify list methods were called with include_inactive=True
-        ...     server_service.list_servers_for_user.assert_called_with(mock_db, mock_user["email"], include_inactive=True)
+        ...     server_service.list_servers_for_user.assert_called_with(mock_db, mock_user["email"], allowed_team_ids=[], team_id=None, include_inactive=True)
         ...     return isinstance(response, HTMLResponse)
         >>>
         >>> asyncio.run(test_admin_ui_include_inactive())
@@ -11384,11 +11405,15 @@ async def admin_list_a2a_agents(
         ...     )
         ... )
         >>>
+        >>> # Mock request
+        >>> mock_request = MagicMock()
+        >>> mock_request.state.user_permissions = []
+        >>>
         >>> async def test_admin_list_a2a_agents_active():
         ...     fake_service = MagicMock()
-        ...     fake_service.list_agents_for_user = AsyncMock(return_value=[mock_agent])
+        ...     fake_service.list_agents = AsyncMock(return_value=[mock_agent])
         ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
-        ...         result = await admin_list_a2a_agents(include_inactive=False, db=mock_db, user=mock_user)
+        ...         result = await admin_list_a2a_agents(request=mock_request, include_inactive=False, db=mock_db, user=mock_user)
         ...         return len(result) > 0 and isinstance(result[0], dict) and result[0]['name'] == "Agent1"
         >>>
         >>> asyncio.run(test_admin_list_a2a_agents_active())
@@ -11396,10 +11421,10 @@ async def admin_list_a2a_agents(
         >>>
         >>> async def test_admin_list_a2a_agents_exception():
         ...     fake_service = MagicMock()
-        ...     fake_service.list_agents_for_user = AsyncMock(side_effect=Exception("A2A error"))
+        ...     fake_service.list_agents = AsyncMock(side_effect=Exception("A2A error"))
         ...     with patch("mcpgateway.admin.a2a_service", new=fake_service):
         ...         try:
-        ...             await admin_list_a2a_agents(False, db=mock_db, user=mock_user)
+        ...             await admin_list_a2a_agents(mock_request, False, db=mock_db, user=mock_user)
         ...             return False
         ...         except Exception as e:
         ...             return "A2A error" in str(e)

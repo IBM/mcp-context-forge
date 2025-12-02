@@ -204,6 +204,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
         ...         pass
         ...     async def check_permission(self, **kwargs):
         ...         return True
+        ...     async def get_user_scopes(self, **kwargs):
+        ...         return [{"permissions": ["tools.read"]}]
         >>> @require_permission("tools.read")
         ... async def demo(user=None):
         ...     return "ok"
