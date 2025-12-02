@@ -1496,7 +1496,7 @@ class ResourceMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        resource_id (int): Foreign key linking to the resource.
+        resource_id (str): Foreign key linking to the resource.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -1548,7 +1548,7 @@ class PromptMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        prompt_id (int): Foreign key linking to the prompt.
+        prompt_id (str): Foreign key linking to the prompt.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -2423,7 +2423,7 @@ class ResourceSubscription(Base):
     __tablename__ = "resource_subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
+    resource_id: Mapped[str] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Client identifier
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
