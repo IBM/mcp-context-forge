@@ -13,7 +13,7 @@ providing server-to-client streaming with proper session management.
 import asyncio
 from datetime import datetime
 import json
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Optional
 import uuid
 
 # Third-Party
@@ -24,6 +24,11 @@ from sse_starlette.sse import EventSourceResponse
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
+
+# TYPE_CHECKING import to avoid circular dependency
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from mcpgateway.cache.session_pool_manager import SessionPoolManager
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -78,11 +83,14 @@ class SSETransport(Transport):
         True
     """
 
-    def __init__(self, base_url: str = None):
+    def __init__(self, base_url: str = None, session_id: str = None, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None):
         """Initialize SSE transport.
 
         Args:
             base_url: Base URL for client message endpoints
+            session_id: Optional session ID for pooled sessions. If not provided, generates a new UUID.
+            pool_manager: Optional SessionPoolManager for pool-aware operations
+            server_id: Optional server ID for pool operations
 
         Examples:
             >>> # Test default initialization
@@ -106,17 +114,31 @@ class SSETransport(Transport):
             >>> transport2 = SSETransport()
             >>> transport1.session_id != transport2.session_id
             True
+
+            >>> # Test with provided session ID (for pooling)
+            >>> pooled_id = "pooled-session-123"
+            >>> transport = SSETransport(session_id=pooled_id)
+            >>> transport.session_id
+            'pooled-session-123'
         """
         self._base_url = base_url or f"http://{settings.host}:{settings.port}"
         self._connected = False
         self._message_queue = asyncio.Queue()
         self._client_gone = asyncio.Event()
-        self._session_id = str(uuid.uuid4())
+        self._session_id = session_id or str(uuid.uuid4())
+        self._is_pooled = session_id is not None
+        self._pool_manager = pool_manager
+        self._server_id = server_id
+        self._acquired_from_pool = False
 
-        logger.info(f"Creating SSE transport with base_url={self._base_url}, session_id={self._session_id}")
+        logger.info(f"Creating SSE transport with base_url={self._base_url}, session_id={self._session_id}, pooled={self._is_pooled}, server_id={self._server_id}")
 
-    async def connect(self) -> None:
-        """Set up SSE connection.
+    async def connect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None) -> None:
+        """Set up SSE connection, optionally using a pooled session.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to acquire session from pool
+            server_id: Optional server ID for pool operations
 
         Examples:
             >>> # Test connection setup
@@ -128,11 +150,35 @@ class SSETransport(Transport):
             >>> asyncio.run(transport.is_connected())
             True
         """
+        # Update pool manager and server ID if provided
+        if pool_manager:
+            self._pool_manager = pool_manager
+        if server_id:
+            self._server_id = server_id
+
+        # Try to acquire from pool if pool manager and server ID are available
+        if self._pool_manager and self._server_id and not self._is_pooled:
+            try:
+                pooled_session_id = await self._pool_manager.acquire_session(self._server_id)
+                if pooled_session_id:
+                    self._session_id = pooled_session_id
+                    self._is_pooled = True
+                    self._acquired_from_pool = True
+                    logger.info(f"SSE transport acquired pooled session: {self._session_id} for server {self._server_id}")
+            except Exception as e:
+                logger.warning(f"Failed to acquire pooled session, using new session: {e}")
+
         self._connected = True
         logger.info(f"SSE transport connected: {self._session_id}")
 
-    async def disconnect(self) -> None:
-        """Clean up SSE connection.
+    async def disconnect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None, healthy: bool = True, error: Optional[str] = None) -> None:
+        """Clean up SSE connection and release session back to pool if applicable.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to release session back to pool
+            server_id: Optional server ID for pool operations
+            healthy: Whether the session is still healthy (default: True)
+            error: Optional error message if session is unhealthy
 
         Examples:
             >>> # Test disconnection
@@ -156,6 +202,20 @@ class SSETransport(Transport):
         if self._connected:
             self._connected = False
             self._client_gone.set()
+
+            # Release session back to pool if it was acquired from pool
+            if self._acquired_from_pool and self._pool_manager and self._server_id:
+                try:
+                    await self._pool_manager.release_session(
+                        self._server_id,
+                        self._session_id,
+                        healthy=healthy,
+                        error=error
+                    )
+                    logger.info(f"SSE transport released pooled session: {self._session_id} for server {self._server_id}")
+                except Exception as e:
+                    logger.error(f"Failed to release pooled session: {e}")
+
             logger.info(f"SSE transport disconnected: {self._session_id}")
 
     async def send_message(self, message: Dict[str, Any]) -> None:
@@ -463,3 +523,158 @@ class SSETransport(Transport):
             True
         """
         return self._session_id
+
+    @property
+    def is_pooled(self) -> bool:
+        """
+        Check if this transport is using a pooled session.
+
+        Returns:
+            bool: True if session is from a pool, False otherwise
+
+        Examples:
+            >>> # Test non-pooled transport
+            >>> transport = SSETransport()
+            >>> transport.is_pooled
+            False
+
+            >>> # Test pooled transport
+            >>> transport = SSETransport(session_id="pooled-123")
+            >>> transport.is_pooled
+            True
+        """
+        return self._is_pooled
+
+    @classmethod
+    async def create_pooled_session(
+        cls,
+        pool_manager: "SessionPoolManager",
+        server_id: str,
+        base_url: str = None,
+        timeout: Optional[int] = None
+    ) -> Optional["SSETransport"]:
+        """Create a new SSE transport using a pooled session.
+
+        This is a factory method that creates a transport instance with a session
+        acquired from the pool. If pool acquisition fails, returns None.
+
+        Args:
+            pool_manager: SessionPoolManager to acquire session from
+            server_id: Server ID for pool operations
+            base_url: Optional base URL for client message endpoints
+            timeout: Optional timeout for pool acquisition
+
+        Returns:
+            SSETransport instance with pooled session, or None if acquisition fails
+
+        Examples:
+            >>> # This method requires a SessionPoolManager instance
+            >>> # and cannot be easily tested in doctest environment
+            >>> callable(SSETransport.create_pooled_session)
+            True
+        """
+        try:
+            session_id = await pool_manager.acquire_session(server_id, timeout=timeout)
+            if not session_id:
+                logger.warning(f"Failed to acquire pooled session for server {server_id}")
+                return None
+
+            transport = cls(
+                base_url=base_url,
+                session_id=session_id,
+                pool_manager=pool_manager,
+                server_id=server_id
+            )
+            transport._acquired_from_pool = True
+            logger.info(f"Created SSE transport with pooled session: {session_id} for server {server_id}")
+            return transport
+        except Exception as e:
+            logger.error(f"Error creating pooled SSE transport: {e}")
+            return None
+
+    async def get_or_create_session(
+        self,
+        pool_manager: Optional["SessionPoolManager"] = None,
+        server_id: Optional[str] = None
+    ) -> str:
+        """Get existing session ID or create a new one, with pool fallback.
+
+        This method attempts to use a pooled session if pool_manager and server_id
+        are provided. If pool acquisition fails, it falls back to the current session ID
+        or generates a new one.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to acquire session from pool
+            server_id: Optional server ID for pool operations
+
+        Returns:
+            Session ID (either pooled or new)
+
+        Examples:
+            >>> # Test with no pool manager
+            >>> transport = SSETransport()
+            >>> import asyncio
+            >>> session_id = asyncio.run(transport.get_or_create_session())
+            >>> isinstance(session_id, str)
+            True
+            >>> len(session_id) > 0
+            True
+        """
+        # If already have a session, return it
+        if self._session_id and self._is_pooled:
+            return self._session_id
+
+        # Try to acquire from pool
+        if pool_manager and server_id:
+            try:
+                pooled_id = await pool_manager.acquire_session(server_id)
+                if pooled_id:
+                    self._session_id = pooled_id
+                    self._is_pooled = True
+                    self._acquired_from_pool = True
+                    self._pool_manager = pool_manager
+                    self._server_id = server_id
+                    logger.info(f"Acquired pooled session: {pooled_id} for server {server_id}")
+                    return pooled_id
+            except Exception as e:
+                logger.warning(f"Failed to acquire pooled session, using fallback: {e}")
+
+        # Fallback to existing or new session
+        if not self._session_id:
+            self._session_id = str(uuid.uuid4())
+            logger.info(f"Created new session: {self._session_id}")
+
+        return self._session_id
+
+    async def check_pool_health(self) -> bool:
+        """Check if the pooled session is still healthy.
+
+        This method verifies that the transport is connected and, if using a pooled
+        session, that the pool manager is still available.
+
+        Returns:
+            True if session is healthy, False otherwise
+
+        Examples:
+            >>> # Test health check for non-pooled session
+            >>> transport = SSETransport()
+            >>> import asyncio
+            >>> asyncio.run(transport.connect())
+            >>> asyncio.run(transport.check_pool_health())
+            True
+
+            >>> # Test health check when disconnected
+            >>> transport = SSETransport()
+            >>> asyncio.run(transport.check_pool_health())
+            False
+        """
+        if not self._connected:
+            return False
+
+        # If using a pooled session, verify pool manager is available
+        if self._is_pooled and self._acquired_from_pool:
+            if not self._pool_manager or not self._server_id:
+                logger.warning(f"Pooled session {self._session_id} missing pool manager or server ID")
+                return False
+
+        return True

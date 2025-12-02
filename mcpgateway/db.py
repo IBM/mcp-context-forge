@@ -2809,6 +2809,19 @@ class Server(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Session pooling configuration fields
+    pool_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pool_size: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    pool_strategy: Mapped[str] = mapped_column(String(50), default="round_robin", nullable=False)
+    pool_min_size: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    pool_max_size: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    pool_timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    pool_recycle: Mapped[int] = mapped_column(Integer, default=3600, nullable=False)
+    pool_pre_ping: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pool_auto_adjust: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pool_response_threshold: Mapped[float] = mapped_column(Float, default=2.0, nullable=False)
+
     __table_args__ = (UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),)
 
 
@@ -3151,7 +3164,7 @@ class GrpcService(Base):
 
 
 class SessionRecord(Base):
-    """ORM model for sessions from SSE client."""
+    """ORM model for sessions from SSE client with session pooling support."""
 
     __tablename__ = "mcp_sessions"
 
@@ -3160,7 +3173,18 @@ class SessionRecord(Base):
     last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
     data: Mapped[str] = mapped_column(Text, nullable=True)
 
+    # Session pooling tracking fields
+    pool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("session_pools.id", ondelete="SET NULL"), nullable=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="SET NULL"), nullable=True)
+    is_pooled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pool_acquired_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pool_released_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    pool_reuse_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pool_last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     messages: Mapped[List["SessionMessageRecord"]] = relationship("SessionMessageRecord", back_populates="session", cascade="all, delete-orphan")
+    pool: Mapped[Optional["SessionPool"]] = relationship("SessionPool", back_populates="sessions")
+    server: Mapped[Optional["Server"]] = relationship("Server")
 
 
 class SessionMessageRecord(Base):
@@ -3175,6 +3199,66 @@ class SessionMessageRecord(Base):
     last_accessed: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)  # pylint: disable=not-callable
 
     session: Mapped["SessionRecord"] = relationship("SessionRecord", back_populates="messages")
+
+
+class SessionPool(Base):
+    """ORM model for session pools that manage reusable sessions for servers.
+    
+    A session pool maintains a collection of sessions that can be reused across
+    multiple requests to improve performance and reduce connection overhead.
+    """
+
+    __tablename__ = "session_pools"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(50), default="round_robin", nullable=False)
+    size: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    min_size: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    max_size: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
+    active_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    available_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_acquisitions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_releases: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_timeouts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    server: Mapped["Server"] = relationship("Server")
+    sessions: Mapped[List["SessionRecord"]] = relationship("SessionRecord", back_populates="pool")
+    metrics: Mapped[List["PoolStrategyMetric"]] = relationship("PoolStrategyMetric", back_populates="pool", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint("server_id", "name", name="uq_pool_server_name"),)
+
+
+class PoolStrategyMetric(Base):
+    """ORM model for tracking pool strategy performance metrics.
+    
+    Records performance data for different pooling strategies to enable
+    intelligent strategy selection and auto-adjustment.
+    """
+
+    __tablename__ = "pool_strategy_metrics"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    pool_id: Mapped[str] = mapped_column(String(36), ForeignKey("session_pools.id", ondelete="CASCADE"), nullable=False)
+    strategy: Mapped[str] = mapped_column(String(50), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    response_time: Mapped[float] = mapped_column(Float, nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    session_reused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    wait_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    pool: Mapped["SessionPool"] = relationship("SessionPool", back_populates="metrics")
+
+    # Index for efficient time-based queries
+    __table_args__ = (Index("idx_pool_strategy_timestamp", "pool_id", "strategy", "timestamp"),)
 
 
 class OAuthToken(Base):

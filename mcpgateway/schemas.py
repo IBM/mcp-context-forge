@@ -238,6 +238,100 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
     last_execution_time: Optional[datetime] = Field(None, description="Timestamp of the most recent interaction")
 
 
+# --- Session Pooling Schemas ---
+
+
+class ServerPoolConfig(BaseModelWithConfigDict):
+    """
+    Configuration schema for server session pooling.
+    
+    Attributes:
+        enabled (bool): Whether pooling is enabled for this server
+        size (int): Target pool size
+        strategy (str): Pooling strategy (round_robin, least_connections, sticky, weighted, none)
+        min_size (int): Minimum pool size
+        max_size (int): Maximum pool size
+        timeout (int): Session acquisition timeout in seconds
+        max_idle_time (int): Maximum idle time before session recycling
+        health_check_interval (int): Health check interval in seconds
+        rebalance_interval (int): Pool rebalancing interval in seconds
+        auto_scale (bool): Enable automatic pool size adjustment
+    """
+    
+    enabled: bool = Field(default=False, description="Whether pooling is enabled")
+    size: int = Field(default=5, ge=1, le=100, description="Target pool size")
+    strategy: str = Field(default="round_robin", description="Pooling strategy")
+    min_size: int = Field(default=1, ge=1, description="Minimum pool size")
+    max_size: int = Field(default=10, ge=1, le=100, description="Maximum pool size")
+    timeout: int = Field(default=30, ge=1, description="Acquisition timeout in seconds")
+    max_idle_time: int = Field(default=3600, ge=60, description="Max idle time in seconds")
+    health_check_interval: int = Field(default=60, ge=10, description="Health check interval in seconds")
+    rebalance_interval: int = Field(default=300, ge=60, description="Rebalance interval in seconds")
+    auto_scale: bool = Field(default=False, description="Enable auto-scaling")
+
+
+class ServerPoolStats(BaseModelWithConfigDict):
+    """
+    Statistics schema for server session pool.
+    
+    Attributes:
+        pool_id (str): Unique pool identifier
+        server_id (str): Associated server ID
+        strategy (str): Current pooling strategy
+        status (str): Pool status (active, inactive, error)
+        total_sessions (int): Total sessions in pool
+        active_sessions (int): Currently active sessions
+        available_sessions (int): Available sessions for acquisition
+        total_acquisitions (int): Total session acquisitions
+        total_releases (int): Total session releases
+        total_timeouts (int): Total acquisition timeouts
+        avg_wait_time (Optional[float]): Average wait time for acquisition
+        session_reuse_rate (Optional[float]): Percentage of reused sessions
+        health_score (Optional[float]): Pool health score (0-100)
+    """
+    
+    pool_id: str = Field(..., description="Pool identifier")
+    server_id: str = Field(..., description="Server identifier")
+    strategy: str = Field(..., description="Current strategy")
+    status: str = Field(..., description="Pool status")
+    total_sessions: int = Field(..., description="Total sessions")
+    active_sessions: int = Field(..., description="Active sessions")
+    available_sessions: int = Field(..., description="Available sessions")
+    total_acquisitions: int = Field(..., description="Total acquisitions")
+    total_releases: int = Field(..., description="Total releases")
+    total_timeouts: int = Field(..., description="Total timeouts")
+    avg_wait_time: Optional[float] = Field(None, description="Average wait time")
+    session_reuse_rate: Optional[float] = Field(None, description="Session reuse rate")
+    health_score: Optional[float] = Field(None, description="Health score 0-100")
+
+
+class PoolStrategyMetricRead(BaseModelWithConfigDict):
+    """
+    Read schema for pool strategy performance metrics.
+    
+    Attributes:
+        id (str): Metric identifier
+        pool_id (str): Associated pool ID
+        strategy (str): Strategy name
+        timestamp (datetime): Metric timestamp
+        response_time (float): Response time in seconds
+        success (bool): Whether operation succeeded
+        session_reused (bool): Whether session was reused
+        wait_time (Optional[float]): Wait time in seconds
+        error_message (Optional[str]): Error message if failed
+    """
+    
+    id: str = Field(..., description="Metric identifier")
+    pool_id: str = Field(..., description="Pool identifier")
+    strategy: str = Field(..., description="Strategy name")
+    timestamp: datetime = Field(..., description="Metric timestamp")
+    response_time: float = Field(..., description="Response time in seconds")
+    success: bool = Field(..., description="Operation success")
+    session_reused: bool = Field(..., description="Session reused")
+    wait_time: Optional[float] = Field(None, description="Wait time in seconds")
+    error_message: Optional[str] = Field(None, description="Error message")
+
+
 # --- JSON Path API modifier Schema
 
 

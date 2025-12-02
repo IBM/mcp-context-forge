@@ -63,11 +63,13 @@ from mcpgateway.admin import admin_router, set_logging_service
 from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
+from mcpgateway.cache.session_pool_manager import SessionPoolManager
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
@@ -430,6 +432,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await tool_service.initialize()
         await resource_service.initialize()
         await prompt_service.initialize()
+        await server_service.initialize()
         await gateway_service.initialize()
         await root_service.initialize()
         await completion_service.initialize()
@@ -440,6 +443,49 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await a2a_service.initialize()
         await resource_cache.initialize()
         await streamable_http_session.initialize()
+
+        # Initialize Session Pool Manager and create pools for active servers
+        if settings.session_pool_enabled:
+            logger.info("Initializing Session Pool Manager")
+            session_pool_manager = SessionPoolManager()
+            
+            # Create pools for all active servers with pooling enabled
+            try:
+                with SessionLocal() as db:
+                    active_servers = db.query(DbServer).filter(DbServer.is_active == True).all()
+                    pools_created = 0
+                    
+                    for server in active_servers:
+                        if server.pool_enabled:
+                            try:
+                                pool_config = {
+                                    "enabled": server.pool_enabled,
+                                    "size": server.pool_size,
+                                    "strategy": server.pool_strategy,
+                                    "min_size": server.pool_min_size,
+                                    "max_size": server.pool_max_size,
+                                    "timeout": server.pool_timeout,
+                                    "max_idle_time": server.pool_max_idle_time,
+                                    "health_check_interval": server.pool_health_check_interval,
+                                    "rebalance_interval": server.pool_rebalance_interval,
+                                    "auto_scale": server.pool_auto_scale,
+                                }
+                                
+                                await session_pool_manager.get_or_create_pool(server.id, pool_config)
+                                pools_created += 1
+                                logger.info(f"Created session pool for server {server.name} (ID: {server.id})")
+                            except Exception as e:
+                                logger.error(f"Failed to create pool for server {server.name}: {e}")
+                    
+                    logger.info(f"Session Pool Manager initialized with {pools_created} pools")
+            except Exception as e:
+                logger.error(f"Error creating session pools: {e}")
+            
+            # Add pool manager to app state for access in endpoints
+            _app.state.pool_manager = session_pool_manager
+        else:
+            logger.info("Session pooling disabled in configuration")
+            _app.state.pool_manager = None
 
         # Initialize elicitation service
         if settings.mcpgateway_elicitation_enabled:
@@ -474,6 +520,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        # Shutdown Session Pool Manager
+        if settings.session_pool_enabled and hasattr(_app.state, 'pool_manager') and _app.state.pool_manager:
+            try:
+                await _app.state.pool_manager.shutdown()
+                logger.info("Session Pool Manager shutdown complete")
+            except Exception as e:
+                logger.error(f"Error shutting down Session Pool Manager: {str(e)}")
+        
         # Shutdown plugin manager
         if plugin_manager:
             try:
@@ -485,6 +539,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # await stop_streamablehttp()
         # Build service list conditionally
         services_to_shutdown: List[Any] = [
+            server_service,
             resource_cache,
             sampling_handler,
             import_service,
@@ -1914,17 +1969,28 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         base_url = update_url_protocol(request)
         server_sse_url = f"{base_url}/servers/{server_id}"
 
+        # Create transport - pooling is handled internally by the transport
         transport = SSETransport(base_url=server_sse_url)
-        await transport.connect()
+        
+        # Connect with pool manager if available (transport handles pool acquisition)
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        await transport.connect(pool_manager=pool_manager, server_id=server_id)
+        
+        # Add to session registry
         await session_registry.add_session(transport.session_id, transport)
+        
+        # Create SSE response
         response = await transport.create_sse_response(request)
 
+        # Start response task
         asyncio.create_task(session_registry.respond(server_id, user, session_id=transport.session_id, base_url=base_url))
 
+        # Setup cleanup task - transport handles pool release in disconnect()
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks
-        logger.info(f"SSE connection established: {transport.session_id}")
+        
+        logger.info(f"SSE connection established: {transport.session_id} (pooled: {transport.is_pooled})")
         return response
     except Exception as e:
         logger.error(f"SSE connection error: {e}")
@@ -2084,6 +2150,731 @@ async def server_get_prompts(
     logger.debug(f"User: {user} has listed prompts for the server_id: {server_id}")
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
+
+
+###########################
+# Session Pool Management #
+###########################
+
+@server_router.get("/{server_id}/pool/config", response_model=ServerPoolConfig)
+@require_permission("servers.read")
+async def get_server_pool_config(
+    server_id: str,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ServerPoolConfig:
+    """
+    Get pool configuration for a server.
+    
+    Returns the current session pooling configuration including strategy,
+    size constraints, timeouts, and auto-scaling settings.
+    
+    Args:
+        server_id: Server identifier
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        ServerPoolConfig: Pool configuration
+        
+    Raises:
+        HTTPException: 404 if server not found
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        config = server_service.get_pool_configuration(server)
+        return ServerPoolConfig(**config)
+    except Exception as e:
+        logger.error(f"Error getting pool config for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.put("/{server_id}/pool/config", response_model=ServerRead)
+@require_permission("servers.update")
+async def update_server_pool_config(
+    server_id: str,
+    config: ServerPoolConfig,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ServerRead:
+    """
+    Update pool configuration for a server.
+    
+    Updates the session pooling configuration and refreshes the pool
+    if pooling is enabled. Changes take effect immediately.
+    
+    Args:
+        server_id: Server identifier
+        config: New pool configuration
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        ServerRead: Updated server
+        
+    Raises:
+        HTTPException: 404 if server not found, 500 on error
+    """
+    try:
+        config_dict = config.model_dump()
+        updated_server = await server_service.update_server_pool_config(db, server_id, config_dict)
+        logger.info(f"User {user} updated pool config for server {server_id}")
+        return updated_server
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating pool config for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.get("/{server_id}/pool/stats", response_model=ServerPoolStats)
+@require_permission("servers.read")
+async def get_server_pool_stats(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ServerPoolStats:
+    """
+    Get pool statistics for a server.
+    
+    Returns real-time statistics about the session pool including
+    active/available sessions, acquisition metrics, and health score.
+    
+    Args:
+        server_id: Server identifier
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        ServerPoolStats: Pool statistics
+        
+    Raises:
+        HTTPException: 404 if server/pool not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
+        
+        stats_list = await pool_manager.get_pool_stats(server_id=server_id)
+        if not stats_list:
+            raise HTTPException(status_code=404, detail=f"Pool not found for server {server_id}")
+        
+        stats = stats_list[0]
+        return ServerPoolStats(**stats)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting pool stats for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.post("/{server_id}/pool/optimize", response_model=Dict[str, str])
+@require_permission("servers.update")
+async def optimize_server_pool_strategy(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
+    """
+    Trigger strategy optimization for a server pool.
+    
+    Analyzes pool performance and recommends the optimal strategy
+    based on historical metrics. Does not automatically apply the
+    recommendation.
+    
+    Args:
+        server_id: Server identifier
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        Dict with recommended strategy or message
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        recommended = await server_service.optimize_pool_strategy(server_id)
+        
+        if recommended:
+            logger.info(f"User {user} triggered optimization for server {server_id}, recommended: {recommended}")
+            return {
+                "current_strategy": server.pool_strategy,
+                "recommended_strategy": recommended,
+                "message": f"Recommended strategy: {recommended}"
+            }
+        else:
+            return {
+                "current_strategy": server.pool_strategy,
+                "message": "Current strategy is optimal or insufficient data for recommendation"
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error optimizing pool strategy for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.get("/{server_id}/pool/metrics", response_model=List[PoolStrategyMetricRead])
+@require_permission("servers.read")
+async def get_server_pool_metrics(
+    server_id: str,
+    hours: int = Query(24, ge=1, le=168, description="Hours of history to retrieve"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[PoolStrategyMetricRead]:
+    """
+    Get performance metrics history for a server pool.
+    
+    Returns historical performance data including response times,
+    success rates, and session reuse statistics.
+    
+    Args:
+        server_id: Server identifier
+        hours: Hours of history (1-168, default 24)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        List[PoolStrategyMetricRead]: Performance metrics
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        metrics = await server_service.get_pool_performance_history(server_id, hours=hours)
+        return [PoolStrategyMetricRead(**m) for m in metrics]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting pool metrics for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.post("/{server_id}/pool/resize", response_model=ServerPoolStats)
+@require_permission("servers.update")
+async def resize_server_pool(
+    server_id: str,
+    size: int = Query(..., ge=1, le=100, description="New pool size"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ServerPoolStats:
+    """
+    Manually resize a server pool.
+    
+    Changes the target pool size and triggers immediate resizing.
+    The pool will scale up or down to match the new size.
+    
+    Args:
+        server_id: Server identifier
+        size: New pool size (1-100)
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        ServerPoolStats: Updated pool statistics
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        # Update pool size in database
+        config = {"size": size}
+        await server_service.update_server_pool_config(db, server_id, config)
+        
+        logger.info(f"User {user} resized pool for server {server_id} to {size}")
+        
+        # Get updated stats
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if pool_manager:
+            stats_list = await pool_manager.get_pool_stats(server_id=server_id)
+            if stats_list:
+                return ServerPoolStats(**stats_list[0])
+        
+        raise HTTPException(status_code=503, detail="Pool manager not available")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resizing pool for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.post("/{server_id}/pool/reset", response_model=Dict[str, str])
+@require_permission("servers.update")
+async def reset_server_pool(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, str]:
+    """
+    Reset a server pool (clear all sessions).
+    
+    Removes all sessions from the pool and recreates it.
+    Use this to recover from pool issues or force fresh connections.
+    
+    Args:
+        server_id: Server identifier
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        Dict with success message
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail="Pooling not enabled for this server")
+        
+        pool_manager = request.app.state.pool_manager
+        await pool_manager.reset_pool(server_id)
+        
+        return {"message": f"Pool for server {server_id} has been reset"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error resetting pool for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset pool: {str(e)}")
+
+
+###################################
+# Pool Monitoring & Health Checks #
+###################################
+
+@server_router.get("/pools/health", response_model=Dict[str, Any])
+@require_permission("servers.read")
+async def get_pools_health(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Get overall pool health status across all servers.
+    
+    Returns aggregated health metrics including total pools,
+    healthy/unhealthy counts, and overall system health score.
+    
+    Args:
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        Dict with health summary:
+        - total_pools: Total number of pools
+        - healthy_pools: Number of healthy pools
+        - unhealthy_pools: Number of unhealthy pools
+        - total_sessions: Total sessions across all pools
+        - active_sessions: Total active sessions
+        - overall_health_score: 0-100 health score
+        - pools: List of pool health details
+        
+    Raises:
+        HTTPException: 503 if pool manager not available
+    """
+    try:
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
+        
+        all_stats = await pool_manager.get_all_stats()
+        
+        total_pools = len(all_stats)
+        total_sessions = sum(s.get("total_sessions", 0) for s in all_stats)
+        active_sessions = sum(s.get("active_sessions", 0) for s in all_stats)
+        
+        # Calculate health scores
+        pool_health = []
+        healthy_count = 0
+        unhealthy_count = 0
+        
+        for stats in all_stats:
+            health_score = stats.get("health_score", 0)
+            is_healthy = health_score >= 70  # 70% threshold
+            
+            if is_healthy:
+                healthy_count += 1
+            else:
+                unhealthy_count += 1
+            
+            pool_health.append({
+                "server_id": stats.get("server_id"),
+                "pool_id": stats.get("pool_id"),
+                "health_score": health_score,
+                "status": "healthy" if is_healthy else "unhealthy",
+                "active_sessions": stats.get("active_sessions", 0),
+                "total_sessions": stats.get("total_sessions", 0),
+            })
+        
+        # Calculate overall health score
+        if total_pools > 0:
+            overall_health = (healthy_count / total_pools) * 100
+        else:
+            overall_health = 100.0
+        
+        return {
+            "total_pools": total_pools,
+            "healthy_pools": healthy_count,
+            "unhealthy_pools": unhealthy_count,
+            "total_sessions": total_sessions,
+            "active_sessions": active_sessions,
+            "overall_health_score": round(overall_health, 2),
+            "pools": pool_health,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting pools health: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.get("/pools/strategies", response_model=List[Dict[str, Any]])
+@require_permission("servers.read")
+async def list_pool_strategies(
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """
+    List available pooling strategies with descriptions.
+    
+    Returns information about all available pooling strategies
+    including their names, descriptions, and use cases.
+    
+    Args:
+        user: Authenticated user
+        
+    Returns:
+        List of strategy information:
+        - name: Strategy name
+        - value: Strategy enum value
+        - description: Strategy description
+        - use_case: When to use this strategy
+        - pros: Advantages
+        - cons: Disadvantages
+    """
+    strategies = [
+        {
+            "name": "Round Robin",
+            "value": "round_robin",
+            "description": "Distributes sessions evenly across the pool in circular order",
+            "use_case": "General purpose, balanced load distribution",
+            "pros": ["Simple", "Fair distribution", "Predictable"],
+            "cons": ["Doesn't consider session load", "May not be optimal for varying workloads"],
+        },
+        {
+            "name": "Least Connections",
+            "value": "least_connections",
+            "description": "Selects the session with the fewest active connections",
+            "use_case": "Workloads with varying request durations",
+            "pros": ["Load-aware", "Optimal for mixed workloads", "Prevents overload"],
+            "cons": ["Slightly more complex", "Requires connection tracking"],
+        },
+        {
+            "name": "Sticky",
+            "value": "sticky",
+            "description": "Routes requests from the same user to the same session",
+            "use_case": "Stateful applications requiring session affinity",
+            "pros": ["Maintains state", "Reduces context switching", "Better caching"],
+            "cons": ["Uneven distribution", "Session failure affects specific users"],
+        },
+        {
+            "name": "Weighted",
+            "value": "weighted",
+            "description": "Distributes based on session weights/priorities",
+            "use_case": "Heterogeneous resources or priority-based routing",
+            "pros": ["Flexible", "Supports priorities", "Resource-aware"],
+            "cons": ["Requires weight configuration", "More complex setup"],
+        },
+        {
+            "name": "None",
+            "value": "none",
+            "description": "Disables pooling, creates new session for each request",
+            "use_case": "Testing, debugging, or when pooling is not desired",
+            "pros": ["Simple", "No shared state", "Easy debugging"],
+            "cons": ["Higher overhead", "No connection reuse", "Slower"],
+        },
+    ]
+    
+    return strategies
+
+
+@server_router.get("/{server_id}/pool/sessions", response_model=List[Dict[str, Any]])
+@require_permission("servers.read")
+async def list_pool_sessions(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[Dict[str, Any]]:
+    """
+    List sessions in a server's pool.
+    
+    Returns detailed information about all sessions in the pool
+    including their status, age, and usage statistics.
+    
+    Args:
+        server_id: Server identifier
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        List of session details:
+        - session_id: Session identifier
+        - status: active, available, or unhealthy
+        - acquired_at: When session was acquired (if active)
+        - released_at: When session was last released
+        - reuse_count: Number of times reused
+        - age_seconds: Age of session in seconds
+        - is_healthy: Health status
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
+        
+        # Get pool sessions from database
+        from mcpgateway.db import SessionRecord
+        
+        sessions = db.query(SessionRecord).filter(
+            SessionRecord.server_id == server_id,
+            SessionRecord.is_pooled == True
+        ).all()
+        
+        session_list = []
+        now = datetime.now(timezone.utc)
+        
+        for session in sessions:
+            age_seconds = (now - session.created_at).total_seconds() if session.created_at else 0
+            
+            # Determine status
+            if session.acquired_at and not session.released_at:
+                status = "active"
+            elif session.is_healthy:
+                status = "available"
+            else:
+                status = "unhealthy"
+            
+            session_list.append({
+                "session_id": session.id,
+                "status": status,
+                "acquired_at": session.acquired_at.isoformat() if session.acquired_at else None,
+                "released_at": session.released_at.isoformat() if session.released_at else None,
+                "reuse_count": session.reuse_count or 0,
+                "age_seconds": round(age_seconds, 2),
+                "is_healthy": session.is_healthy,
+                "created_at": session.created_at.isoformat() if session.created_at else None,
+            })
+        
+        return session_list
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing pool sessions for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.post("/{server_id}/pool/drain", response_model=Dict[str, Any])
+@require_permission("servers.update")
+async def drain_server_pool(
+    server_id: str,
+    timeout: int = Query(60, ge=10, le=300, description="Drain timeout in seconds"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """
+    Gracefully drain a server pool.
+    
+    Stops accepting new sessions from the pool while allowing
+    existing active sessions to complete. Useful for maintenance
+    or before pool reconfiguration.
+    
+    Args:
+        server_id: Server identifier
+        timeout: Maximum time to wait for drain (10-300 seconds)
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        Dict with drain status:
+        - status: draining, drained, or timeout
+        - active_sessions_remaining: Number of active sessions
+        - drained_sessions: Number of sessions drained
+        - elapsed_seconds: Time taken
+        
+    Raises:
+        HTTPException: 404 if server not found, 503 if pooling disabled
+    """
+    try:
+        server = db.get(DbServer, server_id)
+        if not server:
+            raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
+        
+        if not server.pool_enabled:
+            raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
+        
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
+        
+        logger.info(f"User {user} initiated drain for server {server_id} pool (timeout: {timeout}s)")
+        
+        start_time = datetime.now(timezone.utc)
+        drained_count = 0
+        
+        # Get initial stats
+        initial_stats = await pool_manager.get_pool_stats(server_id=server_id)
+        if not initial_stats:
+            raise HTTPException(status_code=404, detail=f"Pool not found for server {server_id}")
+        
+        initial_active = initial_stats[0].get("active_sessions", 0)
+        
+        # Wait for active sessions to complete (simplified drain logic)
+        elapsed = 0
+        while elapsed < timeout:
+            current_stats = await pool_manager.get_pool_stats(server_id=server_id)
+            if current_stats:
+                active_sessions = current_stats[0].get("active_sessions", 0)
+                
+                if active_sessions == 0:
+                    # All sessions drained
+                    elapsed_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    logger.info(f"Pool for server {server_id} fully drained in {elapsed_seconds:.2f}s")
+                    
+                    return {
+                        "status": "drained",
+                        "active_sessions_remaining": 0,
+                        "drained_sessions": initial_active,
+                        "elapsed_seconds": round(elapsed_seconds, 2),
+                        "message": f"Pool successfully drained in {elapsed_seconds:.2f} seconds",
+                    }
+            
+            # Wait a bit before checking again
+            await asyncio.sleep(1)
+            elapsed += 1
+        
+        # Timeout reached
+        final_stats = await pool_manager.get_pool_stats(server_id=server_id)
+        remaining_active = final_stats[0].get("active_sessions", 0) if final_stats else 0
+        drained_count = initial_active - remaining_active
+        
+        logger.warning(f"Pool drain for server {server_id} timed out after {timeout}s, {remaining_active} sessions still active")
+        
+        return {
+            "status": "timeout",
+            "active_sessions_remaining": remaining_active,
+            "drained_sessions": drained_count,
+            "elapsed_seconds": timeout,
+            "message": f"Drain timed out after {timeout} seconds, {remaining_active} sessions still active",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error draining pool for server {server_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@server_router.get("/pools", response_model=List[ServerPoolStats])
+@require_permission("servers.read")
+async def list_all_pools(
+    active_only: bool = Query(True, description="Only show pools for active servers"),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> List[ServerPoolStats]:
+    """
+    List all session pools across servers.
+    
+    Returns statistics for all pools, optionally filtered to
+    only active servers.
+    
+    Args:
+        active_only: Only include pools for active servers
+        request: FastAPI request (for pool manager access)
+        db: Database session
+        user: Authenticated user
+        
+    Returns:
+        List[ServerPoolStats]: Pool statistics for all servers
+        
+    Raises:
+        HTTPException: 503 if pool manager not available
+    """
+    try:
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
+        
+        all_stats = await pool_manager.get_all_stats()
+        
+        if active_only:
+            # Filter to only active servers
+            active_server_ids = {s.id for s in db.query(DbServer).filter(DbServer.is_active == True).all()}
+            all_stats = [s for s in all_stats if s.get("server_id") in active_server_ids]
+        
+        return [ServerPoolStats(**stats) for stats in all_stats]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error listing all pools: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 ##################

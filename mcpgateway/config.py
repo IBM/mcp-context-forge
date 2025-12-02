@@ -412,6 +412,107 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+    # ============================================================================
+    # Session Pooling Configuration (Issue #975)
+    # ============================================================================
+    
+    # Global Session Management
+    session_persistence_enabled: bool = Field(
+        default=True,
+        description="Enable session persistence across requests"
+    )
+    session_backend: str = Field(
+        default="database",
+        description="Session storage backend: 'memory', 'redis', or 'database'"
+    )
+    session_ttl: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Session time-to-live in seconds (1 hour default, max 24 hours)"
+    )
+    session_cleanup_interval: int = Field(
+        default=300,
+        ge=60,
+        description="Interval for session cleanup task in seconds"
+    )
+    session_max_age: int = Field(
+        default=86400,
+        ge=3600,
+        description="Maximum session age before forced expiration (24 hours default)"
+    )
+    
+    # Global Session Pooling Defaults
+    session_pool_enabled: bool = Field(
+        default=True,
+        description="Enable session pooling for improved performance"
+    )
+    session_pool_size: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="Default pool size for new servers"
+    )
+    session_pool_strategy: str = Field(
+        default="least_connections",
+        description="Default pooling strategy: 'round_robin', 'least_connections', 'sticky', 'weighted', 'none'"
+    )
+    session_pool_timeout: int = Field(
+        default=30,
+        ge=1,
+        le=300,
+        description="Timeout for acquiring session from pool in seconds"
+    )
+    session_sticky_routing: bool = Field(
+        default=True,
+        description="Enable sticky session routing by default"
+    )
+    
+    # Strategy Selection Thresholds
+    pool_strategy_response_threshold: float = Field(
+        default=1.0,
+        ge=0.1,
+        le=10.0,
+        description="Response time threshold in seconds for strategy auto-selection"
+    )
+    pool_strategy_failure_threshold: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Failure rate threshold (0.0-1.0) for strategy auto-selection"
+    )
+    pool_strategy_auto_adjust: bool = Field(
+        default=True,
+        description="Automatically adjust pool strategy based on performance metrics"
+    )
+    pool_rebalance_interval: int = Field(
+        default=300,
+        ge=60,
+        description="Interval for automatic pool rebalancing in seconds"
+    )
+    pool_health_check_interval: int = Field(
+        default=60,
+        ge=10,
+        description="Interval for pool health checks in seconds"
+    )
+    
+    # Pool Metrics and Monitoring
+    pool_metrics_enabled: bool = Field(
+        default=True,
+        description="Enable pool performance metrics collection"
+    )
+    pool_metrics_retention_days: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        description="Number of days to retain pool metrics"
+    )
+    pool_metrics_aggregation_interval: int = Field(
+        default=300,
+        ge=60,
+        description="Interval for metrics aggregation in seconds"
+    )
+
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod

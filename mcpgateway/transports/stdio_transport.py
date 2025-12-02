@@ -32,11 +32,16 @@ Note:
 import asyncio
 import json
 import sys
-from typing import Any, AsyncGenerator, Dict, Optional
+from typing import Any, AsyncGenerator, Dict, Optional, TYPE_CHECKING
+import uuid
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports.base import Transport
+
+# TYPE_CHECKING import to avoid circular dependency
+if TYPE_CHECKING:
+    from mcpgateway.cache.session_pool_manager import SessionPoolManager
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -80,8 +85,13 @@ class StdioTransport(Transport):
         True
     """
 
-    def __init__(self):
+    def __init__(self, session_id: Optional[str] = None, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None):
         """Initialize stdio transport.
+
+        Args:
+            session_id: Optional session ID for pooled sessions. If not provided, generates a new UUID.
+            pool_manager: Optional SessionPoolManager for pool-aware operations
+            server_id: Optional server ID for pool operations
 
         Examples:
             >>> # Create transport instance
@@ -92,13 +102,30 @@ class StdioTransport(Transport):
             True
             >>> transport._connected
             False
+
+            >>> # Test with provided session ID (for pooling)
+            >>> pooled_id = "pooled-stdio-123"
+            >>> transport = StdioTransport(session_id=pooled_id)
+            >>> transport.session_id
+            'pooled-stdio-123'
+            >>> transport.is_pooled
+            True
         """
         self._stdin_reader: Optional[asyncio.StreamReader] = None
         self._stdout_writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
+        self._session_id = session_id or str(uuid.uuid4())
+        self._is_pooled = session_id is not None
+        self._pool_manager = pool_manager
+        self._server_id = server_id
+        self._acquired_from_pool = False
 
-    async def connect(self) -> None:
-        """Set up stdio streams.
+    async def connect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None) -> None:
+        """Set up stdio streams, optionally using a pooled session.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to acquire session from pool
+            server_id: Optional server ID for pool operations
 
         Examples:
             >>> # Note: This method requires actual stdio streams
@@ -108,6 +135,24 @@ class StdioTransport(Transport):
             >>> callable(transport.connect)
             True
         """
+        # Update pool manager and server ID if provided
+        if pool_manager:
+            self._pool_manager = pool_manager
+        if server_id:
+            self._server_id = server_id
+
+        # Try to acquire from pool if pool manager and server ID are available
+        if self._pool_manager and self._server_id and not self._is_pooled:
+            try:
+                pooled_session_id = await self._pool_manager.acquire_session(self._server_id)
+                if pooled_session_id:
+                    self._session_id = pooled_session_id
+                    self._is_pooled = True
+                    self._acquired_from_pool = True
+                    logger.info(f"Stdio transport acquired pooled session: {self._session_id} for server {self._server_id}")
+            except Exception as e:
+                logger.warning(f"Failed to acquire pooled session, using new session: {e}")
+
         loop = asyncio.get_running_loop()
 
         # Set up stdin reader
@@ -121,10 +166,16 @@ class StdioTransport(Transport):
         self._stdout_writer = asyncio.StreamWriter(transport, protocol, reader, loop)
 
         self._connected = True
-        logger.info("stdio transport connected")
+        logger.info(f"Stdio transport connected: {self._session_id}")
 
-    async def disconnect(self) -> None:
-        """Clean up stdio streams.
+    async def disconnect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None, healthy: bool = True, error: Optional[str] = None) -> None:
+        """Clean up stdio streams and release session back to pool if applicable.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to release session back to pool
+            server_id: Optional server ID for pool operations
+            healthy: Whether the session is still healthy (default: True)
+            error: Optional error message if session is unhealthy
 
         Examples:
             >>> # Note: This method requires actual stdio streams
@@ -138,7 +189,21 @@ class StdioTransport(Transport):
             self._stdout_writer.close()
             await self._stdout_writer.wait_closed()
         self._connected = False
-        logger.info("stdio transport disconnected")
+
+        # Release session back to pool if it was acquired from pool
+        if self._acquired_from_pool and self._pool_manager and self._server_id:
+            try:
+                await self._pool_manager.release_session(
+                    self._server_id,
+                    self._session_id,
+                    healthy=healthy,
+                    error=error
+                )
+                logger.info(f"Stdio transport released pooled session: {self._session_id} for server {self._server_id}")
+            except Exception as e:
+                logger.error(f"Failed to release pooled session: {e}")
+
+        logger.info(f"Stdio transport disconnected: {self._session_id}")
 
     async def send_message(self, message: Dict[str, Any]) -> None:
         """Send a message over stdout.
@@ -256,3 +321,167 @@ class StdioTransport(Transport):
             False
         """
         return self._connected
+
+    @property
+    def session_id(self) -> str:
+        """Get the session ID for this transport.
+
+        Returns:
+            str: session_id
+
+        Examples:
+            >>> transport = StdioTransport()
+            >>> isinstance(transport.session_id, str)
+            True
+            >>> len(transport.session_id) > 0
+            True
+        """
+        return self._session_id
+
+    @property
+    def is_pooled(self) -> bool:
+        """Check if this transport is using a pooled session.
+
+        Returns:
+            bool: True if session is from a pool, False otherwise
+
+        Examples:
+            >>> transport = StdioTransport()
+            >>> transport.is_pooled
+            False
+            >>> transport_pooled = StdioTransport(session_id="pooled-123")
+            >>> transport_pooled.is_pooled
+            True
+        """
+        return self._is_pooled
+
+    @classmethod
+    async def create_pooled_session(
+        cls,
+        pool_manager: "SessionPoolManager",
+        server_id: str,
+        timeout: Optional[int] = None
+    ) -> Optional["StdioTransport"]:
+        """Create a new Stdio transport using a pooled session.
+
+        This is a factory method that creates a transport instance with a session
+        acquired from the pool. If pool acquisition fails, returns None.
+
+        Args:
+            pool_manager: SessionPoolManager to acquire session from
+            server_id: Server ID for pool operations
+            timeout: Optional timeout for pool acquisition
+
+        Returns:
+            StdioTransport instance with pooled session, or None if acquisition fails
+
+        Examples:
+            >>> # This method requires a SessionPoolManager instance
+            >>> # and cannot be easily tested in doctest environment
+            >>> callable(StdioTransport.create_pooled_session)
+            True
+        """
+        try:
+            session_id = await pool_manager.acquire_session(server_id, timeout=timeout)
+            if not session_id:
+                logger.warning(f"Failed to acquire pooled session for server {server_id}")
+                return None
+
+            transport = cls(
+                session_id=session_id,
+                pool_manager=pool_manager,
+                server_id=server_id
+            )
+            transport._acquired_from_pool = True
+            logger.info(f"Created Stdio transport with pooled session: {session_id} for server {server_id}")
+            return transport
+        except Exception as e:
+            logger.error(f"Error creating pooled Stdio transport: {e}")
+            return None
+
+    async def get_or_create_session(
+        self,
+        pool_manager: Optional["SessionPoolManager"] = None,
+        server_id: Optional[str] = None
+    ) -> str:
+        """Get existing session ID or create a new one, with pool fallback.
+
+        This method attempts to use a pooled session if pool_manager and server_id
+        are provided. If pool acquisition fails, it falls back to the current session ID
+        or generates a new one.
+
+        Args:
+            pool_manager: Optional SessionPoolManager to acquire session from pool
+            server_id: Optional server ID for pool operations
+
+        Returns:
+            Session ID (either pooled or new)
+
+        Examples:
+            >>> # Test with no pool manager
+            >>> transport = StdioTransport()
+            >>> import asyncio
+            >>> session_id = asyncio.run(transport.get_or_create_session())
+            >>> isinstance(session_id, str)
+            True
+            >>> len(session_id) > 0
+            True
+        """
+        # If already have a pooled session, return it
+        if self._session_id and self._is_pooled:
+            return self._session_id
+
+        # Try to acquire from pool
+        if pool_manager and server_id:
+            try:
+                pooled_id = await pool_manager.acquire_session(server_id)
+                if pooled_id:
+                    self._session_id = pooled_id
+                    self._is_pooled = True
+                    self._acquired_from_pool = True
+                    self._pool_manager = pool_manager
+                    self._server_id = server_id
+                    logger.info(f"Acquired pooled session: {pooled_id} for server {server_id}")
+                    return pooled_id
+            except Exception as e:
+                logger.warning(f"Failed to acquire pooled session, using fallback: {e}")
+
+        # Fallback to existing or new session
+        if not self._session_id:
+            self._session_id = str(uuid.uuid4())
+            logger.info(f"Created new session: {self._session_id}")
+
+        return self._session_id
+
+    async def check_pool_health(self) -> bool:
+        """Check if the pooled session is still healthy.
+
+        This method verifies that the transport is connected and, if using a pooled
+        session, that the pool manager is still available.
+
+        Returns:
+            True if session is healthy, False otherwise
+
+        Examples:
+            >>> # Test health check for non-pooled session
+            >>> transport = StdioTransport()
+            >>> transport._connected = True
+            >>> import asyncio
+            >>> asyncio.run(transport.check_pool_health())
+            True
+
+            >>> # Test health check when disconnected
+            >>> transport = StdioTransport()
+            >>> asyncio.run(transport.check_pool_health())
+            False
+        """
+        if not self._connected:
+            return False
+
+        # If using a pooled session, verify pool manager is available
+        if self._is_pooled and self._acquired_from_pool:
+            if not self._pool_manager or not self._server_id:
+                logger.warning(f"Pooled session {self._session_id} missing pool manager or server ID")
+                return False
+
+        return True

@@ -82,6 +82,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
+    <script src="{{ root_path }}/static/pools.js"></script>
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
     <!-- CodeMirror CSS -->
@@ -364,6 +365,13 @@
                 </div>
 
                 <div class="py-1" role="none">
+                  <a
+                    href="javascript:void(0)"
+                    @click="open = false; showPoolHealthDashboard()"
+                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
+                    role="menuitem"
+                    >🏥 Pool Health</a
+                  >
                   <a
                     href="#logs"
                     @click="open = false"
@@ -1964,7 +1972,23 @@
                         Edit
                       </button>
 
-                      <!-- Row 2: Export Config -->
+                      <!-- Row 2: Pool Config | Pool Stats -->
+                      <button
+                        onclick="openPoolConfig('{{ server.id }}')"
+                        class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-cyan-600 hover:text-cyan-900 hover:bg-cyan-50 dark:text-cyan-400 dark:hover:bg-cyan-900/20 transition-colors"
+                        x-tooltip="'💡Configure session pooling for this server'"
+                      >
+                        🔄 Pool Config
+                      </button>
+                      <button
+                        onclick="showPoolStats('{{ server.id }}')"
+                        class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:text-teal-900 hover:bg-teal-50 dark:text-teal-400 dark:hover:bg-teal-900/20 transition-colors"
+                        x-tooltip="'💡View pool statistics and health'"
+                      >
+                        📊 Pool Stats
+                      </button>
+
+                      <!-- Row 3: Export Config -->
                       <button
                         onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')"
                         class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors"
@@ -1973,7 +1997,7 @@
                         Export Config
                       </button>
 
-                      <!-- Row 3: Deactivate/Activate | Delete -->
+                      <!-- Row 4: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
                         {% if server.isActive %}
                         <form
