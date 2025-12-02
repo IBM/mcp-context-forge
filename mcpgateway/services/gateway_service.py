@@ -1332,7 +1332,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Validate write access
             if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
                 logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
-                    raise PermissionError(f"User does not have write access to team {gateway.team_id}")
+                raise PermissionError(f"User does not have write access to team {gateway.team_id}")
 
             if gateway.enabled or include_inactive:
                 # Check for name conflicts if name is being changed
