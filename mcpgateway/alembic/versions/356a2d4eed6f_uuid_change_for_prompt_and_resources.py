@@ -14,250 +14,194 @@ import logging
 
 from sqlalchemy import text
 
-# logger for migration messages
-logger = logging.getLogger(__name__)
-# Exceptions we expect when dropping non-existent constraints/columns
-EXPECTED_DB_EXCEPTIONS = (
-    sa.exc.ProgrammingError,
-    sa.exc.OperationalError,
-    getattr(sa.exc, 'NoSuchTableError', Exception),
-    getattr(sa.exc, 'NoSuchColumnError', Exception),
-    NotImplementedError,
-)
-
-
 
 # revision identifiers, used by Alembic.
 revision: str = '356a2d4eed6f'
-down_revision: Union[str, Sequence[str], None] = 'z1a2b3c4d5e6'
+down_revision: Union[str, Sequence[str], None] = '9e028ecf59c4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Add new UUID columns (temporary names) if they don't already exist
     conn = op.get_bind()
-    inspector = sa.inspect(conn)
 
-    def _column_exists(table_name: str, column_name: str) -> bool:
-        try:
-            return column_name in [c['name'] for c in inspector.get_columns(table_name)]
-        except Exception:
-            return False
+    # 1) Add temporary id_new column to prompts and populate with uuid.hex
+    op.add_column("prompts", sa.Column("id_new", sa.String(36), nullable=True))
 
-    if not _column_exists('resources', 'new_id'):
-        op.add_column('resources', sa.Column('new_id', sa.String(length=36), nullable=True))
-    else:
-        logger.debug("Column 'new_id' already exists on 'resources', skipping add_column")
+    rows = conn.execute(text("SELECT id FROM prompts")).fetchall()
+    for (old_id,) in rows:
+        new_id = uuid.uuid4().hex
+        conn.execute(text("UPDATE prompts SET id_new = :new WHERE id = :old"), {"new": new_id, "old": old_id})
 
-    if not _column_exists('prompts', 'new_id'):
-        op.add_column('prompts', sa.Column('new_id', sa.String(length=36), nullable=True))
-    else:
-        logger.debug("Column 'new_id' already exists on 'prompts', skipping add_column")
+    # 2) Create new prompts table (temporary) with varchar(36) id
+    op.create_table(
+        "prompts_tmp",
+        sa.Column("id", sa.String(36), primary_key=True, nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text, nullable=True),
+        sa.Column("template", sa.Text, nullable=True),
+        sa.Column("argument_schema", sa.JSON, nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("tags", sa.JSON, nullable=False),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.Column("created_from_ip", sa.String(45), nullable=True),
+        sa.Column("created_via", sa.String(100), nullable=True),
+        sa.Column("created_user_agent", sa.Text, nullable=True),
+        sa.Column("modified_by", sa.String(255), nullable=True),
+        sa.Column("modified_from_ip", sa.String(45), nullable=True),
+        sa.Column("modified_via", sa.String(100), nullable=True),
+        sa.Column("modified_user_agent", sa.Text, nullable=True),
+        sa.Column("import_batch_id", sa.String(36), nullable=True),
+        sa.Column("federation_source", sa.String(255), nullable=True),
+        sa.Column("version", sa.Integer, nullable=False, server_default="1"),
+        sa.Column("gateway_id", sa.String(36), nullable=True),
+        sa.Column("team_id", sa.String(36), nullable=True),
+        sa.Column("owner_email", sa.String(255), nullable=True),
+        sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompts"),
+    )
 
-    if not _column_exists('resource_metrics', 'new_resource_id'):
-        op.add_column('resource_metrics', sa.Column('new_resource_id', sa.String(length=36), nullable=True))
-    else:
-        logger.debug("Column 'new_resource_id' already exists on 'resource_metrics', skipping add_column")
+    # 3) Copy data from prompts into prompts_tmp using id_new as id
+    copy_cols = (
+        "id, name, description, template, argument_schema, created_at, updated_at, is_active, tags,"
+        " created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip,"
+        " modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    )
+    conn.execute(text(f"INSERT INTO prompts_tmp ({copy_cols}) SELECT id_new, name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"))
 
-    # Populate resources -> new_id and update resource_metrics to preserve relations
-    resources = conn.execute(sa.text('SELECT id FROM resources')).fetchall()
-    for (old_id,) in resources:
-        new_uuid = uuid.uuid4().hex
-        conn.execute(sa.text('UPDATE resources SET new_id = :new WHERE id = :old'), {'new': new_uuid, 'old': old_id})
-        conn.execute(sa.text('UPDATE resource_metrics SET new_resource_id = :new WHERE resource_id = :old'), {'new': new_uuid, 'old': old_id})
+    # 4) Create new prompt_metrics table with prompt_id varchar(36)
+    op.create_table(
+        "prompt_metrics_tmp",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("prompt_id", sa.String(36), nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("response_time", sa.Float, nullable=False),
+        sa.Column("is_success", sa.Boolean, nullable=False),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_prompt_metrics_prompt_id"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompt_metrics"),
+    )
 
-    # Populate prompts -> new_id
-    prompts = conn.execute(sa.text('SELECT id FROM prompts')).fetchall()
-    for (old_id,) in prompts:
-        new_uuid = uuid.uuid4().hex
-        conn.execute(sa.text('UPDATE prompts SET new_id = :new WHERE id = :old'), {'new': new_uuid, 'old': old_id})
+    # 5) Copy prompt_metrics mapping old integer prompt_id -> new uuid via join
+    conn.execute(text("INSERT INTO prompt_metrics_tmp (id, prompt_id, timestamp, response_time, is_success, error_message) SELECT pm.id, p.id_new, pm.timestamp, pm.response_time, pm.is_success, pm.error_message FROM prompt_metrics pm JOIN prompts p ON pm.prompt_id = p.id"))
 
-    # Make the new id columns non-nullable and perform renames in a SQLite-safe way
-    # Use batch_alter_table so Alembic will recreate the table for SQLite.
-    with op.batch_alter_table('resources') as batch_op:
-        batch_op.alter_column('new_id', existing_type=sa.String(length=36), nullable=False)
+    # 6) Create new server_prompt_association table with prompt_id varchar(36)
+    op.create_table(
+        "server_prompt_association_tmp",
+        sa.Column("server_id", sa.String(36), nullable=False),
+        sa.Column("prompt_id", sa.String(36), nullable=False),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc"),
+        sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
+        sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_server_prompt_prompt_id"),
+    )
 
-    with op.batch_alter_table('prompts') as batch_op:
-        batch_op.alter_column('new_id', existing_type=sa.String(length=36), nullable=False)
+    conn.execute(text("INSERT INTO server_prompt_association_tmp (server_id, prompt_id) SELECT spa.server_id, p.id_new FROM server_prompt_association spa JOIN prompts p ON spa.prompt_id = p.id"))
 
-    with op.batch_alter_table('resource_metrics') as batch_op:
-        batch_op.alter_column('new_resource_id', existing_type=sa.String(length=36), nullable=False)
+    # 7) Drop old tables and rename tmp tables into place
+    op.drop_table("prompt_metrics")
+    op.drop_table("server_prompt_association")
+    op.drop_table("prompts")
 
-    # Try to drop existing primary key constraints (common default names are '<table>_pkey')
-    try:
-        op.drop_constraint('resources_pkey', 'resources', type_='primary')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint resources_pkey: %s", e)
-    try:
-        op.drop_constraint('prompts_pkey', 'prompts', type_='primary')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint prompts_pkey: %s", e)
-
-    # Rename old integer id columns to keep them temporarily and rename new_id -> id
-    # Use batch_alter_table so renames are portable across SQLite and other DBs.
-    with op.batch_alter_table('resources') as batch_op:
-        batch_op.alter_column('id', new_column_name='old_id', existing_type=sa.Integer())
-        batch_op.alter_column('new_id', new_column_name='id', existing_type=sa.String(length=36))
-        # Create primary key on the new UUID id column in a batch-safe way
-        batch_op.create_primary_key('resources_pkey', ['id'])
-        # Drop the old integer PK column as part of the same batch table rebuild
-        try:
-            batch_op.drop_column('old_id')
-        except Exception:
-            logger.debug("Failed to drop 'old_id' in resources batch; will attempt later")
-
-    with op.batch_alter_table('prompts') as batch_op:
-        batch_op.alter_column('id', new_column_name='old_id', existing_type=sa.Integer())
-        batch_op.alter_column('new_id', new_column_name='id', existing_type=sa.String(length=36))
-        # Create primary key on the new UUID id column in a batch-safe way
-        batch_op.create_primary_key('prompts_pkey', ['id'])
-        # Drop the old integer PK column as part of the same batch table rebuild
-        try:
-            batch_op.drop_column('old_id')
-        except Exception:
-            logger.debug("Failed to drop 'old_id' in prompts batch; will attempt later")
-
-    # Primary keys created inside batch_alter_table blocks for SQLite compatibility
-
-    # Replace resource_metrics.resource_id with the UUID-based column and recreate FK
-    try:
-        op.drop_constraint('resource_metrics_resource_id_fkey', 'resource_metrics', type_='foreignkey')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint resource_metrics_resource_id_fkey: %s", e)
-
-    with op.batch_alter_table('resource_metrics') as batch_op:
-        batch_op.alter_column('resource_id', new_column_name='old_resource_id', existing_type=sa.Integer())
-        batch_op.alter_column('new_resource_id', new_column_name='resource_id', existing_type=sa.String(length=36))
-        # Create FK in batch mode so SQLite will rebuild the table with constraint
-        batch_op.create_foreign_key('resource_metrics_resource_id_fkey', 'resources', ['resource_id'], ['id'])
-        # Drop the old integer FK column as part of the same batch table rebuild
-        try:
-            batch_op.drop_column('old_resource_id')
-        except Exception:
-            logger.debug("Failed to drop 'old_resource_id' in resource_metrics batch; will attempt later")
-
-    # Foreign key created inside batch_alter_table block for SQLite compatibility
-
-    # Drop the old integer id columns now that UUIDs are in place
-    # Use batch_alter_table so SQLite can rebuild tables when dropping columns
-    if _column_exists('resources', 'old_id'):
-        with op.batch_alter_table('resources') as batch_op:
-            batch_op.drop_column('old_id')
-    else:
-        logger.debug("Column 'old_id' not present on 'resources', skipping drop_column")
-
-    if _column_exists('prompts', 'old_id'):
-        with op.batch_alter_table('prompts') as batch_op:
-            batch_op.drop_column('old_id')
-    else:
-        logger.debug("Column 'old_id' not present on 'prompts', skipping drop_column")
-
-    if _column_exists('resource_metrics', 'old_resource_id'):
-        with op.batch_alter_table('resource_metrics') as batch_op:
-            batch_op.drop_column('old_resource_id')
-    else:
-        logger.debug("Column 'old_resource_id' not present on 'resource_metrics', skipping drop_column")
-
+    op.rename_table("prompts_tmp", "prompts")
+    op.rename_table("prompt_metrics_tmp", "prompt_metrics")
+    op.rename_table("server_prompt_association_tmp", "server_prompt_association")
+    
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # NOTE: The original integer primary key values were dropped during the upgrade.
-    # This downgrade cannot restore the original integer values; instead it
-    # recreates integer `id` columns populated with new sequential integers and
-    # remaps foreign keys accordingly so the schema returns to integer-based PKs.
-
     conn = op.get_bind()
 
-    # 1) Add integer columns to resources and prompts
-    op.add_column('resources', sa.Column('old_id', sa.Integer(), nullable=True))
-    op.add_column('prompts', sa.Column('old_id', sa.Integer(), nullable=True))
+    # Best-effort: rebuild integer prompt ids and remap dependent FK columns.
+    # 1) Create old-style prompts table with integer id (autoincrement)
+    op.create_table(
+        "prompts_old",
+        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True, nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text, nullable=True),
+        sa.Column("template", sa.Text, nullable=True),
+        sa.Column("argument_schema", sa.JSON, nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("tags", sa.JSON, nullable=False),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.Column("created_from_ip", sa.String(45), nullable=True),
+        sa.Column("created_via", sa.String(100), nullable=True),
+        sa.Column("created_user_agent", sa.Text, nullable=True),
+        sa.Column("modified_by", sa.String(255), nullable=True),
+        sa.Column("modified_from_ip", sa.String(45), nullable=True),
+        sa.Column("modified_via", sa.String(100), nullable=True),
+        sa.Column("modified_user_agent", sa.Text, nullable=True),
+        sa.Column("import_batch_id", sa.String(36), nullable=True),
+        sa.Column("federation_source", sa.String(255), nullable=True),
+        sa.Column("version", sa.Integer, nullable=False, server_default="1"),
+        sa.Column("gateway_id", sa.String(36), nullable=True),
+        sa.Column("team_id", sa.String(36), nullable=True),
+        sa.Column("owner_email", sa.String(255), nullable=True),
+        sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompts"),
+    )
 
-    # Populate sequential integers for resources
-    resources = conn.execute(sa.text('SELECT id FROM resources')).fetchall()
-    for idx, (uuid_val,) in enumerate(resources, start=1):
-        conn.execute(sa.text('UPDATE resources SET old_id = :num WHERE id = :uuid'), {'num': idx, 'uuid': uuid_val})
+    # 2) Insert rows from current prompts into prompts_old letting id autoincrement.
+    # We'll preserve uniqueness by using the team_id/owner_email/name triple to later remap.
+    conn.execute(text("INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"))
 
-    # Populate sequential integers for prompts
-    prompts = conn.execute(sa.text('SELECT id FROM prompts')).fetchall()
-    for idx, (uuid_val,) in enumerate(prompts, start=1):
-        conn.execute(sa.text('UPDATE prompts SET old_id = :num WHERE id = :uuid'), {'num': idx, 'uuid': uuid_val})
+    # 3) Build mapping from new uuid -> new integer id using the unique key (team_id, owner_email, name)
+    mapping = {}
+    res = conn.execute(text("SELECT p.id as uuid_id, p.team_id, p.owner_email, p.name, old.id as int_id FROM prompts p JOIN prompts_old old ON COALESCE(p.team_id, '') = COALESCE(old.team_id, '') AND COALESCE(p.owner_email, '') = COALESCE(old.owner_email, '') AND p.name = old.name"))
+    for row in res:
+        mapping[row[0]] = row[4]
 
-    # 2) Drop primary key constraints on UUID id columns
-    try:
-        op.drop_constraint('resources_pkey', 'resources', type_='primary')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint resources_pkey (downgrade): %s", e)
-    try:
-        op.drop_constraint('prompts_pkey', 'prompts', type_='primary')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint prompts_pkey (downgrade): %s", e)
+    # 4) Recreate prompt_metrics_old and remap prompt_id
+    op.create_table(
+        "prompt_metrics_old",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("prompt_id", sa.Integer, nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("response_time", sa.Float, nullable=False),
+        sa.Column("is_success", sa.Boolean, nullable=False),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_prompt_metrics_prompt_id"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompt_metric"),
+    )
 
-    # 3) Rename UUID id columns to keep them (uuid_id) and rename old_id -> id
-    with op.batch_alter_table('resources') as batch_op:
-        batch_op.alter_column('id', new_column_name='uuid_id', existing_type=sa.String(length=36))
-        batch_op.alter_column('old_id', new_column_name='id', existing_type=sa.Integer())
-        # Recreate primary key on integer id column in batch mode for SQLite
-        batch_op.create_primary_key('resources_pkey', ['id'])
+    # Copy metrics mapping prompt_id via Python mapping
+    rows = conn.execute(text("SELECT id, prompt_id, timestamp, response_time, is_success, error_message FROM prompt_metrics")).fetchall()
+    for r in rows:
+        old_uuid = r[1]
+        int_id = mapping.get(old_uuid)
+        if int_id is None:
+            # skip orphaned metric
+            continue
+        conn.execute(text("INSERT INTO prompt_metrics_old (id, prompt_id, timestamp, response_time, is_success, error_message) VALUES (:id, :pid, :ts, :rt, :is_s, :err)"), {"id": r[0], "pid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]})
 
-    with op.batch_alter_table('prompts') as batch_op:
-        batch_op.alter_column('id', new_column_name='uuid_id', existing_type=sa.String(length=36))
-        batch_op.alter_column('old_id', new_column_name='id', existing_type=sa.Integer())
-        # Recreate primary key on integer id column in batch mode for SQLite
-        batch_op.create_primary_key('prompts_pkey', ['id'])
+    # 5) Recreate server_prompt_association_old and remap prompt_id
+    op.create_table(
+        "server_prompt_association_old",
+        sa.Column("server_id", sa.String(36), nullable=False),
+        sa.Column("prompt_id", sa.Integer, nullable=False),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc"),
+        sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
+        sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_server_prompt_prompt_id"),
+    )
 
-    # Primary keys recreated inside batch_alter_table blocks for SQLite compatibility
+    rows = conn.execute(text("SELECT server_id, prompt_id FROM server_prompt_association")).fetchall()
+    for server_id, prompt_uuid in rows:
+        int_id = mapping.get(prompt_uuid)
+        if int_id is None:
+            continue
+        conn.execute(text("INSERT INTO server_prompt_association_old (server_id, prompt_id) VALUES (:sid, :pid)"), {"sid": server_id, "pid": int_id})
 
-    # 5) For resource_metrics, add integer column and populate using mapping from resources
-    op.add_column('resource_metrics', sa.Column('old_resource_id', sa.Integer(), nullable=True))
-    # Fetch mapping of resource uuid -> new integer id
-    mapping = conn.execute(sa.text('SELECT uuid_id, id FROM resources')).fetchall()
-    for uuid_val, int_id in mapping:
-        conn.execute(sa.text('UPDATE resource_metrics SET old_resource_id = :num WHERE resource_id = :uuid'), {'num': int_id, 'uuid': uuid_val})
+    # 6) Drop current tables and rename old ones back
+    op.drop_table("prompt_metrics")
+    op.drop_table("server_prompt_association")
+    op.drop_table("prompts")
 
-    # 6) Replace FK: drop existing FK, swap columns, recreate FK to integer PK
-    try:
-        op.drop_constraint('resource_metrics_resource_id_fkey', 'resource_metrics', type_='foreignkey')
-    except EXPECTED_DB_EXCEPTIONS as e:
-        logger.debug("Ignoring missing/failed drop_constraint resource_metrics_resource_id_fkey (downgrade): %s", e)
-
-    # Rename current uuid resource_id to uuid_resource_id, and old_resource_id -> resource_id
-    with op.batch_alter_table('resource_metrics') as batch_op:
-        batch_op.alter_column('resource_id', new_column_name='uuid_resource_id', existing_type=sa.String(length=36))
-        batch_op.alter_column('old_resource_id', new_column_name='resource_id', existing_type=sa.Integer())
-        # Recreate FK to resources.id (integer PK) in batch mode for SQLite
-        batch_op.create_foreign_key('resource_metrics_resource_id_fkey', 'resources', ['resource_id'], ['id'])
-
-    # Foreign key recreated inside batch_alter_table block for SQLite compatibility
-
-    # 7) Drop UUID columns from resources, prompts, and resource_metrics
-    inspector = sa.inspect(conn)
-
-    def _col_exists_down(table_name: str, column_name: str) -> bool:
-        try:
-            return column_name in [c['name'] for c in inspector.get_columns(table_name)]
-        except Exception:
-            return False
-
-    if _col_exists_down('resources', 'uuid_id'):
-        with op.batch_alter_table('resources') as batch_op:
-            batch_op.drop_column('uuid_id')
-    else:
-        logger.debug("Column 'uuid_id' not present on 'resources', skipping drop_column")
-
-    if _col_exists_down('prompts', 'uuid_id'):
-        with op.batch_alter_table('prompts') as batch_op:
-            batch_op.drop_column('uuid_id')
-    else:
-        logger.debug("Column 'uuid_id' not present on 'prompts', skipping drop_column")
-
-    # resource_metrics uuid column was renamed to uuid_resource_id earlier; drop it if present
-    if _col_exists_down('resource_metrics', 'uuid_resource_id'):
-        with op.batch_alter_table('resource_metrics') as batch_op:
-            batch_op.drop_column('uuid_resource_id')
-    else:
-        logger.debug("Column 'uuid_resource_id' not present on 'resource_metrics', skipping drop_column")
-
-    # NOTE: This downgrade generates new integer IDs and therefore will not
-    # match the original IDs that existed prior to the upgrade. Use with care.
+    op.rename_table("prompts_old", "prompts")
+    op.rename_table("prompt_metrics_old", "prompt_metrics")
+    op.rename_table("server_prompt_association_old", "server_prompt_association")
