@@ -113,9 +113,11 @@ def upgrade() -> None:
         sa.Column("id", sa.String(36), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("detected_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("correlation_id", sa.String(64), nullable=True),
+        sa.Column("log_entry_id", sa.String(36), nullable=True),
         sa.Column("event_type", sa.String(100), nullable=False),
         sa.Column("severity", sa.String(20), nullable=False),
-        sa.Column("category", sa.String(100), nullable=False),
+        sa.Column("category", sa.String(50), nullable=False),
         sa.Column("user_id", sa.String(255), nullable=True),
         sa.Column("user_email", sa.String(255), nullable=True),
         sa.Column("client_ip", sa.String(45), nullable=False),
@@ -123,17 +125,18 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("action_taken", sa.String(100), nullable=True),
         sa.Column("threat_score", sa.Float(), nullable=False, server_default="0.0"),
-        sa.Column("threat_indicators", sa.JSON(), nullable=True),
+        sa.Column("threat_indicators", sa.JSON(), nullable=False, server_default="{}"),
         sa.Column("failed_attempts_count", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("context", sa.JSON(), nullable=True),
-        sa.Column("correlation_id", sa.String(255), nullable=True),
         sa.Column("resolved", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("resolved_by", sa.String(255), nullable=True),
         sa.Column("resolution_notes", sa.Text(), nullable=True),
         sa.Column("alert_sent", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("alert_sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("alert_recipients", sa.JSON(), nullable=True),
+        sa.Column("context", sa.JSON(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(["log_entry_id"], ["structured_log_entries.id"]),
     )
 
     # Create indexes for security_events
@@ -146,9 +149,13 @@ def upgrade() -> None:
     op.create_index("ix_security_events_user_id", "security_events", ["user_id"], unique=False)
     op.create_index("ix_security_events_user_email", "security_events", ["user_email"], unique=False)
     op.create_index("ix_security_events_client_ip", "security_events", ["client_ip"], unique=False)
-    op.create_index("idx_security_event_time", "security_events", ["event_type", "timestamp"], unique=False)
+    op.create_index("ix_security_events_log_entry_id", "security_events", ["log_entry_id"], unique=False)
+    op.create_index("ix_security_events_resolved", "security_events", ["resolved"], unique=False)
+    op.create_index("idx_security_type_time", "security_events", ["event_type", "timestamp"], unique=False)
     op.create_index("idx_security_severity_time", "security_events", ["severity", "timestamp"], unique=False)
     op.create_index("idx_security_user_time", "security_events", ["user_id", "timestamp"], unique=False)
+    op.create_index("idx_security_ip_time", "security_events", ["client_ip", "timestamp"], unique=False)
+    op.create_index("idx_security_unresolved", "security_events", ["resolved", "severity", "timestamp"], unique=False)
 
     # Create audit_trails table
     op.create_table(
