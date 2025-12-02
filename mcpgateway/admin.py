@@ -11237,7 +11237,14 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         stats = plugin_service.get_plugin_statistics()
 
         # Prepare context for template
-        context = {"request": request, "plugins": plugins, "stats": stats, "plugins_enabled": plugin_manager is not None, "root_path": request.scope.get("root_path", "")}
+        context = {
+            "request": request,
+            "plugins": plugins,
+            "stats": stats,
+            "plugins_enabled": plugin_manager is not None,
+            "root_path": request.scope.get("root_path", ""),
+            "available_plugins": plugins,  # For routing rules modal
+        }
 
         # Render the partial template
         return request.app.state.templates.TemplateResponse("plugins_partial.html", context)
@@ -11390,6 +11397,298 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 ##################################################
 # Plugin Routing Endpoints
 ##################################################
+
+
+@admin_router.get("/plugin-routing/rules", response_class=HTMLResponse)
+async def get_routing_rules(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get the list of plugin routing rules.
+
+    Returns HTML fragment showing all routing rules from the plugin routing config.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        route_service = get_plugin_route_service()
+
+        # Get all routing rules from the config
+        rules = []
+        if route_service._config and route_service._config.routes:
+            for idx, route in enumerate(route_service._config.routes):
+                # Try to get display name from metadata, fallback to entity name filter, then to index
+                display_name = route.metadata.get("display_name") if route.metadata else None
+                if not display_name:
+                    if isinstance(route.name, str):
+                        display_name = route.name
+                    elif isinstance(route.name, list) and route.name:
+                        display_name = ", ".join(route.name)
+                    else:
+                        display_name = f"Rule {idx + 1}"
+
+                rule_data = {
+                    "index": idx,
+                    "name": display_name,
+                    "entities": [str(e) for e in (route.entities or [])],
+                    "tags": route.tags or [],
+                    "hooks": route.hooks or [],
+                    "plugins": [
+                        {
+                            "name": p.name,
+                            "priority": p.priority or 0,
+                        }
+                        for p in (route.plugins or [])
+                    ],
+                    "reverse_order_on_post": route.reverse_order_on_post or False,
+                    "when": route.when or None,
+                }
+                rules.append(rule_data)
+
+        # Get available plugins for the modal
+        plugin_service = get_plugin_service()
+        available_plugins = plugin_service.get_all_plugins()
+
+        # Get root_path for URL generation
+        root_path = request.scope.get("root_path", "")
+
+        context = {
+            "request": request,
+            "root_path": root_path,
+            "rules": rules,
+            "available_plugins": available_plugins,
+        }
+
+        return request.app.state.templates.TemplateResponse("routing_rules_list.html", context)
+
+    except Exception as e:
+        LOGGER.error(f"Error getting routing rules: {e}", exc_info=True)
+        # Return error HTML instead of raising exception
+        error_html = f"""
+        <div class="p-8 text-center">
+          <svg class="mx-auto h-12 w-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">Error loading rules</h3>
+          <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{str(e)}</p>
+        </div>
+        """
+        return HTMLResponse(content=error_html)
+
+
+@admin_router.get("/plugin-routing/rules/{rule_index}")
+async def get_routing_rule(
+    request: Request,
+    rule_index: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get a single routing rule by index.
+
+    Args:
+        request: FastAPI request object.
+        rule_index: Index of the rule to retrieve.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSON response with the rule data.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        route_service = get_plugin_route_service()
+        rule = await route_service.get_rule(rule_index)
+
+        if not rule:
+            return JSONResponse(content={"error": f"Rule at index {rule_index} not found"}, status_code=404)
+
+        # Get display name from metadata or fallback
+        display_name = rule.metadata.get("display_name") if rule.metadata else None
+        if not display_name:
+            if isinstance(rule.name, str):
+                display_name = rule.name
+            elif isinstance(rule.name, list) and rule.name:
+                display_name = ", ".join(rule.name)
+            else:
+                display_name = f"Rule {rule_index + 1}"
+
+        # Convert entity name filter to string for the name_filter field
+        name_filter = ""
+        if isinstance(rule.name, str):
+            name_filter = rule.name
+        elif isinstance(rule.name, list):
+            name_filter = ", ".join(rule.name)
+
+        # Convert rule to dict for JSON serialization
+        rule_data = {
+            "index": rule_index,
+            "display_name": display_name,  # Rule display name for UI
+            "name_filter": name_filter,  # Entity name filter
+            "entities": [str(e) for e in (rule.entities or [])],
+            "tags": rule.tags or [],
+            "hooks": rule.hooks or [],
+            "plugins": [{"name": p.name, "priority": p.priority or 0} for p in (rule.plugins or [])],
+            "reverse_order_on_post": rule.reverse_order_on_post or False,
+            "when": rule.when or "",
+        }
+
+        return JSONResponse(content=rule_data)
+
+    except Exception as e:
+        LOGGER.error(f"Error getting routing rule {rule_index}: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@admin_router.post("/plugin-routing/rules")
+@admin_router.post("/plugin-routing/rules/{rule_index}")
+async def create_or_update_routing_rule(
+    request: Request,
+    rule_index: Optional[int] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Create a new routing rule or update an existing one.
+
+    Args:
+        request: FastAPI request object.
+        rule_index: Optional index of the rule to update (from path).
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        HTML response with the updated rules list.
+    """
+    try:
+        # First-Party
+        from mcpgateway.plugins.framework.models import EntityType, PluginAttachment, PluginHookRule
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+
+        # Extract form fields
+        rule_name = form_data.get("rule_name", "").strip()
+        if not rule_name:
+            return HTMLResponse(content="Rule name is required", status_code=400)
+
+        # Parse entities
+        entities = form_data.getlist("entities")
+        entity_types = [EntityType(e) for e in entities] if entities else None
+
+        # Parse name filter (can be comma-separated)
+        name_filter = form_data.get("name_filter", "").strip()
+        name_list = None
+        if name_filter:
+            names = [n.strip() for n in name_filter.split(",") if n.strip()]
+            name_list = names[0] if len(names) == 1 else names if names else None
+
+        # Parse tags
+        tags = form_data.getlist("tags")
+        tags = [t for t in tags if t.strip()] if tags else None
+
+        # Parse hooks
+        hooks = form_data.getlist("hooks")
+        hooks = [h for h in hooks if h.strip()] if hooks else None
+
+        # Parse when expression
+        when_expression = form_data.get("when_expression", "").strip()
+        when_expression = when_expression if when_expression else None
+
+        # Parse reverse order flag
+        reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # Parse plugins JSON
+        # Standard
+        import json
+
+        plugins_json = form_data.get("plugins", "[]")
+        plugins_data = json.loads(plugins_json)
+
+        if not plugins_data:
+            return HTMLResponse(content="At least one plugin is required", status_code=400)
+
+        # Create PluginAttachment objects
+        plugin_attachments = [PluginAttachment(name=p["name"], priority=int(p.get("priority", 10))) for p in plugins_data if p.get("name")]
+
+        # Check if rule_index is also in form data (for update)
+        form_rule_index = form_data.get("rule_index")
+        if form_rule_index is not None and form_rule_index != "":
+            rule_index = int(form_rule_index)
+
+        # Create PluginHookRule
+        # Note: 'name' field is for entity name filtering, not rule display name
+        # We'll store the display name in metadata
+        rule = PluginHookRule(
+            name=name_list,  # Entity name filter
+            entities=entity_types,
+            tags=tags,
+            hooks=hooks,
+            when=when_expression,
+            reverse_order_on_post=reverse_order_on_post,
+            plugins=plugin_attachments,
+            metadata={"display_name": rule_name},  # Store friendly name in metadata
+        )
+
+        # Save to config
+        route_service = get_plugin_route_service()
+        index = await route_service.add_or_update_rule(rule, rule_index)
+        await route_service.save_config()
+
+        LOGGER.info(f"User {get_user_email(user)} {'updated' if rule_index is not None else 'created'} routing rule at index {index}")
+
+        # Return updated rules list (HTMX will replace the content)
+        return await get_routing_rules(request, db, user)
+
+    except Exception as e:
+        LOGGER.error(f"Error creating/updating routing rule: {e}", exc_info=True)
+        return HTMLResponse(content=f"Error: {str(e)}", status_code=500)
+
+
+@admin_router.delete("/plugin-routing/rules/{rule_index}")
+async def delete_routing_rule(
+    request: Request,
+    rule_index: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Delete a routing rule by index.
+
+    Args:
+        request: FastAPI request object.
+        rule_index: Index of the rule to delete.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        HTML response with the updated rules list.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        route_service = get_plugin_route_service()
+        success = await route_service.delete_rule(rule_index)
+
+        if not success:
+            return HTMLResponse(content=f"Rule at index {rule_index} not found", status_code=404)
+
+        await route_service.save_config()
+
+        LOGGER.info(f"User {get_user_email(user)} deleted routing rule at index {rule_index}")
+
+        # Return updated rules list (HTMX will replace the content)
+        return await get_routing_rules(request, db, user)
+
+    except ValueError as e:
+        LOGGER.error(f"Error deleting routing rule {rule_index}: {e}")
+        return HTMLResponse(content=str(e), status_code=400)
+    except Exception as e:
+        LOGGER.error(f"Error deleting routing rule {rule_index}: {e}", exc_info=True)
+        return HTMLResponse(content=f"Error: {str(e)}", status_code=500)
 
 
 async def _get_entity_by_id(db: Session, entity_type: str, entity_id: str):
@@ -11978,6 +12277,104 @@ async def remove_bulk_plugins(
     )
 
 
+@admin_router.post("/tools/bulk/plugins/priority", response_class=JSONResponse)
+async def update_bulk_plugin_priority(
+    request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+):
+    """Update plugin priority for multiple tools at once (bulk operation).
+
+    Args:
+        request: FastAPI request object
+        db: Database session
+        _user: Current authenticated user
+
+    Returns:
+        JSON response with success/failure counts
+    """
+    try:
+        # Parse form data
+        form_data = await request.form()
+        tool_ids = form_data.getlist("tool_ids")
+        plugin_name = form_data.get("plugin_name")
+        new_priority = int(form_data.get("priority", 10))
+
+        LOGGER.info(f"Bulk update priority - tool_ids: {tool_ids}, plugin: {plugin_name}, priority: {new_priority}")
+
+        if not tool_ids:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No tool IDs provided"},
+            )
+
+        if not plugin_name:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "No plugin name provided"},
+            )
+
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        route_service = get_plugin_route_service()
+        success_count = 0
+        failed_count = 0
+        errors = []
+
+        for tool_id in tool_ids:
+            try:
+                # Get tool from database
+                tool = await _get_entity_by_id(db, "tool", tool_id)
+
+                # Update plugin priority for this tool
+                updated = await route_service.update_plugin_priority(
+                    entity_type="tool",
+                    entity_name=tool.name,
+                    plugin_name=plugin_name,
+                    new_priority=new_priority,
+                )
+
+                if updated:
+                    success_count += 1
+                else:
+                    failed_count += 1
+                    errors.append({"tool_id": tool_id, "error": f"Plugin {plugin_name} not found for tool {tool.name}"})
+
+            except Exception as e:
+                LOGGER.error(f"Failed to update priority for plugin {plugin_name} on tool {tool_id}: {e}")
+                failed_count += 1
+                errors.append({"tool_id": tool_id, "error": str(e)})
+
+        # Save configuration after all updates
+        if success_count > 0:
+            try:
+                await route_service.save_config()
+            except Exception as e:
+                LOGGER.error(f"Failed to save plugin configuration: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"success": False, "message": "Failed to save plugin configuration", "error": str(e)},
+                )
+
+        return JSONResponse(
+            content={
+                "success": True,
+                "message": f"Updated priority for {success_count} tools" + (f", {failed_count} failed" if failed_count > 0 else ""),
+                "success_count": success_count,
+                "failed_count": failed_count,
+                "errors": errors if errors else None,
+            }
+        )
+
+    except Exception as e:
+        LOGGER.error(f"Error in bulk update plugin priority: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": str(e)},
+        )
+
+
 @admin_router.post("/tools/{tool_id}/plugins", response_class=HTMLResponse)
 async def add_tool_plugin(
     request: Request,
@@ -12183,6 +12580,62 @@ async def change_tool_plugin_priority(
         raise
     except Exception as e:
         LOGGER.error(f"Error changing tool plugin priority: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.post("/tools/{tool_id}/plugins/{plugin_name}/set-priority", response_class=HTMLResponse)
+async def set_tool_plugin_priority(
+    request: Request,
+    tool_id: str,
+    plugin_name: str,
+    hook: str = Query(..., description="Hook type (tool_pre_invoke or tool_post_invoke)"),
+    db: Session = Depends(get_db),
+):
+    """Set a plugin's priority to an absolute value.
+
+    Accepts form data with 'priority' field.
+    After updating, returns the updated plugins UI.
+    """
+    try:
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse form data
+        form_data = await request.form()
+        new_priority = int(form_data.get("priority", 10))
+
+        # Get tool from database
+        tool = await _get_entity_by_id(db, "tool", tool_id)
+
+        # Get plugin route service
+        route_service = get_plugin_route_service()
+
+        # Update priority
+        success = await route_service.update_plugin_priority(
+            entity_type="tool",
+            entity_name=tool.name,
+            plugin_name=plugin_name,
+            new_priority=new_priority,
+        )
+
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Plugin {plugin_name} not found for tool {tool.name}",
+            )
+
+        # Save configuration
+        await route_service.save_config()
+
+        LOGGER.info(f"Set priority of plugin {plugin_name} to {new_priority} for tool {tool.name}")
+
+        # Return updated plugins UI
+        return await get_tool_plugins_ui(request, tool_id, db)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOGGER.error(f"Error setting tool plugin priority: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

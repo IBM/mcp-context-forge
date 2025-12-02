@@ -34,7 +34,19 @@
               <div class="flex items-center space-x-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
                 <span class="text-sm text-gray-900 dark:text-gray-100">{{ plugin.name }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">(p: {{ plugin.priority }})</span>
+                <div class="flex items-center space-x-1">
+                  <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                  <input type="number"
+                         name="priority"
+                         value="{{ plugin.priority }}"
+                         hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/set-priority?hook=tool_pre_invoke"
+                         hx-trigger="blur changed"
+                         hx-target="#plugins-{{ tool_id }}"
+                         hx-swap="outerHTML"
+                         min="0"
+                         max="1000"
+                         class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                </div>
               </div>
               <div class="flex items-center space-x-1">
                 <!-- Up/Down buttons -->
@@ -115,7 +127,19 @@
               <div class="flex items-center space-x-2">
                 <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ loop.index }}.</span>
                 <span class="text-sm text-gray-900 dark:text-gray-100">{{ plugin.name }}</span>
-                <span class="text-xs text-gray-500 dark:text-gray-400">(p: {{ plugin.priority }})</span>
+                <div class="flex items-center space-x-1">
+                  <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                  <input type="number"
+                         name="priority"
+                         value="{{ plugin.priority }}"
+                         hx-post="{{ root_path }}/admin/tools/{{ tool_id }}/plugins/{{ plugin.name }}/set-priority?hook=tool_post_invoke"
+                         hx-trigger="blur changed"
+                         hx-target="#plugins-{{ tool_id }}"
+                         hx-swap="outerHTML"
+                         min="0"
+                         max="1000"
+                         class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                </div>
               </div>
               <div class="flex items-center space-x-1">
                 <!-- Up/Down buttons -->

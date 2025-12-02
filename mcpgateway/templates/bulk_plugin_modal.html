@@ -73,6 +73,33 @@
          } catch (e) {
            console.error('Failed to clear all plugins:', e);
          }
+       },
+       async updatePluginPriority(pluginName, newPriority) {
+         const toolIds = window.Alpine.store('toolsPanel').selectedTools;
+         const formData = new FormData();
+         toolIds.forEach(id => formData.append('tool_ids', id));
+         formData.append('plugin_name', pluginName);
+         formData.append('priority', newPriority);
+
+         try {
+           const response = await fetch(`{{ root_path }}/admin/tools/bulk/plugins/priority`, {
+             method: 'POST',
+             body: formData
+           });
+           if (response.ok) {
+             // Reload plugin status to get fresh data from server
+             await this.loadPluginStatus();
+             window.dispatchEvent(new Event('plugin-priority-changed'));
+             htmx.trigger('#tools-table', 'refresh');
+           } else {
+             const data = await response.json();
+             console.error('Failed to update plugin priority:', data.message || 'Unknown error');
+             alert('Failed to update priority: ' + (data.message || 'Unknown error'));
+           }
+         } catch (e) {
+           console.error('Failed to update plugin priority:', e);
+           alert('Failed to update priority: ' + e.message);
+         }
        }
      }"
      @plugin-modal-opened.window="loadPluginStatus()"
@@ -154,13 +181,22 @@
                   <h5 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase tracking-wider">Pre-Invoke Hooks</h5>
                   <div class="space-y-1">
                     <template x-for="[pluginName, status] in Object.entries(pluginStatus.plugin_status).filter(([name, s]) => s.pre_hooks && s.pre_hooks.length > 0).sort((a, b) => (a[1].priority || 0) - (b[1].priority || 0))" :key="`pre-${pluginName}`">
-                      <label class="flex items-center text-xs hover:bg-gray-100 dark:hover:bg-gray-800 p-2 rounded cursor-pointer">
+                      <div class="flex items-center text-xs hover:bg-gray-100 dark:hover:bg-gray-800 p-2 rounded">
                         <input type="checkbox"
                                :value="pluginName"
                                x-model="selectedForRemoval"
                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 mr-2">
                         <span class="flex-1 font-medium text-gray-700 dark:text-gray-300" x-text="pluginName"></span>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 mr-2" x-text="`(p: ${status.priority || 0})`"></span>
+                        <div class="flex items-center space-x-1 mr-2">
+                          <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                          <input type="number"
+                                 :value="status.priority || 0"
+                                 @blur="if($event.target.value != (status.priority || 0)) { updatePluginPriority(pluginName, $event.target.value) }"
+                                 @keydown.enter="$event.target.blur()"
+                                 min="0"
+                                 max="1000"
+                                 class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                        </div>
                         <template x-if="status.status === 'all'">
                           <span class="inline-flex items-center px-2 py-0.5 rounded-md bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                             <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -174,7 +210,7 @@
                             <span x-text="`${status.count}/${status.total}`"></span>
                           </span>
                         </template>
-                      </label>
+                      </div>
                     </template>
                   </div>
                 </div>
@@ -184,13 +220,22 @@
                   <h5 class="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-2 uppercase tracking-wider">Post-Invoke Hooks</h5>
                   <div class="space-y-1">
                     <template x-for="[pluginName, status] in Object.entries(pluginStatus.plugin_status).filter(([name, s]) => s.post_hooks && s.post_hooks.length > 0).sort((a, b) => (a[1].priority || 0) - (b[1].priority || 0))" :key="`post-${pluginName}`">
-                      <label class="flex items-center text-xs hover:bg-gray-100 dark:hover:bg-gray-800 p-2 rounded cursor-pointer">
+                      <div class="flex items-center text-xs hover:bg-gray-100 dark:hover:bg-gray-800 p-2 rounded">
                         <input type="checkbox"
                                :value="pluginName"
                                x-model="selectedForRemoval"
                                class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 mr-2">
                         <span class="flex-1 font-medium text-gray-700 dark:text-gray-300" x-text="pluginName"></span>
-                        <span class="text-xs text-gray-500 dark:text-gray-400 mr-2" x-text="`(p: ${status.priority || 0})`"></span>
+                        <div class="flex items-center space-x-1 mr-2">
+                          <label class="text-xs text-gray-500 dark:text-gray-400">p:</label>
+                          <input type="number"
+                                 :value="status.priority || 0"
+                                 @blur="if($event.target.value != (status.priority || 0)) { updatePluginPriority(pluginName, $event.target.value) }"
+                                 @keydown.enter="$event.target.blur()"
+                                 min="0"
+                                 max="1000"
+                                 class="w-16 px-2 py-0.5 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-1 focus:ring-indigo-500">
+                        </div>
                         <template x-if="status.status === 'all'">
                           <span class="inline-flex items-center px-2 py-0.5 rounded-md bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                             <svg class="w-3 h-3 mr-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -204,7 +249,7 @@
                             <span x-text="`${status.count}/${status.total}`"></span>
                           </span>
                         </template>
-                      </label>
+                      </div>
                     </template>
                   </div>
                 </div>

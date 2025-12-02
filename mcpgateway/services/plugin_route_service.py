@@ -559,6 +559,60 @@ class PluginRouteService:
         logger.info(f"Swapped priority of {plugin_name} ({target_priority} -> {target_plugin.priority}) " f"with {swap_plugin.name} ({swap_priority} -> {swap_plugin.priority})")
         return True
 
+    async def update_plugin_priority(
+        self,
+        entity_type: str,
+        entity_name: str,
+        plugin_name: str,
+        new_priority: int,
+    ) -> bool:
+        """Update a plugin's priority to an absolute value.
+
+        Works across multiple rules for the same entity - updates all instances of the plugin.
+
+        Args:
+            entity_type: Type of entity (e.g., "tool")
+            entity_name: Name of entity
+            plugin_name: Name of plugin to update
+            new_priority: New priority value to set
+
+        Returns:
+            True if priority was updated, False if plugin not found.
+        """
+        if not self._config or not self._config.routes:
+            logger.warning("No config or routes available")
+            return False
+
+        entity_type_enum = EntityType(entity_type)
+        updated = False
+
+        # Find all rules matching this entity
+        for rule in self._config.routes:
+            # Only check simple name-based rules
+            if not rule.entities or entity_type_enum not in rule.entities:
+                continue
+
+            # Must have exact name match
+            if rule.name != entity_name:
+                continue
+
+            # Must not have tags or when (simple rule only)
+            if rule.tags or rule.when:
+                continue
+
+            # Update the plugin priority in this rule
+            for plugin in rule.plugins:
+                if plugin.name == plugin_name:
+                    old_priority = plugin.priority
+                    plugin.priority = new_priority
+                    logger.info(f"Updated priority for {plugin_name} on {entity_type}:{entity_name}: {old_priority} -> {new_priority}")
+                    updated = True
+
+        if not updated:
+            logger.warning(f"Plugin {plugin_name} not found for {entity_type}:{entity_name}")
+
+        return updated
+
     async def toggle_reverse_post_hooks(
         self,
         entity_type: str,
@@ -634,6 +688,79 @@ class PluginRouteService:
             return rule.reverse_order_on_post or False
 
         return False
+
+    async def get_rule(self, index: int) -> Optional[PluginHookRule]:
+        """Get a single routing rule by index.
+
+        Args:
+            index: Index of the rule in the routes list.
+
+        Returns:
+            The PluginHookRule at the given index, or None if not found.
+        """
+        if not self._config or not self._config.routes:
+            return None
+
+        if index < 0 or index >= len(self._config.routes):
+            return None
+
+        return self._config.routes[index]
+
+    async def add_or_update_rule(
+        self,
+        rule: PluginHookRule,
+        index: Optional[int] = None,
+    ) -> int:
+        """Add a new routing rule or update an existing one.
+
+        Args:
+            rule: The PluginHookRule to add or update.
+            index: If provided, updates the rule at this index. Otherwise, adds a new rule.
+
+        Returns:
+            The index of the added/updated rule.
+
+        Raises:
+            ValueError: If the index is out of range.
+        """
+        if not self._config:
+            self._config = Config(routes=[])
+
+        if index is not None:
+            # Update existing rule
+            if index < 0 or index >= len(self._config.routes):
+                raise ValueError(f"Rule index {index} is out of range")
+            self._config.routes[index] = rule
+            logger.info(f"Updated routing rule at index {index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
+            return index
+        else:
+            # Add new rule
+            self._config.routes.append(rule)
+            new_index = len(self._config.routes) - 1
+            logger.info(f"Added new routing rule at index {new_index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
+            return new_index
+
+    async def delete_rule(self, index: int) -> bool:
+        """Delete a routing rule by index.
+
+        Args:
+            index: Index of the rule to delete.
+
+        Returns:
+            True if the rule was deleted, False otherwise.
+
+        Raises:
+            ValueError: If the index is out of range.
+        """
+        if not self._config or not self._config.routes:
+            return False
+
+        if index < 0 or index >= len(self._config.routes):
+            raise ValueError(f"Rule index {index} is out of range")
+
+        deleted_rule = self._config.routes.pop(index)
+        logger.info(f"Deleted routing rule at index {index}: {deleted_rule.name if hasattr(deleted_rule, 'name') else 'unnamed'}")
+        return True
 
     async def save_config(self) -> None:
         """Save configuration to YAML file.

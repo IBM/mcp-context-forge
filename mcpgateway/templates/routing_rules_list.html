@@ -1,0 +1,158 @@
+<!-- htmlhint doctype-first:false -->
+{% if rules %}
+<div class="overflow-x-auto">
+  <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+    <thead class="bg-gray-50 dark:bg-gray-700">
+      <tr>
+        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Rule Name
+        </th>
+        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Entities
+        </th>
+        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Tags
+        </th>
+        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Plugins
+        </th>
+        <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Hooks
+        </th>
+        <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+          Actions
+        </th>
+      </tr>
+    </thead>
+    <tbody class="bg-white divide-y divide-gray-200 dark:bg-gray-800 dark:divide-gray-700">
+      {% for rule in rules %}
+      <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+        <td class="px-6 py-4 whitespace-nowrap">
+          <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
+            {{ rule.name }}
+          </div>
+          {% if rule.when %}
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            <span class="inline-flex items-center px-2 py-0.5 rounded bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200">
+              <svg class="h-3 w-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clip-rule="evenodd" />
+              </svg>
+              Conditional
+            </span>
+          </div>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4">
+          <div class="flex flex-wrap gap-1">
+            {% if rule.entities %}
+              {% for entity in rule.entities %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">
+                  {{ entity }}
+                </span>
+              {% endfor %}
+            {% else %}
+              <span class="text-xs text-gray-400 dark:text-gray-500">All</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="px-6 py-4">
+          <div class="flex flex-wrap gap-1">
+            {% if rule.tags %}
+              {% for tag in rule.tags %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  {{ tag }}
+                </span>
+              {% endfor %}
+            {% else %}
+              <span class="text-xs text-gray-400 dark:text-gray-500">Any</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="px-6 py-4">
+          <div class="text-sm text-gray-900 dark:text-gray-100">
+            {% if rule.plugins %}
+              <div class="flex flex-wrap gap-1">
+                {% for plugin in rule.plugins %}
+                  <span class="inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                    {{ plugin.name }}
+                    <span class="ml-1 text-indigo-600 dark:text-indigo-300">(p:{{ plugin.priority }})</span>
+                  </span>
+                {% endfor %}
+              </div>
+            {% else %}
+              <span class="text-xs text-gray-400 dark:text-gray-500">None</span>
+            {% endif %}
+          </div>
+        </td>
+        <td class="px-6 py-4">
+          <div class="flex flex-wrap gap-1">
+            {% if rule.hooks %}
+              {% for hook in rule.hooks %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                  {{ hook }}
+                </span>
+              {% endfor %}
+            {% else %}
+              <span class="text-xs text-gray-400 dark:text-gray-500">All</span>
+            {% endif %}
+          </div>
+          {% if rule.reverse_order_on_post %}
+          <div class="mt-1">
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200">
+              Reversed Post-Hooks
+            </span>
+          </div>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+          <div class="flex justify-end space-x-2">
+            <button
+              onclick="window.dispatchEvent(new CustomEvent('open-rule-modal', { detail: { ruleIndex: {{ rule.index }} } }))"
+              class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300"
+              title="Edit rule"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+            <button
+              hx-delete="{{ root_path }}/admin/plugin-routing/rules/{{ rule.index }}"
+              hx-confirm="Are you sure you want to delete this routing rule?"
+              hx-target="#routing-rules-list"
+              hx-swap="innerHTML"
+              class="text-red-600 hover:text-red-900 dark:text-red-400 dark:hover:text-red-300"
+              title="Delete rule"
+            >
+              <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="p-8 text-center">
+  <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+  </svg>
+  <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">No routing rules</h3>
+  <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+    Get started by creating a new routing rule.
+  </p>
+  <div class="mt-6">
+    <button
+      @click="$dispatch('open-rule-modal')"
+      class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+    >
+      <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+      </svg>
+      Create Rule
+    </button>
+  </div>
+</div>
+{% endif %}

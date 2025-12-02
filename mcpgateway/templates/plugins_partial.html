@@ -1,5 +1,146 @@
 <!-- htmlhint doctype-first:false -->
-<div class="space-y-6">
+<div class="space-y-6" x-data="{
+  activePluginTab: 'routing',
+  routingLoaded: false,
+  async loadRoutingRules() {
+    if (this.routingLoaded) return;
+    try {
+      const response = await fetch('{{ root_path }}/admin/plugin-routing/rules');
+      const html = await response.text();
+      document.getElementById('routing-rules-list').innerHTML = html;
+      this.routingLoaded = true;
+    } catch (e) {
+      console.error('Failed to load routing rules:', e);
+    }
+  },
+  init() {
+    this.$watch('activePluginTab', (value) => {
+      if (value === 'routing') {
+        this.$nextTick(() => this.loadRoutingRules());
+      }
+    });
+    // Load immediately if routing is the default tab
+    if (this.activePluginTab === 'routing') {
+      this.$nextTick(() => this.loadRoutingRules());
+    }
+  }
+}">
+  {% if not plugins_enabled %}
+  <div
+    class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded mb-4"
+  >
+    <p class="font-bold">Plugins are currently disabled</p>
+    <p class="text-sm">
+      Set PLUGINS_ENABLED=true in your environment to enable plugin
+      functionality.
+    </p>
+  </div>
+  {% else %}
+  <!-- Sub-tab Navigation -->
+  <div class="border-b border-gray-200 dark:border-gray-700">
+    <nav class="-mb-px flex space-x-8">
+      <button
+        @click="activePluginTab = 'routing'"
+        :class="activePluginTab === 'routing' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:border-gray-300'"
+        class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors"
+      >
+        <span class="flex items-center">
+          <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Routing Rules
+        </span>
+      </button>
+      <button
+        @click="activePluginTab = 'configuration'"
+        :class="activePluginTab === 'configuration' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:border-gray-300'"
+        class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors"
+      >
+        <span class="flex items-center">
+          <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Configuration
+        </span>
+      </button>
+      <button
+        @click="activePluginTab = 'registry'"
+        :class="activePluginTab === 'registry' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:border-gray-300'"
+        class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors"
+      >
+        <span class="flex items-center">
+          <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+          </svg>
+          Registry
+          <span class="ml-2 text-xs bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200 px-2 py-0.5 rounded">Coming Soon</span>
+        </span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Routing Rules Tab -->
+  <div x-show="activePluginTab === 'routing'" x-cloak class="space-y-6">
+    <!-- Header with Add Button -->
+    <div class="flex justify-between items-center">
+      <div>
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">Plugin Routing Rules</h3>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
+          Define rules to control which plugins apply to specific entities based on names, tags, and conditions.
+        </p>
+      </div>
+      <button
+        @click="$dispatch('open-rule-modal')"
+        class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+      >
+        <svg class="h-5 w-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+        </svg>
+        Add Rule
+      </button>
+    </div>
+
+    <!-- Routing Rules List -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+      <div
+        id="routing-rules-list"
+        hx-get="{{ root_path }}/admin/plugin-routing/rules"
+        hx-trigger="loadRules, rule-changed from:body, intersect once"
+        hx-swap="innerHTML"
+      >
+        <!-- Loading state -->
+        <div class="p-8 text-center">
+          <svg class="animate-spin h-8 w-8 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">Loading routing rules...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Info Card -->
+    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+      <div class="flex">
+        <div class="flex-shrink-0">
+          <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+          </svg>
+        </div>
+        <div class="ml-3 flex-1">
+          <h4 class="text-sm font-medium text-blue-800 dark:text-blue-200">About Routing Rules</h4>
+          <p class="mt-1 text-sm text-blue-700 dark:text-blue-300">
+            Routing rules determine which plugins are applied to which entities (tools, prompts, resources, etc.).
+            Rules can match by entity name, tags, or custom conditions. Higher priority plugins execute first (lower numbers = higher priority).
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Configuration Tab (current content) -->
+  <div x-show="activePluginTab === 'configuration'" x-cloak class="space-y-6">
   <!-- Plugin Overview Card -->
   <div
     class="bg-gradient-to-r from-purple-500 to-indigo-600 rounded-lg shadow-lg p-6 text-white"
@@ -19,20 +160,8 @@
           d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"
         />
       </svg>
-      Plugin Management
+      Plugin Configuration
     </h2>
-
-    {% if not plugins_enabled %}
-    <div
-      class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded mb-4"
-    >
-      <p class="font-bold">Plugins are currently disabled</p>
-      <p class="text-sm">
-        Set PLUGINS_ENABLED=true in your environment to enable plugin
-        functionality.
-      </p>
-    </div>
-    {% else %}
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="text-center">
         <div class="text-3xl font-bold">{{ stats.total_plugins }}</div>
@@ -53,10 +182,8 @@
         <div class="text-purple-100 text-sm">Enforce Mode</div>
       </div>
     </div>
-    {% endif %}
   </div>
 
-  {% if plugins_enabled %}
   <!-- Plugin Statistics Cards -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <!-- Hooks Distribution -->
@@ -455,4 +582,415 @@
       </div>
     </div>
   </div>
+  </div>
+  <!-- End Configuration Tab -->
+
+  <!-- Registry Tab -->
+  <div x-show="activePluginTab === 'registry'" x-cloak class="space-y-6">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+      <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-4">Plugin Registry</h3>
+      <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
+        Discover and install plugins from the community registry.
+      </p>
+
+      <!-- Placeholder for future feature -->
+      <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-8 text-center">
+        <svg class="mx-auto h-16 w-16 text-yellow-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <h4 class="text-xl font-medium text-yellow-900 dark:text-yellow-100 mb-3">Coming Soon</h4>
+        <p class="text-sm text-yellow-700 dark:text-yellow-300 mb-4">
+          The Plugin Registry will allow you to browse, search, and install plugins from manifest files.<br/>
+          This feature is planned for a future release.
+        </p>
+        <div class="inline-flex items-center text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900/40 px-3 py-1 rounded-full">
+          <svg class="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd" />
+          </svg>
+          Future Feature
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- End Registry Tab -->
+
+  <!-- Routing Rule Modal -->
+  <div
+    x-data="{
+      showModal: false,
+      ruleIndex: null,
+      ruleName: '',
+      entities: [],
+      nameFilter: '',
+      tags: [],
+      newTag: '',
+      hooks: [],
+      whenExpression: '',
+      reverseOrderOnPost: false,
+      selectedPlugins: [],
+      init() {
+        window.addEventListener('open-rule-modal', (e) => {
+          this.showModal = true;
+          if (e.detail && e.detail.ruleIndex !== undefined) {
+            this.loadRule(e.detail.ruleIndex);
+          } else {
+            this.resetForm();
+          }
+        });
+      },
+      resetForm() {
+        this.ruleIndex = null;
+        this.ruleName = '';
+        this.entities = [];
+        this.nameFilter = '';
+        this.tags = [];
+        this.newTag = '';
+        this.hooks = [];
+        this.whenExpression = '';
+        this.reverseOrderOnPost = false;
+        this.selectedPlugins = [];
+      },
+      async loadRule(index) {
+        try {
+          this.ruleIndex = index;
+          const response = await fetch(`{{ root_path }}/admin/plugin-routing/rules/${index}`);
+          if (!response.ok) {
+            throw new Error(`Failed to load rule: ${response.statusText}`);
+          }
+          const ruleData = await response.json();
+
+          // Populate form fields
+          this.ruleName = ruleData.display_name || '';
+          this.nameFilter = ruleData.name_filter || '';
+          this.entities = ruleData.entities || [];
+          this.tags = ruleData.tags || [];
+          this.hooks = ruleData.hooks || [];
+          this.whenExpression = ruleData.when || '';
+          this.reverseOrderOnPost = ruleData.reverse_order_on_post || false;
+          this.selectedPlugins = ruleData.plugins || [];
+        } catch (error) {
+          console.error('Failed to load rule:', error);
+          alert('Failed to load rule: ' + error.message);
+          this.resetForm();
+        }
+      },
+      addTag() {
+        if (this.newTag && !this.tags.includes(this.newTag)) {
+          this.tags.push(this.newTag);
+          this.newTag = '';
+        }
+      },
+      removeTag(tag) {
+        this.tags = this.tags.filter(t => t !== tag);
+      },
+      addPlugin() {
+        this.selectedPlugins.push({ name: '', priority: 10 });
+      },
+      removePlugin(index) {
+        this.selectedPlugins.splice(index, 1);
+      },
+      async saveRule() {
+        const formData = new FormData();
+        if (this.ruleIndex !== null) {
+          formData.append('rule_index', this.ruleIndex);
+        }
+        formData.append('rule_name', this.ruleName);
+
+        // Add entities
+        this.entities.forEach(entity => formData.append('entities', entity));
+
+        // Add name filter
+        if (this.nameFilter) {
+          formData.append('name_filter', this.nameFilter);
+        }
+
+        // Add tags
+        this.tags.forEach(tag => formData.append('tags', tag));
+
+        // Add hooks
+        this.hooks.forEach(hook => formData.append('hooks', hook));
+
+        // Add when expression
+        if (this.whenExpression) {
+          formData.append('when_expression', this.whenExpression);
+        }
+
+        // Add reverse order flag
+        formData.append('reverse_order_on_post', this.reverseOrderOnPost);
+
+        // Add plugins
+        formData.append('plugins', JSON.stringify(this.selectedPlugins));
+
+        try {
+          const url = this.ruleIndex !== null
+            ? '{{ root_path }}/admin/plugin-routing/rules/' + this.ruleIndex
+            : '{{ root_path }}/admin/plugin-routing/rules';
+
+          const response = await fetch(url, {
+            method: 'POST',
+            body: formData
+          });
+
+          if (response.ok) {
+            this.showModal = false;
+            htmx.trigger('#routing-rules-list', 'rule-changed');
+          } else {
+            const error = await response.text();
+            alert('Failed to save rule: ' + error);
+          }
+        } catch (e) {
+          console.error('Failed to save rule:', e);
+          alert('Failed to save rule: ' + e.message);
+        }
+      }
+    }"
+    x-cloak
+  >
+    <!-- Modal Overlay -->
+    <div
+      x-show="showModal"
+      x-transition:enter="transition ease-out duration-300"
+      x-transition:enter-start="opacity-0"
+      x-transition:enter-end="opacity-100"
+      x-transition:leave="transition ease-in duration-200"
+      x-transition:leave-start="opacity-100"
+      x-transition:leave-end="opacity-0"
+      class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50"
+      @click.self="showModal = false"
+    >
+      <!-- Modal Content -->
+      <div
+        class="relative top-10 mx-auto p-6 border w-11/12 max-w-4xl shadow-lg rounded-lg bg-white dark:bg-gray-800 mb-10"
+        @click.stop
+      >
+        <!-- Modal Header -->
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-xl font-semibold text-gray-900 dark:text-gray-100">
+            <span x-text="ruleIndex !== null ? 'Edit Routing Rule' : 'Create Routing Rule'"></span>
+          </h3>
+          <button
+            @click="showModal = false"
+            class="text-gray-400 hover:text-gray-500 dark:hover:text-gray-300"
+          >
+            <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <!-- Modal Body -->
+        <div class="space-y-6">
+          <!-- Rule Name -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Rule Name <span class="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              x-model="ruleName"
+              placeholder="e.g., pii-filter-customer-tools"
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+              required
+            />
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">A unique identifier for this rule</p>
+          </div>
+
+          <!-- Entities -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Entity Types
+            </label>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="entityType in ['tool', 'prompt', 'resource', 'agent', 'server', 'gateway']" :key="entityType">
+                <label class="inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    :value="entityType"
+                    x-model="entities"
+                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                  />
+                  <span class="ml-2 text-sm text-gray-700 dark:text-gray-300 capitalize" x-text="entityType"></span>
+                </label>
+              </template>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for HTTP-level hooks</p>
+          </div>
+
+          <!-- Name Filter -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Entity Name Filter
+            </label>
+            <input
+              type="text"
+              x-model="nameFilter"
+              placeholder="e.g., create_user or create_user,update_user,delete_user"
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+            />
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Exact name match (comma-separated for multiple)</p>
+          </div>
+
+          <!-- Tags -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Tags
+            </label>
+            <div class="flex gap-2 mb-2">
+              <input
+                type="text"
+                x-model="newTag"
+                @keydown.enter.prevent="addTag()"
+                placeholder="Add tag..."
+                class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                @click="addTag()"
+                type="button"
+                class="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md transition-colors"
+              >
+                Add
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-2" x-show="tags.length > 0">
+              <template x-for="(tag, index) in tags" :key="index">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                  <span x-text="tag"></span>
+                  <button @click="removeTag(tag)" class="ml-2 text-green-600 dark:text-green-300 hover:text-green-800">&times;</button>
+                </span>
+              </template>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tag-based matching for flexible filtering</p>
+          </div>
+
+          <!-- Hooks -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Hook Types
+            </label>
+            <div class="grid grid-cols-2 gap-2">
+              <template x-for="hookType in ['tool_pre_invoke', 'tool_post_invoke', 'prompt_pre_invoke', 'prompt_post_invoke', 'resource_pre_invoke', 'resource_post_invoke', 'http_pre_request', 'http_post_response']" :key="hookType">
+                <label class="inline-flex items-center">
+                  <input
+                    type="checkbox"
+                    :value="hookType"
+                    x-model="hooks"
+                    class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                  />
+                  <span class="ml-2 text-xs text-gray-700 dark:text-gray-300" x-text="hookType.replace(/_/g, ' ')"></span>
+                </label>
+              </template>
+            </div>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty to apply to all hooks</p>
+          </div>
+
+          <!-- When Expression -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Conditional Expression (When)
+            </label>
+            <textarea
+              x-model="whenExpression"
+              rows="3"
+              placeholder="e.g., payload.uri.endswith('.env') or payload.method == 'POST'"
+              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+            ></textarea>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Python expression for complex matching logic</p>
+          </div>
+
+          <!-- Reverse Order on Post -->
+          <div>
+            <label class="inline-flex items-center">
+              <input
+                type="checkbox"
+                x-model="reverseOrderOnPost"
+                class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+              />
+              <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Reverse plugin order for post-hooks (LIFO wrapping)</span>
+            </label>
+          </div>
+
+          <!-- Plugins -->
+          <div>
+            <div class="flex justify-between items-center mb-2">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Plugins <span class="text-red-500">*</span>
+              </label>
+              <button
+                @click="addPlugin()"
+                type="button"
+                class="inline-flex items-center px-3 py-1 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
+              >
+                <svg class="h-4 w-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                </svg>
+                Add Plugin
+              </button>
+            </div>
+            <div class="space-y-2">
+              <template x-for="(plugin, index) in selectedPlugins" :key="index">
+                <div class="flex gap-2 items-center p-3 bg-gray-50 dark:bg-gray-700 rounded-md">
+                  <div class="flex-1">
+                    <select
+                      x-model="plugin.name"
+                      class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                      required
+                    >
+                      <option value="">Select plugin...</option>
+                      {% for available_plugin in available_plugins %}
+                      <option value="{{ available_plugin.name }}">{{ available_plugin.name }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="w-24">
+                    <input
+                      type="number"
+                      x-model="plugin.priority"
+                      placeholder="Priority"
+                      min="0"
+                      max="1000"
+                      class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <button
+                    @click="removePlugin(index)"
+                    type="button"
+                    class="px-2 py-2 text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                  >
+                    <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </div>
+              </template>
+              <div x-show="selectedPlugins.length === 0" class="text-sm text-gray-500 dark:text-gray-400 italic text-center p-4">
+                No plugins added yet. Click "Add Plugin" to add one.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="flex justify-end gap-3 mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+          <button
+            @click="showModal = false"
+            type="button"
+            class="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            @click="saveRule()"
+            type="button"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
+            :disabled="!ruleName || selectedPlugins.length === 0"
+            :class="{ 'opacity-50 cursor-not-allowed': !ruleName || selectedPlugins.length === 0 }"
+          >
+            <span x-text="ruleIndex !== null ? 'Update Rule' : 'Create Rule'"></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- End Routing Rule Modal -->
+
 </div>
