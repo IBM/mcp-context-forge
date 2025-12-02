@@ -468,7 +468,8 @@ class Settings(BaseSettings):
                 loaded = json.loads(v)
                 if isinstance(loaded, list):
                     return loaded
-            except Exception:
+            except json.JSONDecodeError:
+                # Not a valid JSON array → fallback to comma-separated parsing
                 pass
             # Fallback to comma-split
             return [x.strip() for x in v.split(",") if x.strip()]
