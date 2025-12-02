@@ -884,7 +884,7 @@ class ResourceService:
                     else:
                         ssl_context = None
 
-                    def get_httpx_client_factory(
+                    def _get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
                         timeout: httpx.Timeout | None = None,
                         auth: httpx.Auth | None = None,
@@ -1001,7 +1001,11 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with sse_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+                                async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
                                     async with ClientSession(read_stream, write_stream) as session:
                                         _ = await session.initialize()
                                         resource_response = await session.read_resource(uri=uri)
@@ -1047,7 +1051,11 @@ class ResourceService:
                             if authentication is None:
                                 authentication = {}
                             try:
-                                async with streamablehttp_client(url=server_url, headers=authentication) as (read_stream, write_stream, _get_session_id):
+                                async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
                                     async with ClientSession(read_stream, write_stream) as session:
                                         _ = await session.initialize()
                                         resource_response = await session.read_resource(uri=uri)
@@ -1063,10 +1071,9 @@ class ResourceService:
                         resource_text = ""
                         if (gateway.transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
-                            return resource_text
-                        elif (gateway.transport).lower() == "streamablehttp":
+                        else:
                             resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
-                            return resource_text
+                        return resource_text
                     except Exception as e:
                         success = False
                         error_message = str(e)
