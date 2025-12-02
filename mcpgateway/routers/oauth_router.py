@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -503,7 +503,8 @@ async def get_oauth_status(gateway_id: str, db: Session = Depends(get_db)) -> di
 
 
 @oauth_router.post("/fetch-tools/{gateway_id}")
-async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
+@require_permission("tools.read")
+async def fetch_tools_after_oauth(request: Request, gateway_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:
     """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
     Args:
@@ -520,9 +521,12 @@ async def fetch_tools_after_oauth(gateway_id: str, current_user: EmailUserRespon
     try:
         # First-Party
         from mcpgateway.services.gateway_service import GatewayService
+        from mcpgateway.admin import get_allowed_team_ids
+
+        allowed_team_ids = await get_allowed_team_ids(request)
 
         gateway_service = GatewayService()
-        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"))
+        result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, current_user.get("email"), allowed_team_ids)
         tools_count = len(result.get("tools", []))
 
         return {"success": True, "message": f"Successfully fetched and created {tools_count} tools"}
