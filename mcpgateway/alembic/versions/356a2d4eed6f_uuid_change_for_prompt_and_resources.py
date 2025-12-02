@@ -66,23 +66,122 @@ def upgrade() -> None:
     )
 
     # 3) Copy data from prompts into prompts_tmp using id_new as id
-    copy_cols = (
-        "id, name, description, template, argument_schema, created_at, updated_at, enabled, tags,"
-        " created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip,"
-        " modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    # Use SQLAlchemy Core to move rows from `prompts` -> `prompts_tmp` without
+    # composing SQL text. This avoids dynamic string concat while keeping the
+    # same column mapping (id_new -> id, is_active -> enabled).
+    prompts_src = sa.table(
+        "prompts",
+        sa.column("id_new"),
+        sa.column("name"),
+        sa.column("description"),
+        sa.column("template"),
+        sa.column("argument_schema"),
+        sa.column("created_at"),
+        sa.column("updated_at"),
+        sa.column("is_active"),
+        sa.column("tags"),
+        sa.column("created_by"),
+        sa.column("created_from_ip"),
+        sa.column("created_via"),
+        sa.column("created_user_agent"),
+        sa.column("modified_by"),
+        sa.column("modified_from_ip"),
+        sa.column("modified_via"),
+        sa.column("modified_user_agent"),
+        sa.column("import_batch_id"),
+        sa.column("federation_source"),
+        sa.column("version"),
+        sa.column("gateway_id"),
+        sa.column("team_id"),
+        sa.column("owner_email"),
+        sa.column("visibility"),
     )
-    conn.execute(
-        text(
-            (
-                "INSERT INTO prompts_tmp (" + copy_cols + ") "
-                "SELECT id_new, name, description, template, argument_schema, created_at, "
-                "updated_at, is_active, tags, created_by, created_from_ip, created_via, "
-                "created_user_agent, modified_by, modified_from_ip, modified_via, "
-                "modified_user_agent, import_batch_id, federation_source, version, gateway_id, "
-                "team_id, owner_email, visibility FROM prompts"
-            )
-        )
+
+    prompts_tgt = sa.table(
+        "prompts_tmp",
+        sa.column("id"),
+        sa.column("name"),
+        sa.column("description"),
+        sa.column("template"),
+        sa.column("argument_schema"),
+        sa.column("created_at"),
+        sa.column("updated_at"),
+        sa.column("enabled"),
+        sa.column("tags"),
+        sa.column("created_by"),
+        sa.column("created_from_ip"),
+        sa.column("created_via"),
+        sa.column("created_user_agent"),
+        sa.column("modified_by"),
+        sa.column("modified_from_ip"),
+        sa.column("modified_via"),
+        sa.column("modified_user_agent"),
+        sa.column("import_batch_id"),
+        sa.column("federation_source"),
+        sa.column("version"),
+        sa.column("gateway_id"),
+        sa.column("team_id"),
+        sa.column("owner_email"),
+        sa.column("visibility"),
     )
+
+    target_cols = [
+        "id",
+        "name",
+        "description",
+        "template",
+        "argument_schema",
+        "created_at",
+        "updated_at",
+        "enabled",
+        "tags",
+        "created_by",
+        "created_from_ip",
+        "created_via",
+        "created_user_agent",
+        "modified_by",
+        "modified_from_ip",
+        "modified_via",
+        "modified_user_agent",
+        "import_batch_id",
+        "federation_source",
+        "version",
+        "gateway_id",
+        "team_id",
+        "owner_email",
+        "visibility",
+    ]
+
+    select_exprs = [
+        prompts_src.c.id_new,
+        prompts_src.c.name,
+        prompts_src.c.description,
+        prompts_src.c.template,
+        prompts_src.c.argument_schema,
+        prompts_src.c.created_at,
+        prompts_src.c.updated_at,
+        prompts_src.c.is_active,
+        prompts_src.c.tags,
+        prompts_src.c.created_by,
+        prompts_src.c.created_from_ip,
+        prompts_src.c.created_via,
+        prompts_src.c.created_user_agent,
+        prompts_src.c.modified_by,
+        prompts_src.c.modified_from_ip,
+        prompts_src.c.modified_via,
+        prompts_src.c.modified_user_agent,
+        prompts_src.c.import_batch_id,
+        prompts_src.c.federation_source,
+        prompts_src.c.version,
+        prompts_src.c.gateway_id,
+        prompts_src.c.team_id,
+        prompts_src.c.owner_email,
+        prompts_src.c.visibility,
+    ]
+
+    stmt = sa.select(*select_exprs)
+    ins = sa.insert(prompts_tgt).from_select(target_cols, stmt)
+    conn.execute(ins)
 
     # 4) Create new prompt_metrics table with prompt_id varchar(36)
     op.create_table(
@@ -174,21 +273,136 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name="pk_resources"),
     )
 
-    # Copy data into resources_tmp using id_new
-    res_copy_cols = "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, enabled, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
-    conn.execute(
-        text(
-            (
-                "INSERT INTO resources_tmp (" + res_copy_cols + ") "
-                "SELECT id_new, uri, name, description, mime_type, size, uri_template, "
-                "created_at, updated_at, is_active, tags, text_content, binary_content, "
-                "created_by, created_from_ip, created_via, created_user_agent, modified_by, "
-                "modified_from_ip, modified_via, modified_user_agent, import_batch_id, "
-                "federation_source, version, gateway_id, team_id, owner_email, visibility "
-                "FROM resources"
-            )
-        )
+    # Copy data into resources_tmp using id_new via SQLAlchemy Core
+    resources_src = sa.table(
+        "resources",
+        sa.column("id_new"),
+        sa.column("uri"),
+        sa.column("name"),
+        sa.column("description"),
+        sa.column("mime_type"),
+        sa.column("size"),
+        sa.column("uri_template"),
+        sa.column("created_at"),
+        sa.column("updated_at"),
+        sa.column("is_active"),
+        sa.column("tags"),
+        sa.column("text_content"),
+        sa.column("binary_content"),
+        sa.column("created_by"),
+        sa.column("created_from_ip"),
+        sa.column("created_via"),
+        sa.column("created_user_agent"),
+        sa.column("modified_by"),
+        sa.column("modified_from_ip"),
+        sa.column("modified_via"),
+        sa.column("modified_user_agent"),
+        sa.column("import_batch_id"),
+        sa.column("federation_source"),
+        sa.column("version"),
+        sa.column("gateway_id"),
+        sa.column("team_id"),
+        sa.column("owner_email"),
+        sa.column("visibility"),
     )
+
+    resources_tgt = sa.table(
+        "resources_tmp",
+        sa.column("id"),
+        sa.column("uri"),
+        sa.column("name"),
+        sa.column("description"),
+        sa.column("mime_type"),
+        sa.column("size"),
+        sa.column("uri_template"),
+        sa.column("created_at"),
+        sa.column("updated_at"),
+        sa.column("enabled"),
+        sa.column("tags"),
+        sa.column("text_content"),
+        sa.column("binary_content"),
+        sa.column("created_by"),
+        sa.column("created_from_ip"),
+        sa.column("created_via"),
+        sa.column("created_user_agent"),
+        sa.column("modified_by"),
+        sa.column("modified_from_ip"),
+        sa.column("modified_via"),
+        sa.column("modified_user_agent"),
+        sa.column("import_batch_id"),
+        sa.column("federation_source"),
+        sa.column("version"),
+        sa.column("gateway_id"),
+        sa.column("team_id"),
+        sa.column("owner_email"),
+        sa.column("visibility"),
+    )
+
+    target_cols_res = [
+        "id",
+        "uri",
+        "name",
+        "description",
+        "mime_type",
+        "size",
+        "uri_template",
+        "created_at",
+        "updated_at",
+        "enabled",
+        "tags",
+        "text_content",
+        "binary_content",
+        "created_by",
+        "created_from_ip",
+        "created_via",
+        "created_user_agent",
+        "modified_by",
+        "modified_from_ip",
+        "modified_via",
+        "modified_user_agent",
+        "import_batch_id",
+        "federation_source",
+        "version",
+        "gateway_id",
+        "team_id",
+        "owner_email",
+        "visibility",
+    ]
+
+    select_exprs_res = [
+        resources_src.c.id_new,
+        resources_src.c.uri,
+        resources_src.c.name,
+        resources_src.c.description,
+        resources_src.c.mime_type,
+        resources_src.c.size,
+        resources_src.c.uri_template,
+        resources_src.c.created_at,
+        resources_src.c.updated_at,
+        resources_src.c.is_active,
+        resources_src.c.tags,
+        resources_src.c.text_content,
+        resources_src.c.binary_content,
+        resources_src.c.created_by,
+        resources_src.c.created_from_ip,
+        resources_src.c.created_via,
+        resources_src.c.created_user_agent,
+        resources_src.c.modified_by,
+        resources_src.c.modified_from_ip,
+        resources_src.c.modified_via,
+        resources_src.c.modified_user_agent,
+        resources_src.c.import_batch_id,
+        resources_src.c.federation_source,
+        resources_src.c.version,
+        resources_src.c.gateway_id,
+        resources_src.c.team_id,
+        resources_src.c.owner_email,
+        resources_src.c.visibility,
+    ]
+
+    stmt_res = sa.select(*select_exprs_res)
+    ins_res = sa.insert(resources_tgt).from_select(target_cols_res, stmt_res)
+    conn.execute(ins_res)
 
     # resource_metrics_tmp with resource_id varchar(32)
     op.create_table(
@@ -264,6 +478,7 @@ def upgrade() -> None:
             existing_nullable=False,
         )
 
+
 def downgrade() -> None:
     """Downgrade schema."""
     conn = op.get_bind()
@@ -304,7 +519,16 @@ def downgrade() -> None:
     # We'll preserve uniqueness by using the team_id/owner_email/name triple to later remap.
     conn.execute(
         text(
-            "INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, enabled, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"
+            (
+                "INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, "
+                "is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, "
+                "modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, "
+                "gateway_id, team_id, owner_email, visibility) "
+                "SELECT name, description, template, argument_schema, created_at, updated_at, enabled, tags, "
+                "created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, "
+                "modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, "
+                "team_id, owner_email, visibility FROM prompts"
+            )
         )
     )
 
@@ -426,7 +650,16 @@ def downgrade() -> None:
     # 2) Insert rows from current resources into resources_old letting id autoincrement.
     conn.execute(
         text(
-            "INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, enabled, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"
+            (
+                "INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, "
+                "updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, "
+                "created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, "
+                "import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) "
+                "SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, enabled, tags, "
+                "text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, "
+                "modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, "
+                "team_id, owner_email, visibility FROM resources"
+            )
         )
     )
 
