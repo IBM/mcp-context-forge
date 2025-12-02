@@ -3848,7 +3848,7 @@ async def list_gateways(
     allowed_team_ids = await get_allowed_team_ids(request)
 
     if team_id or visibility:
-        return await gateway_service.list_gateways_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+        return await gateway_service.list_gateways_for_user(db=db, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
     return await gateway_service.list_gateways(db, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
@@ -3947,7 +3947,7 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
     logger.debug(f"User '{user}' requested gateway {gateway_id}")
     user_email = get_user_email(user)
     allowed_team_ids = await get_allowed_team_ids(request)
-    return await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+    return await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
 
 
 @gateway_router.put("/{gateway_id}", response_model=GatewayRead)
@@ -3987,8 +3987,8 @@ async def update_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            user_email=user_email,
             allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
     except Exception as ex:
         if isinstance(ex, PermissionError):
@@ -4034,9 +4034,9 @@ async def delete_gateway(gateway_id: str, request: Request = None, db: Session =
     try:
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         allowed_team_ids = await get_allowed_team_ids(request) if request else None
-        current = await gateway_service.get_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        current = await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
         has_resources = bool(current.capabilities.get("resources"))
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        await gateway_service.delete_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
 
         # If the gateway had resources and was successfully deleted, invalidate
         # the whole resource cache. This is needed since the cache holds both

@@ -2117,7 +2117,7 @@ async def admin_list_gateways(
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway list")
     allowed_team_ids = await get_allowed_team_ids(request)
-    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+    gateways = await gateway_service.list_gateways_for_user(db, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
     return [gateway.model_dump(by_alias=True) for gateway in gateways]
 
 
@@ -2147,7 +2147,7 @@ async def admin_list_gateway_ids(
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} requested gateway ids list")
     allowed_team_ids = await get_allowed_team_ids(request)
-    gateways = await gateway_service.list_gateways_for_user(db, user_email, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+    gateways = await gateway_service.list_gateways_for_user(db, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
     ids = [str(g.id) for g in gateways]
     LOGGER.info(f"Gateway IDs retrieved: {ids}")
     return {"gateway_ids": ids}
@@ -2507,7 +2507,7 @@ async def admin_ui(
         raw_prompts = []
 
     try:
-        gateways_raw = await gateway_service.list_gateways_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
+        gateways_raw = await gateway_service.list_gateways_for_user(db, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load gateways: %s", e)
         gateways_raw = []
@@ -7445,7 +7445,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
     LOGGER.debug(f"User {user_email} requested details for gateway ID {gateway_id}")
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
-        gateway = await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
+        gateway = await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -8032,8 +8032,8 @@ async def admin_edit_gateway(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            user_email=user_email,
             allowed_team_ids=allowed_team_ids,
+            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Gateway updated successfully!", "success": True},
@@ -8136,7 +8136,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     error_message = None
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
-        await gateway_service.delete_gateway(db, gateway_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        await gateway_service.delete_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
         error_message = str(e)
@@ -12576,6 +12576,7 @@ async def get_servers_section(
 @admin_router.get("/sections/gateways")
 @require_permission("admin")
 async def get_gateways_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -12593,9 +12594,10 @@ async def get_gateways_section(
     try:
         local_gateway_service = GatewayService()
         get_user_email(user)
+        allowed_team_ids = await get_allowed_team_ids(request)
 
         # Get all gateways and filter by team
-        gateways_list = await local_gateway_service.list_gateways(db, include_inactive=True)
+        gateways_list = await local_gateway_service.list_gateways(db, include_inactive=True, allowed_team_ids=allowed_team_ids)
 
         # Apply team filtering if specified
         if team_id:
