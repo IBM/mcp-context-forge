@@ -201,7 +201,7 @@ MOCK_SERVER = ServerRead(
     icon=None,
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
-    is_active=True,
+    enabled=True,
     associated_tools=[MOCK_TOOL.id],
     associated_resources=[],
     associated_prompts=[],
@@ -218,7 +218,7 @@ MOCK_RESOURCE = ResourceRead(
     size=5,
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
-    is_active=True,
+    enabled=True,
     metrics=MOCK_METRICS,
     tags=[],
 )
