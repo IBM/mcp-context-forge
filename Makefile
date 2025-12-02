@@ -2207,22 +2207,42 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
-		echo "🦀 Building container WITH Rust plugins..."; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=true \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
+	@NATIVE_PLATFORM=linux/$$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'); \
+	if [ "$(PLATFORM)" = "$$NATIVE_PLATFORM" ] && [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		echo "ℹ️  Building for native platform - using docker build without --platform flag"; \
+		if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+			echo "🦀 Building container WITH Rust plugins..."; \
+			docker build \
+				-f $(CONTAINER_FILE) \
+				--build-arg ENABLE_RUST=true \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+		else \
+			echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+			docker build \
+				-f $(CONTAINER_FILE) \
+				--build-arg ENABLE_RUST=false \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+		fi; \
 	else \
-		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=false \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
+		if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+			echo "🦀 Building container WITH Rust plugins..."; \
+			$(CONTAINER_RUNTIME) build \
+				--platform=$(PLATFORM) \
+				-f $(CONTAINER_FILE) \
+				--build-arg ENABLE_RUST=true \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+		else \
+			echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
+			$(CONTAINER_RUNTIME) build \
+				--platform=$(PLATFORM) \
+				-f $(CONTAINER_FILE) \
+				--build-arg ENABLE_RUST=false \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+		fi; \
 	fi
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)

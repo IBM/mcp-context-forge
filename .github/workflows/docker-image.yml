@@ -3,14 +3,15 @@
 # ===============================================================
 #
 # This workflow:
-#   - Builds and tags the container image (`latest` + timestamp)
+#   - Builds multi-platform container image (linux/amd64, linux/arm64)
+#   - Tags the image with `latest` + timestamp
 #   - Re-uses a BuildKit layer cache for faster rebuilds
 #   - Lints the Dockerfile with **Hadolint** (CLI) → SARIF
 #   - Lints the finished image with **Dockle** (CLI) → SARIF
 #   - Generates an SPDX SBOM with **Syft**
 #   - Scans the image for CRITICAL CVEs with **Trivy/Grype**
 #   - Uploads Hadolint, Dockle and Trivy results as SARIF files
-#   - Pushes the image to **GitHub Container Registry (GHCR)**
+#   - Pushes the multi-platform image to **GitHub Container Registry (GHCR)**
 #   - Signs & attests the image with **Cosign (key-less OIDC)**
 #
 # Triggers:
@@ -126,15 +127,25 @@ jobs:
             .   # build context is mandatory
 
       # -------------------------------------------------------------
-      # 5️⃣  Pull image for scanning (multiplatform builds don't load locally)
+      # 5️⃣  Verify multi-platform manifest
+      # -------------------------------------------------------------
+      - name: 🔍  Verify multi-platform manifest
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "📋 Verifying multi-platform image manifest..."
+          docker buildx imagetools inspect $IMAGE_NAME:latest
+          echo "✅ Multi-platform image verified"
+
+      # -------------------------------------------------------------
+      # 6️⃣  Pull image for scanning (multiplatform builds don't load locally)
       # -------------------------------------------------------------
       - name: 📥  Pull image for local scanning
         run: |
           echo "📥  Pulling image for scanning (multiplatform images not available locally after --push)..."
-          docker pull $IMAGE_NAME:latest
+          docker pull --platform linux/amd64 $IMAGE_NAME:latest
 
       # -------------------------------------------------------------
-      # 6️⃣  Image lint (Dockle CLI → SARIF)
+      # 7️⃣  Image lint (Dockle CLI → SARIF)
       # -------------------------------------------------------------
       - name: 🔍  Image lint (Dockle)
         id: dockle
@@ -164,7 +175,7 @@ jobs:
           sarif_file: dockle-results.sarif
 
       # -------------------------------------------------------------
-      # 7️⃣  Generate SPDX SBOM with Syft
+      # 8️⃣  Generate SPDX SBOM with Syft
       # -------------------------------------------------------------
       - name: 📄  Generate SBOM (Syft)
         uses: anchore/sbom-action@v0.20.5
@@ -173,7 +184,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # -------------------------------------------------------------
-      # 8️⃣  Trivy, Grype CVE scan → SARIF
+      # 9️⃣  Trivy, Grype CVE scan → SARIF
       # -------------------------------------------------------------
       - name: 🛡️  Trivy vulnerability scan
         if: env.TRIVY_ENABLED == 'true'
@@ -210,7 +221,7 @@ jobs:
           sarif_file: grype-results.sarif
 
       # -------------------------------------------------------------
-      # 9️⃣  Key-less Cosign sign + attest  (latest **and** timestamp)
+      # 🔟  Key-less Cosign sign + attest  (latest **and** timestamp)
       # -------------------------------------------------------------
       - name: 📥 Install Cosign
         if: github.ref == 'refs/heads/main'
@@ -233,7 +244,7 @@ jobs:
           done
 
       # -------------------------------------------------------------
-      # 🔟  Single gate - fail job on any scanner error
+      # 1️⃣1️⃣  Single gate - fail job on any scanner error
       # -------------------------------------------------------------
       - name: ⛔  Enforce lint & vuln gates
         if: |
