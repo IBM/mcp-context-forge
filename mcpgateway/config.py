@@ -217,12 +217,15 @@ class Settings(BaseSettings):
     allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
     max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
     max_param_length: int = Field(default=10000, description="Maximum parameter length")
-    dangerous_patterns: List[str] = Field(default_factory=lambda: [
-        r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
-        r"\.\.[\\/]",  # Path traversal
-        r"[\x00-\x1f\x7f-\x9f]",  # Control characters
-    ], description="Regex patterns for dangerous input")
-    
+    dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
+            r"\.\.[\\/]",  # Path traversal
+            r"[\x00-\x1f\x7f-\x9f]",  # Control characters
+        ],
+        description="Regex patterns for dangerous input",
+    )
+
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
     sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
 
@@ -445,7 +448,16 @@ class Settings(BaseSettings):
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
 
     @field_validator("allowed_roots", mode="before")
+    @classmethod
     def parse_allowed_roots(cls, v):
+        """Parse allowed roots from environment variable or config value.
+
+        Args:
+            v: The input value to parse
+
+        Returns:
+            list: Parsed list of allowed root paths
+        """
         if isinstance(v, str):
             # Support both JSON array and comma-separated values
             v = v.strip()
@@ -453,7 +465,6 @@ class Settings(BaseSettings):
                 return []
             # Try JSON first
             try:
-                import json
                 loaded = json.loads(v)
                 if isinstance(loaded, list):
                     return loaded
