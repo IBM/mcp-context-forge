@@ -820,7 +820,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -897,7 +897,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
