@@ -234,9 +234,7 @@ class OPAPluginFilter(Plugin):
                     if hook.extensions:
                         policy = hook.extensions.get("policy", None)
                         if not policy:
-                             raise PluginError(
-                                    PluginErrorModel(message=OPAPluginErrorCodes.UNSPECIFIED_POLICY_PACKAGE_NAME.value, plugin_name="OPAPluginFilter")
-                                )
+                            raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.UNSPECIFIED_POLICY_PACKAGE_NAME.value, plugin_name="OPAPluginFilter"))
                         policy_endpoints = hook.extensions.get("policy_endpoints", [])
                         policy_input_data_map = hook.extensions.get("policy_input_data_map", {})
                         if "policy_modality" not in hook.extensions:
@@ -260,7 +258,7 @@ class OPAPluginFilter(Plugin):
                         else:
                             logger.error(f"{OPAPluginErrorCodes.OPA_SERVER_UNCONFIGURED_ENDPOINT.value} {hook_type} {hook_name} invocation")
                             raise PluginError(PluginErrorModel(message=OPAPluginErrorCodes.OPA_SERVER_UNCONFIGURED_ENDPOINT.value, plugin_name="OPAPluginFilter"))
-                        
+
         result["policy_context"] = policy_context
         result["opa_server_url"] = "{opa_url}{policy}/{policy_endpoint}".format(opa_url=self.opa_config.opa_base_url, policy=policy, policy_endpoint=policy_endpoint)
         result["policy_input_data_map"] = policy_input_data_map
