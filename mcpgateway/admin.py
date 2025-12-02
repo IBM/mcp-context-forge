@@ -856,8 +856,8 @@ async def admin_list_servers(
         ...     updated_at=datetime.now(timezone.utc),
         ...     enabled=True,
         ...     associated_tools=["tool1", "tool2"],
-        ...     associated_resources=[1, 2],
-        ...     associated_prompts=[1],
+        ...     associated_resources=["1", "2"],
+        ...     associated_prompts=["1"],
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -962,8 +962,8 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         ...     updated_at=datetime.now(timezone.utc),
         ...     enabled=True,
         ...     associated_tools=["tool1"],
-        ...     associated_resources=[1],
-        ...     associated_prompts=[1],
+        ...     associated_resources=["1"],
+        ...     associated_prompts=["1"],
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -1143,9 +1143,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        server_id = form.get("id")
         visibility = str(form.get("visibility", "private"))
-        
+
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
         if form.get("selectAllTools") == "true":
@@ -1755,7 +1754,7 @@ async def admin_list_resources(
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
         ...     result = await admin_list_resources(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['isActive']
+        ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_resources_all())
         True
@@ -1864,7 +1863,7 @@ async def admin_list_prompts(
         >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
         >>> async def test_admin_list_prompts_all():
         ...     result = await admin_list_prompts(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['isActive']
+        ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_prompts_all())
         True
