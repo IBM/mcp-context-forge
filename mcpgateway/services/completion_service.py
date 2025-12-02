@@ -266,7 +266,7 @@ class CompletionService:
             raise CompletionError("Missing URI template")
 
         # List matching resources
-        resources = db.execute(select(DbResource).where(DbResource.is_active)).scalars().all()
+        resources = db.execute(select(DbResource).where(DbResource.enabled)).scalars().all()
 
         # Filter by URI pattern
         matches = []

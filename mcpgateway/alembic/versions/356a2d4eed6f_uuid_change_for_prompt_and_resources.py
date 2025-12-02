@@ -44,7 +44,7 @@ def upgrade() -> None:
         sa.Column("argument_schema", sa.JSON, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("enabled", sa.Boolean, nullable=True),
         sa.Column("tags", sa.JSON, nullable=False),
         sa.Column("created_by", sa.String(255), nullable=True),
         sa.Column("created_from_ip", sa.String(45), nullable=True),
@@ -67,7 +67,7 @@ def upgrade() -> None:
 
     # 3) Copy data from prompts into prompts_tmp using id_new as id
     copy_cols = (
-        "id, name, description, template, argument_schema, created_at, updated_at, is_active, tags,"
+        "id, name, description, template, argument_schema, created_at, updated_at, enabled, tags,"
         " created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip,"
         " modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
     )
@@ -151,7 +151,7 @@ def upgrade() -> None:
         sa.Column("uri_template", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("enabled", sa.Boolean, nullable=True),
         sa.Column("tags", sa.JSON, nullable=False),
         sa.Column("text_content", sa.Text, nullable=True),
         sa.Column("binary_content", sa.LargeBinary, nullable=True),
@@ -175,7 +175,7 @@ def upgrade() -> None:
     )
 
     # Copy data into resources_tmp using id_new
-    res_copy_cols = "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    res_copy_cols = "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, enabled, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
     conn.execute(
         text(
             (
@@ -255,6 +255,14 @@ def upgrade() -> None:
     op.rename_table("server_resource_association_tmp", "server_resource_association")
     op.rename_table("resource_subscriptions_tmp", "resource_subscriptions")
 
+    with op.batch_alter_table("servers") as batch_op:
+        batch_op.alter_column(
+            "is_active",
+            new_column_name="enabled",
+            existing_type=sa.Boolean(),
+            existing_server_default=sa.text("1"),
+            existing_nullable=False,
+        )
 
 def downgrade() -> None:
     """Downgrade schema."""
@@ -296,7 +304,7 @@ def downgrade() -> None:
     # We'll preserve uniqueness by using the team_id/owner_email/name triple to later remap.
     conn.execute(
         text(
-            "INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"
+            "INSERT INTO prompts_old (name, description, template, argument_schema, created_at, updated_at, is_active, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT name, description, template, argument_schema, created_at, updated_at, enabled, tags, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM prompts"
         )
     )
 
@@ -418,7 +426,7 @@ def downgrade() -> None:
     # 2) Insert rows from current resources into resources_old letting id autoincrement.
     conn.execute(
         text(
-            "INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"
+            "INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, enabled, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"
         )
     )
 
@@ -519,3 +527,11 @@ def downgrade() -> None:
     op.rename_table("resource_metrics_old", "resource_metrics")
     op.rename_table("server_resource_association_old", "server_resource_association")
     op.rename_table("resource_subscriptions_old", "resource_subscriptions")
+    with op.batch_alter_table("servers") as batch_op:
+        batch_op.alter_column(
+            "enabled",
+            new_column_name="is_active",
+            existing_type=sa.Boolean(),
+            existing_server_default=sa.text("1"),
+            existing_nullable=False,
+        )
