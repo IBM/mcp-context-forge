@@ -6,29 +6,41 @@ logger = logging.getLogger(__name__)
 DEFAULT_FILE_NAME = "qr"
 
 
-def resolve_output_path(output_path: str, default_path: str, file_extension: str) -> str:
+def resolve_output_path(output_path: str, file_extension: str) -> str:
     """
-    Resolve the final file path for saving output.
+    Return a resolved file path for saving output.
 
-    - If output_path is a full file path with the correct extension, return it.
-    - If output_path is a directory, use DEFAULT_FILE_NAME inside it.
+    - If output_path ends with os.sep, treat it as a directory.
+    - If output_path includes a filename:
+        - return it unchanged when it already has an extension.
+        - otherwise append the given file_extension.
+    - If no filename is provided, use DEFAULT_FILE_NAME.
+    The function will attempt to create the target directory.
+    file_extension should not include a leading dot.
     """
 
-    raw_path = os.path.expanduser(output_path or default_path)
-    if raw_path.endswith(os.sep):
-        base = raw_path
-        filename = ""
+    filename = ""
+    ext = ""
+    file_extension = file_extension.strip(".")
+    # case 1: output_path is a folder
+    if output_path.endswith(os.sep):
+        base = output_path
     else:
-        base, filename = os.path.split(raw_path)
+        base, filename = os.path.split(output_path)
+        _, ext = os.path.splitext(filename)
+
     try:
         os.makedirs(base, exist_ok=True)
     except OSError as e:
         logger.error("Error creating output folder '%s': %s", base, e)
         # img.save will handle the error
 
-    _, ext = os.path.splitext(filename)
-    # in case the user gave path + filename.ext with correct extension
-    if ext.lstrip(".").lower() == file_extension.lower():
-        return raw_path
+    # case 2: output_path has file extension
+    if ext:
+        return output_path
+    # case 3: output_path has filename without extension
+    elif filename:
+        return os.path.join(base, f"{filename}.{file_extension}")
 
+    # case 4: output_path does not have filename
     return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")
