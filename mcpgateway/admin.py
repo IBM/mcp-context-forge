@@ -6160,7 +6160,7 @@ async def admin_resources_partial_html(
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
-
+    LOGGER.info(f"resources_data partial::{resources_data}")
     data = jsonable_encoder(resources_data)
 
     # Build pagination metadata
@@ -12187,7 +12187,7 @@ async def get_resources_section(
                     "description": resource.description,
                     "uri": resource.uri,
                     "tags": resource.tags or [],
-                    "isActive": resource.is_active,
+                    "isActive": resource.enabled,
                     "team_id": getattr(resource, "team_id", None),
                     "visibility": getattr(resource, "visibility", "private"),
                 }

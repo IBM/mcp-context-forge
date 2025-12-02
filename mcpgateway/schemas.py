@@ -1780,7 +1780,6 @@ class ResourceRead(BaseModelWithConfigDict):
     size: Optional[int]
     created_at: datetime
     updated_at: datetime
-    #is_active: bool
     enabled: bool
     metrics: ResourceMetrics
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
