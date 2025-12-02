@@ -451,7 +451,7 @@ class TestKeycloakNormalization:
         assert normalized["provider"] == "keycloak"
         assert "mcp-gateway:gateway-admin" in normalized["groups"]
         assert "mcp-gateway:gateway-user" in normalized["groups"]
-        assert "another-client:viewer" in normalized["groups"]
+        assert "another-client:team_viewer" in normalized["groups"]
 
     def test_keycloak_with_both_realm_and_client_roles(self, sso_service):
         """Test Keycloak with both realm and client roles enabled."""
