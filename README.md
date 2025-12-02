@@ -1598,7 +1598,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `SECURE_COOKIES`          | Force secure cookie flags     | `true`                                         | bool       |
 | `COOKIE_SAMESITE`         | Cookie SameSite attribute      | `lax`                                          | `strict`/`lax`/`none` |
 | `SECURITY_HEADERS_ENABLED` | Enable security headers middleware | `true`                                     | bool       |
-| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN` |
+| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN`/`""`/`null` |
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
@@ -1617,7 +1617,13 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 >
 > **Security Validation**: Set `REQUIRE_STRONG_SECRETS=true` to enforce minimum lengths for JWT secrets and passwords at startup. This helps prevent weak credentials in production. Default is `false` for backward compatibility.
 >
-> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or disable with `X_FRAME_OPTIONS=""`. Also update CSP `frame-ancestors` directive if needed.
+> **iframe Embedding**: The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive (both are automatically synced). Options:
+> - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
+> - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only  
+> - `X_FRAME_OPTIONS=""`: Allows embedding from all sources (sets `frame-ancestors * file: http: https:`)
+> - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions (no headers sent)
+>
+> Modern browsers prioritize CSP `frame-ancestors` over the legacy `X-Frame-Options` header. Both are now kept in sync automatically.
 >
 > **Cookie Security**: Authentication cookies are automatically configured with HttpOnly, Secure (in production), and SameSite attributes for CSRF protection.
 >
