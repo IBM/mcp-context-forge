@@ -2674,7 +2674,7 @@ async def list_tools(
     # Use team-filtered tool listing
     allowed_team_ids = await get_allowed_team_ids(request)
     if team_id or visibility:
-        data = await tool_service.list_tools_for_user(db=db, user_email=user_email, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
+        data = await tool_service.list_tools_for_user(db=db, team_id=team_id, visibility=visibility, include_inactive=include_inactive, allowed_team_ids=allowed_team_ids)
 
         # Apply tag filtering to team-filtered results if needed
         if tags_list:
@@ -2808,7 +2808,7 @@ async def get_tool(
         logger.debug(f"User {user} is retrieving tool with ID {tool_id}")
         user_email = get_user_email(user)
         allowed_team_ids = await get_allowed_team_ids(request)
-        data = await tool_service.get_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        data = await tool_service.get_tool(db, tool_id, allowed_team_ids=allowed_team_ids)
         if apijsonpath is None:
             return data
 
@@ -2863,7 +2863,6 @@ async def update_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            user_email=user_email,
             allowed_team_ids=allowed_team_ids,
         )
     except Exception as ex:
@@ -2905,7 +2904,7 @@ async def delete_tool(tool_id: str, request: Request = None, db: Session = Depen
         logger.debug(f"User {user} is deleting tool with ID {tool_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         allowed_team_ids = await get_allowed_team_ids(request) if request else None
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        await tool_service.delete_tool(db, tool_id, allowed_team_ids=allowed_team_ids)
         return {"status": "success", "message": f"Tool {tool_id} permanently deleted"}
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -2944,7 +2943,7 @@ async def toggle_tool_status(
         logger.debug(f"User {user} is toggling tool with ID {tool_id} to {'active' if activate else 'inactive'}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
         allowed_team_ids = await get_allowed_team_ids(request) if request else None
-        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        tool = await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, allowed_team_ids=allowed_team_ids)
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
@@ -4495,7 +4494,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
             # Get user email for OAuth token selection
             user_email = get_user_email(user)
             try:
-                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers, app_user_email=user_email)
+                result = await tool_service.invoke_tool(db=db, name=method, arguments=params, request_headers=headers, app_user_email=user_email, plugin_context_table=plugin_context_table,
+                    plugin_global_context=plugin_global_context,
+                    allowed_team_ids=allowed_team_ids,)
                 if hasattr(result, "model_dump"):
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):

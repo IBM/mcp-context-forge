@@ -603,7 +603,6 @@ class ToolService:
         owner_email: Optional[str] = None,
         visibility: str = None,
         allowed_team_ids: Optional[List[str]] = None,
-        user_email: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -632,20 +631,19 @@ class ToolService:
             PermissionError: If the user does not have permission to create the tool in the specified team.
         """
         try:
+            target_team_id = team_id or tool.team_id
+            
+            if target_team_id and allowed_team_ids is not None:
+                if target_team_id not in allowed_team_ids:
+                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
+                    raise PermissionError(f"User does not have write access to team {target_team_id}")
+
             if tool.auth is None:
                 auth_type = None
                 auth_value = None
             else:
                 auth_type = tool.auth.auth_type
                 auth_value = tool.auth.auth_value
-
-            target_team_id = team_id or tool.team_id
-
-            # Validate write access
-            if target_team_id and allowed_team_ids is not None:
-                if target_team_id not in allowed_team_ids:
-                    logger.warning(f"Write access denied for team {target_team_id}. Allowed: {allowed_team_ids}")
-                    raise PermissionError(f"User does not have write access to team {target_team_id}")
 
             if owner_email is None:
                 owner_email = tool.owner_email
@@ -824,7 +822,6 @@ class ToolService:
         tags: Optional[List[str]] = None,
         _request_headers: Optional[Dict[str, str]] = None,
         allowed_team_ids: Optional[List[str]] = None,
-        user_email: Optional[str] = None,
     ) -> tuple[List[ToolRead], Optional[str]]:
         """
         Retrieve a list of registered tools from the database with pagination support and access control.
@@ -839,7 +836,6 @@ class ToolService:
             _request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
                 Currently unused but kept for API consistency. Defaults to None.
             allowed_team_ids: List of team IDs the user has access to.
-            user_email: Email of the user requesting the list.
 
         Returns:
             tuple[List[ToolRead], Optional[str]]: Tuple containing:
@@ -874,21 +870,13 @@ class ToolService:
         if tags:
             query = query.where(json_contains_expr(db, DbTool.tags, tags, match_any=True))
 
-        # Access Control Filtering
-        if allowed_team_ids is not None or user_email is not None:
-            access_conditions = []
-            # 1. Public tools
-            access_conditions.append(DbTool.visibility == "public")
+        access_conditions = []
+        access_conditions.append(DbTool.visibility == "public")
 
-            # 2. Team tools where user is a member
-            if allowed_team_ids:
-                access_conditions.append(and_(DbTool.visibility == "team", DbTool.team_id.in_(allowed_team_ids)))
+        if allowed_team_ids:
+            access_conditions.append(and_(DbTool.visibility.in_(["team", "private"]), DbTool.team_id.in_(allowed_team_ids)))
 
-            # 3. Private/Personal tools owned by user
-            if user_email:
-                access_conditions.append(DbTool.owner_email == user_email)
-
-            query = query.where(or_(*access_conditions))
+        query = query.where(or_(*access_conditions))
 
         # Fetch page_size + 1 to determine if there are more results
         query = query.limit(page_size + 1)
@@ -976,7 +964,6 @@ class ToolService:
     async def list_tools_for_user(
         self,
         db: Session,
-        user_email: str,
         allowed_team_ids: List[str],
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
@@ -1005,7 +992,6 @@ class ToolService:
         # user_teams = await team_service.get_user_teams(user_email)
         # team_ids = [team.id for team in user_teams]
         # Use provided allowed_team_ids instead of fetching
-        team_ids = allowed_team_ids
 
         query = select(DbTool)
 
@@ -1016,38 +1002,16 @@ class ToolService:
         if not include_inactive:
             query = query.where(DbTool.enabled.is_(True))
 
+        access_conditions = []
+        access_conditions.append(DbTool.visibility == "public")
+
         if team_id:
-            if team_id not in team_ids:
-                return []  # No access to team
-
-            access_conditions = []
-            # Filter by specific team
-            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
-
-            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
-
-            query = query.where(or_(*access_conditions))
-
-            query = query.offset(offset).limit(per_page)
+            access_conditions.append(DbTool.team_id == team_id)
         else:
-            # Get user's accessible teams
-            # Build access conditions following existing patterns
+            if allowed_team_ids:
+                access_conditions.append(and_(DbTool.visibility.in_(["team", "private"]), DbTool.team_id.in_(allowed_team_ids)))
 
-            access_conditions = []
-
-            # 1. User's personal resources (owner_email matches)
-            access_conditions.append(DbTool.owner_email == user_email)
-
-            # 2. Team resources where user is member
-            if team_ids:
-                access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-            # 3. Public resources (if visibility allows)
-            access_conditions.append(DbTool.visibility == "public")
-
-            query = query.where(or_(*access_conditions))
-
-            query = query.offset(offset).limit(per_page)
+        query = query.where(or_(*access_conditions))
 
         # Apply visibility filter if specified
         if visibility:
@@ -1071,7 +1035,7 @@ class ToolService:
             result.append(self._convert_tool_to_read(tool))
         return result
 
-    async def get_tool(self, db: Session, tool_id: str, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None) -> ToolRead:
+    async def get_tool(self, db: Session, tool_id: str, allowed_team_ids: Optional[List[str]] = None) -> ToolRead:
         """
         Retrieve a tool by its ID.
 
@@ -1093,22 +1057,12 @@ class ToolService:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
         # Access control validation
-        if allowed_team_ids is not None or user_email is not None:
-            has_access = False
-            if tool.visibility == "public":
-                has_access = True
-            elif tool.visibility == "team":
-                if allowed_team_ids and tool.team_id in allowed_team_ids:
-                    has_access = True
-                elif user_email and tool.owner_email == user_email:
-                    has_access = True
-            elif tool.visibility == "private":
-                if user_email and tool.owner_email == user_email:
-                    has_access = True
+        tool_team_id = getattr(tool, "team_id", None)
 
-            if not has_access:
-                logger.warning(f"Access denied to tool {tool_id} (visibility={tool.visibility}, team={tool.team_id}) for user {user_email}")
-                raise PermissionError(f"Access denied to tool {tool_id}")
+        if tool.visibility is not "public" or tool_team_id not in (allowed_team_ids or []):
+            logger.info(f"User does not have access to tool {tool_id} with visibility {tool.visibility} and team {tool_team_id}")
+            raise ToolNotFoundError(f"Tool not found: {tool_id}")
+
 
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
 
@@ -1131,7 +1085,7 @@ class ToolService:
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, allowed_team_ids: Optional[List[str]] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -1151,25 +1105,8 @@ class ToolService:
             if not tool:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
-            # Access control validation for delete (Write Access)
-            if user_email or allowed_team_ids:
-                has_write_access = False
-                if tool.visibility == "private":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "team":
-                    if allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-                    elif user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "public":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-
-                if not has_write_access:
-                    raise PermissionError(f"User does not have permission to delete tool {tool_id}")
+            if not allowed_team_ids or tool.team_id not in allowed_team_ids:
+                raise PermissionError(f"User does not have permission to delete tool {tool_id}")
 
             tool_info = {"id": tool.id, "name": tool.name}
             tool_name = tool.name
@@ -1243,7 +1180,7 @@ class ToolService:
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
-    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, allowed_team_ids: Optional[List[str]] = None) -> ToolRead:
+    async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, allowed_team_ids: Optional[List[str]] = None) -> ToolRead:
         """
         Toggle the activation status of a tool.
 
@@ -1252,7 +1189,6 @@ class ToolService:
             tool_id (str): The unique identifier of the tool.
             activate (bool): True to activate, False to deactivate.
             reachable (bool): True if the tool is reachable.
-            user_email: Optional[str] The email of the user to check if the user has permission to modify.
             allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
@@ -1269,24 +1205,8 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
             # Access control validation for toggle (Write Access)
-            if user_email or allowed_team_ids:
-                has_write_access = False
-                if tool.visibility == "private":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "team":
-                    if allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-                    elif user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "public":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-
-                if not has_write_access:
-                    raise PermissionError(f"User does not have permission to toggle status of tool {tool_id}")
+            if not allowed_team_ids or tool.team_id not in allowed_team_ids:
+                raise PermissionError(f"User does not have permission to toggle status of tool {tool_id}")
 
             is_activated = is_reachable = False
             if tool.enabled != activate:
@@ -1393,6 +1313,7 @@ class ToolService:
         app_user_email: Optional[str] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
+        allowed_team_ids: Optional[List[str]] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -1407,6 +1328,7 @@ class ToolService:
                 Required for OAuth-protected gateways.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
             plugin_global_context: Optional global context from middleware for consistency across hooks.
+            allowed_team_ids: Optional list of allowed team ids
 
         Returns:
             Tool invocation result.
@@ -1440,6 +1362,9 @@ class ToolService:
             if inactive_tool:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
             raise ToolNotFoundError(f"Tool not found: {name}")
+        
+        if not tool.team_id in allowed_team_ids:
+            return ToolNotFoundError(f"Cannot ivoke tool: {name}")
 
         # is_reachable = db.execute(select(DbTool.reachable).where(slug_expr == name)).scalar_one_or_none()
         is_reachable = tool.reachable
@@ -1934,7 +1859,6 @@ class ToolService:
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
-        user_email: Optional[str] = None,
         allowed_team_ids: Optional[List[str]] = None,
     ) -> ToolRead:
         """
@@ -1948,7 +1872,6 @@ class ToolService:
             modified_from_ip (Optional[str]): IP address of modifier.
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
-            user_email (Optional[str]): Email of user performing update (for ownership check).
             allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
@@ -1985,23 +1908,7 @@ class ToolService:
                 raise ToolNotFoundError(f"Tool not found: {tool_id}")
 
             # Access control validation for update (Write Access)
-            if user_email or allowed_team_ids:
-                has_write_access = False
-                if tool.visibility == "private":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "team":
-                    if allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-                    elif user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                elif tool.visibility == "public":
-                    if user_email and tool.owner_email == user_email:
-                        has_write_access = True
-                    elif tool.team_id and allowed_team_ids and tool.team_id in allowed_team_ids:
-                        has_write_access = True
-
-                if not has_write_access:
+            if not allowed_team_ids or tool.team_id not in allowed_team_ids:
                     raise PermissionError(f"User does not have permission to update tool {tool_id}")
 
             # Check for name change and ensure uniqueness

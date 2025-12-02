@@ -6623,7 +6623,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
     try:
         user_email = get_user_email(user)
         allowed_team_ids = await get_allowed_team_ids(request)
-        tool = await tool_service.get_tool(db, tool_id, allowed_team_ids=allowed_team_ids, user_email=user_email)
+        tool = await tool_service.get_tool(db, tool_id, allowed_team_ids=allowed_team_ids)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -6837,7 +6837,6 @@ async def admin_add_tool(
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
             allowed_team_ids=allowed_team_ids,
-            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
@@ -7106,7 +7105,6 @@ async def admin_edit_tool(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
-            user_email=user_email,
             allowed_team_ids=await get_allowed_team_ids(request),
         )
         return JSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
@@ -7211,7 +7209,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     error_message = None
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
-        await tool_service.delete_tool(db, tool_id, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        await tool_service.delete_tool(db, tool_id, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting tool {tool_id}: {e}")
         error_message = str(e)
@@ -7340,7 +7338,7 @@ async def admin_toggle_tool(
     is_inactive_checked = str(form.get("is_inactive_checked", "false"))
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
-        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, user_email=user_email, allowed_team_ids=allowed_team_ids)
+        await tool_service.toggle_tool_status(db, tool_id, activate, reachable=activate, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling tools {tool_id}: {e}")
         error_message = str(e)
@@ -10425,7 +10423,6 @@ async def admin_import_tools(
                     import_batch_id=import_batch_id,
                     federation_source=base_metadata["federation_source"],
                     allowed_team_ids=allowed_team_ids,
-                    user_email=user_email,
                 )
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
@@ -12360,6 +12357,7 @@ async def admin_get_grpc_methods(
 @admin_router.get("/sections/tools")
 @require_permission("admin")
 async def get_tools_section(
+    request: Request
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -12367,6 +12365,7 @@ async def get_tools_section(
     """Get tools data filtered by team.
 
     Args:
+        request: FastAPI Request
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -12378,8 +12377,10 @@ async def get_tools_section(
         local_tool_service = ToolService()
         user_email = get_user_email(user)
 
+        allowed_team_ids = await get_allowed_team_ids(request)
+
         # Get team-filtered tools
-        tools_list = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True)
+        tools_list = await local_tool_service.list_tools_for_user(db, user_email, team_id=team_id, include_inactive=True, allowed_team_ids=allowed_team_ids)
 
         # Convert to JSON-serializable format
         tools = []
