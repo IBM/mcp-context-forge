@@ -471,11 +471,14 @@ class TokenCatalogService:
             ValueError: If user is not a team owner
         """
         # Validate user is team owner
+        # Validate user is team owner
         # First-Party
-        from mcpgateway.db import UserRole  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import Role, UserRole  # pylint: disable=import-outside-toplevel
 
         membership = self.db.execute(
-            select(UserRole).where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, UserRole.role == "team_owner", UserRole.is_active.is_(True)))
+            select(UserRole)
+            .join(Role, UserRole.role_id == Role.id)
+            .where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, Role.name == "team_owner", UserRole.is_active.is_(True)))
         ).scalar_one_or_none()
 
         if not membership:
