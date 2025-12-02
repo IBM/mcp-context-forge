@@ -1428,7 +1428,7 @@ server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
 )
 
 # Association table for servers and prompts
@@ -1436,7 +1436,7 @@ server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -1558,7 +1558,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[int] = mapped_column(Integer, ForeignKey("prompts.id"), nullable=False)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
