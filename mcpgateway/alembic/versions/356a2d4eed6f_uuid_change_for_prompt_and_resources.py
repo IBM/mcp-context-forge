@@ -110,6 +110,109 @@ def upgrade() -> None:
     op.rename_table("prompt_metrics_tmp", "prompt_metrics")
     op.rename_table("server_prompt_association_tmp", "server_prompt_association")
     
+    # -----------------------------
+    # Resources -> change id to VARCHAR(32) and remap FKs
+    # -----------------------------
+    # Add temporary id_new to resources
+    op.add_column("resources", sa.Column("id_new", sa.String(32), nullable=True))
+
+    rows = conn.execute(text("SELECT id FROM resources")).fetchall()
+    for (old_id,) in rows:
+        new_id = uuid.uuid4().hex
+        conn.execute(text("UPDATE resources SET id_new = :new WHERE id = :old"), {"new": new_id, "old": old_id})
+
+    # Create resources_tmp with varchar(32) id
+    op.create_table(
+        "resources_tmp",
+        sa.Column("id", sa.String(32), primary_key=True, nullable=False),
+        sa.Column("uri", sa.String(767), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text, nullable=True),
+        sa.Column("mime_type", sa.String(255), nullable=True),
+        sa.Column("size", sa.Integer, nullable=True),
+        sa.Column("uri_template", sa.Text, nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("tags", sa.JSON, nullable=False),
+        sa.Column("text_content", sa.Text, nullable=True),
+        sa.Column("binary_content", sa.LargeBinary, nullable=True),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.Column("created_from_ip", sa.String(45), nullable=True),
+        sa.Column("created_via", sa.String(100), nullable=True),
+        sa.Column("created_user_agent", sa.Text, nullable=True),
+        sa.Column("modified_by", sa.String(255), nullable=True),
+        sa.Column("modified_from_ip", sa.String(45), nullable=True),
+        sa.Column("modified_via", sa.String(100), nullable=True),
+        sa.Column("modified_user_agent", sa.Text, nullable=True),
+        sa.Column("import_batch_id", sa.String(36), nullable=True),
+        sa.Column("federation_source", sa.String(255), nullable=True),
+        sa.Column("version", sa.Integer, nullable=False, server_default="1"),
+        sa.Column("gateway_id", sa.String(36), nullable=True),
+        sa.Column("team_id", sa.String(36), nullable=True),
+        sa.Column("owner_email", sa.String(255), nullable=True),
+        sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
+        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        sa.PrimaryKeyConstraint("id", name="pk_resources"),
+    )
+
+    # Copy data into resources_tmp using id_new
+    res_copy_cols = (
+        "id, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility"
+    )
+    conn.execute(text(f"INSERT INTO resources_tmp ({res_copy_cols}) SELECT id_new, uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"))
+
+    # resource_metrics_tmp with resource_id varchar(32)
+    op.create_table(
+        "resource_metrics_tmp",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("response_time", sa.Float, nullable=False),
+        sa.Column("is_success", sa.Boolean, nullable=False),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_resource_metrics_resource_id"),
+        sa.PrimaryKeyConstraint("id", name="pk_resource_metrics"),
+    )
+
+    # copy resource_metrics mapping old int->new uuid
+    conn.execute(text("INSERT INTO resource_metrics_tmp (id, resource_id, timestamp, response_time, is_success, error_message) SELECT rm.id, r.id_new, rm.timestamp, rm.response_time, rm.is_success, rm.error_message FROM resource_metrics rm JOIN resources r ON rm.resource_id = r.id"))
+
+    # server_resource_association_tmp
+    op.create_table(
+        "server_resource_association_tmp",
+        sa.Column("server_id", sa.String(36), nullable=False),
+        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc"),
+        sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_server_resource_resource_id"),
+    )
+
+    conn.execute(text("INSERT INTO server_resource_association_tmp (server_id, resource_id) SELECT sra.server_id, r.id_new FROM server_resource_association sra JOIN resources r ON sra.resource_id = r.id"))
+
+    # resource_subscriptions_tmp
+    op.create_table(
+        "resource_subscriptions_tmp",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.Column("subscriber_id", sa.String(255), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_notification", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_resource_subscriptions_resource_id"),
+    )
+
+    conn.execute(text("INSERT INTO resource_subscriptions_tmp (id, resource_id, subscriber_id, created_at, last_notification) SELECT rs.id, r.id_new, rs.subscriber_id, rs.created_at, rs.last_notification FROM resource_subscriptions rs JOIN resources r ON rs.resource_id = r.id"))
+
+    # Drop old resource-related tables and rename tmp tables
+    op.drop_table("resource_metrics")
+    op.drop_table("server_resource_association")
+    op.drop_table("resource_subscriptions")
+    op.drop_table("resources")
+
+    op.rename_table("resources_tmp", "resources")
+    op.rename_table("resource_metrics_tmp", "resource_metrics")
+    op.rename_table("server_resource_association_tmp", "server_resource_association")
+    op.rename_table("resource_subscriptions_tmp", "resource_subscriptions")
 
 def downgrade() -> None:
     """Downgrade schema."""
@@ -205,3 +308,118 @@ def downgrade() -> None:
     op.rename_table("prompts_old", "prompts")
     op.rename_table("prompt_metrics_old", "prompt_metrics")
     op.rename_table("server_prompt_association_old", "server_prompt_association")
+
+    # =============================
+    # Resources downgrade: rebuild integer ids and remap FKs
+    # =============================
+    # 1) Create old-style resources table with integer id (autoincrement)
+    op.create_table(
+        "resources_old",
+        sa.Column("id", sa.Integer, primary_key=True, autoincrement=True, nullable=False),
+        sa.Column("uri", sa.String(767), nullable=False),
+        sa.Column("name", sa.String(255), nullable=False),
+        sa.Column("description", sa.Text, nullable=True),
+        sa.Column("mime_type", sa.String(255), nullable=True),
+        sa.Column("size", sa.Integer, nullable=True),
+        sa.Column("uri_template", sa.Text, nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("is_active", sa.Boolean, nullable=True),
+        sa.Column("tags", sa.JSON, nullable=False),
+        sa.Column("text_content", sa.Text, nullable=True),
+        sa.Column("binary_content", sa.LargeBinary, nullable=True),
+        sa.Column("created_by", sa.String(255), nullable=True),
+        sa.Column("created_from_ip", sa.String(45), nullable=True),
+        sa.Column("created_via", sa.String(100), nullable=True),
+        sa.Column("created_user_agent", sa.Text, nullable=True),
+        sa.Column("modified_by", sa.String(255), nullable=True),
+        sa.Column("modified_from_ip", sa.String(45), nullable=True),
+        sa.Column("modified_via", sa.String(100), nullable=True),
+        sa.Column("modified_user_agent", sa.Text, nullable=True),
+        sa.Column("import_batch_id", sa.String(36), nullable=True),
+        sa.Column("federation_source", sa.String(255), nullable=True),
+        sa.Column("version", sa.Integer, nullable=False, server_default="1"),
+        sa.Column("gateway_id", sa.String(36), nullable=True),
+        sa.Column("team_id", sa.String(36), nullable=True),
+        sa.Column("owner_email", sa.String(255), nullable=True),
+        sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
+        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        sa.PrimaryKeyConstraint("id", name="pk_resources"),
+    )
+
+    # 2) Insert rows from current resources into resources_old letting id autoincrement.
+    conn.execute(text("INSERT INTO resources_old (uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility) SELECT uri, name, description, mime_type, size, uri_template, created_at, updated_at, is_active, tags, text_content, binary_content, created_by, created_from_ip, created_via, created_user_agent, modified_by, modified_from_ip, modified_via, modified_user_agent, import_batch_id, federation_source, version, gateway_id, team_id, owner_email, visibility FROM resources"))
+
+    # 3) Build mapping from new uuid -> new integer id using unique key (team_id, owner_email, uri)
+    mapping_res = {}
+    res_map = conn.execute(text("SELECT r.id as uuid_id, r.team_id, r.owner_email, r.uri, old.id as int_id FROM resources r JOIN resources_old old ON COALESCE(r.team_id, '') = COALESCE(old.team_id, '') AND COALESCE(r.owner_email, '') = COALESCE(old.owner_email, '') AND r.uri = old.uri"))
+    for row in res_map:
+        mapping_res[row[0]] = row[4]
+
+    # 4) Recreate resource_metrics_old and remap resource_id
+    op.create_table(
+        "resource_metrics_old",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("resource_id", sa.Integer, nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("response_time", sa.Float, nullable=False),
+        sa.Column("is_success", sa.Boolean, nullable=False),
+        sa.Column("error_message", sa.Text, nullable=True),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_old.id"], name="fk_resource_metrics_resource_id"),
+        sa.PrimaryKeyConstraint("id", name="pk_resource_metrics_old"),
+    )
+
+    # Copy resource metrics remapping ids
+    rows = conn.execute(text("SELECT id, resource_id, timestamp, response_time, is_success, error_message FROM resource_metrics")).fetchall()
+    for r in rows:
+        old_uuid = r[1]
+        int_id = mapping_res.get(old_uuid)
+        if int_id is None:
+            continue
+        conn.execute(text("INSERT INTO resource_metrics_old (id, resource_id, timestamp, response_time, is_success, error_message) VALUES (:id, :rid, :ts, :rt, :is_s, :err)"), {"id": r[0], "rid": int_id, "ts": r[2], "rt": r[3], "is_s": r[4], "err": r[5]})
+
+    # 5) Recreate server_resource_association_old and remap resource_id
+    op.create_table(
+        "server_resource_association_old",
+        sa.Column("server_id", sa.String(36), nullable=False),
+        sa.Column("resource_id", sa.Integer, nullable=False),
+        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc"),
+        sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_old.id"], name="fk_server_resource_resource_id"),
+    )
+
+    rows = conn.execute(text("SELECT server_id, resource_id FROM server_resource_association")).fetchall()
+    for server_id, resource_uuid in rows:
+        int_id = mapping_res.get(resource_uuid)
+        if int_id is None:
+            continue
+        conn.execute(text("INSERT INTO server_resource_association_old (server_id, resource_id) VALUES (:sid, :rid)"), {"sid": server_id, "rid": int_id})
+
+    # 6) Recreate resource_subscriptions_old and remap resource_id
+    op.create_table(
+        "resource_subscriptions_old",
+        sa.Column("id", sa.Integer, primary_key=True, nullable=False),
+        sa.Column("resource_id", sa.Integer, nullable=False),
+        sa.Column("subscriber_id", sa.String(255), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_notification", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(["resource_id"], ["resources_old.id"], name="fk_resource_subscriptions_resource_id"),
+    )
+
+    rows = conn.execute(text("SELECT id, resource_id, subscriber_id, created_at, last_notification FROM resource_subscriptions")).fetchall()
+    for r in rows:
+        int_id = mapping_res.get(r[1])
+        if int_id is None:
+            continue
+        conn.execute(text("INSERT INTO resource_subscriptions_old (id, resource_id, subscriber_id, created_at, last_notification) VALUES (:id, :rid, :sub, :ts, :ln)"), {"id": r[0], "rid": int_id, "sub": r[2], "ts": r[3], "ln": r[4]})
+
+    # 7) Drop current resource tables and rename old ones back
+    op.drop_table("resource_metrics")
+    op.drop_table("server_resource_association")
+    op.drop_table("resource_subscriptions")
+    op.drop_table("resources")
+
+    op.rename_table("resources_old", "resources")
+    op.rename_table("resource_metrics_old", "resource_metrics")
+    op.rename_table("server_resource_association_old", "server_resource_association")
+    op.rename_table("resource_subscriptions_old", "resource_subscriptions")
