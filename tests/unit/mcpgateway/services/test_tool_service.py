@@ -1809,23 +1809,25 @@ class TestToolService:
                 mock_db.add.assert_called_once_with(mock_metric_instance)
                 mock_db.commit.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service):
         """Test aggregating metrics across all tools."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            10,  # total count
-            8,  # successful count
-            2,  # failed count
-            0.5,  # min response time
-            5.0,  # max response time
-            2.3,  # avg response time
-            "2025-01-10T12:00:00",  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object that behaves like the SQLAlchemy Row result
+        # The new implementation calls .one() and accesses attributes .total, .successful, etc.
+        mock_row = MagicMock()
+        mock_row.total = 10
+        mock_row.successful = 8
+        mock_row.failed = 2
+        mock_row.min_rt = 0.5
+        mock_row.max_rt = 5.0
+        mock_row.avg_rt = 2.3
+        mock_row.last_time = "2025-01-10T12:00:00"
+
+        # Setup the chain: db.execute(...).one() -> returns the mock_row
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1840,26 +1842,26 @@ class TestToolService:
             "last_execution_time": "2025-01-10T12:00:00",
         }
 
-        # Verify all expected queries were made
-        assert mock_db.execute.call_count == 7
+        # Verify only 1 query was executed (optimization check)
+        assert mock_db.execute.call_count == 1
 
+    @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
         # Mock database
         mock_db = MagicMock()
 
-        # Create a mock that returns scalar values
-        mock_execute_result = MagicMock()
-        mock_execute_result.scalar.side_effect = [
-            0,  # total count
-            0,  # successful count
-            0,  # failed count
-            None,  # min response time
-            None,  # max response time
-            None,  # avg response time
-            None,  # last execution time
-        ]
-        mock_db.execute.return_value = mock_execute_result
+        # Create a mock object for empty results (None values)
+        mock_row = MagicMock()
+        mock_row.total = 0
+        mock_row.successful = 0
+        mock_row.failed = 0
+        mock_row.min_rt = None
+        mock_row.max_rt = None
+        mock_row.avg_rt = None
+        mock_row.last_time = None
+
+        mock_db.execute.return_value.one.return_value = mock_row
 
         result = await tool_service.aggregate_metrics(mock_db)
 
@@ -1873,6 +1875,9 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
+        
+        # Verify optimization
+        assert mock_db.execute.call_count == 1
 
     async def test_validate_tool_url_success(self, tool_service):
         """Test successful tool URL validation."""
@@ -1967,6 +1972,7 @@ class TestToolService:
             assert event["type"] == "tool_removed"
             assert event["data"]["id"] == mock_tool.id
 
+    @pytest.mark.asyncio
     async def test_get_top_tools(self, tool_service, test_db):
         """Test get_top_tools method."""
         # Mock database query result
@@ -1975,18 +1981,24 @@ class TestToolService:
             (2, "tool2", 5, 2.0, 80.0, "2024-01-02T12:00:00"),
         ]
 
-        # Create a proper mock chain for the query
-        mock_query_chain = Mock()
-        mock_query_chain.outerjoin.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = mock_results
-        test_db.query = Mock(return_value=mock_query_chain)
+        # Mock the execute method on the test_db (which is likely a MagicMock)
+        test_db.execute = MagicMock()
+        test_db.execute.return_value.all.return_value = mock_results
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
+            
+            # Run the method
             result = await tool_service.get_top_tools(test_db, limit=5)
 
+            # Assert the result is as expected
             assert result == ["top_performer1", "top_performer2"]
+
+            # Assert build_top_performers was called with the mock results
             mock_build.assert_called_once_with(mock_results)
-            test_db.query.assert_called_once()
+            
+            # Verify that the execute method was called once
+            test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_tags(self, tool_service, mock_tool):
