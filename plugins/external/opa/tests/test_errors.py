@@ -21,6 +21,7 @@ from mcpgateway.plugins.framework import (
     PluginContext,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
+    PluginError
 )
 
 from mcpgateway.services.logging_service import LoggingService
@@ -56,7 +57,7 @@ async def test_error_opa_server_error():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
         await plugin.tool_pre_invoke(payload, context)
-    except Exception as e:
+    except PluginError as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_ERROR.value
 
 
@@ -86,7 +87,7 @@ async def test_error_opa_server_invalid_endpoint():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
         await plugin.tool_pre_invoke(payload, context)
-    except Exception as e:
+    except PluginError as e:
         assert e.error.message == OPAPluginErrorCodes.INVALID_POLICY_ENDPOINT.value
 
 
@@ -116,7 +117,7 @@ async def test_error_opa_server_none_response():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
         await plugin.tool_pre_invoke(payload, context)
-    except Exception as e:
+    except PluginError as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_NONE_RESPONSE.value
 
 
@@ -143,7 +144,7 @@ async def test_error_opa_server_unconfigured_endpoint():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
         await plugin.tool_pre_invoke(payload, context)
-    except Exception as e:
+    except PluginError as e:
         assert e.error.message == OPAPluginErrorCodes.OPA_SERVER_UNCONFIGURED_ENDPOINT.value
 
 
@@ -173,7 +174,7 @@ async def test_error_opa_server_unsupported_modality():
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     try:
         await plugin.tool_post_invoke(payload, context)
-    except Exception as e:
+    except PluginError as e:
         assert e.error.message == OPAPluginErrorCodes.UNSUPPORTED_POLICY_MODALITY.value
 
 
