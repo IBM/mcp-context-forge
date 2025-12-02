@@ -215,7 +215,11 @@ def app_with_temp_db():
     mp.setattr(settings, "email_auth_enabled", True, raising=False)
     
     # Import bootstrap functions here to ensure they use the patched SessionLocal
+    import mcpgateway.bootstrap_db as bootstrap_mod
     from mcpgateway.bootstrap_db import bootstrap_admin_user, bootstrap_default_roles
+    
+    # Patch SessionLocal in bootstrap_db module
+    mp.setattr(bootstrap_mod, "SessionLocal", TestSessionLocal, raising=False)
     
     # Run bootstrap
     asyncio.run(bootstrap_admin_user())
