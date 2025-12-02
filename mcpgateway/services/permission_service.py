@@ -190,6 +190,23 @@ class PermissionService:
             # Default to deny on error
             return False
 
+    async def check_admin_permission(self, user_email: str) -> bool:
+        """Check if user has admin privileges.
+
+        Checks if user is a platform admin or has explicit admin permissions.
+
+        Args:
+            user_email: Email of the user
+
+        Returns:
+            bool: True if user is admin
+        """
+        if await self._is_user_admin(user_email):
+            return True
+
+        permissions = await self.get_user_permissions(user_email)
+        return Permissions.ADMIN_SYSTEM_CONFIG in permissions
+
     async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None) -> Set[str]:
         """Get all effective permissions for a user.
 
