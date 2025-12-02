@@ -366,7 +366,6 @@ class ServerService:
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
         allowed_team_ids: Optional[List[str]] = None,
-        user_email: Optional[str] = None,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -393,7 +392,6 @@ class ServerService:
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
             allowed_team_ids (Optional[List[str]]): List of team IDs the user has write access to.
-            user_email (Optional[str]): Email of the user performing the operation.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.

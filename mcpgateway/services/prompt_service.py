@@ -1426,7 +1426,7 @@ class PromptService:
 
     # Get prompt details for admin ui
     async def get_prompt_details(
-        self, db: Session, prompt_id: Union[int, str], include_inactive: bool = False, allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
+        self, db: Session, prompt_id: Union[int, str], allowed_team_ids: Optional[List[str]] = None, user_email: Optional[str] = None
     ) -> Dict[str, Any]:  # pylint: disable=unused-argument
         """
         Get prompt details by ID.
@@ -1434,7 +1434,6 @@ class PromptService:
         Args:
             db: Database session
             prompt_id: ID of prompt
-            include_inactive: Whether to include inactive prompts
             allowed_team_ids: List of team IDs the user has write access to.
             user_email: Email of the user requesting the prompt.
 

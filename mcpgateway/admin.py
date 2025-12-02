@@ -1319,7 +1319,6 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             team_id=team_id_cast,
             visibility=visibility,
             allowed_team_ids=allowed_team_ids,
-            user_email=user_email,
         )
         return JSONResponse(
             content={"message": "Server created successfully!", "success": True},
@@ -6004,9 +6003,12 @@ async def admin_prompts_partial_html(
     # Convert to schemas using PromptService
     local_prompt_service = PromptService()
     prompts_data = []
+    user_email = get_user_email(user)
+    allowed_team_ids = await get_allowed_team_ids(request)
+
     for p in prompts_db:
         try:
-            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, include_inactive=include_inactive)
+            prompt_dict = await local_prompt_service.get_prompt_details(db, p.id, allowed_team_ids=allowed_team_ids, user_email=user_email)
             if prompt_dict:
                 prompts_data.append(prompt_dict)
         except Exception as e:
@@ -7361,6 +7363,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
+@require_permission("gateways.read")
 async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
@@ -7452,6 +7455,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
 
 
 @admin_router.post("/gateways")
+@require_permission("gateways.create")
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
@@ -7746,7 +7750,6 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
             team_id=team_id_cast,
             owner_email=user_email,
             allowed_team_ids=allowed_team_ids,
-            user_email=user_email,
         )
 
         # Provide specific guidance for OAuth Authorization Code flow

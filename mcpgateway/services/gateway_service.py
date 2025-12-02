@@ -571,7 +571,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
         allowed_team_ids: Optional[List[str]] = None,
-        user_email: Optional[str] = None,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -586,7 +585,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             allowed_team_ids: List of team IDs the user has write access to.
-            user_email: Email of the user performing the operation.
 
         Returns:
             Created gateway information
@@ -994,13 +992,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Other grouped errors: {other.exceptions}")
             raise other.exceptions[0]
 
-    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
+    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str, allowed_team_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
             app_user_email: MCP Gateway user email for token retrieval
+            allowed_team_ids: List of team IDs the user has write access to.
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -1011,6 +1010,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         try:
             # Get the gateway
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+            if not gateway.team_id in (allowed_team_ids or []):
+                raise PermissionError(f"User does not have access to gateway {gateway_id} in team {gateway.team_id}")
 
             if not gateway:
                 raise ValueError(f"Gateway {gateway_id} not found")
