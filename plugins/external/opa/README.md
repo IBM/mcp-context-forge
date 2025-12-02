@@ -285,6 +285,7 @@ The`make test` command executes a complete testing workflow: it launches an OPA 
 6. `INVALID_POLICY_ENDPOINT` = "Policy endpoint must be curated with the supported hooktypes"
 7. `UNSPECIFIED_POLICY_MODALITY` = "Unspecified policy modality. Picking up default modality: text"
 8. `UNSUPPORTED_POLICY_MODALITY` = "Unsupported policy modality (Supports text, image and resource)"
+9. `UNSPECIFIED_POLICY_PACKAGE_NAME` = "Unspecified policy package name"
 
 If OPA plugin encounters any of the errors above, it raises a PluginError.
 The file `test_errors.py` includes unit tests to verify that these errors are correctly raised under the corresponding conditions.
