@@ -210,6 +210,17 @@ def app_with_temp_db():
     # 4) create schema
     db_mod.Base.metadata.create_all(bind=engine)
 
+    # 4.5) Bootstrap default roles and admin user
+    # Ensure email auth is enabled for bootstrapping
+    mp.setattr(settings, "email_auth_enabled", True, raising=False)
+    
+    # Import bootstrap functions here to ensure they use the patched SessionLocal
+    from mcpgateway.bootstrap_db import bootstrap_admin_user, bootstrap_default_roles
+    
+    # Run bootstrap
+    asyncio.run(bootstrap_admin_user())
+    asyncio.run(bootstrap_default_roles())
+
     # 5) reload main so routers, deps pick up new SessionLocal
     # if "mcpgateway.main" in sys.modules:
     #     import importlib
