@@ -101,6 +101,9 @@ def upgrade() -> None:
 
     conn.execute(text("INSERT INTO server_prompt_association_tmp (server_id, prompt_id) SELECT spa.server_id, p.id_new FROM server_prompt_association spa JOIN prompts p ON spa.prompt_id = p.id"))
 
+    # Update observability spans that reference prompts: remap integer prompt IDs -> new uuid
+    conn.execute(text("UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id"))
+
     # 7) Drop old tables and rename tmp tables into place
     op.drop_table("prompt_metrics")
     op.drop_table("server_prompt_association")
@@ -114,7 +117,7 @@ def upgrade() -> None:
     # Resources -> change id to VARCHAR(32) and remap FKs
     # -----------------------------
     # Add temporary id_new to resources
-    op.add_column("resources", sa.Column("id_new", sa.String(32), nullable=True))
+    op.add_column("resources", sa.Column("id_new", sa.String(36), nullable=True))
 
     rows = conn.execute(text("SELECT id FROM resources")).fetchall()
     for (old_id,) in rows:
@@ -124,7 +127,7 @@ def upgrade() -> None:
     # Create resources_tmp with varchar(32) id
     op.create_table(
         "resources_tmp",
-        sa.Column("id", sa.String(32), primary_key=True, nullable=False),
+        sa.Column("id", sa.String(36), primary_key=True, nullable=False),
         sa.Column("uri", sa.String(767), nullable=False),
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("description", sa.Text, nullable=True),
@@ -166,7 +169,7 @@ def upgrade() -> None:
     op.create_table(
         "resource_metrics_tmp",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
-        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.Column("resource_id", sa.String(36), nullable=False),
         sa.Column("timestamp", sa.DateTime(timezone=True), nullable=False),
         sa.Column("response_time", sa.Float, nullable=False),
         sa.Column("is_success", sa.Boolean, nullable=False),
@@ -182,7 +185,7 @@ def upgrade() -> None:
     op.create_table(
         "server_resource_association_tmp",
         sa.Column("server_id", sa.String(36), nullable=False),
-        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.Column("resource_id", sa.String(36), nullable=False),
         sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc"),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_server_resource_resource_id"),
@@ -190,11 +193,14 @@ def upgrade() -> None:
 
     conn.execute(text("INSERT INTO server_resource_association_tmp (server_id, resource_id) SELECT sra.server_id, r.id_new FROM server_resource_association sra JOIN resources r ON sra.resource_id = r.id"))
 
+    # Update observability spans that reference resources: remap integer resource IDs -> new uuid
+    conn.execute(text("UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"))
+
     # resource_subscriptions_tmp
     op.create_table(
         "resource_subscriptions_tmp",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
-        sa.Column("resource_id", sa.String(32), nullable=False),
+        sa.Column("resource_id", sa.String(36), nullable=False),
         sa.Column("subscriber_id", sa.String(255), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_notification", sa.DateTime(timezone=True), nullable=True),
@@ -299,6 +305,15 @@ def downgrade() -> None:
         if int_id is None:
             continue
         conn.execute(text("INSERT INTO server_prompt_association_old (server_id, prompt_id) VALUES (:sid, :pid)"), {"sid": server_id, "pid": int_id})
+
+    # Remap observability_spans for prompts: uuid -> integer id using mapping built above
+    span_rows = conn.execute(text("SELECT span_id, resource_id FROM observability_spans WHERE resource_type = 'prompts'")).fetchall()
+    for span_id, res_uuid in span_rows:
+        int_id = mapping.get(res_uuid)
+        if int_id is None:
+            # skip orphaned span
+            continue
+        conn.execute(text("UPDATE observability_spans SET resource_id = :rid WHERE span_id = :sid"), {"rid": int_id, "sid": span_id})
 
     # 6) Drop current tables and rename old ones back
     op.drop_table("prompt_metrics")
@@ -412,6 +427,14 @@ def downgrade() -> None:
         if int_id is None:
             continue
         conn.execute(text("INSERT INTO resource_subscriptions_old (id, resource_id, subscriber_id, created_at, last_notification) VALUES (:id, :rid, :sub, :ts, :ln)"), {"id": r[0], "rid": int_id, "sub": r[2], "ts": r[3], "ln": r[4]})
+
+    # Remap observability_spans for resources: uuid -> integer id using mapping_res built above
+    span_rows = conn.execute(text("SELECT span_id, resource_id FROM observability_spans WHERE resource_type = 'resources'")).fetchall()
+    for span_id, res_uuid in span_rows:
+        int_id = mapping_res.get(res_uuid)
+        if int_id is None:
+            continue
+        conn.execute(text("UPDATE observability_spans SET resource_id = :rid WHERE span_id = :sid"), {"rid": int_id, "sid": span_id})
 
     # 7) Drop current resource tables and rename old ones back
     op.drop_table("resource_metrics")
