@@ -1090,6 +1090,9 @@ class ServerService:
             >>> service = ServerService()
             >>> db = MagicMock()
             >>> server = MagicMock()
+            >>> server.owner_email = 'user@example.com'
+            >>> server.team_id = None
+            >>> server.visibility = 'private'
             >>> db.get.return_value = server
             >>> db.delete = MagicMock()
             >>> db.commit = MagicMock()
