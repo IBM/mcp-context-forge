@@ -1767,7 +1767,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if gateway.enabled or include_inactive:
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
-            
+
             # Structured logging: Log gateway view
             structured_logger.log(
                 level="INFO",
@@ -1784,7 +1784,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 },
                 db=db,
             )
-            
+
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")

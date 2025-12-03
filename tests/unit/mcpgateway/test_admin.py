@@ -1357,7 +1357,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 mock_client.request.assert_called_once()
@@ -1396,7 +1397,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                await admin_test_gateway(request, None, "test-user", mock_db)
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
@@ -1422,7 +1424,8 @@ class TestAdminGatewayTestRoute:
 
             mock_client_class.return_value = mock_client
 
-            result = await admin_test_gateway(request, "test-user")
+            mock_db = MagicMock()
+            result = await admin_test_gateway(request, None, "test-user", mock_db)
 
             assert result.status_code == 502
             assert "Request timed out" in str(result.body)
@@ -1459,7 +1462,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text

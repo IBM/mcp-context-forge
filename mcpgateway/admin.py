@@ -9811,7 +9811,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
     except httpx.RequestError as e:
         LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
-        
+
         # Structured logging: Log failed gateway test
         structured_logger = get_structured_logger("gateway_service")
         structured_logger.log(
@@ -9833,7 +9833,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
             },
             db=db,
         )
-        
+
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
 
