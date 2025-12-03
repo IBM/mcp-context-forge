@@ -29,6 +29,7 @@ spec:
           image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
           imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
 
+          # Migration workflow: wait for DB → run migrations
           command: ["/bin/sh"]
           args:
             - -c
