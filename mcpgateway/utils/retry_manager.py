@@ -301,7 +301,7 @@ class ResilientHttpClient:
             True
         """
         # random.uniform() is safe here as jitter is only used for retry timing, not security
-        delay = base + random.uniform(0, jitter_range)  # noqa: DUO102 # nosec B311
+        delay = base + random.uniform(0, jitter_range)  # nosec B311  # noqa: DUO102
         # Ensure delay doesn't exceed the max allowed
         delay = min(delay, self.max_delay)
         await asyncio.sleep(delay)

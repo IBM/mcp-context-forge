@@ -776,6 +776,51 @@ class Settings(BaseSettings):
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
 
+    # Correlation ID Settings
+    correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
+    correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
+    correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
+    correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
+
+    # Structured Logging Configuration
+    structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")
+    structured_logging_database_enabled: bool = Field(default=True, description="Persist structured logs to database")
+    structured_logging_external_enabled: bool = Field(default=False, description="Send logs to external systems")
+
+    # Performance Tracking Configuration
+    performance_tracking_enabled: bool = Field(default=True, description="Enable performance tracking and metrics")
+    performance_threshold_database_query_ms: float = Field(default=100.0, description="Alert threshold for database queries (ms)")
+    performance_threshold_tool_invocation_ms: float = Field(default=2000.0, description="Alert threshold for tool invocations (ms)")
+    performance_threshold_resource_read_ms: float = Field(default=1000.0, description="Alert threshold for resource reads (ms)")
+    performance_threshold_http_request_ms: float = Field(default=500.0, description="Alert threshold for HTTP requests (ms)")
+    performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
+
+    # Security Logging Configuration
+    security_logging_enabled: bool = Field(default=True, description="Enable security event logging")
+    security_failed_auth_threshold: int = Field(default=5, description="Failed auth attempts before high severity alert")
+    security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
+    security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
+
+    # Metrics Aggregation Configuration
+    metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
+    metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
+    metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
+    metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+
+    # Log Search Configuration
+    log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
+    log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
+
+    # External Log Integration Configuration
+    elasticsearch_enabled: bool = Field(default=False, description="Send logs to Elasticsearch")
+    elasticsearch_url: Optional[str] = Field(default=None, description="Elasticsearch cluster URL")
+    elasticsearch_index_prefix: str = Field(default="mcpgateway-logs", description="Elasticsearch index prefix")
+    syslog_enabled: bool = Field(default=False, description="Send logs to syslog")
+    syslog_host: Optional[str] = Field(default=None, description="Syslog server host")
+    syslog_port: int = Field(default=514, description="Syslog server port")
+    webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
+    webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
+
     @field_validator("log_level", mode="before")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
