@@ -777,6 +777,8 @@ class RoleService:
 
         if team_id:
             scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+        else:
+            scope_conditions.append(UserRole.scope == "team")
 
         query = query.where(or_(*scope_conditions))
 

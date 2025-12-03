@@ -75,10 +75,6 @@ class PermissionService:
         Returns:
             List[Dict]: List of scopes, e.g. [{'scope': 'global', 'scope_id': None, 'permissions': [...]}, {'scope': 'team', 'scope_id': 'team-123', 'permissions': [...]}]
         """
-        if await self._is_user_admin(user_email):
-            # Admin has permission everywhere (conceptually global covers everything)
-            return [{"scope": "global", "scope_id": None, "permissions": [Permissions.ALL_PERMISSIONS]}]
-
         if roles is None:
             roles = await self._get_user_roles(user_email)
 
@@ -102,6 +98,7 @@ class PermissionService:
             effective_perms = role.role.get_effective_permissions()
             granted_scopes.append({"scope": "personal", "scope_id": None, "permissions": list(effective_perms)})
 
+        logger.info(f'{granted_scopes=}')
         return granted_scopes
 
     async def check_permission(
