@@ -344,7 +344,7 @@ class ServerService:
         """
         if not team_id:
             return None
-        team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.enabled.is_(True)).first()
+        team = db.query(DbEmailTeam).filter(DbEmailTeam.id == team_id, DbEmailTeam.is_active.is_(True)).first()
         return team.name if team else None
 
     async def register_server(
@@ -412,6 +412,7 @@ class ServerService:
             'server_read'
         """
         try:
+            logger.info(f"Registering server: {server_in.name}")
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -445,6 +446,7 @@ class ServerService:
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
                 db_server.id = server_in.id
+            logger.info(f"Adding server to DB session: {db_server.name}")
             db.add(db_server)
 
             # Associate tools, verifying each exists using bulk query when multiple items
@@ -467,7 +469,7 @@ class ServerService:
 
             # Associate resources, verifying each exists using bulk query when multiple items
             if server_in.associated_resources:
-                resource_ids = [int(resource_id.strip()) for resource_id in server_in.associated_resources if resource_id.strip()]
+                resource_ids = [resource_id.strip() for resource_id in server_in.associated_resources if resource_id.strip()]
                 if len(resource_ids) > 1:
                     # Use bulk query for multiple items
                     resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
@@ -479,6 +481,11 @@ class ServerService:
                 elif resource_ids:
                     # Use single query for single item (maintains test compatibility)
                     resource_obj = db.get(DbResource, resource_ids[0])
+                # for resource_id in server_in.associated_resources:
+                #     if resource_id.strip() == "":
+                #         continue
+                #     # Resource IDs are stored as string UUID hex values, not integers.
+                #     resource_obj = db.get(DbResource, resource_id)
                     if not resource_obj:
                         raise ServerError(f"Resource with id {resource_ids[0]} does not exist.")
                     db_server.resources.append(resource_obj)
@@ -884,7 +891,7 @@ class ServerService:
             if server_update.associated_resources is not None:
                 server.resources = []
                 if server_update.associated_resources:
-                    resource_ids = [int(resource_id) for resource_id in server_update.associated_resources if resource_id]
+                    resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
                         resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
                         server.resources = list(resources)
@@ -893,7 +900,7 @@ class ServerService:
             if server_update.associated_prompts is not None:
                 server.prompts = []
                 if server_update.associated_prompts:
-                    prompt_ids = [int(prompt_id) for prompt_id in server_update.associated_prompts if prompt_id]
+                    prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
                     if prompt_ids:
                         prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
                         server.prompts = list(prompts)
@@ -1025,7 +1032,7 @@ class ServerService:
                 "associated_resources": [res.id for res in server.resources],
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
-            logger.debug(f"Server Data: {server_data}")
+            logger.info(f"Server Data: {server_data}")
             return self._convert_server_to_read(server)
         except PermissionError as e:
             raise e

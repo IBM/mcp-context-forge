@@ -1145,8 +1145,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
         server_id = form.get("id")
         visibility = str(form.get("visibility", "private"))
-        LOGGER.info(f" user input id::{server_id}")
-
+        
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
         if form.get("selectAllTools") == "true":
@@ -6160,7 +6159,6 @@ async def admin_resources_partial_html(
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
-    LOGGER.info(f"resources_data partial::{resources_data}")
     data = jsonable_encoder(resources_data)
 
     # Build pagination metadata
