@@ -920,7 +920,7 @@ class TestAdminPromptRoutes:
             "arguments": [{"name": "var", "type": "string"}],
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc),
-            "is_active": True,
+            "enabled": True,
             "metrics": {
                 "total_executions": 1000,
                 "successful_executions": 950,
