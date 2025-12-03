@@ -4,7 +4,7 @@ import sys
 from fastmcp import FastMCP
 
 from qr_code_server.config import config
-from qr_code_server.tools.generator import QRGenerationRequest, create_qr_code
+from qr_code_server.tools.generator import BatchQRGenerationRequest, QRGenerationRequest, create_batch_qr_codes, create_qr_code
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +29,7 @@ async def generate_qr_code(
     back_color: str = "white",
     save_path: str | None = config.output.default_directory,
     return_base64: bool = False,
-) -> str | bytes:
+) -> str:
     request = QRGenerationRequest(
         data=data,
         format=format,
@@ -66,7 +66,17 @@ async def generate_batch_qr_codes(
     output_directory: str = "./qr_codes/",
     zip_output: bool = False
 ):
-    pass
+    request = BatchQRGenerationRequest(
+        data_list=data_list,
+        size=size,
+        naming_pattern=naming_pattern,
+        output_directory=output_directory,
+        zip_output=zip_output,
+    )
+    try:
+        return create_batch_qr_codes(request)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @mcp.tool(description="Validate and analyze QR code data before generation")
