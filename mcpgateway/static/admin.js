@@ -23088,7 +23088,7 @@ const SEARCH_FIELD_CONFIG = {
 const SearchState = {
     debounceTimers: {},
     activeFilters: {},
-    
+
     reset(entityType) {
         if (this.debounceTimers[entityType]) {
             clearTimeout(this.debounceTimers[entityType]);
@@ -23099,7 +23099,7 @@ const SearchState = {
             tags: [],
         };
     },
-    
+
     setSearch(entityType, value) {
         if (!this.activeFilters[entityType]) {
             this.activeFilters[entityType] = { search: "", tags: [] };
@@ -23107,7 +23107,7 @@ const SearchState = {
         this.activeFilters[entityType].search = value;
         this.updateFilterCount(entityType);
     },
-    
+
     setTags(entityType, tags) {
         if (!this.activeFilters[entityType]) {
             this.activeFilters[entityType] = { search: "", tags: [] };
@@ -23115,21 +23115,27 @@ const SearchState = {
         this.activeFilters[entityType].tags = tags;
         this.updateFilterCount(entityType);
     },
-    
+
     getActiveFilterCount(entityType) {
-        if (!this.activeFilters[entityType]) return 0;
+        if (!this.activeFilters[entityType]) {
+            return 0;
+        }
         const state = this.activeFilters[entityType];
         let count = 0;
-        if (state.search.trim()) count++;
-        if (state.tags.length > 0) count += state.tags.length;
+        if (state.search.trim()) {
+            count++;
+        }
+        if (state.tags.length > 0) {
+            count += state.tags.length;
+        }
         return count;
     },
-    
+
     updateFilterCount(entityType) {
         const count = this.getActiveFilterCount(entityType);
         const badge = safeGetElement(`${entityType}-filter-count-badge`);
         const clearAllBtn = safeGetElement(`${entityType}-clear-all-filters`);
-        
+
         if (badge) {
             if (count > 0) {
                 badge.textContent = `${count} filter${count > 1 ? "s" : ""} active`;
@@ -23146,7 +23152,7 @@ const SearchState = {
                 clearAllBtn.classList.add("hidden");
             }
         }
-    }
+    },
 };
 
 /**
@@ -23278,25 +23284,25 @@ function extractRowSearchText(row, searchFields) {
 
 /**
  * Extract tags from a table row
- * @param {HTMLElement} row - Table row element  
+ * @param {HTMLElement} row - Table row element
  * @return {string[]} Array of tag strings
  */
 function extractRowTags(row) {
     const tags = [];
-    
+
     // Look for various tag element patterns
     const tagSelectors = [
-        'span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800',
-        'span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full',
-        'span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700',
-        'span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700',
-        '.bg-blue-100.text-blue-800', // Broader fallback
+        "span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800",
+        "span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full",
+        "span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700",
+        "span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700",
+        ".bg-blue-100.text-blue-800", // Broader fallback
     ];
-    
-    tagSelectors.forEach(selector => {
+
+    tagSelectors.forEach((selector) => {
         try {
             const elements = row.querySelectorAll(selector);
-            elements.forEach(el => {
+            elements.forEach((el) => {
                 const tagText = el.textContent?.trim();
                 if (tagText && !isStatusBadge(tagText)) {
                     tags.push(tagText);
@@ -23306,7 +23312,7 @@ function extractRowTags(row) {
             // Ignore selector errors
         }
     });
-    
+
     return [...new Set(tags)]; // Remove duplicates
 }
 
