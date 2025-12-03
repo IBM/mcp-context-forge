@@ -23240,7 +23240,6 @@ function applyUnifiedFilters(entityType, searchText = "", filterTags = []) {
                             cells[4]?.textContent?.toLowerCase() || "";
                         const tools =
                             cells[5]?.textContent?.toLowerCase() || "";
-
                         matchesSearch =
                             name.includes(search) ||
                             description.includes(search) ||
@@ -23575,7 +23574,7 @@ function initializeAllUnifiedSearch() {
             const panel = safeGetElement(`${entityType}-panel`);
             if (panel) {
                 initializeUnifiedSearch(entityType);
-                
+
                 // Set up tab switching listeners to refresh search state
                 const tabButton = safeGetElement(
                     `tab-${entityType === "catalog" ? "catalog" : entityType}`,
