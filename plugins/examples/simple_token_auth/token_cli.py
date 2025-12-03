@@ -93,7 +93,7 @@ Examples:
   python -m plugins.simple_token_auth.token_cli create user@example.com "User Name"
 
   # Create an admin token that never expires
-  python -m plugins.simple_token_auth.token_cli create admin@example.com "Admin User" --admin --expires 0
+  python -m plugins.simple_token_auth.token_cli create owner@example.com "Admin User" --admin --expires 0
 
   # List all active tokens
   python -m plugins.simple_token_auth.token_cli list

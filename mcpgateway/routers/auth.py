@@ -123,13 +123,13 @@ async def login(login_request: LoginRequest, request: Request, db: Session = Dep
     Examples:
         Email format (recommended):
             {
-              "email": "admin@example.com",
+              "email": "owner@example.com",
               "password": "ChangeMe_12345678$"
             }
 
         Username format (compatibility):
             {
-              "username": "admin@example.com",
+              "username": "owner@example.com",
               "password": "ChangeMe_12345678$"
             }
     """
