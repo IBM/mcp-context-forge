@@ -30,6 +30,27 @@ docker logs mcpgateway
 
 You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
 
+### Multi-architecture containers
+Note: the container build process creates container images for 'amd64', 'arm64' and 's390x' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION` 
+not points to a manifest so that if all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
+
+If the specific image is needed for one architecture on a different architecture use the appropriate arguments for your given container execution tool:
+
+With docker run: 
+```
+docker run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+
+With podman run:
+```
+podman run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+Or
+```
+podman run [... all your options...] --arch arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+
+
 ## 🐳 Build the Container
 
 ### Using Podman (recommended)
