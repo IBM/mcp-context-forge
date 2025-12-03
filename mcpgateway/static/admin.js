@@ -23104,3 +23104,516 @@ function updateEntityActionButtons(cell, type, id, isEnabled) {
         `;
     }
 }
+
+// ===================================================================
+// UNIFIED SEARCH & FILTER COMPONENT - Cross-Tab Discovery
+// ===================================================================
+
+/**
+ * Configuration for search fields by entity type
+ */
+const SEARCH_FIELD_CONFIG = {
+    catalog: ['name', 'description'], // Virtual Servers (will add tool_names dynamically)
+    gateways: ['name', 'description', 'url'], // MCP Servers
+    tools: ['name', 'description', 'displayName'],
+    prompts: ['name', 'description'],
+    resources: ['name', 'uri', 'mimeType', 'description'],
+    'a2a-agents': ['name', 'url', 'description']
+};
+
+/**
+ * Unified search state management
+ */
+const SearchState = {
+    debounceTimers: {},
+    activeFilters: {},
+    
+    reset(entityType) {
+        if (this.debounceTimers[entityType]) {
+            clearTimeout(this.debounceTimers[entityType]);
+            delete this.debounceTimers[entityType];
+        }
+        this.activeFilters[entityType] = {
+            search: '',
+            tags: []
+        };
+    },
+    
+    setSearch(entityType, value) {
+        if (!this.activeFilters[entityType]) {
+            this.activeFilters[entityType] = { search: '', tags: [] };
+        }
+        this.activeFilters[entityType].search = value;
+        this.updateFilterCount(entityType);
+    },
+    
+    setTags(entityType, tags) {
+        if (!this.activeFilters[entityType]) {
+            this.activeFilters[entityType] = { search: '', tags: [] };
+        }
+        this.activeFilters[entityType].tags = tags;
+        this.updateFilterCount(entityType);
+    },
+    
+    getActiveFilterCount(entityType) {
+        if (!this.activeFilters[entityType]) return 0;
+        const state = this.activeFilters[entityType];
+        let count = 0;
+        if (state.search.trim()) count++;
+        if (state.tags.length > 0) count += state.tags.length;
+        return count;
+    },
+    
+    updateFilterCount(entityType) {
+        const count = this.getActiveFilterCount(entityType);
+        const badge = safeGetElement(`${entityType}-filter-count-badge`);
+        const clearAllBtn = safeGetElement(`${entityType}-clear-all-filters`);
+        
+        if (badge) {
+            if (count > 0) {
+                badge.textContent = `${count} filter${count > 1 ? 's' : ''} active`;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+        
+        if (clearAllBtn) {
+            if (count > 0) {
+                clearAllBtn.classList.remove('hidden');
+            } else {
+                clearAllBtn.classList.add('hidden');
+            }
+        }
+    }
+};
+
+/**
+ * Enhanced unified search and filter function
+ * @param {string} entityType - The entity type (tools, prompts, etc.)
+ * @param {string} searchText - Search text to filter by
+ * @param {string[]} filterTags - Array of tags to filter by
+ */
+function applyUnifiedFilters(entityType, searchText = '', filterTags = []) {
+    try {
+        // Update state
+        SearchState.setSearch(entityType, searchText);
+        SearchState.setTags(entityType, filterTags);
+        
+        const searchFields = SEARCH_FIELD_CONFIG[entityType] || ['name', 'description'];
+        const tableSelector = `#${entityType}-panel tbody tr`;
+        let rows = document.querySelectorAll(tableSelector);
+        
+        // Handle special case for Virtual Servers (catalog)
+        if (entityType === 'catalog') {
+            rows = document.querySelectorAll('tbody[data-testid="server-list"] tr[data-testid="server-item"]');
+        }
+
+        let visibleCount = 0;
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let showRow = true;
+
+            // Search filtering (OR logic across search fields)
+            if (search) {
+                let matchesSearch = false;
+                
+                if (entityType === 'catalog') {
+                    // Virtual Servers: search name, description, and tool names
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length >= 5) {
+                        const name = cells[3]?.textContent?.toLowerCase() || '';
+                        const description = cells[4]?.textContent?.toLowerCase() || '';
+                        const tools = cells[5]?.textContent?.toLowerCase() || '';
+                        
+                        matchesSearch = name.includes(search) || 
+                                      description.includes(search) || 
+                                      tools.includes(search);
+                    }
+                } else {
+                    // Other entity types: search based on field configuration
+                    const rowText = extractRowSearchText(row, searchFields).toLowerCase();
+                    matchesSearch = rowText.includes(search);
+                }
+                
+                if (!matchesSearch) {
+                    showRow = false;
+                }
+            }
+
+            // Tag filtering (AND logic - row must have ALL specified tags)
+            if (showRow && filterTags.length > 0) {
+                const rowTags = extractRowTags(row);
+                const hasAllTags = filterTags.every(filterTag => 
+                    rowTags.some(rowTag => 
+                        rowTag.toLowerCase().includes(filterTag.toLowerCase()) ||
+                        filterTag.toLowerCase().includes(rowTag.toLowerCase())
+                    )
+                );
+                
+                if (!hasAllTags) {
+                    showRow = false;
+                }
+            }
+
+            // Apply visibility
+            row.style.display = showRow ? '' : 'none';
+            if (showRow) visibleCount++;
+        });
+
+        // Update empty state
+        const hasActiveFilters = search || filterTags.length > 0;
+        updateUnifiedEmptyState(entityType, visibleCount, hasActiveFilters);
+        
+        console.log(`Applied unified filters to ${entityType}: ${visibleCount} visible items`);
+        
+    } catch (error) {
+        console.error(`Error applying unified filters to ${entityType}:`, error);
+    }
+}
+
+/**
+ * Extract searchable text from a table row based on configured fields
+ * @param {HTMLElement} row - Table row element
+ * @param {string[]} searchFields - Array of field names to search
+ * @return {string} Combined searchable text
+ */
+function extractRowSearchText(row, searchFields) {
+    const cells = row.querySelectorAll('td');
+    let text = '';
+    
+    // For most tables, search all cell content for now
+    // This can be refined per entity type as needed
+    cells.forEach(cell => {
+        text += ' ' + (cell.textContent || '');
+    });
+    
+    return text;
+}
+
+/**
+ * Extract tags from a table row
+ * @param {HTMLElement} row - Table row element  
+ * @return {string[]} Array of tag strings
+ */
+function extractRowTags(row) {
+    const tags = [];
+    
+    // Look for various tag element patterns
+    const tagSelectors = [
+        'span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800',
+        'span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full',
+        'span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700',
+        'span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700',
+        '.bg-blue-100.text-blue-800', // Broader fallback
+    ];
+    
+    tagSelectors.forEach(selector => {
+        try {
+            const elements = row.querySelectorAll(selector);
+            elements.forEach(el => {
+                const tagText = el.textContent?.trim();
+                if (tagText && !isStatusBadge(tagText)) {
+                    tags.push(tagText);
+                }
+            });
+        } catch (e) {
+            // Ignore selector errors
+        }
+    });
+    
+    return [...new Set(tags)]; // Remove duplicates
+}
+
+/**
+ * Check if text content is a status badge rather than a tag
+ * @param {string} text - Text to check
+ * @return {boolean} True if this is a status badge
+ */
+function isStatusBadge(text) {
+    const statusTerms = [
+        'active', 'inactive', 'online', 'offline', 'enabled', 'disabled',
+        'public', 'private', 'team', 'none', 'no tags', 'n/a'
+    ];
+    return statusTerms.includes(text.toLowerCase());
+}
+
+/**
+ * Debounced search function
+ * @param {string} entityType - Entity type
+ * @param {string} searchText - Search text
+ * @param {number} delay - Debounce delay in milliseconds (default 300)
+ */
+function debouncedSearch(entityType, searchText, delay = 300) {
+    // Clear existing timer
+    if (SearchState.debounceTimers[entityType]) {
+        clearTimeout(SearchState.debounceTimers[entityType]);
+    }
+    
+    // Set new timer
+    SearchState.debounceTimers[entityType] = setTimeout(() => {
+        const tagFilter = safeGetElement(`${entityType}-tag-filter`);
+        const currentTags = tagFilter ? 
+            tagFilter.value.split(',').map(t => t.trim()).filter(t => t) : [];
+        
+        applyUnifiedFilters(entityType, searchText, currentTags);
+        delete SearchState.debounceTimers[entityType];
+    }, delay);
+}
+
+/**
+ * Clear search input
+ * @param {string} entityType - Entity type
+ */
+function clearSearch(entityType) {
+    const searchInput = safeGetElement(`${entityType}-search-input`);
+    if (searchInput) {
+        searchInput.value = '';
+        // Trigger search with empty value
+        debouncedSearch(entityType, '', 0);
+    }
+}
+
+/**
+ * Clear all filters for an entity type
+ * @param {string} entityType - Entity type
+ */
+function clearAllFilters(entityType) {
+    // Clear search
+    const searchInput = safeGetElement(`${entityType}-search-input`);
+    if (searchInput) {
+        searchInput.value = '';
+    }
+    
+    // Clear tag filter
+    const tagFilter = safeGetElement(`${entityType}-tag-filter`);
+    if (tagFilter) {
+        tagFilter.value = '';
+    }
+    
+    // Reset state
+    SearchState.reset(entityType);
+    
+    // Apply empty filters
+    applyUnifiedFilters(entityType, '', []);
+}
+
+/**
+ * Enhanced empty state display
+ * @param {string} entityType - Entity type
+ * @param {number} visibleCount - Number of visible items
+ * @param {boolean} hasActiveFilters - Whether any filters are active
+ */
+function updateUnifiedEmptyState(entityType, visibleCount, hasActiveFilters) {
+    const tableContainer = document.querySelector(`#${entityType}-panel .overflow-x-auto`);
+    if (!tableContainer) return;
+
+    let emptyMessage = tableContainer.querySelector('.unified-filter-empty-message');
+
+    if (visibleCount === 0 && hasActiveFilters) {
+        if (!emptyMessage) {
+            emptyMessage = document.createElement('div');
+            emptyMessage.className = 'unified-filter-empty-message text-center py-12 text-gray-500 dark:text-gray-400';
+            
+            emptyMessage.innerHTML = `
+                <div class="flex flex-col items-center">
+                    <svg class="w-16 h-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" 
+                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        No matching ${entityType.replace('-', ' ')}
+                    </h3>
+                    <p class="text-gray-500 dark:text-gray-400 mb-4 max-w-md">
+                        No ${entityType.replace('-', ' ')} found with the current search and filter criteria. 
+                        Try adjusting your search terms or clearing some filters.
+                    </p>
+                    <button onclick="clearAllFilters('${entityType}')" 
+                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900 dark:text-indigo-200 dark:hover:bg-indigo-800 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                        Clear All Filters
+                    </button>
+                </div>
+            `;
+            
+            // Insert after table
+            const table = tableContainer.querySelector('table');
+            if (table) {
+                table.parentNode.insertBefore(emptyMessage, table.nextSibling);
+            } else {
+                tableContainer.appendChild(emptyMessage);
+            }
+        }
+        emptyMessage.style.display = 'block';
+    } else if (emptyMessage) {
+        emptyMessage.style.display = 'none';
+    }
+}
+
+/**
+ * Initialize unified search and filter for a specific entity type
+ * @param {string} entityType - Entity type to initialize
+ */
+function initializeUnifiedSearch(entityType) {
+    try {
+        // Initialize state
+        SearchState.reset(entityType);
+        
+        // Set up search input listener with debounce
+        const searchInput = safeGetElement(`${entityType}-search-input`);
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => {
+                debouncedSearch(entityType, e.target.value);
+            });
+        }
+        
+        // Set up tag filter listener  
+        const tagFilter = safeGetElement(`${entityType}-tag-filter`);
+        if (tagFilter) {
+            tagFilter.addEventListener('input', (e) => {
+                const tags = e.target.value.split(',').map(t => t.trim()).filter(t => t);
+                const searchText = searchInput ? searchInput.value : '';
+                applyUnifiedFilters(entityType, searchText, tags);
+            });
+        }
+        
+        // Update available tags
+        updateAvailableTags(entityType);
+        
+        console.log(`Initialized unified search for ${entityType}`);
+        
+    } catch (error) {
+        console.error(`Error initializing unified search for ${entityType}:`, error);
+    }
+}
+
+// Expose unified search functions globally
+window.applyUnifiedFilters = applyUnifiedFilters;
+window.debouncedSearch = debouncedSearch;
+window.clearSearch = clearSearch;
+window.clearAllFilters = clearAllFilters;
+window.initializeUnifiedSearch = initializeUnifiedSearch;
+
+// ===================================================================
+// UNIFIED SEARCH INITIALIZATION & INTEGRATION
+// ===================================================================
+
+/**
+ * Initialize unified search for all supported entity types
+ */
+function initializeAllUnifiedSearch() {
+    const entityTypes = ['catalog', 'gateways', 'tools', 'prompts', 'resources', 'a2a-agents'];
+    
+    entityTypes.forEach(entityType => {
+        try {
+            // Only initialize if the panel exists
+            const panel = safeGetElement(`${entityType}-panel`);
+            if (panel) {
+                initializeUnifiedSearch(entityType);
+                
+                // Set up tab switching listeners to refresh search state
+                const tabButton = safeGetElement(`tab-${entityType === 'catalog' ? 'catalog' : entityType}`);
+                if (tabButton) {
+                    tabButton.addEventListener('click', () => {
+                        // Small delay to ensure tab content is visible
+                        setTimeout(() => {
+                            // Refresh available tags
+                            updateAvailableTags(entityType);
+                            // Re-apply any active filters
+                            const searchInput = safeGetElement(`${entityType}-search-input`);
+                            const tagFilter = safeGetElement(`${entityType}-tag-filter`);
+                            if (searchInput || tagFilter) {
+                                const searchText = searchInput ? searchInput.value : '';
+                                const tags = tagFilter ? 
+                                    tagFilter.value.split(',').map(t => t.trim()).filter(t => t) : [];
+                                applyUnifiedFilters(entityType, searchText, tags);
+                            }
+                        }, 100);
+                    });
+                }
+            }
+        } catch (error) {
+            console.error(`Error initializing unified search for ${entityType}:`, error);
+        }
+    });
+    
+    console.log('Initialized unified search for all entity types');
+}
+
+/**
+ * Enhanced backward compatibility with existing filterServerTable function
+ */
+function enhancedFilterServerTable(searchText) {
+    // Use the new unified search for Virtual Servers
+    debouncedSearch('catalog', searchText, 100);
+}
+
+/**
+ * Enhanced backward compatibility with existing filterEntitiesByTags function
+ */
+function enhancedFilterEntitiesByTags(entityType, tagsInput) {
+    const searchInput = safeGetElement(`${entityType}-search-input`);
+    const searchText = searchInput ? searchInput.value : '';
+    const tags = tagsInput.split(',').map(tag => tag.trim().toLowerCase()).filter(tag => tag);
+    
+    // Use the new unified search
+    applyUnifiedFilters(entityType, searchText, tags);
+}
+
+/**
+ * Enhanced backward compatibility with existing clearTagFilter function
+ */
+function enhancedClearTagFilter(entityType) {
+    // Clear tag filter
+    const tagFilter = safeGetElement(`${entityType}-tag-filter`);
+    if (tagFilter) {
+        tagFilter.value = '';
+    }
+    
+    // Keep search but clear tags
+    const searchInput = safeGetElement(`${entityType}-search-input`);
+    const searchText = searchInput ? searchInput.value : '';
+    
+    applyUnifiedFilters(entityType, searchText, []);
+}
+
+// ===================================================================
+// OVERRIDE EXISTING FUNCTIONS FOR BACKWARD COMPATIBILITY
+// ===================================================================
+
+// Replace the original functions with enhanced versions
+window.filterServerTable = enhancedFilterServerTable;
+window.filterEntitiesByTags = enhancedFilterEntitiesByTags;
+window.clearTagFilter = enhancedClearTagFilter;
+
+// ===================================================================
+// INITIALIZATION ON PAGE LOAD
+// ===================================================================
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', function() {
+    // Initialize unified search after a short delay to ensure all elements are loaded
+    setTimeout(() => {
+        initializeAllUnifiedSearch();
+    }, 500);
+});
+
+// Re-initialize when HTMX content loads (for dynamically loaded tables)
+document.addEventListener('htmx:afterSwap', function(event) {
+    // Check if this was a table update
+    const target = event.target;
+    if (target && target.id) {
+        // Extract entity type from target ID (e.g., 'tools-table' -> 'tools')
+        const entityType = target.id.replace('-table', '').replace('-list-container', '');
+        
+        if (['catalog', 'gateways', 'tools', 'prompts', 'resources', 'a2a-agents'].includes(entityType)) {
+            // Re-initialize search for this entity type after HTMX content loads
+            setTimeout(() => {
+                initializeUnifiedSearch(entityType);
+            }, 100);
+        }
+    }
+});
