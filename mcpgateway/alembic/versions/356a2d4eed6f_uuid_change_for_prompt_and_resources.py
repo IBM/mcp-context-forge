@@ -6,14 +6,14 @@ Create Date: 2025-12-01 14:52:01.957105
 
 """
 
+# Standard
 from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
 import uuid
 
+# Third-Party
+from alembic import op
+import sqlalchemy as sa
 from sqlalchemy import text
-
 
 # revision identifiers, used by Alembic.
 revision: str = "356a2d4eed6f"
