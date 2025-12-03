@@ -1,10 +1,10 @@
 
-from io import BytesIO, TextIOBase
 import numpy as np
 import qrcode
 from qrcode.image.pil import PilImage
 from qrcode.image.svg import SvgImage
 from qrcode.image.base import BaseImage
+from collections.abc import Generator
 
 
 class SaveImageError(Exception):
@@ -27,17 +27,35 @@ class ImageAscii(BaseImage):
 
     def save(self, target):
         ascii_qr = self.to_string()
-        if isinstance(target, BytesIO):
-            try:
-                target.write(ascii_qr.encode("utf-8"))
-                return
-            except OSError as e:
-                raise SaveImageError(f"Error saving ASCII image: {e}") from e
         try:
             with open(target, "w", encoding="utf-8") as f:
                 f.write(ascii_qr)
         except Exception as e:
             raise SaveImageError(f"Error saving ASCII image: {e}") from e
+
+
+def index_image_generator(
+    data: list[str],
+    format: str = "png",
+    size: int = 10,
+    border: int = 4,
+    error_correction: str = "M",
+    fill_color: str = "black",
+    back_color: str = "white",
+) -> Generator[tuple[int, BaseImage], None, None]:
+    """Generator that yields indexed QR code images.
+    """
+    for index, item in enumerate(data):
+        img = create_qr_image(
+            data=item,
+            format=format,
+            error_correction=error_correction,
+            size=size,
+            border=border,
+            fill_color=fill_color,
+            back_color=back_color
+        )
+        yield index, img
 
 
 def create_qr_image(
@@ -59,12 +77,11 @@ def create_qr_image(
         "Q": qrcode.constants.ERROR_CORRECT_Q,
         "H": qrcode.constants.ERROR_CORRECT_H,
     }
-    format = "txt" if format == "ascii" else format
 
     factory_map = {
         "png": PilImage,
         "svg": SvgImage,
-        "txt": ImageAscii
+        "ascii": ImageAscii
     }
 
     qr = qrcode.QRCode(
