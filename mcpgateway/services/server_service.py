@@ -481,18 +481,13 @@ class ServerService:
                 elif resource_ids:
                     # Use single query for single item (maintains test compatibility)
                     resource_obj = db.get(DbResource, resource_ids[0])
-                # for resource_id in server_in.associated_resources:
-                #     if resource_id.strip() == "":
-                #         continue
-                #     # Resource IDs are stored as string UUID hex values, not integers.
-                #     resource_obj = db.get(DbResource, resource_id)
                     if not resource_obj:
                         raise ServerError(f"Resource with id {resource_ids[0]} does not exist.")
                     db_server.resources.append(resource_obj)
 
             # Associate prompts, verifying each exists using bulk query when multiple items
             if server_in.associated_prompts:
-                prompt_ids = [int(prompt_id.strip()) for prompt_id in server_in.associated_prompts if prompt_id.strip()]
+                prompt_ids = [prompt_id.strip() for prompt_id in server_in.associated_prompts if prompt_id.strip()]
                 if len(prompt_ids) > 1:
                     # Use bulk query for multiple items
                     prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
