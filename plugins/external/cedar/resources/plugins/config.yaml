@@ -100,4 +100,3 @@ plugin_settings:
   fail_on_plugin_error: false
   enable_plugin_api: true
   plugin_health_check_interval: 60
-
