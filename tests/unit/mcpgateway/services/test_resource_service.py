@@ -73,7 +73,7 @@ def mock_resource():
     resource.text_content = "Test content"
     resource.binary_content = None
     resource.size = 12
-    resource.is_active = True
+    resource.enabled = True
     resource.created_by = "test_user"
     resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
@@ -110,7 +110,7 @@ def mock_resource_template():
     resource.text_content = "Test content"
     resource.binary_content = None
     resource.size = 12
-    resource.is_active = True
+    resource.enabled = True
     resource.created_by = "test_user"
     resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
@@ -147,7 +147,7 @@ def mock_inactive_resource():
     resource.text_content = None
     resource.binary_content = None
     resource.size = 0
-    resource.is_active = False
+    resource.enabled = False
     resource.created_by = "test_user"
     resource.modified_by = "test_user"
     resource.created_at = datetime.now(timezone.utc)
@@ -230,7 +230,7 @@ class TestResourceRegistration:
                 description=sample_resource_create.description or "",
                 mime_type="text/plain",
                 size=len(sample_resource_create.content),
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -346,7 +346,7 @@ class TestResourceRegistration:
                 description=binary_resource.description or "",
                 mime_type="application/octet-stream",
                 size=len(binary_resource.content),
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -552,7 +552,7 @@ class TestResourceManagement:
                 description=mock_inactive_resource.description or "",
                 mime_type=mock_inactive_resource.mime_type or "text/plain",
                 size=mock_inactive_resource.size or 0,
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -570,7 +570,7 @@ class TestResourceManagement:
 
             result = await resource_service.toggle_resource_status(mock_db, 2, activate=True)
 
-            assert mock_inactive_resource.is_active is True
+            assert mock_inactive_resource.enabled is True
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -586,7 +586,7 @@ class TestResourceManagement:
                 description=mock_resource.description,
                 mime_type=mock_resource.mime_type,
                 size=mock_resource.size,
-                is_active=False,
+                enabled=False,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -604,7 +604,7 @@ class TestResourceManagement:
 
             result = await resource_service.toggle_resource_status(mock_db, 1, activate=False)
 
-            assert mock_resource.is_active is False
+            assert mock_resource.enabled is False
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -622,7 +622,7 @@ class TestResourceManagement:
     async def test_toggle_resource_status_no_change(self, resource_service, mock_db, mock_resource):
         """Test toggling status when no change needed."""
         mock_db.get.return_value = mock_resource
-        mock_resource.is_active = True
+        mock_resource.enabled = True
 
         with patch.object(resource_service, "_convert_resource_to_read") as mock_convert:
             mock_convert.return_value = ResourceRead(
@@ -632,7 +632,7 @@ class TestResourceManagement:
                 description=mock_resource.description,
                 mime_type=mock_resource.mime_type,
                 size=mock_resource.size,
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -673,7 +673,7 @@ class TestResourceManagement:
                 description="Updated description",
                 mime_type="text/plain",
                 size=15,  # length of "Updated content"
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -746,7 +746,7 @@ class TestResourceManagement:
                 description=mock_resource.description,
                 mime_type="application/octet-stream",
                 size=len(b"new binary content"),
-                is_active=True,
+                enabled=True,
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc),
                 template=None,
@@ -1355,7 +1355,7 @@ class TestNotifications:
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_activated"
-        assert call_args["data"]["is_active"] is True
+        assert call_args["data"]["enabled"] is True
 
     @pytest.mark.asyncio
     async def test_notify_resource_deactivated(self, resource_service, mock_resource):
@@ -1367,7 +1367,7 @@ class TestNotifications:
         resource_service._event_service.publish_event.assert_called_once()
         call_args = resource_service._event_service.publish_event.call_args[0][0]
         assert call_args["type"] == "resource_deactivated"
-        assert call_args["data"]["is_active"] is False
+        assert call_args["data"]["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_notify_resource_deleted(self, resource_service):
