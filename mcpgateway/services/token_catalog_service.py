@@ -478,7 +478,7 @@ class TokenCatalogService:
         membership = self.db.execute(
             select(UserRole)
             .join(Role, UserRole.role_id == Role.id)
-            .where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, Role.name == "team_owner", UserRole.is_active.is_(True)))
+            .where(and_(UserRole.scope == "team", UserRole.scope_id == team_id, UserRole.user_email == user_email, Role.name.in_(["team_owner", "team_admin"]), UserRole.is_active.is_(True)))
         ).scalar_one_or_none()
 
         if not membership:

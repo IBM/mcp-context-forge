@@ -516,7 +516,7 @@ class TeamManagementService:
         """
         try:
             # Validate role
-            valid_roles = ["team_owner", "team_member", "team_viewer"]
+            valid_roles = ["team_owner", "team_admin", "team_member", "team_viewer"]
             if new_role not in valid_roles:
                 raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
 

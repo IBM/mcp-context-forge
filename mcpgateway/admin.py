@@ -3085,11 +3085,9 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     """
     # Get user's teams (owned + member)
     user_teams = await team_service.get_user_teams(current_user.email)
-    LOGGER.info(f'{user_teams=}')
 
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
-    LOGGER.info(f'{public_teams=}')
 
     # Combine teams with relationship information
     all_teams = []
@@ -3932,7 +3930,7 @@ async def admin_add_team_member(
         user_email_from_jwt = get_user_email(user)
         if team.visibility == "private":
             user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-            if user_role != "team_owner":
+            if user_role not in ["team_owner", "team_admin"]:
                 return HTMLResponse(content='<div class="text-red-500">Only team owners can add members to private teams. Use the invitation system instead.</div>', status_code=403)
 
         form = await request.form()
@@ -4013,7 +4011,7 @@ async def admin_update_team_member_role(
         # Only team owners can modify member roles
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "team_owner":
+        if user_role not in ["team_owner", "team_admin"]:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can modify member roles</div>', status_code=403)
 
         form = await request.form()
@@ -4098,7 +4096,7 @@ async def admin_remove_team_member(
         # Only team owners can remove members
         user_email_from_jwt = get_user_email(user)
         user_role = await team_service.get_user_role_in_team(user_email_from_jwt, team_id)
-        if user_role != "team_owner":
+        if user_role not in ["team_owner", "team_admin"]:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can remove members</div>', status_code=403)
 
         form = await request.form()
@@ -4392,7 +4390,7 @@ async def admin_list_join_requests(
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
+        if user_role not in ["team_owner", "team_admin"]:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can view join requests</div>', status_code=403)
 
         # Get join requests
@@ -4474,7 +4472,7 @@ async def admin_approve_join_request(
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
+        if user_role not in ["team_owner", "team_admin"]:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can approve join requests</div>', status_code=403)
 
         # Approve join request
@@ -4533,7 +4531,7 @@ async def admin_reject_join_request(
 
         # Verify team ownership
         user_role = await team_service.get_user_role_in_team(user_email, team_id)
-        if user_role != "team_owner":
+        if user_role not in ["team_owner", "team_admin"]:
             return HTMLResponse(content='<div class="text-red-500">Only team owners can reject join requests</div>', status_code=403)
 
         # Reject join request
