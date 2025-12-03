@@ -3109,7 +3109,6 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         relationship_data = {"team": team, "relationship": "join", "member_count": team.get_member_count(), "pending_request": pending_request}
         all_teams.append(relationship_data)
 
-    LOGGER.info(f'{all_teams=}')
     # Generate HTML for unified team view
     teams_html = ""
     for item in all_teams:
@@ -3121,9 +3120,9 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         # Relationship badge - special handling for personal teams
         if team.is_personal:
             badge_html = '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-300">PERSONAL</span>'
-        elif relationship == "team_owner":
+        elif relationship in ["team_owner", "team_admin"]:
             badge_html = (
-                '<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">OWNER</span>'
+                f'<span class="relationship-badge inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{relationship.replace("team_", "").upper()}</span>'
             )
         elif relationship == "team_member":
             badge_html = (
@@ -3142,6 +3141,8 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
             subtitle = "Your personal team • Private workspace"
         elif relationship == "team_owner":
             subtitle = "You own this team"
+        elif relationship == "team_admin":
+            subtitle = f"You are an admin • Owner: {team.created_by}"
         elif relationship == "team_member":
             subtitle = f"You are a member • Owner: {team.created_by}"
         else:  # join
@@ -3161,7 +3162,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
                 </span>
             </div>
             """
-        elif relationship == "team_owner":
+        elif relationship in ["team_owner", "team_admin"]:
             delete_button = f'<button data-team-id="{team.id}" data-team-name="{safe_team_name}" onclick="deleteTeamSafe(this)" class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">Delete Team</button>'
             join_requests_button = (
                 f'<button data-team-id="{team.id}" onclick="viewJoinRequestsSafe(this)" class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">Join Requests</button>'
@@ -3481,7 +3482,7 @@ async def admin_view_team_members(
 
         # Check if current user is team owner
         current_user_role = [role.role.name for role in members if role.user_email == user_email][0]
-        is_team_owner = current_user_role == "team_owner"
+        is_team_owner = current_user_role in ["team_owner", "team_admin"]
 
         # Build member table with inline role editing for team owners
         members_html = """
@@ -3509,7 +3510,8 @@ async def admin_view_team_members(
                         hx-swap="innerHTML"
                         hx-trigger="change">
                         <option value="team_member" {"selected" if member.role.name == "team_member" else ""}>Member</option>
-                        <option value="team_owner" {"selected" if memberrole.name == "team_owner" else ""}>Owner</option>
+                        <option value="team_member" {"selected" if member.role.name == "team_admin" else ""}>Admin</option>
+                        <option value="team_owner" {"selected" if member.role.name == "team_owner" else ""}>Owner</option>
                     </select>
                 """
             else:
@@ -3552,7 +3554,7 @@ async def admin_view_team_members(
                     <div class="flex items-center space-x-4 flex-1">
                         <div class="flex-shrink-0">
                             <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member.user_email.upper()}</span>
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member.user_email[0].upper()}</span>
                             </div>
                         </div>
                         <div class="min-w-0 flex-1">
@@ -3641,6 +3643,7 @@ async def admin_view_team_members(
                                     <select name="role" required
                                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                                         <option value="team_member">Member</option>
+                                        <option value="team_admin">Admin</option>
                                         <option value="team_owner">Owner</option>
                                     </select>
                                 </div>
