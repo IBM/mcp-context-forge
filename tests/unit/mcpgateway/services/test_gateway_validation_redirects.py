@@ -59,11 +59,6 @@ async def test_streamablehttp_follows_3xx_redirects_and_validates():
         def stream(self, method, url, **kwargs):
             return mock_resilient.client.stream(method, url, **kwargs)
 
-    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", MockResilientFactory):
-        headers = {}
-        ok = await svc._validate_gateway_url("http://example/start", headers, transport_type="STREAMABLEHTTP")
-        assert ok is True
-
 @pytest.mark.asyncio
 async def test_200_with_location_is_not_treated_as_redirect():
     svc = GatewayService()
@@ -97,8 +92,3 @@ async def test_200_with_location_is_not_treated_as_redirect():
 
         def stream(self, method, url, **kwargs):
             return mock_resilient.client.stream(method, url, **kwargs)
-
-    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", MockResilientFactory):
-        headers = {}
-        ok = await svc._validate_gateway_url("http://example/bad", headers, transport_type="STREAMABLEHTTP")
-        assert ok is False

@@ -14,16 +14,15 @@ MCP Gateway supports multiple database backends with full feature parity across 
 |-------------|---------------|--------------------------------------------------------------|--------------------------------|
 | SQLite      | ✅ Full       | `sqlite:///./mcp.db`                                        | Default, file-based            |
 | PostgreSQL  | ✅ Full       | `postgresql://postgres:changeme@localhost:5432/mcp`         | Recommended for production     |
-| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 12.0+ |
+| MariaDB     | ✅ Full       | `mysql+pymysql://mysql:changeme@localhost:3306/mcp`         | **36+ tables**, MariaDB 10.6+ |
 | MySQL       | ✅ Full       | `mysql+pymysql://admin:changeme@localhost:3306/mcp`         | Alternative MySQL variant      |
-| MongoDB     | ✅ Full       | `mongodb://admin:changeme@localhost:27017/mcp`              | NoSQL document store           |
 
 ### MariaDB/MySQL Setup Details
 
 !!! success "MariaDB & MySQL Full Support"
     MariaDB and MySQL are **fully supported** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** have been resolved for MariaDB/MySQL compatibility
     - Complete feature parity with SQLite and PostgreSQL
     - Supports all MCP Gateway features including federation, caching, and A2A agents
@@ -154,9 +153,8 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 ```bash
 # Database connection (choose one)
 DATABASE_URL=sqlite:///./mcp.db                                        # SQLite (default)
-DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MySQL
+DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp          # MariaDB/MySQL
 DATABASE_URL=postgresql://postgres:changeme@localhost:5432/mcp          # PostgreSQL
-DATABASE_URL=mongodb://admin:changeme@localhost:27017/mcp               # MongoDB
 
 # Connection pool settings (optional)
 DB_POOL_SIZE=200
@@ -224,6 +222,7 @@ AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
 # Core Features
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_UI_AIRGAPPED=false          # Use local CDN assets for airgapped deployments
 MCPGATEWAY_BULK_IMPORT_ENABLED=true
 MCPGATEWAY_BULK_IMPORT_MAX_TOOLS=200
 
@@ -238,6 +237,33 @@ MCPGATEWAY_A2A_METRICS_ENABLED=true
 FEDERATION_ENABLED=true
 FEDERATION_DISCOVERY=true
 FEDERATION_PEERS=["https://gateway-1.internal", "https://gateway-2.internal"]
+```
+
+### Airgapped Deployments
+
+For environments without internet access, the Admin UI can be configured to use local CDN assets instead of external CDNs.
+
+```bash
+# Enable airgapped mode (loads CSS/JS from local files)
+MCPGATEWAY_UI_AIRGAPPED=true
+```
+
+!!! info "Airgapped Mode Features"
+    When `MCPGATEWAY_UI_AIRGAPPED=true`:
+
+    - All CSS and JavaScript libraries are loaded from local files
+    - No external CDN connections required (Tailwind, HTMX, CodeMirror, Alpine.js, Chart.js)
+    - Assets are automatically downloaded during container build
+    - Total asset size: ~932KB
+    - Full UI functionality maintained
+
+!!! warning "Container Build Required"
+    Airgapped mode requires building with `Containerfile.lite` which automatically downloads all CDN assets during the build process. The assets are not included in the Git repository.
+
+**Container Build Example:**
+```bash
+docker build -f Containerfile.lite -t mcpgateway:airgapped .
+docker run -e MCPGATEWAY_UI_AIRGAPPED=true -p 4444:4444 mcpgateway:airgapped
 ```
 
 ### Caching Configuration

@@ -74,9 +74,6 @@ class TestGatewayResourcesPrompts:
             mock_prompts_response.prompts = [mock_prompt]
             mock_session_instance.list_prompts.return_value = mock_prompts_response
 
-            # Mock _validate_gateway_url to return True
-            service._validate_gateway_url = AsyncMock(return_value=True)
-
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", {"Authorization": "Bearer token"}, "SSE")
 
@@ -133,9 +130,6 @@ class TestGatewayResourcesPrompts:
             mock_tool.model_dump.return_value = {"name": "test_tool", "description": "Test tool", "inputSchema": {}}
             mock_tools_response.tools = [mock_tool]
             mock_session_instance.list_tools.return_value = mock_tools_response
-
-            # Mock _validate_gateway_url to return True
-            service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")
@@ -195,9 +189,6 @@ class TestGatewayResourcesPrompts:
 
             # Mock prompts response - failure
             mock_session_instance.list_prompts.side_effect = Exception("Failed to fetch prompts")
-
-            # Mock _validate_gateway_url to return True
-            service._validate_gateway_url = AsyncMock(return_value=True)
 
             # Execute
             capabilities, tools, resources, prompts = await service._initialize_gateway("http://test.example.com", None, "SSE")

@@ -20,7 +20,7 @@ function handleAddPassthrough() {
             queryDiv.className = "mb-4";
             queryDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(queryDiv);
         }
@@ -29,7 +29,7 @@ function handleAddPassthrough() {
             headerDiv.className = "mb-4";
             headerDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
+                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
             `;
             passthroughContainer.appendChild(headerDiv);
         }
@@ -38,7 +38,7 @@ function handleAddPassthrough() {
             timeoutDiv.className = "mb-4";
             timeoutDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
+                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
             `;
             passthroughContainer.appendChild(timeoutDiv);
         }
@@ -47,7 +47,7 @@ function handleAddPassthrough() {
             exposeDiv.className = "mb-4";
             exposeDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
+                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
                     <option value="true" selected>True</option>
                     <option value="false">False</option>
                 </select>
@@ -59,7 +59,7 @@ function handleAddPassthrough() {
             allowlistDiv.className = "mb-4";
             allowlistDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
+                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
             `;
             passthroughContainer.appendChild(allowlistDiv);
         }
@@ -68,7 +68,7 @@ function handleAddPassthrough() {
             pluginPreDiv.className = "mb-4";
             pluginPreDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPreDiv);
         }
@@ -77,7 +77,7 @@ function handleAddPassthrough() {
             pluginPostDiv.className = "mb-4";
             pluginPostDiv.innerHTML = `
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
+                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
             `;
             passthroughContainer.appendChild(pluginPostDiv);
         }
@@ -803,6 +803,7 @@ async function loadMetricsInternal() {
             data = {}; // Use empty object as fallback
         }
 
+        console.log("Metrics data received:", data);
         displayMetrics(data);
         console.log("✓ Metrics loaded successfully");
     } catch (error) {
@@ -919,7 +920,7 @@ function hideMetricsLoading() {
  */
 function showMetricsError(error) {
     // Only show error in the aggregated metrics section, not the entire panel
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+    const aggregatedSection = safeGetElement("aggregated-metrics-content");
     if (aggregatedSection) {
         const errorDiv = document.createElement("div");
         errorDiv.className = "text-center p-8";
@@ -988,16 +989,63 @@ function showMetricsPlaceholder() {
 // ENHANCED METRICS DISPLAY with Complete System Overview
 // ===================================================================
 
-function displayMetrics(data) {
-    const aggregatedSection = safeGetElement("aggregated-metrics-section");
+function displayMetrics(data, retryCount = 0) {
+    console.log("displayMetrics called with:", data, "retry:", retryCount);
+
+    // Ensure parent sections exist, create container if missing
+    const metricsPanel = document.getElementById("metrics-panel");
+    const aggregatedSection = document.getElementById(
+        "aggregated-metrics-section",
+    );
+    let aggregatedContent = document.getElementById(
+        "aggregated-metrics-content",
+    );
+
+    console.log("Panel check:", {
+        metricsPanel: !!metricsPanel,
+        metricsPanelHidden: metricsPanel?.classList.contains("hidden"),
+        aggregatedSection: !!aggregatedSection,
+        aggregatedContent: !!aggregatedContent,
+    });
+
     if (!aggregatedSection) {
-        console.error("Aggregated metrics section element not found");
+        if (retryCount < 10) {
+            console.error(
+                `Aggregated metrics section missing, retrying (${retryCount + 1}/10) in 100ms`,
+            );
+            setTimeout(() => displayMetrics(data, retryCount + 1), 100);
+            return;
+        }
+        console.error(
+            "Aggregated metrics section not found after retries; cannot render metrics",
+        );
         return;
     }
+
+    if (!aggregatedContent) {
+        console.warn(
+            "Aggregated metrics content container missing; creating fallback container",
+        );
+        aggregatedContent = document.createElement("div");
+        aggregatedContent.id = "aggregated-metrics-content";
+        aggregatedContent.className =
+            "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
+
+        // Insert before chart if present, otherwise append to section
+        const chartElement = aggregatedSection.querySelector("#metricsChart");
+        if (chartElement && chartElement.parentElement === aggregatedSection) {
+            aggregatedSection.insertBefore(aggregatedContent, chartElement);
+        } else {
+            aggregatedSection.appendChild(aggregatedContent);
+        }
+    }
+
+    console.log("aggregated-metrics-content element ready:", aggregatedContent);
 
     try {
         // FIX: Handle completely empty data
         if (!data || Object.keys(data).length === 0) {
+            console.warn("Empty or null data received");
             const emptyStateDiv = document.createElement("div");
             emptyStateDiv.className = "text-center p-8 text-gray-500";
             emptyStateDiv.innerHTML = `
@@ -1010,8 +1058,8 @@ function displayMetrics(data) {
                     Refresh Metrics
                 </button>
             `;
-            aggregatedSection.innerHTML = "";
-            aggregatedSection.appendChild(emptyStateDiv);
+            aggregatedContent.innerHTML = "";
+            aggregatedContent.appendChild(emptyStateDiv);
             return;
         }
 
@@ -1019,74 +1067,78 @@ function displayMetrics(data) {
         const mainContainer = document.createElement("div");
         mainContainer.className = "space-y-6";
 
-        // System overview section (top priority display)
-        if (data.system || data.overall) {
-            const systemData = data.system || data.overall || {};
-            const systemSummary = createSystemSummaryCard(systemData);
-            mainContainer.appendChild(systemSummary);
-        }
-
-        // Key Performance Indicators section
+        // Key Performance Indicators section - render to dedicated container above Top Performers
         const kpiData = extractKPIData(data);
         if (Object.keys(kpiData).length > 0) {
-            const kpiSection = createKPISection(kpiData);
-            mainContainer.appendChild(kpiSection);
+            const kpiContainer = document.getElementById("kpi-metrics-section");
+            if (kpiContainer) {
+                const kpiSection = createKPISection(kpiData);
+                kpiContainer.innerHTML = "";
+                kpiContainer.appendChild(kpiSection);
+            }
         }
 
-        // Top Performers section (before individual metrics)
-        if (data.topPerformers || data.top) {
-            const topData = data.topPerformers || data.top;
-            // const topSection = createTopPerformersSection(topData);
-            const topSection = createEnhancedTopPerformersSection(topData);
+        // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
+        // (see <details> sections with top-tools-content, top-resources-content, etc. in admin.html)
+        // Legacy JavaScript widget is disabled to prevent duplicate rendering
+        console.log(
+            "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget",
+        );
 
-            mainContainer.appendChild(topSection);
+        // Individual metrics grid - render inside Top Performers section
+        const individualMetricsGrid = document.getElementById(
+            "individual-metrics-grid",
+        );
+        if (individualMetricsGrid) {
+            const metricsContainer = document.createElement("div");
+            metricsContainer.className =
+                "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
+
+            // Tools metrics
+            if (data.tools) {
+                const toolsCard = createMetricsCard("Tools", data.tools);
+                metricsContainer.appendChild(toolsCard);
+            }
+
+            // Resources metrics
+            if (data.resources) {
+                const resourcesCard = createMetricsCard(
+                    "Resources",
+                    data.resources,
+                );
+                metricsContainer.appendChild(resourcesCard);
+            }
+
+            // Prompts metrics
+            if (data.prompts) {
+                const promptsCard = createMetricsCard("Prompts", data.prompts);
+                metricsContainer.appendChild(promptsCard);
+            }
+
+            // Gateways metrics
+            if (data.gateways) {
+                const gatewaysCard = createMetricsCard(
+                    "Gateways",
+                    data.gateways,
+                );
+                metricsContainer.appendChild(gatewaysCard);
+            }
+
+            // Servers metrics
+            if (data.servers) {
+                const serversCard = createMetricsCard("Servers", data.servers);
+                metricsContainer.appendChild(serversCard);
+            }
+
+            // Performance metrics
+            if (data.performance) {
+                const performanceCard = createPerformanceCard(data.performance);
+                metricsContainer.appendChild(performanceCard);
+            }
+
+            individualMetricsGrid.innerHTML = "";
+            individualMetricsGrid.appendChild(metricsContainer);
         }
-
-        // Individual metrics grid for all components
-        const metricsContainer = document.createElement("div");
-        metricsContainer.className =
-            "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
-
-        // Tools metrics
-        if (data.tools) {
-            const toolsCard = createMetricsCard("Tools", data.tools);
-            metricsContainer.appendChild(toolsCard);
-        }
-
-        // Resources metrics
-        if (data.resources) {
-            const resourcesCard = createMetricsCard(
-                "Resources",
-                data.resources,
-            );
-            metricsContainer.appendChild(resourcesCard);
-        }
-
-        // Prompts metrics
-        if (data.prompts) {
-            const promptsCard = createMetricsCard("Prompts", data.prompts);
-            metricsContainer.appendChild(promptsCard);
-        }
-
-        // Gateways metrics
-        if (data.gateways) {
-            const gatewaysCard = createMetricsCard("Gateways", data.gateways);
-            metricsContainer.appendChild(gatewaysCard);
-        }
-
-        // Servers metrics
-        if (data.servers) {
-            const serversCard = createMetricsCard("Servers", data.servers);
-            metricsContainer.appendChild(serversCard);
-        }
-
-        // Performance metrics
-        if (data.performance) {
-            const performanceCard = createPerformanceCard(data.performance);
-            metricsContainer.appendChild(performanceCard);
-        }
-
-        mainContainer.appendChild(metricsContainer);
 
         // Recent activity section (bottom)
         if (data.recentActivity || data.recent) {
@@ -1096,8 +1148,8 @@ function displayMetrics(data) {
         }
 
         // Safe content replacement
-        aggregatedSection.innerHTML = "";
-        aggregatedSection.appendChild(mainContainer);
+        aggregatedContent.innerHTML = "";
+        aggregatedContent.appendChild(mainContainer);
 
         console.log("✓ Enhanced metrics display rendered successfully");
     } catch (error) {
@@ -1107,8 +1159,65 @@ function displayMetrics(data) {
 }
 
 /**
+ * Switch between Top Performers tabs
+ */
+// eslint-disable-next-line no-unused-vars
+function switchTopPerformersTab(entityType) {
+    // Hide all panels
+    const panels = document.querySelectorAll(".top-performers-panel");
+    panels.forEach((panel) => panel.classList.add("hidden"));
+
+    // Remove active state from all tabs
+    const tabs = document.querySelectorAll(".top-performers-tab");
+    tabs.forEach((tab) => {
+        tab.classList.remove(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+        tab.classList.add(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+    });
+
+    // Show selected panel
+    const selectedPanel = document.getElementById(
+        `top-performers-panel-${entityType}`,
+    );
+    if (selectedPanel) {
+        selectedPanel.classList.remove("hidden");
+    }
+
+    // Activate selected tab
+    const selectedTab = document.getElementById(
+        `top-performers-tab-${entityType}`,
+    );
+    if (selectedTab) {
+        selectedTab.classList.remove(
+            "border-transparent",
+            "text-gray-500",
+            "hover:text-gray-700",
+            "hover:border-gray-300",
+            "dark:text-gray-400",
+            "dark:hover:text-gray-300",
+        );
+        selectedTab.classList.add(
+            "border-indigo-500",
+            "text-indigo-600",
+            "dark:text-indigo-400",
+        );
+    }
+}
+
+/**
  * SECURITY: Create system summary card with safe HTML generation
  */
+// eslint-disable-next-line no-unused-vars
 function createSystemSummaryCard(systemData) {
     try {
         const card = document.createElement("div");
@@ -1532,7 +1641,8 @@ function updateKPICards(kpiData) {
 //         return document.createElement("div"); // Safe fallback
 //     }
 // }
-function createEnhancedTopPerformersSection(topData) {
+// Removed unused function createEnhancedTopPerformersSection - handled by HTMX
+/* function createEnhancedTopPerformersSection(topData) {
     try {
         const section = document.createElement("div");
         section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
@@ -1613,7 +1723,7 @@ function createEnhancedTopPerformersSection(topData) {
         showErrorMessage("Failed to load top performers section");
         return document.createElement("div");
     }
-}
+} */
 function calculateSuccessRate(item) {
     // API returns successRate directly as a percentage
     if (item.successRate !== undefined && item.successRate !== null) {
@@ -1668,6 +1778,7 @@ function formatLastUsed(timestamp) {
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTopPerformersTable(entityType, data, isActive) {
     const panel = document.createElement("div");
     panel.id = `top-${entityType}-panel`;
@@ -1819,17 +1930,25 @@ function createTopPerformersTable(entityType, data, isActive) {
     tableWrapper.appendChild(table);
     panel.appendChild(tableWrapper);
 
-    // Pagination controls (if needed)
+    // Pagination controls (using standard Alpine.js pattern)
     if (data.length > 5) {
-        const pagination = createPaginationControls(data.length, 5, (page) => {
-            updateTableRows(panel, entityType, data, page);
-        });
+        const pagination = createStandardPaginationControls(
+            `top-${entityType}`,
+            data.length,
+            5,
+            (page, perPage) => {
+                updateTableRows(tbody, entityType, data, page, perPage);
+            },
+            },
+        );
         panel.appendChild(pagination);
     }
 
     return panel;
 }
+*/
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function createTab(type, isActive) {
     const tab = document.createElement("a");
     tab.href = "#";
@@ -1849,7 +1968,9 @@ function createTab(type, isActive) {
     };
     return tab;
 }
+*/
 
+// eslint-disable-next-line no-unused-vars
 function showTopPerformerTab(activeType) {
     const entityTypes = [
         "tools",
@@ -1878,40 +1999,285 @@ function showTopPerformerTab(activeType) {
     });
 }
 
-function createPaginationControls(totalItems, itemsPerPage, onPageChange) {
-    const pagination = document.createElement("div");
-    pagination.className = "mt-4 flex justify-end space-x-2";
-    const totalPages = Math.ceil(totalItems / itemsPerPage);
+/**
+ * Creates standard Alpine.js-based pagination controls matching the pattern
+ * used in Tools/Resources/Prompts sections for visual consistency
+ */
+// eslint-disable-next-line no-unused-vars
+function createStandardPaginationControls(
+    idPrefix,
+    totalItems,
+    initialPerPage,
+    onPageChange,
+) {
+    const wrapper = document.createElement("div");
 
-    for (let page = 1; page <= totalPages; page++) {
-        const button = document.createElement("button");
-        button.className = `px-3 py-1 rounded ${page === 1 ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
-        button.textContent = page;
-        button.onclick = () => {
-            onPageChange(page);
-            pagination.querySelectorAll("button").forEach((btn) => {
-                btn.className = `px-3 py-1 rounded ${btn === button ? "bg-indigo-600 text-white" : "bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300"}`;
-            });
-        };
-        pagination.appendChild(button);
-    }
+    // Store callback in a global namespace for Alpine.js to access
+    const callbackId = `pagination_${idPrefix}_${Date.now()}`;
+    window[callbackId] = onPageChange;
 
-    return pagination;
+    wrapper.setAttribute(
+        "x-data",
+        `{
+        currentPage: 1,
+        perPage: ${initialPerPage},
+        totalItems: ${totalItems},
+        callbackId: '${callbackId}',
+        get totalPages() { return Math.ceil(this.totalItems / this.perPage); },
+        get hasNext() { return this.currentPage < this.totalPages; },
+        get hasPrev() { return this.currentPage > 1; },
+        get startItem() { return Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems); },
+        get endItem() { return Math.min(this.currentPage * this.perPage, this.totalItems); },
+
+        goToPage(page) {
+            if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
+                this.currentPage = page;
+                window[this.callbackId](this.currentPage, this.perPage);
+            }
+        },
+        prevPage() {
+            if (this.hasPrev) { this.goToPage(this.currentPage - 1); }
+        },
+        nextPage() {
+            if (this.hasNext) { this.goToPage(this.currentPage + 1); }
+        },
+        changePageSize(size) {
+            this.perPage = parseInt(size);
+            this.currentPage = 1;
+            window[this.callbackId](this.currentPage, this.perPage);
+        }
+    }`,
+    );
+    wrapper.className =
+        "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
+
+    wrapper.innerHTML = `
+        <!-- Page Size Selector -->
+        <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <span>Show:</span>
+            <select
+                x-model="perPage"
+                @change="changePageSize($event.target.value)"
+                class="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+            >
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+            <span>per page</span>
+        </div>
+
+        <!-- Page Info -->
+        <div class="text-sm text-gray-700 dark:text-gray-300">
+            <span x-text="\`Showing \${startItem} - \${endItem} of \${totalItems.toLocaleString()} items\`"></span>
+        </div>
+
+        <!-- Page Navigation -->
+        <div class="flex items-center gap-2">
+            <!-- First Page Button -->
+            <button
+                @click="goToPage(1)"
+                :disabled="!hasPrev"
+                :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="First Page"
+            >
+                ⏮️
+            </button>
+
+            <!-- Previous Page Button -->
+            <button
+                @click="prevPage()"
+                :disabled="!hasPrev"
+                :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Previous Page"
+            >
+                ◀️ Prev
+            </button>
+
+            <!-- Page Number Display -->
+            <div class="flex items-center gap-1">
+                <!-- Show first page if not near start -->
+                <template x-if="currentPage > 3">
+                    <button
+                        @click="goToPage(1)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                    >
+                        1
+                    </button>
+                </template>
+
+                <!-- Ellipsis if needed -->
+                <template x-if="currentPage > 4">
+                    <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+                </template>
+
+                <!-- Show 2 pages before current -->
+                <template x-for="i in [currentPage - 2, currentPage - 1]" :key="i">
+                    <button
+                        x-show="i >= 1"
+                        @click="goToPage(i)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="i"
+                    ></button>
+                </template>
+
+                <!-- Current Page (highlighted) -->
+                <button
+                    class="px-3 py-1 rounded-md border-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 font-semibold text-indigo-700 dark:text-indigo-300"
+                    disabled
+                    x-text="currentPage"
+                ></button>
+
+                <!-- Show 2 pages after current -->
+                <template x-for="i in [currentPage + 1, currentPage + 2]" :key="i">
+                    <button
+                        x-show="i <= totalPages"
+                        @click="goToPage(i)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="i"
+                    ></button>
+                </template>
+
+                <!-- Ellipsis if needed -->
+                <template x-if="currentPage < totalPages - 3">
+                    <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+                </template>
+
+                <!-- Show last page if not near end -->
+                <template x-if="currentPage < totalPages - 2">
+                    <button
+                        @click="goToPage(totalPages)"
+                        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+                        x-text="totalPages"
+                    ></button>
+                </template>
+            </div>
+
+            <!-- Next Page Button -->
+            <button
+                @click="nextPage()"
+                :disabled="!hasNext"
+                :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Next Page"
+            >
+                Next ▶️
+            </button>
+
+            <!-- Last Page Button -->
+            <button
+                @click="goToPage(totalPages)"
+                :disabled="!hasNext"
+                :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+                class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+                title="Last Page"
+            >
+                ⏭️
+            </button>
+        </div>
+    `;
+    return wrapper;
 }
 
-function updateTableRows(panel, entityType, data, page) {
-    const tbody = panel.querySelector("tbody");
+// eslint-disable-next-line no-unused-vars
+function updateTableRows(tbody, entityType, data, page, perPage) {
     tbody.innerHTML = "";
-    const start = (page - 1) * 5;
-    const paginatedData = data.slice(start, start + 5);
+    const start = (page - 1) * perPage;
+    const paginatedData = data.slice(start, start + perPage);
 
-    paginatedData.forEach((item, index) => {
+    paginatedData.forEach((item, localIndex) => {
+        const globalIndex = start + localIndex; // Calculate global rank
         const row = document.createElement("tr");
-        // ... (same row creation logic as in createTopPerformersTable)
+        row.className =
+            "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200";
+
+        // Rank
+        const rankCell = document.createElement("td");
+        rankCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
+        const rankBadge = document.createElement("span");
+        rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${
+            globalIndex === 0
+                ? "bg-yellow-400 text-yellow-900"
+                : globalIndex === 1
+                  ? "bg-gray-300 text-gray-900"
+                  : globalIndex === 2
+                    ? "bg-orange-400 text-orange-900"
+                    : "bg-gray-100 text-gray-600"
+        }`;
+        rankBadge.textContent = globalIndex + 1;
+        rankBadge.setAttribute("aria-label", `Rank ${globalIndex + 1}`);
+        rankCell.appendChild(rankBadge);
+        row.appendChild(rankCell);
+
+        // Name (clickable for drill-down)
+        const nameCell = document.createElement("td");
+        nameCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
+        nameCell.textContent = escapeHtml(item.name || "Unknown");
+        nameCell.setAttribute("role", "button");
+        nameCell.setAttribute(
+            "aria-label",
+            `View details for ${item.name || "Unknown"}`,
+        );
+        row.appendChild(nameCell);
+
+        // Executions
+        const execCell = document.createElement("td");
+        execCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        execCell.textContent = formatNumber(
+            item.executionCount || item.execution_count || item.executions || 0,
+        );
+        row.appendChild(execCell);
+
+        // Avg Response Time
+        const avgTimeCell = document.createElement("td");
+        avgTimeCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        const avgTime = item.avg_response_time || item.avgResponseTime;
+        avgTimeCell.textContent = avgTime ? `${Math.round(avgTime)}ms` : "N/A";
+        row.appendChild(avgTimeCell);
+
+        // Success Rate
+        const successCell = document.createElement("td");
+        successCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
+        const successRate = calculateSuccessRate(item);
+        const successBadge = document.createElement("span");
+        successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+            successRate >= 95
+                ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+                : successRate >= 80
+                  ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+                  : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+        }`;
+        successBadge.textContent = `${successRate}%`;
+        successBadge.setAttribute(
+            "aria-label",
+            `Success rate: ${successRate}%`,
+        );
+        successCell.appendChild(successBadge);
+        row.appendChild(successCell);
+
+        // Last Used
+        const lastUsedCell = document.createElement("td");
+        lastUsedCell.className =
+            "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+        lastUsedCell.textContent = formatLastUsed(
+            item.last_execution || item.lastExecution,
+        );
+        row.appendChild(lastUsedCell);
+
         tbody.appendChild(row);
     });
 }
 
+/* Unused - part of commented createEnhancedTopPerformersSection
 function exportMetricsToCSV(topData) {
     const headers = [
         "Entity Type",
@@ -1958,6 +2324,7 @@ function exportMetricsToCSV(topData) {
     a.click();
     URL.revokeObjectURL(url);
 }
+*/
 
 /**
  * SECURITY: Create top item card with safe content handling
@@ -2189,6 +2556,7 @@ async function editTool(toolId) {
         }
 
         const tool = await response.json();
+
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -2236,6 +2604,10 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
+            );
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -2245,7 +2617,14 @@ async function editTool(toolId) {
         // Set tags field
         const tagsField = safeGetElement("edit-tool-tags");
         if (tagsField) {
-            tagsField.value = tool.tags ? tool.tags.join(", ") : "";
+            const rawTags = tool.tags
+                ? tool.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -2895,7 +3274,14 @@ async function editA2AAgent(agentId) {
         // Set tags field
         const tagsField = safeGetElement("a2a-agent-tags-edit");
         if (tagsField) {
-            tagsField.value = agent.tags ? agent.tags.join(", ") : "";
+            const rawTags = agent.tags
+                ? agent.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -3157,16 +3543,24 @@ function toggleA2AAuthFields(authType) {
 /**
  * SECURE: View Resource function with safe display
  */
-async function viewResource(resourceUri) {
+async function viewResource(resourceId) {
     try {
-        console.log(`Viewing resource: ${resourceUri}`);
+        console.log(`Viewing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}`,
+            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
         }
 
         const data = await response.json();
@@ -3523,7 +3917,14 @@ async function editResource(resourceUri) {
         // Set tags field
         const tagsField = safeGetElement("edit-resource-tags");
         if (tagsField) {
-            tagsField.value = resource.tags ? resource.tags.join(", ") : "";
+            const rawTags = resource.tags
+                ? resource.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (contentField) {
@@ -3625,7 +4026,11 @@ async function viewPrompt(promptName) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -3935,7 +4340,14 @@ async function editPrompt(promptId) {
         // Set tags field
         const tagsField = safeGetElement("edit-prompt-tags");
         if (tagsField) {
-            tagsField.value = prompt.tags ? prompt.tags.join(", ") : "";
+            const rawTags = prompt.tags
+                ? prompt.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (templateField) {
@@ -4244,7 +4656,14 @@ async function editGateway(gatewayId) {
         // Set tags field
         const tagsField = safeGetElement("edit-gateway-tags");
         if (tagsField) {
-            tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
+            const rawTags = gateway.tags
+                ? gateway.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -4602,7 +5021,11 @@ async function viewServer(serverId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -5082,7 +5505,14 @@ async function editServer(serverId) {
         // Set tags field
         const tagsField = safeGetElement("edit-server-tags");
         if (tagsField) {
-            tagsField.value = server.tags ? server.tags.join(", ") : "";
+            const rawTags = server.tags
+                ? server.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         // Set icon field
@@ -5126,8 +5556,20 @@ async function editServer(serverId) {
         }
 
         openModal("server-edit-modal");
+        // Initialize the select handlers for gateways, resources and prompts in the edit modal
+        // so that gateway changes will trigger filtering of associated items while editing.
+        if (document.getElementById("associatedEditGateways")) {
+            initGatewaySelect(
+                "associatedEditGateways",
+                "selectedEditGatewayPills",
+                "selectedEditGatewayWarning",
+                12,
+                "selectAllEditGatewayBtn",
+                "clearAllEditGatewayBtn",
+                "searchEditGateways",
+            );
+        }
 
-        // Initialize the select handlers for resources and prompts in the edit modal
         initResourceSelect(
             "edit-server-resources",
             "selectedEditResourcesPills",
@@ -5153,10 +5595,14 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
-            // Set associated tools checkboxes
-            const toolCheckboxes = document.querySelectorAll(
-                'input[name="associatedTools"]',
-            );
+            // Set associated tools checkboxes (scope to edit modal container only)
+            const editToolContainer =
+                document.getElementById("edit-server-tools");
+            const toolCheckboxes = editToolContainer
+                ? editToolContainer.querySelectorAll(
+                      'input[name="associatedTools"]',
+                  )
+                : document.querySelectorAll('input[name="associatedTools"]');
 
             toolCheckboxes.forEach((checkbox) => {
                 let isChecked = false;
@@ -5172,10 +5618,17 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated resources checkboxes
-            const resourceCheckboxes = document.querySelectorAll(
-                'input[name="associatedResources"]',
+            // Set associated resources checkboxes (scope to edit modal container only)
+            const editResourceContainer = document.getElementById(
+                "edit-server-resources",
             );
+            const resourceCheckboxes = editResourceContainer
+                ? editResourceContainer.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  )
+                : document.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5185,10 +5638,15 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated prompts checkboxes
-            const promptCheckboxes = document.querySelectorAll(
-                'input[name="associatedPrompts"]',
+            // Set associated prompts checkboxes (scope to edit modal container only)
+            const editPromptContainer = document.getElementById(
+                "edit-server-prompts",
             );
+            const promptCheckboxes = editPromptContainer
+                ? editPromptContainer.querySelectorAll(
+                      'input[name="associatedPrompts"]',
+                  )
+                : document.querySelectorAll('input[name="associatedPrompts"]');
 
             promptCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5260,10 +5718,11 @@ async function editServer(serverId) {
 
 // Helper function to set edit server associations
 function setEditServerAssociations(server) {
-    // Set associated tools checkboxes
-    const toolCheckboxes = document.querySelectorAll(
-        'input[name="associatedTools"]',
-    );
+    // Set associated tools checkboxes (scope to edit modal container only)
+    const toolContainer = document.getElementById("edit-server-tools");
+    const toolCheckboxes = toolContainer
+        ? toolContainer.querySelectorAll('input[name="associatedTools"]')
+        : document.querySelectorAll('input[name="associatedTools"]');
 
     if (toolCheckboxes.length === 0) {
         return;
@@ -5282,10 +5741,13 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated resources checkboxes
-    const resourceCheckboxes = document.querySelectorAll(
-        'input[name="associatedResources"]',
-    );
+    // Set associated resources checkboxes (scope to edit modal container only)
+    const resourceContainer = document.getElementById("edit-server-resources");
+    const resourceCheckboxes = resourceContainer
+        ? resourceContainer.querySelectorAll(
+              'input[name="associatedResources"]',
+          )
+        : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -5295,10 +5757,11 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated prompts checkboxes
-    const promptCheckboxes = document.querySelectorAll(
-        'input[name="associatedPrompts"]',
-    );
+    // Set associated prompts checkboxes (scope to edit modal container only)
+    const promptContainer = document.getElementById("edit-server-prompts");
+    const promptCheckboxes = promptContainer
+        ? promptContainer.querySelectorAll('input[name="associatedPrompts"]')
+        : document.querySelectorAll('input[name="associatedPrompts"]');
 
     promptCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -5893,7 +6356,7 @@ function showTab(tabName) {
 
                 if (tabName === "gateways") {
                     // Reload gateways list to show any newly registered servers
-                    const gatewaysSection = safeGetElement("gateways-section");
+                    const gatewaysSection = safeGetElement("gateways-panel");
                     if (gatewaysSection) {
                         const gatewaysTbody =
                             gatewaysSection.querySelector("tbody");
@@ -6320,7 +6783,7 @@ function createParameterForm(parameterCount) {
     nameInput.name = `param_name_${parameterCount}`;
     nameInput.required = true;
     nameInput.className =
-        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     // Add validation to name input
     nameInput.addEventListener("blur", function () {
@@ -6347,7 +6810,7 @@ function createParameterForm(parameterCount) {
     const typeSelect = document.createElement("select");
     typeSelect.name = `param_type_${parameterCount}`;
     typeSelect.className =
-        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
 
     const typeOptions = [
         { value: "string", text: "String" },
@@ -6383,7 +6846,7 @@ function createParameterForm(parameterCount) {
     const descTextarea = document.createElement("textarea");
     descTextarea.name = `param_description_${parameterCount}`;
     descTextarea.className =
-        "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
+        "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring focus:ring-indigo-200";
     descTextarea.rows = 2;
 
     descGroup.appendChild(descLabel);
@@ -6685,25 +7148,51 @@ function initToolSelect(
             newSelectBtn.textContent = "Selecting all tools...";
 
             try {
-                // Fetch all tool IDs from the server
-                const response = await fetch(
-                    `${window.ROOT_PATH}/admin/tools/ids`,
-                );
-                if (!response.ok) {
-                    throw new Error("Failed to fetch tool IDs");
-                }
-
-                const data = await response.json();
-                const allToolIds = data.tool_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                // Detect pagination/infinite-scroll controls for tools
+                const hasPaginationControls = !!document.getElementById(
+                    "tools-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='tools-scroll-trigger']",
+                );
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
+                let allToolIds = [];
+
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
+                    allToolIds = visibleCheckboxes.map((cb) => cb.value);
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
+                    const response = await fetch(
+                        `${window.ROOT_PATH}/admin/tools/ids${gatewayParam}`,
+                    );
+                    if (!response.ok) {
+                        throw new Error("Failed to fetch tool IDs");
+                    }
+                    const data = await response.json();
+                    allToolIds = data.tool_ids || [];
+                    // Check loaded checkboxes so UI shows selection where possible
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add a hidden input to indicate "select all" mode
-                // Remove any existing one first
                 let selectAllInput = container.querySelector(
                     'input[name="selectAllTools"]',
                 );
@@ -6966,20 +7455,49 @@ function initResourceSelect(
             newSelectBtn.textContent = "Selecting all resources...";
 
             try {
-                const resp = await fetch(
-                    `${window.ROOT_PATH}/admin/resources/ids`,
-                );
-                if (!resp.ok) {
-                    throw new Error("Failed to fetch resource IDs");
-                }
-                const data = await resp.json();
-                const allIds = data.resource_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                // Detect pagination/infinite-scroll controls for resources
+                const hasPaginationControls = !!document.getElementById(
+                    "resources-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='resources-scroll-trigger']",
+                );
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
+                let allIds = [];
+
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
+                    allIds = visibleCheckboxes.map((cb) => cb.value);
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
+                    const resp = await fetch(
+                        `${window.ROOT_PATH}/admin/resources/ids${gatewayParam}`,
+                    );
+                    if (!resp.ok) {
+                        throw new Error("Failed to fetch resource IDs");
+                    }
+                    const data = await resp.json();
+                    allIds = data.resource_ids || [];
+                    // If nothing visible (paginated), check loaded checkboxes
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add hidden select-all flag
                 let selectAllInput = container.querySelector(
@@ -7053,6 +7571,51 @@ function initResourceSelect(
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (err) {
                         console.error("Error updating allResourceIds:", err);
+                    }
+                }
+
+                // If we're in the edit-server-resources container, maintain the
+                // `data-server-resources` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-resources") {
+                    try {
+                        let serverResources = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-resources",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverResources = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-resources:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverResources.includes(idVal)) {
+                                    serverResources.push(idVal);
+                                }
+                            } else {
+                                serverResources = serverResources.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-resources",
+                                JSON.stringify(serverResources),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-resources:",
+                            err,
+                        );
                     }
                 }
 
@@ -7190,20 +7753,49 @@ function initPromptSelect(
             newSelectBtn.textContent = "Selecting all prompts...";
 
             try {
-                const resp = await fetch(
-                    `${window.ROOT_PATH}/admin/prompts/ids`,
-                );
-                if (!resp.ok) {
-                    throw new Error("Failed to fetch prompt IDs");
-                }
-                const data = await resp.json();
-                const allIds = data.prompt_ids || [];
-
-                // Check all currently loaded checkboxes
+                // Prefer full-set selection when pagination/infinite-scroll is present
                 const loadedCheckboxes = container.querySelectorAll(
                     'input[type="checkbox"]',
                 );
-                loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
+                    (cb) => cb.offsetParent !== null,
+                );
+
+                // Detect pagination/infinite-scroll controls for prompts
+                const hasPaginationControls = !!document.getElementById(
+                    "prompts-pagination-controls",
+                );
+                const hasScrollTrigger = !!document.querySelector(
+                    "[id^='prompts-scroll-trigger']",
+                );
+                const isPaginated = hasPaginationControls || hasScrollTrigger;
+
+                let allIds = [];
+
+                if (!isPaginated && visibleCheckboxes.length > 0) {
+                    // No pagination and some visible items => select visible set
+                    allIds = visibleCheckboxes.map((cb) => cb.value);
+                    visibleCheckboxes.forEach((cb) => (cb.checked = true));
+                } else {
+                    // Paginated (or no visible items) => fetch full set from server
+                    const selectedGatewayIds = getSelectedGatewayIds
+                        ? getSelectedGatewayIds()
+                        : [];
+                    const gatewayParam =
+                        selectedGatewayIds && selectedGatewayIds.length
+                            ? `?gateway_id=${encodeURIComponent(selectedGatewayIds.join(","))}`
+                            : "";
+                    const resp = await fetch(
+                        `${window.ROOT_PATH}/admin/prompts/ids${gatewayParam}`,
+                    );
+                    if (!resp.ok) {
+                        throw new Error("Failed to fetch prompt IDs");
+                    }
+                    const data = await resp.json();
+                    allIds = data.prompt_ids || [];
+                    // If nothing visible (paginated), check loaded checkboxes
+                    loadedCheckboxes.forEach((cb) => (cb.checked = true));
+                }
 
                 // Add hidden select-all flag
                 let selectAllInput = container.querySelector(
@@ -7280,11 +7872,827 @@ function initPromptSelect(
                     }
                 }
 
+                // If we're in the edit-server-prompts container, maintain the
+                // `data-server-prompts` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-prompts") {
+                    try {
+                        let serverPrompts = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-prompts",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverPrompts = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-prompts:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverPrompts.includes(idVal)) {
+                                    serverPrompts.push(idVal);
+                                }
+                            } else {
+                                serverPrompts = serverPrompts.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-prompts",
+                                JSON.stringify(serverPrompts),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-prompts:",
+                            err,
+                        );
+                    }
+                }
+
                 update();
             }
         });
     }
 }
+
+// ===================================================================
+// GATEWAY SELECT (Associated MCP Servers) - search/select/clear
+// ===================================================================
+function initGatewaySelect(
+    selectId = "associatedGateways",
+    pillsId = "selectedGatewayPills",
+    warnId = "selectedGatewayWarning",
+    max = 12,
+    selectBtnId = "selectAllGatewayBtn",
+    clearBtnId = "clearAllGatewayBtn",
+    searchInputId = "searchGateways",
+) {
+    const container = document.getElementById(selectId);
+    const pillsBox = document.getElementById(pillsId);
+    const warnBox = document.getElementById(warnId);
+    const clearBtn = clearBtnId ? document.getElementById(clearBtnId) : null;
+    const selectBtn = selectBtnId ? document.getElementById(selectBtnId) : null;
+    const searchInput = searchInputId
+        ? document.getElementById(searchInputId)
+        : null;
+
+    if (!container || !pillsBox || !warnBox) {
+        console.warn(
+            `Gateway select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
+        );
+        return;
+    }
+
+    const pillClasses =
+        "inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-900 dark:text-indigo-200";
+
+    // Search functionality
+    function applySearch() {
+        if (!searchInput) {
+            return;
+        }
+
+        try {
+            const query = searchInput.value.toLowerCase().trim();
+            const items = container.querySelectorAll(".tool-item");
+            let visibleCount = 0;
+
+            items.forEach((item) => {
+                const text = item.textContent.toLowerCase();
+                if (!query || text.includes(query)) {
+                    item.style.display = "";
+                    visibleCount++;
+                } else {
+                    item.style.display = "none";
+                }
+            });
+
+            // Update "no results" message if it exists
+            const noMsg = document.getElementById("noGatewayMessage");
+            const searchQuerySpan =
+                document.getElementById("searchQueryServers");
+
+            if (noMsg) {
+                if (query && visibleCount === 0) {
+                    noMsg.style.display = "block";
+                    if (searchQuerySpan) {
+                        searchQuerySpan.textContent = query;
+                    }
+                } else {
+                    noMsg.style.display = "none";
+                }
+            }
+        } catch (error) {
+            console.error("Error applying gateway search:", error);
+        }
+    }
+
+    // Bind search input
+    if (searchInput && !searchInput.dataset.searchBound) {
+        searchInput.addEventListener("input", applySearch);
+        searchInput.dataset.searchBound = "true";
+    }
+
+    function update() {
+        try {
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
+            const checked = Array.from(checkboxes).filter((cb) => cb.checked);
+
+            // Check if "Select All" mode is active
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllGateways"]',
+            );
+            const allIdsInput = container.querySelector(
+                'input[name="allGatewayIds"]',
+            );
+
+            let count = checked.length;
+
+            // If Select All mode is active, use the count from allGatewayIds
+            if (
+                selectAllInput &&
+                selectAllInput.value === "true" &&
+                allIdsInput
+            ) {
+                try {
+                    const allIds = JSON.parse(allIdsInput.value);
+                    count = allIds.length;
+                } catch (e) {
+                    console.error("Error parsing allGatewayIds:", e);
+                }
+            }
+
+            // Rebuild pills safely - show first 3, then summarize the rest
+            pillsBox.innerHTML = "";
+            const maxPillsToShow = 3;
+
+            checked.slice(0, maxPillsToShow).forEach((cb) => {
+                const span = document.createElement("span");
+                span.className = pillClasses;
+                span.textContent =
+                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                pillsBox.appendChild(span);
+            });
+
+            // If more than maxPillsToShow, show a summary pill
+            if (count > maxPillsToShow) {
+                const span = document.createElement("span");
+                span.className = pillClasses + " cursor-pointer";
+                span.title = "Click to see all selected gateways";
+                const remaining = count - maxPillsToShow;
+                span.textContent = `+${remaining} more`;
+                pillsBox.appendChild(span);
+            }
+
+            // Warning when > max
+            if (count > max) {
+                warnBox.textContent = `Selected ${count} MCP servers. Selecting more than ${max} servers may impact performance.`;
+            } else {
+                warnBox.textContent = "";
+            }
+        } catch (error) {
+            console.error("Error updating gateway select:", error);
+        }
+    }
+
+    // Remove old event listeners by cloning and replacing (preserving ID)
+    if (clearBtn && !clearBtn.dataset.listenerAttached) {
+        clearBtn.dataset.listenerAttached = "true";
+        const newClearBtn = clearBtn.cloneNode(true);
+        newClearBtn.dataset.listenerAttached = "true";
+        clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
+
+        newClearBtn.addEventListener("click", () => {
+            const checkboxes = container.querySelectorAll(
+                'input[type="checkbox"]',
+            );
+            checkboxes.forEach((cb) => (cb.checked = false));
+
+            // Clear the "select all" flag
+            const selectAllInput = container.querySelector(
+                'input[name="selectAllGateways"]',
+            );
+            if (selectAllInput) {
+                selectAllInput.remove();
+            }
+            const allIdsInput = container.querySelector(
+                'input[name="allGatewayIds"]',
+            );
+            if (allIdsInput) {
+                allIdsInput.remove();
+            }
+
+            update();
+
+            // Reload associated items after clearing selection
+            reloadAssociatedItems();
+        });
+    }
+
+    if (selectBtn && !selectBtn.dataset.listenerAttached) {
+        selectBtn.dataset.listenerAttached = "true";
+        const newSelectBtn = selectBtn.cloneNode(true);
+        newSelectBtn.dataset.listenerAttached = "true";
+        selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
+
+        newSelectBtn.addEventListener("click", async () => {
+            // Disable button and show loading state
+            const originalText = newSelectBtn.textContent;
+            newSelectBtn.disabled = true;
+            newSelectBtn.textContent = "Selecting all gateways...";
+
+            try {
+                // Fetch all gateway IDs from the server
+                const response = await fetch(
+                    `${window.ROOT_PATH}/admin/gateways/ids`,
+                );
+                if (!response.ok) {
+                    throw new Error("Failed to fetch gateway IDs");
+                }
+
+                const data = await response.json();
+                const allGatewayIds = data.gateway_ids || [];
+
+                // Apply search filter first to determine which items are visible
+                applySearch();
+
+                // Check only currently visible checkboxes
+                const loadedCheckboxes = container.querySelectorAll(
+                    'input[type="checkbox"]',
+                );
+                loadedCheckboxes.forEach((cb) => {
+                    const parent = cb.closest(".tool-item") || cb.parentElement;
+                    const isVisible =
+                        parent && getComputedStyle(parent).display !== "none";
+                    if (isVisible) {
+                        cb.checked = true;
+                    }
+                });
+
+                // Add a hidden input to indicate "select all" mode
+                // Remove any existing one first
+                let selectAllInput = container.querySelector(
+                    'input[name="selectAllGateways"]',
+                );
+                if (!selectAllInput) {
+                    selectAllInput = document.createElement("input");
+                    selectAllInput.type = "hidden";
+                    selectAllInput.name = "selectAllGateways";
+                    container.appendChild(selectAllInput);
+                }
+                selectAllInput.value = "true";
+
+                // Also store the IDs as a JSON array for the backend
+                // Ensure the special 'null' sentinel is included when selecting all
+                try {
+                    const nullCheckbox = container.querySelector(
+                        'input[data-gateway-null="true"]',
+                    );
+                    if (nullCheckbox) {
+                        // Include the literal string "null" so server-side
+                        // `any(gid.lower() == 'null' ...)` evaluates to true.
+                        if (!allGatewayIds.includes("null")) {
+                            allGatewayIds.push("null");
+                        }
+                    }
+                } catch (err) {
+                    console.error(
+                        "Error ensuring null sentinel in gateway IDs:",
+                        err,
+                    );
+                }
+
+                let allIdsInput = container.querySelector(
+                    'input[name="allGatewayIds"]',
+                );
+                if (!allIdsInput) {
+                    allIdsInput = document.createElement("input");
+                    allIdsInput.type = "hidden";
+                    allIdsInput.name = "allGatewayIds";
+                    container.appendChild(allIdsInput);
+                }
+                allIdsInput.value = JSON.stringify(allGatewayIds);
+
+                update();
+
+                newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
+                setTimeout(() => {
+                    newSelectBtn.textContent = originalText;
+                }, 2000);
+
+                // Reload associated items after selecting all
+                reloadAssociatedItems();
+            } catch (error) {
+                console.error("Error in Select All:", error);
+                alert("Failed to select all gateways. Please try again.");
+                newSelectBtn.disabled = false;
+                newSelectBtn.textContent = originalText;
+            } finally {
+                newSelectBtn.disabled = false;
+            }
+        });
+    }
+
+    update(); // Initial render
+
+    // Attach change listeners to checkboxes (using delegation for dynamic content)
+    if (!container.dataset.changeListenerAttached) {
+        container.dataset.changeListenerAttached = "true";
+        container.addEventListener("change", (e) => {
+            if (e.target.type === "checkbox") {
+                // Log gateway_id when checkbox is clicked
+                // Normalize the special null-gateway checkbox to the literal string "null"
+                let gatewayId = e.target.value;
+                if (
+                    e.target.dataset &&
+                    e.target.dataset.gatewayNull === "true"
+                ) {
+                    gatewayId = "null";
+                }
+                const gatewayName =
+                    e.target.nextElementSibling?.textContent?.trim() ||
+                    "Unknown";
+                const isChecked = e.target.checked;
+
+                console.log(
+                    `[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`,
+                );
+
+                // Check if we're in "Select All" mode
+                const selectAllInput = container.querySelector(
+                    'input[name="selectAllGateways"]',
+                );
+                const allIdsInput = container.querySelector(
+                    'input[name="allGatewayIds"]',
+                );
+
+                if (
+                    selectAllInput &&
+                    selectAllInput.value === "true" &&
+                    allIdsInput
+                ) {
+                    // User is manually checking/unchecking after Select All
+                    // Update the allGatewayIds array to reflect the change
+                    try {
+                        let allIds = JSON.parse(allIdsInput.value);
+
+                        if (e.target.checked) {
+                            // Add the ID if it's not already there
+                            if (!allIds.includes(gatewayId)) {
+                                allIds.push(gatewayId);
+                            }
+                        } else {
+                            // Remove the ID from the array
+                            allIds = allIds.filter((id) => id !== gatewayId);
+                        }
+
+                        // Update the hidden field
+                        allIdsInput.value = JSON.stringify(allIds);
+                    } catch (error) {
+                        console.error("Error updating allGatewayIds:", error);
+                    }
+                }
+
+                // No exclusivity: allow the special 'null' gateway (RestTool/Prompts/Resources) to be
+                // selected together with real gateways. Server-side filtering already
+                // supports mixed lists like `gateway_id=abc,null`.
+
+                update();
+
+                // Trigger reload of associated tools, resources, and prompts with selected gateway filter
+                reloadAssociatedItems();
+            }
+        });
+    }
+
+    // Initial render
+    applySearch();
+    update();
+}
+
+/**
+ * Get all selected gateway IDs from the gateway selection container
+ * @returns {string[]} Array of selected gateway IDs
+ */
+function getSelectedGatewayIds() {
+    // Prefer the gateway selection belonging to the currently active form.
+    // If the edit-server modal is open, use the edit modal's gateway container
+    // (`associatedEditGateways`). Otherwise use the create form container
+    // (`associatedGateways`). This allows the same filtering logic to work
+    // for both Add and Edit flows.
+    let container = document.getElementById("associatedGateways");
+    const editContainer = document.getElementById("associatedEditGateways");
+
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+
+    if (isEditModalOpen && editContainer) {
+        container = editContainer;
+    } else if (
+        editContainer &&
+        editContainer.offsetParent !== null &&
+        !container
+    ) {
+        // If edit container is visible (e.g. modal rendered) and associatedGateways
+        // not present, prefer edit container.
+        container = editContainer;
+    }
+
+    console.log(
+        "[Gateway Selection DEBUG] Container used:",
+        container ? container.id : null,
+    );
+
+    if (!container) {
+        console.warn(
+            "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
+        );
+        return [];
+    }
+
+    // Check if "Select All" mode is active
+    const selectAllInput = container.querySelector(
+        "input[name='selectAllGateways']",
+    );
+    const allIdsInput = container.querySelector("input[name='allGatewayIds']");
+
+    console.log(
+        "[Gateway Selection DEBUG] Select All mode:",
+        selectAllInput?.value === "true",
+    );
+    if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
+        try {
+            const allIds = JSON.parse(allIdsInput.value);
+            console.log(
+                `[Gateway Selection DEBUG] Returning all gateway IDs (${allIds.length} total)`,
+            );
+            return allIds;
+        } catch (error) {
+            console.error(
+                "[Gateway Selection DEBUG] Error parsing allGatewayIds:",
+                error,
+            );
+        }
+    }
+
+    // Otherwise, get all checked checkboxes. If the special 'null' gateway
+    // checkbox is selected, include the sentinel 'null' alongside any real
+    // gateway ids. This allows requests like `gateway_id=abc,null` which the
+    // server interprets as (gateway_id = abc) OR (gateway_id IS NULL).
+    const checkboxes = container.querySelectorAll(
+        "input[type='checkbox']:checked",
+    );
+
+    const selectedIds = Array.from(checkboxes)
+        .map((cb) => {
+            // Convert the special null-gateway checkbox to the literal 'null'
+            if (cb.dataset?.gatewayNull === "true") {
+                return "null";
+            }
+            return cb.value;
+        })
+        // Filter out any empty values to avoid sending empty CSV entries
+        .filter((id) => id !== "" && id !== null && id !== undefined);
+
+    console.log(
+        `[Gateway Selection DEBUG] Found ${selectedIds.length} checked gateway checkboxes`,
+    );
+    console.log("[Gateway Selection DEBUG] Selected gateway IDs:", selectedIds);
+
+    return selectedIds;
+}
+
+/**
+ * Reload associated tools, resources, and prompts filtered by selected gateway IDs
+ */
+function reloadAssociatedItems() {
+    const selectedGatewayIds = getSelectedGatewayIds();
+    // Join all selected IDs (including the special 'null' sentinel if present)
+    // so the server receives a combined filter like `gateway_id=abc,null`.
+    let gatewayIdParam = "";
+    if (selectedGatewayIds.length > 0) {
+        gatewayIdParam = selectedGatewayIds.join(",");
+    }
+
+    console.log(
+        `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
+    );
+    console.log(
+        "[Filter Update DEBUG] Selected gateway IDs array:",
+        selectedGatewayIds,
+    );
+
+    // Determine whether to reload the 'create server' containers (associated*)
+    // or the 'edit server' containers (edit-server-*). Prefer the edit
+    // containers when the edit modal is open or the edit-gateway selector
+    // exists and is visible.
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+    const editGateways = document.getElementById("associatedEditGateways");
+
+    const useEditContainers =
+        isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
+
+    const toolsContainerId = useEditContainers
+        ? "edit-server-tools"
+        : "associatedTools";
+    const resourcesContainerId = useEditContainers
+        ? "edit-server-resources"
+        : "associatedResources";
+    const promptsContainerId = useEditContainers
+        ? "edit-server-prompts"
+        : "associatedPrompts";
+
+    // Reload tools
+    const toolsContainer = document.getElementById(toolsContainerId);
+    if (toolsContainer) {
+        const toolsUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+        console.log(
+            "[Filter Update DEBUG] Tools URL:",
+            toolsUrl,
+            "-> target:",
+            `#${toolsContainerId}`,
+        );
+
+        // Use HTMX to reload the content into the chosen container
+        if (window.htmx) {
+            htmx.ajax("GET", toolsUrl, {
+                target: `#${toolsContainerId}`,
+                swap: "innerHTML",
+            })
+                .then(() => {
+                    console.log(
+                        "[Filter Update DEBUG] Tools reloaded successfully",
+                    );
+                    // Re-initialize the tool select after content is loaded
+                    const pillsId = useEditContainers
+                        ? "selectedEditToolsPills"
+                        : "selectedToolsPills";
+                    const warnId = useEditContainers
+                        ? "selectedEditToolsWarning"
+                        : "selectedToolsWarning";
+                    const selectBtn = useEditContainers
+                        ? "selectAllEditToolsBtn"
+                        : "selectAllToolsBtn";
+                    const clearBtn = useEditContainers
+                        ? "clearAllEditToolsBtn"
+                        : "clearAllToolsBtn";
+
+                    initToolSelect(
+                        toolsContainerId,
+                        pillsId,
+                        warnId,
+                        6,
+                        selectBtn,
+                        clearBtn,
+                    );
+                })
+                .catch((err) => {
+                    console.error(
+                        "[Filter Update DEBUG] Tools reload failed:",
+                        err,
+                    );
+                });
+        } else {
+            console.error(
+                "[Filter Update DEBUG] HTMX not available for tools reload",
+            );
+        }
+    } else {
+        console.warn(
+            "[Filter Update DEBUG] Tools container not found ->",
+            toolsContainerId,
+        );
+    }
+
+    // Reload resources - use fetch directly to avoid HTMX race conditions
+    const resourcesContainer = document.getElementById(resourcesContainerId);
+    if (resourcesContainer) {
+        const resourcesUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+        console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
+
+        // Use fetch() directly instead of htmx.ajax() to avoid race conditions
+        fetch(resourcesUrl, {
+            method: "GET",
+            headers: {
+                "HX-Request": "true",
+                "HX-Current-URL": window.location.href,
+            },
+        })
+            .then((response) => {
+                if (!response.ok) {
+                    throw new Error(
+                        `HTTP ${response.status}: ${response.statusText}`,
+                    );
+                }
+                return response.text();
+            })
+            .then((html) => {
+                console.log(
+                    "[Filter Update DEBUG] Resources fetch successful, HTML length:",
+                    html.length,
+                );
+                resourcesContainer.innerHTML = html;
+                // If HTMX is available, process the newly-inserted HTML so hx-*
+                // triggers (like the infinite-scroll 'intersect' trigger) are
+                // initialized. To avoid HTMX re-triggering the container's
+                // own `hx-get`/`hx-trigger="load"` (which would issue a second
+                // request without the gateway filter), temporarily remove those
+                // attributes from the container while we call `htmx.process`.
+                if (window.htmx && typeof window.htmx.process === "function") {
+                    try {
+                        // Backup and remove attributes that could auto-fire
+                        const hadHxGet =
+                            resourcesContainer.hasAttribute("hx-get");
+                        const hadHxTrigger =
+                            resourcesContainer.hasAttribute("hx-trigger");
+                        const oldHxGet =
+                            resourcesContainer.getAttribute("hx-get");
+                        const oldHxTrigger =
+                            resourcesContainer.getAttribute("hx-trigger");
+
+                        if (hadHxGet) {
+                            resourcesContainer.removeAttribute("hx-get");
+                        }
+                        if (hadHxTrigger) {
+                            resourcesContainer.removeAttribute("hx-trigger");
+                        }
+
+                        // Process only the newly-inserted inner nodes to initialize
+                        // any hx-* behavior (infinite scroll, after-swap hooks, etc.)
+                        window.htmx.process(resourcesContainer);
+
+                        // Restore original attributes so the container retains its
+                        // declarative behavior for future operations, but don't
+                        // re-process (we already processed child nodes).
+                        if (hadHxGet && oldHxGet !== null) {
+                            resourcesContainer.setAttribute("hx-get", oldHxGet);
+                        }
+                        if (hadHxTrigger && oldHxTrigger !== null) {
+                            resourcesContainer.setAttribute(
+                                "hx-trigger",
+                                oldHxTrigger,
+                            );
+                        }
+
+                        console.log(
+                            "[Filter Update DEBUG] htmx.process called on resources container (attributes temporarily removed)",
+                        );
+                    } catch (e) {
+                        console.warn(
+                            "[Filter Update DEBUG] htmx.process failed:",
+                            e,
+                        );
+                    }
+                }
+
+                // Re-initialize the resource select after content is loaded
+                const resPills = useEditContainers
+                    ? "selectedEditResourcesPills"
+                    : "selectedResourcesPills";
+                const resWarn = useEditContainers
+                    ? "selectedEditResourcesWarning"
+                    : "selectedResourcesWarning";
+                const resSelectBtn = useEditContainers
+                    ? "selectAllEditResourcesBtn"
+                    : "selectAllResourcesBtn";
+                const resClearBtn = useEditContainers
+                    ? "clearAllEditResourcesBtn"
+                    : "clearAllResourcesBtn";
+
+                initResourceSelect(
+                    resourcesContainerId,
+                    resPills,
+                    resWarn,
+                    6,
+                    resSelectBtn,
+                    resClearBtn,
+                );
+                // Re-apply server-associated resource selections so selections
+                // persist across gateway-filtered reloads. The resources partial
+                // replaces checkbox inputs; use the container's
+                // `data-server-resources` attribute (set when opening edit modal)
+                // to restore checked state.
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const associated = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(associated) &&
+                            associated.length > 0
+                        ) {
+                            const resourceCheckboxes =
+                                resourcesContainer.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedResources"]',
+                                );
+                            resourceCheckboxes.forEach((cb) => {
+                                const val = parseInt(cb.value);
+                                if (
+                                    !Number.isNaN(val) &&
+                                    associated.includes(val)
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger change so pills and counts update
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            resourcesContainer.dispatchEvent(event);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Error restoring associated resources:", e);
+                }
+                console.log(
+                    "[Filter Update DEBUG] Resources reloaded successfully via fetch",
+                );
+            })
+            .catch((err) => {
+                console.error(
+                    "[Filter Update DEBUG] Resources reload failed:",
+                    err,
+                );
+            });
+    } else {
+        console.warn("[Filter Update DEBUG] Resources container not found");
+    }
+
+    // Reload prompts
+    const promptsContainer = document.getElementById(promptsContainerId);
+    if (promptsContainer) {
+        const promptsUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+        if (window.htmx) {
+            htmx.ajax("GET", promptsUrl, {
+                target: `#${promptsContainerId}`,
+                swap: "innerHTML",
+            }).then(() => {
+                // Re-initialize the prompt select after content is loaded
+                const pPills = useEditContainers
+                    ? "selectedEditPromptsPills"
+                    : "selectedPromptsPills";
+                const pWarn = useEditContainers
+                    ? "selectedEditPromptsWarning"
+                    : "selectedPromptsWarning";
+                const pSelectBtn = useEditContainers
+                    ? "selectAllEditPromptsBtn"
+                    : "selectAllPromptsBtn";
+                const pClearBtn = useEditContainers
+                    ? "clearAllEditPromptsBtn"
+                    : "clearAllPromptsBtn";
+
+                initPromptSelect(
+                    promptsContainerId,
+                    pPills,
+                    pWarn,
+                    6,
+                    pSelectBtn,
+                    pClearBtn,
+                );
+            });
+        }
+    }
+}
+
+// Initialize gateway select on page load
+document.addEventListener("DOMContentLoaded", function () {
+    // Initialize for the create server form
+    if (document.getElementById("associatedGateways")) {
+        initGatewaySelect(
+            "associatedGateways",
+            "selectedGatewayPills",
+            "selectedGatewayWarning",
+            12,
+            "selectAllGatewayBtn",
+            "clearAllGatewayBtn",
+            "searchGateways",
+        );
+    }
+});
 
 // ===================================================================
 // INACTIVE ITEMS HANDLING
@@ -7640,7 +9048,7 @@ async function testTool(toolId) {
                         input.required =
                             schema.required && schema.required.includes(key);
                         input.className =
-                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                         const itemTypes = Array.isArray(prop.items?.anyOf)
                             ? prop.items.anyOf.map((t) => t.type)
@@ -7745,7 +9153,7 @@ async function testTool(toolId) {
                     fieldInput.className =
                         prop.type === "boolean"
                             ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                            : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
 
                     // Set default values here
                     if (prop.default !== undefined) {
@@ -7814,6 +9222,1752 @@ async function testTool(toolId) {
             testButton.disabled = false;
             testButton.textContent = "Test";
             testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function loadTools() {
+    const toolBody = document.getElementById("toolBody");
+    console.log("Loading tools...");
+    try {
+        if (toolBody !== null) {
+            toolBody.innerHTML = ` 
+                <tr>
+                    <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
+                </tr>
+                `;
+            const response = await fetch(`${window.ROOT_PATH}/tools`, {
+                method: "GET",
+            });
+
+            if (!response.ok) {
+                throw new Error("Failed to load tools");
+            }
+            const tools = await response.json(); // 👈 expect JSON array
+            console.log("Fetched tools:", tools);
+
+            //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
+
+            if (!tools.length) {
+                toolBody.innerHTML = `
+                <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
+                `;
+                return;
+            }
+
+            // ✅ Build HTML rows dynamically
+            const rows = tools
+                .map((tool) => {
+                    const { id, name, integrationType, enabled, reachable } =
+                        tool;
+                    let statusText = "";
+                    let statusClass = "";
+                    if (enabled && reachable) {
+                        statusText = "Online";
+                        statusClass = "bg-green-100 text-green-800";
+                    } else if (enabled) {
+                        statusText = "Offline";
+                        statusClass = "bg-yellow-100 text-yellow-800";
+                    } else {
+                        statusText = "Inactive";
+                        statusClass = "bg-red-100 text-red-800";
+                    }
+                    return `
+                <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
+                    <td class="px-4 py-3">
+                    <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                            data-tool="${name}###${id}">
+                    </td>
+                    <td class="px-4 py-3">${name}</td>
+                    <td class="px-4 py-3">${integrationType || "-"}</td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
+                        ${statusText}
+                    </span>
+                    </td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                        <button onclick="enrichTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
+                        Enrich
+                        </button>
+                        <button onclick="generateToolTestCases('${id}')"
+                        class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
+                        Generate Test Cases
+                        </button>
+                        <button onclick="validateTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
+                        Validate
+                        </button>
+                        <button onclick="viewTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
+                        View
+                        </button>
+                        <button onclick="editTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
+                        Edit
+                        </button>
+                    </div>
+                    </td>
+                </tr>
+                `;
+                })
+                .join("");
+            toolBody.innerHTML = rows;
+        }
+    } catch (error) {
+        console.error("Error loading tools:", error);
+        if (toolBody !== null) {
+            toolBody.innerHTML = `
+                <tr>
+                <td colspan="5" class="text-center py-4 text-red-500">Failed to load tools. Please try again.</td>
+                </tr>
+            `;
+        }
+    }
+}
+
+document.addEventListener("DOMContentLoaded", loadTools);
+
+async function enrichTool(toolId) {
+    try {
+        console.log(`Enriching tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const enrichButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (enrichButton) {
+            if (enrichButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            enrichButton.disabled = true;
+            enrichButton.textContent = "Enriching...";
+            enrichButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        // 6. MAKE REQUEST with increased timeout
+        //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const response = await fetchWithTimeout(
+            `/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+
+        const data = await response.json();
+        enrichButton.disabled = false;
+        enrichButton.textContent = "Enrich";
+        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        console.log(`Tool ${toolId} enriched successfully`, data);
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+
+        const newDesc = safeGetElement("view-new-description");
+        const oldDesc = safeGetElement("view-old-description");
+
+        if (newDesc) {
+            newDesc.textContent = data.enriched_desc || "";
+        }
+        if (oldDesc) {
+            oldDesc.textContent =
+                data.original_desc.slice(0, data.original_desc.indexOf("*")) ||
+                "";
+        }
+        openModal("description-view-modal");
+        // showSuccessMessage(`Tool enriched successfully`);
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Enrich";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    const toolBody = document.getElementById("toolBody");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const searchBox = document.getElementById("searchBox");
+
+    let selectedTools = [];
+    let selectedToolIds = [];
+
+    if (toolBody !== null) {
+        // ✅ Use event delegation for dynamically added checkboxes
+        toolBody.addEventListener("change", (event) => {
+            const cb = event.target;
+            if (cb.classList.contains("tool-checkbox")) {
+                const toolName = cb.getAttribute("data-tool");
+                if (cb.checked) {
+                    if (!selectedTools.includes(toolName)) {
+                        selectedTools.push(toolName.split("###")[0]);
+                        selectedToolIds.push(toolName.split("###")[1]);
+                    }
+                } else {
+                    selectedTools = selectedTools.filter(
+                        (t) => t !== toolName.split("###")[0],
+                    );
+                    selectedToolIds = selectedToolIds.filter(
+                        (t) => t !== toolName.split("###")[1],
+                    );
+                }
+                updateSelectedList();
+            }
+        });
+    }
+
+    function updateSelectedList() {
+        selectedList.innerHTML = "";
+        if (selectedTools.length === 0) {
+            selectedList.textContent = "No tools selected";
+        } else {
+            selectedTools.forEach((tool) => {
+                const item = document.createElement("div");
+                item.className =
+                    "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+                item.innerHTML = `
+                    <span>${tool}</span>
+                    <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
+                `;
+                item.querySelector(".remove-btn").addEventListener(
+                    "click",
+                    () => {
+                        selectedTools = selectedTools.filter((t) => t !== tool);
+                        const box = document.querySelector(`
+                            .tool-checkbox[data-tool="${tool}"]`);
+                        if (box) {
+                            box.checked = false;
+                        }
+                        updateSelectedList();
+                    },
+                );
+                selectedList.appendChild(item);
+            });
+        }
+        selectedCount.textContent = selectedTools.length;
+    }
+
+    // --- Search logic ---
+    if (searchBox !== null) {
+        searchBox.addEventListener("input", () => {
+            const query = searchBox.value.trim().toLowerCase();
+            document.querySelectorAll("#toolBody tr").forEach((row) => {
+                const name = row.dataset.name;
+                row.style.display = name.includes(query) ? "" : "none";
+            });
+        });
+    }
+    // Generic API call for Enrich/Validate
+    async function callEnrichment() {
+        // const selectedTools = getSelectedTools();
+
+        if (selectedTools.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
+        try {
+            console.log(selectedToolIds);
+            selectedToolIds.forEach((toolId) => {
+                console.log(toolId);
+                fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+                    method: "POST",
+                    headers: {
+                        "Cache-Control": "no-cache",
+                        Pragma: "no-cache",
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ tool_id: toolId }),
+                });
+            });
+            showSuccessMessage("Tool description enrichment has started.");
+            // Uncheck all checkboxes
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
+
+            // Empty the selected tools array
+            selectedTools = [];
+            selectedToolIds = [];
+
+            // Update the selected tools list UI
+            updateSelectedList();
+        } catch (err) {
+            //   responseDiv.textContent = `❌ Error: ${err.message}`;
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
+    }
+
+    function openTestCaseModal() {
+        if (selectedToolIds.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
+
+        // Show modal
+        document
+            .getElementById("bulk-testcase-gen-modal")
+            .classList.remove("hidden");
+        document
+            .getElementById("bulk-generate-btn")
+            .addEventListener("click", generateBulkTestCases);
+    }
+
+    async function generateBulkTestCases() {
+        const testCases = parseInt(
+            document.getElementById("gen-bulk-testcase-count").value,
+        );
+        const variations = parseInt(
+            document.getElementById("gen-bulk-nl-variation-count").value,
+        );
+
+        if (!testCases || !variations || testCases < 1 || variations < 1) {
+            showErrorMessage(
+                "⚠️ Please enter valid numbers for test cases and variations.",
+            );
+            return;
+        }
+
+        try {
+            for (const toolId of selectedToolIds) {
+                fetch(
+                    `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Cache-Control": "no-cache",
+                            Pragma: "no-cache",
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ tool_id: toolId }),
+                    },
+                );
+            }
+            showSuccessMessage(
+                "Test case generation for tool validation has started.",
+            );
+            // Reset selections
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
+            selectedTools = [];
+            selectedToolIds = [];
+            updateSelectedList();
+
+            // Close modal immediately after clicking Generate
+            closeModal("bulk-testcase-gen-modal");
+        } catch (err) {
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
+    }
+    window.generateBulkTestCases = generateBulkTestCases;
+
+    function clearAllSelections() {
+        // Uncheck all checkboxes
+        document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+            cb.checked = false;
+        });
+
+        // Empty the selected tools array
+        selectedTools = [];
+        selectedToolIds = [];
+
+        // Update the selected tools list UI
+        updateSelectedList();
+    }
+    // Button listeners
+    const enrichToolsBtn = document.getElementById("enrichToolsBtn");
+
+    if (enrichToolsBtn !== null) {
+        document
+            .getElementById("enrichToolsBtn")
+            .addEventListener("click", () => callEnrichment());
+        document
+            .getElementById("validateToolsBtn")
+            .addEventListener("click", () => openTestCaseModal());
+        document
+            .getElementById("clearToolsBtn")
+            .addEventListener("click", () => clearAllSelections());
+    }
+});
+
+async function generateToolTestCases(toolId) {
+    try {
+        console.log(`Generating Test cases for tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const tcgButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (tcgButton) {
+            if (tcgButton.disabled) {
+                console.log(
+                    "Generate Test Cases button already disabled, request in progress",
+                );
+                return;
+            }
+            tcgButton.disabled = true;
+            tcgButton.textContent = "Generating Test Cases...";
+            tcgButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        const toolIdElement = safeGetElement("gen-test-tool-id");
+        if (toolIdElement) {
+            toolIdElement.textContent = toolId || "Unknown";
+        }
+        document.getElementById("gen-test-tool-id").style.display = "none";
+        // document.getElementById("gen-test-tool-id").style.display = 'block';
+
+        openModal("testcase-gen-modal");
+
+        tcgButton.disabled = false;
+        tcgButton.textContent = "Generate Test Cases";
+        tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Generate Test Cases";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function generateTestCases() {
+    const testCases = document.getElementById("gen-testcase-count").value;
+    const variations = document.getElementById("gen-nl-variation-count").value;
+    let toolId;
+    // const toolId = document.getElementById("gen-test-tool-id").value;
+    const toolIdElement = safeGetElement("gen-test-tool-id");
+    if (toolIdElement) {
+        toolId = toolIdElement.textContent || "Unknown";
+    }
+    console.log(
+        `Generate ${testCases} test cases with ${variations} variations for tool ${toolId}`,
+    );
+
+    try {
+        showSuccessMessage(
+            "Test case generation started successfully for the tool.",
+        );
+        closeModal("testcase-gen-modal");
+        const response = await fetch(
+            `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+        // const data = await response.json();
+        // console.log(data)
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Generate Test Cases";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function validateTool(toolId) {
+    try {
+        console.log(`Validating tool ID: ${toolId}`);
+
+        // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 2. MODAL PROTECTION: Enhanced check
+        if (AppState.isModalActive("tool-validation-modal")) {
+            console.warn("Tool validation modal is already active");
+            return; // Silent fail for better UX
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const validateButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
+        if (validateButton) {
+            if (validateButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            validateButton.disabled = true;
+            validateButton.textContent = "Generating Test Cases...";
+            validateButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        // 6. MAKE REQUEST with increased timeout
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            {
+                signal: controller.signal,
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                },
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+        const tool = await response.json();
+        console.log(`Tool ${toolId} fetched successfully`, tool);
+        toolInputSchemaRegistry = tool;
+
+        // 7. CLEAN STATE before proceeding
+        toolTestState.activeRequests.delete(toolId);
+
+        // Store in safe state
+        AppState.currentTestTool = tool;
+
+        // Set modal title and description safely - NO DOUBLE ESCAPING
+        const titleElement = safeGetElement("tool-validation-modal-title");
+        const descElement = safeGetElement("tool-validation-modal-description");
+
+        if (titleElement) {
+            titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
+        }
+        if (descElement) {
+            if (tool.description) {
+                // Escape HTML and then replace newlines with <br/> tags
+                tool.description = tool.description.slice(
+                    0,
+                    tool.description.indexOf("*"),
+                );
+                descElement.innerHTML = escapeHtml(tool.description).replace(
+                    /\n/g,
+                    "<br/>",
+                );
+            } else {
+                descElement.textContent = "No description available.";
+            }
+        }
+
+        const container = safeGetElement("tool-validation-form-fields");
+        if (!container) {
+            console.error("Tool validation form fields container not found");
+            return;
+        }
+
+        container.innerHTML = ""; // Clear previous fields
+
+        // Parse the input schema safely
+        let schema = tool.inputSchema;
+        if (typeof schema === "string") {
+            try {
+                schema = JSON.parse(schema);
+            } catch (e) {
+                console.error("Invalid JSON schema", e);
+                schema = {};
+            }
+        }
+
+        // Modal setup
+        const title = safeGetElement("tool-validation-modal-title");
+        const desc = safeGetElement("tool-validation-modal-description");
+        if (title) {
+            title.textContent = `Test Tool: ${tool.name || "Unknown"}`;
+        }
+        if (desc) {
+            desc.textContent = tool.description || "No description available.";
+        }
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "";
+
+        // Parse schema safely
+        if (typeof schema === "string") {
+            try {
+                schema = JSON.parse(schema);
+            } catch (e) {
+                console.error("Invalid schema JSON", e);
+                schema = {};
+            }
+        }
+
+        // Example validat cases (you can replace this with API-provided cases)
+        let testCases = tool.testCases || [
+            { id: "t1", name: "Test Case 1", input_parameters: {} },
+            { id: "t2", name: "Test Case 2", input_parameters: {} },
+        ];
+
+        const validationStatusResponse = await fetchWithTimeout(
+            `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=status`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (validationStatusResponse.ok) {
+            const vsres = await validationStatusResponse.json();
+            console.log(JSON.stringify(vsres));
+            let validationStatus = await vsres;
+
+            if (validationStatus.constructor === Array) {
+                validationStatus = validationStatus[0].status;
+                if (validationStatus === "not-initiated") {
+                    showErrorMessage(
+                        "Please generate test cases before running validation.",
+                    );
+                } else if (validationStatus === "in-progress") {
+                    showErrorMessage(
+                        "Test case generation is in progress. Please try validation once it is complete.",
+                    );
+                } else if (validationStatus === "failed") {
+                    showErrorMessage(
+                        "Test case generation failed. Please check your LLM connection and try again.",
+                    );
+                    console.log(
+                        "Previous error while generating test cases: ",
+                        vsres[0].error_message,
+                    );
+                } else {
+                    const validationResponse = await fetchWithTimeout(
+                        `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=query`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "Cache-Control": "no-cache",
+                                Pragma: "no-cache",
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({ tool_id: toolId }),
+                        },
+                        toolTestState.requestTimeout, // Use the increased timeout
+                    );
+
+                    if (validationResponse.ok) {
+                        const vres = await validationResponse.json();
+                        // console.log(JSON.stringify(vres))
+                        testCases = await vres;
+                    }
+
+                    // Render accordion-style test cases
+                    testCases.forEach((test, index) => {
+                        const inputParameters = test.input_parameters;
+                        const acc = document.createElement("div");
+                        acc.className =
+                            "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
+
+                        const header = document.createElement("button");
+                        header.type = "button";
+                        header.className =
+                            "w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium";
+                        header.innerHTML = `
+                            <span>${`Test Case ${index + 1}`}</span>
+                            <span class="toggle-icon">+</span>
+                        `;
+
+                        const body = document.createElement("div");
+                        body.className =
+                            "hidden bg-white dark:bg-gray-900 px-4 py-4 space-y-3";
+
+                        // Toggle open/close
+                        header.addEventListener("click", () => {
+                            const isOpen = !body.classList.contains("hidden");
+                            body.classList.toggle("hidden", isOpen);
+                            header.querySelector(".toggle-icon").textContent =
+                                isOpen ? "+" : "−";
+                        });
+
+                        acc.appendChild(header);
+                        acc.appendChild(body);
+                        container.appendChild(acc);
+
+                        // Render fields
+                        const formDiv = document.createElement("form");
+                        formDiv.id = `tool-validation-form-${index}`;
+                        formDiv.className = "space-y-3";
+
+                        if (schema && schema.properties) {
+                            for (const key in schema.properties) {
+                                const prop = schema.properties[key];
+
+                                // Validate the property name
+                                const keyValidation = validateInputName(
+                                    key,
+                                    "schema property",
+                                );
+                                if (!keyValidation.valid) {
+                                    console.warn(
+                                        `Skipping invalid schema property: ${key}`,
+                                    );
+                                    continue;
+                                }
+
+                                const fieldDiv = document.createElement("div");
+                                fieldDiv.className = "mb-4";
+
+                                // Field label - use textContent to avoid double escaping
+                                const label = document.createElement("label");
+                                // label.textContent = key;
+                                label.className =
+                                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                                // Create span for label text
+                                const labelText =
+                                    document.createElement("span");
+                                labelText.textContent = keyValidation.value;
+                                label.appendChild(labelText);
+                                let defaultValue = "";
+                                if (keyValidation.value in inputParameters) {
+                                    defaultValue =
+                                        inputParameters[keyValidation.value];
+                                }
+
+                                // Add red star if field is required
+                                if (
+                                    schema.required &&
+                                    schema.required.includes(key)
+                                ) {
+                                    const requiredMark =
+                                        document.createElement("span");
+                                    requiredMark.textContent = " *";
+                                    requiredMark.className = "text-red-500";
+                                    label.appendChild(requiredMark);
+                                }
+
+                                fieldDiv.appendChild(label);
+
+                                // Description help text - use textContent
+                                if (prop.description) {
+                                    const description =
+                                        document.createElement("small");
+                                    description.textContent = prop.description;
+                                    description.className =
+                                        "text-gray-500 block mb-1";
+                                    fieldDiv.appendChild(description);
+                                }
+
+                                // const input = document.createElement("input");
+                                // input.name = key;
+                                // input.className =
+                                // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
+                                // input.value = test.inputs[key] || prop.default || "";
+                                // fieldDiv.appendChild(input);
+
+                                if (prop.type === "array") {
+                                    const arrayContainer =
+                                        document.createElement("div");
+                                    arrayContainer.className = "space-y-2";
+
+                                    function createArrayInput(value = "") {
+                                        const wrapper =
+                                            document.createElement("div");
+                                        wrapper.className =
+                                            "flex items-center space-x-2";
+
+                                        const input =
+                                            document.createElement("input");
+                                        input.name = keyValidation.value;
+                                        input.required =
+                                            schema.required &&
+                                            schema.required.includes(key);
+                                        input.className =
+                                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                                        const itemTypes = Array.isArray(
+                                            prop.items?.anyOf,
+                                        )
+                                            ? prop.items.anyOf.map(
+                                                  (t) => t.type,
+                                              )
+                                            : [prop.items?.type];
+
+                                        if (
+                                            itemTypes.includes("number") ||
+                                            itemTypes.includes("integer")
+                                        ) {
+                                            input.type = "number";
+                                            input.step = itemTypes.includes(
+                                                "integer",
+                                            )
+                                                ? "1"
+                                                : "any";
+                                        } else if (
+                                            itemTypes.includes("boolean")
+                                        ) {
+                                            input.type = "checkbox";
+                                            input.value = "true";
+                                            input.checked =
+                                                value === true ||
+                                                value === "true";
+                                        } else {
+                                            input.type = "text";
+                                        }
+
+                                        if (
+                                            typeof value === "string" ||
+                                            typeof value === "number"
+                                        ) {
+                                            input.value = value;
+                                        }
+
+                                        const delBtn =
+                                            document.createElement("button");
+                                        delBtn.type = "button";
+                                        delBtn.className =
+                                            "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
+                                        delBtn.title = "Delete";
+                                        delBtn.textContent = "×";
+                                        delBtn.addEventListener("click", () => {
+                                            arrayContainer.removeChild(wrapper);
+                                        });
+
+                                        wrapper.appendChild(input);
+
+                                        if (itemTypes.includes("boolean")) {
+                                            const hidden =
+                                                document.createElement("input");
+                                            hidden.type = "hidden";
+                                            hidden.name = keyValidation.value;
+                                            hidden.value = "false";
+                                            wrapper.appendChild(hidden);
+                                        }
+
+                                        wrapper.appendChild(delBtn);
+                                        return wrapper;
+                                    }
+
+                                    const addBtn =
+                                        document.createElement("button");
+                                    addBtn.type = "button";
+                                    addBtn.className =
+                                        "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
+                                    addBtn.textContent = "Add items";
+                                    addBtn.addEventListener("click", () => {
+                                        arrayContainer.appendChild(
+                                            createArrayInput(),
+                                        );
+                                    });
+
+                                    defaultValue = defaultValue[0];
+                                    if (Array.isArray(defaultValue)) {
+                                        if (defaultValue.length > 0) {
+                                            defaultValue.forEach((val) => {
+                                                arrayContainer.appendChild(
+                                                    createArrayInput(val),
+                                                );
+                                            });
+                                        } else {
+                                            // Create one empty input for empty default arrays
+                                            arrayContainer.appendChild(
+                                                createArrayInput(),
+                                            );
+                                        }
+                                    } else {
+                                        arrayContainer.appendChild(
+                                            createArrayInput(),
+                                        );
+                                    }
+
+                                    fieldDiv.appendChild(arrayContainer);
+                                    fieldDiv.appendChild(addBtn);
+                                } else {
+                                    // Input field with validation (with multiline support)
+                                    let fieldInput;
+                                    const isTextType = prop.type === "text";
+                                    if (isTextType) {
+                                        fieldInput =
+                                            document.createElement("textarea");
+                                        fieldInput.rows = 4;
+                                    } else {
+                                        fieldInput =
+                                            document.createElement("input");
+                                        if (
+                                            prop.type === "number" ||
+                                            prop.type === "integer"
+                                        ) {
+                                            fieldInput.type = "number";
+                                        } else if (prop.type === "boolean") {
+                                            fieldInput.type = "checkbox";
+                                            fieldInput.value = "true";
+                                        } else {
+                                            fieldInput =
+                                                document.createElement(
+                                                    "textarea",
+                                                );
+                                            fieldInput.rows = 1;
+                                        }
+                                    }
+
+                                    fieldInput.name = keyValidation.value;
+                                    fieldInput.required =
+                                        schema.required &&
+                                        schema.required.includes(key);
+                                    fieldInput.className =
+                                        prop.type === "boolean"
+                                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                                    // Set default values here
+                                    if (prop.default !== undefined) {
+                                        if (fieldInput.type === "checkbox") {
+                                            fieldInput.checked =
+                                                prop.default === true;
+                                        } else if (isTextType) {
+                                            fieldInput.value = prop.default;
+                                        } else {
+                                            fieldInput.value = prop.default;
+                                        }
+                                    }
+                                    fieldInput.value = defaultValue;
+                                    fieldDiv.appendChild(fieldInput);
+                                    if (prop.default !== undefined) {
+                                        if (fieldInput.type === "checkbox") {
+                                            const hiddenInput =
+                                                document.createElement("input");
+                                            hiddenInput.type = "hidden";
+                                            hiddenInput.value = "false";
+                                            hiddenInput.name =
+                                                keyValidation.value;
+                                            fieldDiv.appendChild(hiddenInput);
+                                        }
+                                    }
+                                }
+                                formDiv.appendChild(fieldDiv);
+                            }
+                        }
+
+                        // First section - Passthrough Headers
+                        const headerSection = document.createElement("div");
+                        headerSection.className = "mt-4 border-t pt-4";
+
+                        const headerDiv = document.createElement("div");
+
+                        const label = document.createElement("label");
+                        label.setAttribute(
+                            "for",
+                            "validation-passthrough-headers",
+                        );
+                        label.className =
+                            "block text-sm font-medium text-gray-700 dark:text-gray-400";
+                        label.textContent = "Passthrough Headers (Optional)";
+
+                        const small = document.createElement("small");
+                        small.className =
+                            "text-gray-500 dark:text-gray-400 block mb-2";
+                        small.textContent =
+                            'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
+
+                        const textarea = document.createElement("textarea");
+                        textarea.id = "validation-passthrough-headers";
+                        textarea.name = "passthrough_headers";
+                        textarea.rows = 3;
+                        textarea.placeholder =
+                            "Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456";
+                        textarea.className =
+                            "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
+
+                        headerDiv.appendChild(label);
+                        headerDiv.appendChild(small);
+                        headerDiv.appendChild(textarea);
+                        headerSection.appendChild(headerDiv);
+
+                        const nlUtteranceSection =
+                            document.createElement("div");
+                        nlUtteranceSection.className = "mt-4 border-t pt-4";
+                        const nlUtteranceDiv = document.createElement("div");
+                        const nlUtterancelabel =
+                            document.createElement("label");
+                        nlUtterancelabel.setAttribute(
+                            "for",
+                            "test-passthrough-nlUtterances",
+                        );
+                        nlUtterancelabel.className =
+                            "block text-sm font-bold text-green-700 dark:text-green-400";
+                        nlUtterancelabel.textContent =
+                            "Generated Test Utterance";
+
+                        const nlUtterancesmall =
+                            document.createElement("small");
+                        nlUtterancesmall.className =
+                            "text-gray-500 dark:text-gray-400 block mb-2";
+                        nlUtterancesmall.textContent =
+                            "Modify or add new utterances to test using the agent.";
+
+                        const nlutextarea = document.createElement("textarea");
+                        nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
+                        nlutextarea.name = "passthrough_nlUtterances";
+                        nlutextarea.rows = 3;
+                        nlutextarea.value = test.nl_utterance.join("\n\n");
+                        nlutextarea.className =
+                            "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
+
+                        nlUtteranceDiv.appendChild(nlUtterancelabel);
+                        nlUtteranceDiv.appendChild(nlUtterancesmall);
+                        nlUtteranceDiv.appendChild(nlutextarea);
+                        nlUtteranceSection.appendChild(nlUtteranceDiv);
+
+                        // // Result area
+                        // const resultBox = document.createElement("pre");
+                        // resultBox.id = `test-result-${index}`;
+                        // resultBox.className =
+                        // "bg-gray-50 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-200 p-3 rounded overflow-x-auto hidden border border-gray-200 dark:border-gray-700";
+
+                        // Run button
+                        const runBtn = document.createElement("button");
+                        runBtn.textContent = "Run Test";
+                        runBtn.className =
+                            "mt-2 mr-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+                        // Added: mr-2 for spacing
+                        runBtn.addEventListener("click", async () => {
+                            await runToolValidation(index);
+                        });
+
+                        // Run Agent button
+                        const runAgentBtn = document.createElement("button");
+                        runAgentBtn.textContent = "Run With Agent";
+                        runAgentBtn.className =
+                            "mt-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700";
+                        // Changed color to blue
+                        runAgentBtn.addEventListener("click", async () => {
+                            await runToolAgentValidation(index);
+                        });
+
+                        // Loading spinner
+                        const loadingDiv = document.createElement("div");
+                        loadingDiv.id = `tool-validation-loading-${index}`;
+                        loadingDiv.style.display = "none";
+
+                        const spinner = document.createElement("div");
+                        spinner.className = "spinner";
+                        loadingDiv.appendChild(spinner);
+
+                        // Result area
+                        const resultDiv = document.createElement("div");
+                        resultDiv.id = `tool-validation-result-${index}`;
+                        resultDiv.className =
+                            "mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300";
+                        resultDiv.style.height = "400px";
+
+                        body.appendChild(formDiv);
+                        body.appendChild(headerSection);
+                        body.appendChild(nlUtteranceSection);
+                        body.appendChild(runBtn);
+                        body.appendChild(runAgentBtn);
+                        body.appendChild(loadingDiv);
+                        body.appendChild(resultDiv);
+                    });
+
+                    // Run All Tests button
+                    const runAllDiv = document.createElement("div");
+                    runAllDiv.className = "mt-6 text-center";
+                    runAllDiv.innerHTML = `
+                        <button id="run-all-tests-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                        Run All Tests
+                        </button>`;
+                    container.appendChild(runAllDiv);
+
+                    // Run All Tests wit hAgent button
+                    // const runAGentAllDiv = document.createElement("div");
+                    // runAGentAllDiv.className = "mt-6 text-center";
+                    // runAGentAllDiv.innerHTML = `
+                    //     <button id="run-all-agent-tests-btn"
+                    //     class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
+                    //     Run With Agent
+                    //     </button>`;
+                    // container.appendChild(runAGentAllDiv);
+
+                    // Hook up Run All button
+                    document
+                        .getElementById("run-all-tests-btn")
+                        ?.addEventListener("click", async () => {
+                            showSuccessMessage(
+                                "🔍 Validation in progress; View results by expanding each test case.",
+                            );
+                            const total = testCases.length;
+                            document
+                                .querySelectorAll(
+                                    "#tool-validation-form-fields > div",
+                                )
+                                .forEach((acc) => {
+                                    const body =
+                                        acc.querySelector("div.hidden");
+                                    const icon =
+                                        acc.querySelector(".toggle-icon");
+                                    if (body) {
+                                        body.classList.remove("hidden");
+                                    }
+                                    if (icon) {
+                                        icon.textContent = "−";
+                                    }
+                                });
+                            for (let i = 0; i < total; i++) {
+                                await runToolValidation(i);
+                            }
+                        });
+
+                    openModal("tool-validation-modal");
+                    console.log(
+                        "✓ Test modal with accordions loaded successfully",
+                    );
+                }
+            } else {
+                showErrorMessage(
+                    "Test case generation failed. Please check your LLM connection and try again.",
+                );
+            }
+        }
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Validate";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function runToolValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolValidation()"]',
+    );
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const formData = new FormData(form);
+        // const formData = {};
+        // form.querySelectorAll("input, textarea, select").forEach((input) => {
+        // formData[input.name] =
+        //     input.type === "checkbox" ? input.checked : input.value;
+        // });
+        const params = {};
+
+        const schema = toolInputSchemaRegistry.inputSchema;
+
+        if (schema && schema.properties) {
+            for (const key in schema.properties) {
+                const prop = schema.properties[key];
+                const keyValidation = validateInputName(key, "parameter");
+                if (!keyValidation.valid) {
+                    console.warn(`Skipping invalid parameter: ${key}`);
+                    continue;
+                }
+                let value;
+                if (prop.type === "array") {
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items) {
+                            const itemType = Array.isArray(prop.items.anyOf)
+                                ? prop.items.anyOf.map((t) => t.type)
+                                : [prop.items.type];
+
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
+                                value = inputValues.map((v) => {
+                                    const num = Number(v);
+                                    if (isNaN(num)) {
+                                        throw new Error(`Invalid number: ${v}`);
+                                    }
+                                    return num;
+                                });
+                            } else if (itemType.includes("boolean")) {
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
+                            } else if (itemType.includes("object")) {
+                                value = inputValues.map((v) => {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
+                                        }
+                                        return parsed;
+                                    } catch {
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
+                                    }
+                                });
+                            } else {
+                                value = inputValues;
+                            }
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
+                    }
+                } else {
+                    value = formData.get(key);
+                    if (value === null || value === undefined || value === "") {
+                        if (schema.required && schema.required.includes(key)) {
+                            params[keyValidation.value] = "";
+                        }
+                        continue;
+                    }
+                    if (prop.type === "number" || prop.type === "integer") {
+                        params[keyValidation.value] = Number(value);
+                    } else if (prop.type === "boolean") {
+                        params[keyValidation.value] =
+                            value === "true" || value === true;
+                    } else if (prop.enum) {
+                        if (prop.enum.includes(value)) {
+                            params[keyValidation.value] = value;
+                        }
+                    } else {
+                        params[keyValidation.value] = value;
+                    }
+                }
+            }
+        }
+
+        const payload = {
+            jsonrpc: "2.0",
+            id: Date.now(),
+            method: AppState.currentTestTool.name,
+            params,
+        };
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Use longer timeout for test execution
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/rpc`,
+            {
+                method: "POST",
+                headers: requestHeaders,
+                body: JSON.stringify(payload),
+                credentials: "include",
+            },
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
+        }
+    }
+}
+
+async function runToolAgentValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolAgentValidation()"]',
+    );
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const nlTestCases = document
+            .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
+            .value.split(/\r?\n\r?\n/);
+        const toolId = AppState.currentTestTool.id;
+
+        console.log(nlTestCases);
+        console.log(
+            "Running validation for the Tool: ",
+            AppState.currentTestTool.name,
+        );
+        console.log("Running validation for the Tool Id: ", toolId);
+
+        const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        const response = await fetchWithTimeout(
+            "/toolops/validation/execute_tool_nl_testcases",
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
         }
     }
 }
@@ -8331,7 +11485,7 @@ function buildPromptTestForm(prompt) {
         input.id = `prompt-arg-${index}`;
         input.name = `arg-${arg.name}`;
         input.className =
-            "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
+            "mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300";
 
         if (arg.description) {
             input.placeholder = arg.description;
@@ -8857,7 +12011,6 @@ async function viewTool(toolId) {
         }
 
         const tool = await response.json();
-
         // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
@@ -9137,6 +12290,10 @@ async function viewTool(toolId) {
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
+            );
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
             );
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
@@ -9468,6 +12625,13 @@ async function handleResourceFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+        }
+
+        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -10272,6 +13436,12 @@ async function handleEditResFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+        }
+        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -10461,7 +13631,7 @@ if (window.performance && window.performance.mark) {
 // Tool Tips for components with Alpine.js
 // ===================================================================
 
-/* global Alpine */
+/* global Alpine, htmx */
 function setupTooltipsWithAlpine() {
     document.addEventListener("alpine:init", () => {
         console.log("Initializing Alpine tooltip directive...");
@@ -11128,18 +14298,44 @@ function setupSelectorSearch() {
         });
     }
 
-    // Resources search
-    const searchResources = safeGetElement("searchResources", true);
-    if (searchResources) {
-        searchResources.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedResources",
-                ".resource-item",
-                "noResourcesMessage",
-                "searchResourcesQuery",
-            );
+    // Edit-server tools search (server-side, mirror of searchTools)
+    const searchEditTools = safeGetElement("searchEditTools", true);
+    if (searchEditTools) {
+        let editSearchTimeout;
+        searchEditTools.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditToolSearch(searchTerm);
+            }, 300);
         });
+
+        // If HTMX swaps/paginates the edit tools container, re-run server-side search
+        const editToolsContainer = document.getElementById("edit-server-tools");
+        if (editToolsContainer) {
+            editToolsContainer.addEventListener("htmx:afterSwap", function () {
+                try {
+                    const current = searchEditTools.value || "";
+                    if (current && current.trim() !== "") {
+                        serverSideEditToolSearch(current);
+                    } else {
+                        // No active search — ensure the selector is initialized
+                        initToolSelect(
+                            "edit-server-tools",
+                            "selectedEditToolsPills",
+                            "selectedEditToolsWarning",
+                            6,
+                            "selectAllEditToolsBtn",
+                            "clearAllEditToolsBtn",
+                        );
+                    }
+                } catch (err) {
+                    console.error("Error handling edit-tools afterSwap:", err);
+                }
+            });
+        }
     }
 
     // Prompts search (server-side)
@@ -11156,63 +14352,115 @@ function setupSelectorSearch() {
             }, 300);
         });
     }
-}
 
-/**
- * Generic function to filter items in multi-select dropdowns with no results message
- */
-function filterSelectorItems(
-    searchText,
-    containerSelector,
-    itemSelector,
-    noResultsId,
-    searchQueryId,
-) {
-    const container = document.querySelector(containerSelector);
-    if (!container) {
-        return;
-    }
-
-    const items = container.querySelectorAll(itemSelector);
-    const search = searchText.toLowerCase().trim();
-    let hasVisibleItems = false;
-
-    items.forEach((item) => {
-        let textContent = "";
-
-        // Get text from all text nodes within the item
-        const textElements = item.querySelectorAll(
-            "span, .text-xs, .font-medium",
-        );
-        textElements.forEach((el) => {
-            textContent += " " + el.textContent;
+    // Edit-server prompts search (server-side, mirror of searchPrompts)
+    const searchEditPrompts = safeGetElement("searchEditPrompts", true);
+    if (searchEditPrompts) {
+        let editSearchTimeout;
+        searchEditPrompts.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditPromptsSearch(searchTerm);
+            }, 300);
         });
 
-        // Also get direct text content
-        textContent += " " + item.textContent;
-
-        if (search === "" || textContent.toLowerCase().includes(search)) {
-            item.style.display = "";
-            hasVisibleItems = true;
-        } else {
-            item.style.display = "none";
+        // If HTMX swaps/paginates the edit prompts container, re-run server-side search
+        const editPromptsContainer = document.getElementById(
+            "edit-server-prompts",
+        );
+        if (editPromptsContainer) {
+            editPromptsContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditPrompts.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditPromptsSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initPromptSelect(
+                                "edit-server-prompts",
+                                "selectedEditPromptsPills",
+                                "selectedEditPromptsWarning",
+                                6,
+                                "selectAllEditPromptsBtn",
+                                "clearAllEditPromptsBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-prompts afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
-    });
+    }
 
-    // Handle no results message
-    const noResultsMessage = safeGetElement(noResultsId, true);
-    const searchQuerySpan = safeGetElement(searchQueryId, true);
+    // Resources search (server-side)
+    const searchResources = safeGetElement("searchResources", true);
+    if (searchResources) {
+        let resourceSearchTimeout;
+        searchResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (resourceSearchTimeout) {
+                clearTimeout(resourceSearchTimeout);
+            }
+            resourceSearchTimeout = setTimeout(() => {
+                serverSideResourceSearch(searchTerm);
+            }, 300);
+        });
+    }
 
-    if (search !== "" && !hasVisibleItems) {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "block";
-        }
-        if (searchQuerySpan) {
-            searchQuerySpan.textContent = searchText;
-        }
-    } else {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "none";
+    // Edit-server resources search (server-side, mirror of searchResources)
+    const searchEditResources = safeGetElement("searchEditResources", true);
+    if (searchEditResources) {
+        let editSearchTimeout;
+        searchEditResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditResourcesSearch(searchTerm);
+            }, 300);
+        });
+
+        // If HTMX swaps/paginates the edit resources container, re-run server-side search
+        const editResourcesContainer = document.getElementById(
+            "edit-server-resources",
+        );
+        if (editResourcesContainer) {
+            editResourcesContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditResources.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditResourcesSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initResourceSelect(
+                                "edit-server-resources",
+                                "selectedEditResourcesPills",
+                                "selectedEditResourcesWarning",
+                                6,
+                                "selectAllEditResourcesBtn",
+                                "clearAllEditResourcesBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-resources afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
     }
 }
@@ -11561,6 +14809,7 @@ window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;
+window.validateTool = validateTool;
 window.viewResource = viewResource;
 window.editResource = editResource;
 window.viewPrompt = viewPrompt;
@@ -11576,6 +14825,9 @@ window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
+window.generateToolTestCases = generateToolTestCases;
+window.generateTestCases = generateTestCases;
+window.enrichTool = enrichTool;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY
@@ -12280,7 +15532,7 @@ function addAuthHeader(containerId, options = {}) {
             <input
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
-                class="auth-header-key block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
+                class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
                 oninput="updateAuthHeadersJSON('${containerId}')"
             />
         </div>
@@ -12291,7 +15543,7 @@ function addAuthHeader(containerId, options = {}) {
                     id="${valueInputId}"
                     placeholder="Header Value"
                     data-sensitive-label="header value"
-                    class="auth-header-value block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
+                    class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
                     oninput="updateAuthHeadersJSON('${containerId}')"
                 />
                 <button
@@ -17987,7 +21239,7 @@ function initializeChatInputResize() {
 async function serverSideToolSearch(searchTerm) {
     const container = document.getElementById("associatedTools");
     const noResultsMessage = safeGetElement("noToolsMessage", true);
-    const searchQuerySpan = safeGetElement("searchQuery", true);
+    const searchQuerySpan = safeGetElement("searchQueryTools", true);
 
     if (!container) {
         console.error("associatedTools container not found");
@@ -18127,6 +21379,52 @@ function updateToolMapping(container) {
 }
 
 /**
+ * Update the prompt mapping with prompts in the given container
+ */
+function updatePromptMapping(container) {
+    if (!window.promptMapping) {
+        window.promptMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedPrompts"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const promptId = checkbox.value;
+        const promptName =
+            checkbox.getAttribute("data-prompt-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            promptId;
+        if (promptId && promptName) {
+            window.promptMapping[promptId] = promptName;
+        }
+    });
+}
+
+/**
+ * Update the resource mapping with resources in the given container
+ */
+function updateResourceMapping(container) {
+    if (!window.resourceMapping) {
+        window.resourceMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedResources"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const resourceId = checkbox.value;
+        const resourceName =
+            checkbox.getAttribute("data-resource-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            resourceId;
+        if (resourceId && resourceName) {
+            window.resourceMapping[resourceId] = resourceName;
+        }
+    });
+}
+
+/**
  * Perform server-side search for prompts and update the prompt list
  */
 async function serverSidePromptSearch(searchTerm) {
@@ -18245,6 +21543,853 @@ async function serverSidePromptSearch(searchTerm) {
         console.error("Error searching prompts:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources and update the resouces list
+ */
+async function serverSideResourceSearch(searchTerm) {
+    const container = document.getElementById("associatedResources");
+    const noResultsMessage = safeGetElement("noResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+
+    if (!container) {
+        console.error("associatedResources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-purple-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompt selector
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Initialize resource mapping if needed
+                initResourceSelect(
+                    "associatedResources",
+                    "selectedResourcesPills",
+                    "selectedResourcesWarning",
+                    6,
+                    "selectAllResourcesBtn",
+                    "clearAllResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const displayName = resource.name || resource.id;
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(displayName)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Initialize Resource select mapping
+            initResourceSelect(
+                "associatedResources",
+                "selectedResourcesPills",
+                "selectedResourcesWarning",
+                6,
+                "selectAllResourcesBtn",
+                "clearAllResourcesBtn",
+            );
+
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for tools in the edit-server selector and update the list
+ */
+async function serverSideEditToolSearch(searchTerm) {
+    const container = document.getElementById("edit-server-tools");
+    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+
+    if (!container) {
+        console.error("edit-server-tools container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching tools...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default tool selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update tool mapping
+                updateToolMapping(container);
+
+                // Restore checked state for any tools already associated with the server
+                try {
+                    const dataAttr =
+                        container.getAttribute("data-server-tools");
+                    if (dataAttr) {
+                        const serverTools = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverTools) &&
+                            serverTools.length > 0
+                        ) {
+                            // Normalize serverTools to a set of strings for robust comparison
+                            const serverToolSet = new Set(
+                                serverTools.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedTools"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const toolId = cb.value;
+                                const toolName =
+                                    cb.getAttribute("data-tool-name") ||
+                                    (window.toolMapping &&
+                                        window.toolMapping[cb.value]);
+                                if (
+                                    serverToolSet.has(toolId) ||
+                                    (toolName &&
+                                        serverToolSet.has(String(toolName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server tools checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container
+                initToolSelect(
+                    "edit-server-tools",
+                    "selectedEditToolsPills",
+                    "selectedEditToolsWarning",
+                    6,
+                    "selectAllEditToolsBtn",
+                    "clearAllEditToolsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
+            }
+        } catch (error) {
+            console.error("Error loading tools:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading tools</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.tools && data.tools.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.tools.forEach((tool) => {
+                const displayName =
+                    tool.display_name ||
+                    tool.custom_name ||
+                    tool.name ||
+                    tool.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                        data-tool-id="${escapeHtml(tool.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedTools"
+                            value="${escapeHtml(tool.id)}"
+                            data-tool-name="${escapeHtml(displayName)}"
+                            class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateToolMapping(container);
+
+            // Restore checked state for any tools already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-tools");
+                if (dataAttr) {
+                    const serverTools = JSON.parse(dataAttr);
+                    if (Array.isArray(serverTools) && serverTools.length > 0) {
+                        // Normalize serverTools to a set of strings for robust comparison
+                        const serverToolSet = new Set(
+                            serverTools.map((s) => String(s)),
+                        );
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const toolId = cb.value;
+                            const toolName =
+                                cb.getAttribute("data-tool-name") ||
+                                (window.toolMapping &&
+                                    window.toolMapping[cb.value]);
+                            if (
+                                serverToolSet.has(toolId) ||
+                                (toolName &&
+                                    serverToolSet.has(String(toolName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server tools checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initToolSelect(
+                "edit-server-tools",
+                "selectedEditToolsPills",
+                "selectedEditToolsWarning",
+                6,
+                "selectAllEditToolsBtn",
+                "clearAllEditToolsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching tools:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching tools</div>';
+
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for prompts in the edit-server selector and update the list
+ */
+async function serverSideEditPromptsSearch(searchTerm) {
+    const container = document.getElementById("edit-server-prompts");
+    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+
+    if (!container) {
+        console.error("edit-server-prompts container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching prompts...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompts selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update prompt mapping
+                updatePromptMapping(container);
+
+                // Restore checked state for any prompts already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-prompts",
+                    );
+                    if (dataAttr) {
+                        const serverPrompts = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverPrompts) &&
+                            serverPrompts.length > 0
+                        ) {
+                            // Normalize serverPrompts to a set of strings for robust comparison
+                            const serverPromptSet = new Set(
+                                serverPrompts.map((s) => String(s)),
+                            );
+
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedPrompts"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const promptId = cb.value;
+                                const promptName =
+                                    cb.getAttribute("data-prompt-name") ||
+                                    (window.promptMapping &&
+                                        window.promptMapping[cb.value]);
+
+                                // Check by id first (string), then by name as a fallback
+                                if (
+                                    serverPromptSet.has(promptId) ||
+                                    (promptName &&
+                                        serverPromptSet.has(String(promptName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server prompts checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (prompt-specific)
+                initPromptSelect(
+                    "edit-server-prompts",
+                    "selectedEditPromptsPills",
+                    "selectedEditPromptsWarning",
+                    6,
+                    "selectAllEditPromptsBtn",
+                    "clearAllEditPromptsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+            }
+        } catch (error) {
+            console.error("Error loading prompts:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.prompts && data.prompts.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.prompts.forEach((prompt) => {
+                const name = prompt.name || prompt.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 prompt-item"
+                        data-prompt-id="${escapeHtml(prompt.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="${escapeHtml(prompt.id)}"
+                            data-prompt-name="${escapeHtml(name)}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updatePromptMapping(container);
+
+            // Restore checked state for any prompts already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-prompts");
+                if (dataAttr) {
+                    const serverPrompts = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverPrompts) &&
+                        serverPrompts.length > 0
+                    ) {
+                        // Normalize serverPrompts to a set of strings for robust comparison
+                        const serverPromptSet = new Set(
+                            serverPrompts.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const promptId = cb.value;
+                            const promptName =
+                                cb.getAttribute("data-prompt-name") ||
+                                (window.promptMapping &&
+                                    window.promptMapping[cb.value]);
+
+                            if (
+                                serverPromptSet.has(promptId) ||
+                                (promptName &&
+                                    serverPromptSet.has(String(promptName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server prompts checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initPromptSelect(
+                "edit-server-prompts",
+                "selectedEditPromptsPills",
+                "selectedEditPromptsWarning",
+                6,
+                "selectAllEditPromptsBtn",
+                "clearAllEditPromptsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching prompts:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources in the edit-server selector and update the list
+ */
+async function serverSideEditResourcesSearch(searchTerm) {
+    const container = document.getElementById("edit-server-resources");
+    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+
+    if (!container) {
+        console.error("edit-server-resources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching Resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default resources selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update resource mapping
+                updateResourceMapping(container);
+                // Restore checked state for any resources already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const serverResources = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverResources) &&
+                            serverResources.length > 0
+                        ) {
+                            // Normalize serverResources to a set of strings for robust comparison
+                            const serverResourceSet = new Set(
+                                serverResources.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedResources"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const resourceId = cb.value;
+                                const resourceName =
+                                    cb.getAttribute("data-resource-name") ||
+                                    (window.resourceMapping &&
+                                        window.resourceMapping[cb.value]);
+                                if (
+                                    serverResourceSet.has(resourceId) ||
+                                    (resourceName &&
+                                        serverResourceSet.has(
+                                            String(resourceName),
+                                        ))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server resources checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (resource-specific)
+                initResourceSelect(
+                    "edit-server-resources",
+                    "selectedEditResourcesPills",
+                    "selectedEditResourcesWarning",
+                    6,
+                    "selectAllEditResourcesBtn",
+                    "clearAllEditResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const name = resource.name || resource.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(name)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateResourceMapping(container);
+
+            // Restore checked state for any resources already associated with the server
+            try {
+                const dataAttr = container.getAttribute(
+                    "data-server-resources",
+                );
+                if (dataAttr) {
+                    const serverResources = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverResources) &&
+                        serverResources.length > 0
+                    ) {
+                        // Normalize serverResources to a set of strings for robust comparison
+                        const serverResourceSet = new Set(
+                            serverResources.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const resourceId = cb.value;
+                            const resourceName =
+                                cb.getAttribute("data-resource-name") ||
+                                (window.resourceMapping &&
+                                    window.resourceMapping[cb.value]);
+                            // Check by id first (string), then by name as a fallback
+                            if (
+                                serverResourceSet.has(resourceId) ||
+                                (resourceName &&
+                                    serverResourceSet.has(String(resourceName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server resources checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initResourceSelect(
+                "edit-server-resources",
+                "selectedEditResourcesPills",
+                "selectedEditResourcesWarning",
+                6,
+                "selectAllEditResourcesBtn",
+                "clearAllEditResourcesBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
@@ -18672,3 +22817,251 @@ function updateBodyLabel() {
 
 // Make it available globally for HTML onclick handlers
 window.updateBodyLabel = updateBodyLabel;
+
+/**
+ * ====================================================================
+ * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
+ * Handles live status updates for Gateways and Tools
+ * ====================================================================
+ */
+
+document.addEventListener("DOMContentLoaded", function () {
+    initializeRealTimeMonitoring();
+});
+
+function initializeRealTimeMonitoring() {
+    if (!window.EventSource) {
+        return;
+    }
+
+    // Connect to the admin events endpoint
+    const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
+
+    // --- Gateway Events ---
+    // Handlers for specific states
+
+    // eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_activated", (e) =>
+        handleEntityEvent("gateway", e),
+    );
+    eventSource.addEventListener("gateway_offline", (e) =>
+        handleEntityEvent("gateway", e),
+    );
+
+    // --- Tool Events ---
+    // Handlers for specific states
+
+    // eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_activated", (e) =>
+        handleEntityEvent("tool", e),
+    );
+    eventSource.addEventListener("tool_offline", (e) =>
+        handleEntityEvent("tool", e),
+    );
+
+    eventSource.onopen = () =>
+        console.log("✅ SSE Connected for Real-time Monitoring");
+    eventSource.onerror = (err) =>
+        console.warn("⚠️ SSE Connection issue, retrying...", err);
+}
+
+/**
+ * Generic handler for entity events
+ */
+function handleEntityEvent(type, event) {
+    try {
+        const data = JSON.parse(event.data);
+        // Log the specific event type for debugging
+        // console.log(`Received ${type} event [${event.type}]:`, data);
+        updateEntityStatus(type, data);
+    } catch (err) {
+        console.error(`Error processing ${type} event:`, err);
+    }
+}
+
+/**
+ * Updates the status badge and action buttons for a row
+ */
+
+function updateEntityStatus(type, data) {
+    let row = null;
+
+    if (type === "gateway") {
+        // Gateways usually have explicit IDs
+        row = document.getElementById(`gateway-row-${data.id}`);
+    } else if (type === "tool") {
+        // 1. Try explicit ID (fastest)
+        row = document.getElementById(`tool-row-${data.id}`);
+
+        // 2. Fallback: Search rows by looking for the ID in Action buttons
+        if (!row) {
+            const panel = document.getElementById("tools-panel");
+            if (panel) {
+                const rows = panel.querySelectorAll("table tbody tr");
+                for (const tr of rows) {
+                    // Check data attribute if present
+                    if (tr.dataset.toolId === data.id) {
+                        row = tr;
+                        break;
+                    }
+
+                    // Check innerHTML for the UUID in action attributes
+                    const html = tr.innerHTML;
+                    if (html.includes(data.id)) {
+                        // Verify it's likely an ID usage (in quotes or url path)
+                        if (
+                            html.includes(`'${data.id}'`) ||
+                            html.includes(`"${data.id}"`) ||
+                            html.includes(`/${data.id}/`)
+                        ) {
+                            row = tr;
+                            // Optimization: Set ID on row for next time
+                            tr.id = `tool-row-${data.id}`;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!row) {
+        console.warn(`Could not find row for ${type} id: ${data.id}`);
+        return;
+    }
+
+    // Dynamically find Status and Action columns
+    const table = row.closest("table");
+    let statusIndex = -1;
+    let actionIndex = -1;
+
+    if (table) {
+        const headers = table.querySelectorAll("thead th");
+        headers.forEach((th, index) => {
+            const text = th.textContent.trim().toLowerCase();
+            if (text === "status") {
+                statusIndex = index;
+            }
+            if (text === "actions") {
+                actionIndex = index;
+            }
+        });
+    }
+
+    // Fallback indices if headers aren't found
+    if (statusIndex === -1) {
+        statusIndex = type === "gateway" ? 4 : 5;
+    }
+    if (actionIndex === -1) {
+        actionIndex = type === "gateway" ? 9 : 6;
+    }
+
+    const statusCell = row.children[statusIndex];
+    const actionCell = row.children[actionIndex];
+
+    // --- 1. Update Status Badge ---
+    if (statusCell) {
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
+        const isReachable =
+            data.reachable !== undefined ? data.reachable : true;
+
+        statusCell.innerHTML = generateStatusBadgeHtml(
+            isEnabled,
+            isReachable,
+            type,
+        );
+
+        // Flash effect
+        statusCell.classList.add(
+            "bg-blue-50",
+            "dark:bg-blue-900",
+            "transition-colors",
+            "duration-500",
+        );
+        setTimeout(() => {
+            statusCell.classList.remove("bg-blue-50", "dark:bg-blue-900");
+        }, 1000);
+    }
+
+    // --- 2. Update Action Buttons ---
+    if (actionCell) {
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
+        updateEntityActionButtons(actionCell, type, data.id, isEnabled);
+    }
+}
+
+/**
+ * Generates the HTML for the status badge (Active/Inactive/Offline)
+ */
+function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
+    const label = typeLabel
+        ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
+        : "Item";
+
+    if (!enabled) {
+        // CASE 1: Inactive (Manually disabled) -> RED
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                Inactive
+                <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+        </div>`;
+    } else if (!reachable) {
+        // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                Offline
+                <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+        </div>`;
+    } else {
+        // CASE 3: Active (Enabled and Reachable) -> GREEN
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                Active
+                <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+        </div>`;
+    }
+}
+
+/**
+ * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
+ */
+
+function updateEntityActionButtons(cell, type, id, isEnabled) {
+    // We look for the form that toggles activation inside the cell
+    const form = cell.querySelector('form[action*="/toggle"]');
+    if (!form) {
+        return;
+    }
+
+    // The HTML structure for the button
+    // Ensure we are flipping the button state correctly based on isEnabled
+
+    if (isEnabled) {
+        // If Enabled -> Show Deactivate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="false" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this item'">
+                Deactivate
+            </button>
+        `;
+    } else {
+        // If Disabled -> Show Activate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="true" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'💡Re-enable this item'">
+                Activate
+            </button>
+        `;
+    }
+}

@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sign In - MCP Gateway</title>
+    <!-- Tailwind CSS -->
+    {% if ui_airgapped %}
+    <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
+    {% else %}
     <script src="https://cdn.tailwindcss.com"></script>
+    {% endif %}
     <script>
       tailwind.config = {
         darkMode: "class",
