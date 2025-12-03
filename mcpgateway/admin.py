@@ -2483,7 +2483,7 @@ async def admin_ui(
     # Load resource lists directly with DB-level filtering.
     # --------------------------------------------------------------------------------
     try:
-        raw_tools = await tool_service.list_tools_for_user(db, user_email, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
+        raw_tools = await tool_service.list_tools_for_user(db, allowed_team_ids=allowed_team_ids, team_id=selected_team_id, include_inactive=include_inactive)
     except Exception as e:
         LOGGER.exception("Failed to load tools for user: %s", e)
         raw_tools = []
