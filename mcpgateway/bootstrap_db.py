@@ -133,13 +133,6 @@ async def bootstrap_default_roles() -> None:
         with cast(Any, SessionLocal)() as db:
             role_service = RoleService(db)
             auth_service = EmailAuthService(db)
-
-            # Check if admin user exists
-            admin_user = await auth_service.get_user_by_email(settings.platform_owner_email)
-            if not admin_user:
-                logger.info("Admin user not found - skipping role assignment")
-                return
-
             # Default system roles to create
             default_roles = DEFAULT_ROLES
 
@@ -169,28 +162,6 @@ async def bootstrap_default_roles() -> None:
                 except Exception as e:
                     logger.error(f"Failed to create role {role_def['name']}: {e}")
                     continue
-
-            # Assign platform_owner role to admin user
-            platform_owner_role = next((r for r in created_roles if r.name == "platform_owner"), None)
-            if platform_owner_role:
-                try:
-                    # Check if assignment already exists
-                    existing_assignment = await role_service.get_user_role_assignment(user_email=admin_user.email, role_id=platform_owner_role.id, scope="global", scope_id=None)
-
-                    if not existing_assignment or not existing_assignment.is_active:
-                        await role_service.assign_role_to_user(user_email=admin_user.email, role_id=platform_owner_role.id, scope="global", scope_id=None, granted_by=admin_user.email)
-                        logger.info(f"Assigned platform_owner role to {admin_user.email}")
-
-                        team = admin_user.get_personal_team()
-                        if team:
-                            team_owner_role = await role_service.get_role_by_name("team_owner", "team")
-                            if team_owner_role:
-                                await role_service.assign_role_to_user(user_email=admin_user.email, role_id=team_owner_role.id, scope="team", scope_id=team.id, granted_by=admin_user.email)
-                    else:
-                        logger.info("Admin user already has platform_owner role")
-
-                except Exception as e:
-                    logger.error(f"Failed to assign platform_owner role: {e}")
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
@@ -309,11 +280,11 @@ async def main() -> None:
 
     logger.info("Database ready")
 
-    # Bootstrap admin user after database is ready
-    await bootstrap_admin_user()
-
     # Bootstrap default RBAC roles after admin user is created
     await bootstrap_default_roles()
+
+    # Bootstrap admin user after database is ready
+    await bootstrap_admin_user()
 
     # Assign orphaned resources to admin personal team after all setup is complete
     await bootstrap_resource_assignments()
