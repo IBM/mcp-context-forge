@@ -14,7 +14,7 @@ plugins:
         tenant_ids: []  # Apply to all tenants
     config:
       policy_lang: custom_dsl
-      policy_output_keywords: 
+      policy_output_keywords:
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
       policy_redaction_spec:
@@ -28,7 +28,6 @@ plugins:
 
         [role:admin:prompt/judge_prompts]
         view_full_output
-          
 
 
 # Plugin directories to scan
