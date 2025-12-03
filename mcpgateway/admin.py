@@ -9614,7 +9614,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> result = asyncio.run(test_admin_test_gateway())
@@ -9640,7 +9640,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_text_response():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientTextOnly()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.body.get("details") == "plain text response"
         >>>
         >>> asyncio.run(test_admin_test_gateway_text_response())
@@ -9658,7 +9658,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_network_error():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientError()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return response.status_code == 502 and "Network error" in str(response.body)
         >>>
         >>> asyncio.run(test_admin_test_gateway_network_error())
@@ -9676,7 +9676,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_post():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_post, mock_user)
+        ...         response = await admin_test_gateway(mock_request_post, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_post())
@@ -9694,7 +9694,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_trailing_slash():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_trailing, mock_user)
+        ...         response = await admin_test_gateway(mock_request_trailing, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_trailing_slash())
