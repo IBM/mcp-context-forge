@@ -286,7 +286,7 @@ class BenchmarkSuite:
                     {"ssn": "123-45-6789", "email": "alice@example.com", "name": "Alice"},
                     {"ssn": "987-65-4321", "email": "bob@example.com", "name": "Bob"},
                 ],
-                "contact": {"email": "admin@example.com", "phone": "555-1234"},
+                "contact": {"email": "owner@example.com", "phone": "555-1234"},
             }
             data_str = json.dumps(data)
             data_size = len(data_str.encode("utf-8"))

@@ -2733,7 +2733,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> # Mock request with form data
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
-        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}
+        >>> mock_form = {"email": "owner@example.com", "password": "changeme"}
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>>
         >>> mock_db = MagicMock()
@@ -3085,9 +3085,11 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
     """
     # Get user's teams (owned + member)
     user_teams = await team_service.get_user_teams(current_user.email)
+    LOGGER.info(f'{user_teams=}')
 
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
+    LOGGER.info(f'{public_teams=}')
 
     # Combine teams with relationship information
     all_teams = []
@@ -3107,6 +3109,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
         relationship_data = {"team": team, "relationship": "join", "member_count": team.get_member_count(), "pending_request": pending_request}
         all_teams.append(relationship_data)
 
+    LOGGER.info(f'{all_teams=}')
     # Generate HTML for unified team view
     teams_html = ""
     for item in all_teams:
@@ -3891,7 +3894,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.manage_members")  # Team write permission instead of admin user management
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -3975,7 +3978,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.write")
+@require_permission("teams.manage_members")
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -4060,7 +4063,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.write")  # Team write permission instead of admin user management
+@require_permission("teams.manage_members")  # Team write permission instead of admin user management
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
@@ -5338,7 +5341,7 @@ async def admin_force_password_change(
         >>>
         >>> # Mock user context
         >>> mock_user = MagicMock()
-        >>> mock_user.email = "admin@example.com"
+        >>> mock_user.email = "owner@example.com"
         >>>
         >>> import asyncio
         >>> async def test_force_password_change():

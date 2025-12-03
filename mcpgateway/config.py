@@ -315,7 +315,7 @@ class Settings(BaseSettings):
 
     # Email-Based Authentication
     email_auth_enabled: bool = Field(default=True, description="Enable email-based authentication")
-    platform_owner_email: str = Field(default="admin@example.com", description="Platform owner email address")
+    platform_owner_email: str = Field(default="owner@example.com", description="Platform owner email address")
     platform_owner_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform owner password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
     platform_owner_full_name: str = Field(default="Platform Owner", description="Platform owner full name")

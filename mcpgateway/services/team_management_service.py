@@ -125,7 +125,7 @@ class TeamManagementService:
             True
 
             Test creator validation:
-            >>> created_by = "admin@example.com"
+            >>> created_by = "owner@example.com"
             >>> "@" in created_by
             True
             >>> len(created_by) > 0
@@ -393,7 +393,7 @@ class TeamManagementService:
             >>> service = TeamManagementService(Mock())
             >>> asyncio.iscoroutinefunction(service.add_member_to_team)
             True
-            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "admin@example.com")
+            >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "team_member", "added", "owner@example.com")
         """
         try:
             # Validate role
