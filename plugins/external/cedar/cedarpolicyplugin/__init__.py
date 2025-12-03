@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """MCP Gateway CedarPolicyPlugin Plugin - A plugin that does policy decision and enforcement using cedar.
 
 Copyright 2025

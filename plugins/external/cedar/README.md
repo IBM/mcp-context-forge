@@ -18,7 +18,7 @@ Role-based access control (RBAC) is an authorization model where permissions are
 
 This plugin supports two ways of defining policies in the configuration file, controlled by the `policy_lang` parameter.
 
-### Cedar Mode 
+### Cedar Mode
 
 `plugins/external/cedar/resources/config.yaml`
 
@@ -98,7 +98,7 @@ plugins:
         tenant_ids: []  # Apply to all tenants
     config:
       policy_lang: cedar
-      policy_output_keywords: 
+      policy_output_keywords:
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
       policy_redaction_spec:
@@ -119,7 +119,7 @@ plugins:
           effect: Permit
           principal: Role::"manager"
           action:
-            - Action::"get_leave_balance" 
+            - Action::"get_leave_balance"
             - Action::"approve_leave"
             - Action::"promote_employee"
             - Action::"view_performance"
@@ -159,7 +159,7 @@ plugins:
           principal: Role::"employee"
           action:
             - Action::"view_redacted_output"
-          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>          
+          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>
 
         ### Prompt invocation policies ###
         - id: allow-admin-prompts # policy for resources
@@ -169,7 +169,7 @@ plugins:
             - Action::"view_full_output"
           resource: Prompt::"judge_prompts" #Prompt::<prompt_name>
 
-        
+
         - id: allow-employee-redacted-prompts # policy for resources
           effect: Permit
           principal: Role::"employee"
@@ -221,7 +221,7 @@ In another policy defined for tools
 ```
 
 
-The actions like `view_full_output` and `view_redacted_output` has been used. This basically controls the 
+The actions like `view_full_output` and `view_redacted_output` has been used. This basically controls the
 level of output visibile to the user. In the above policy, user with role `hr` is only allowed to view the output of `update_payroll`. Similary for the second policy, user with role `employee` is only allowed to view redacted output of the tool.
 
 
@@ -238,7 +238,7 @@ level of output visibile to the user. In the above policy, user with role `hr` i
             - Action::"view_full_output"
           resource: Prompt::"judge_prompts" #Prompt::<prompt_name>
 
-        
+
         - id: allow-employee-redacted-prompts # policy for resources
           effect: Permit
           principal: Role::"employee"
@@ -252,7 +252,7 @@ Here, in the above polcicy, given a prompt template `judge_prompts`, user of rol
 
 #### Resource Invocation Policies
 
-**NOTE:** Please don't be confused with the word resource in cedar to the word resource in MCP ContextForge. 
+**NOTE:** Please don't be confused with the word resource in cedar to the word resource in MCP ContextForge.
 
 ```yaml
 
@@ -268,10 +268,10 @@ Here, in the above polcicy, given a prompt template `judge_prompts`, user of rol
           principal: Role::"employee"
           action:
             - Action::"view_redacted_output"
-          resource: Resource::"https://example.com/data" #Resource::<resource_uri>          
+          resource: Resource::"https://example.com/data" #Resource::<resource_uri>
 ```
 
-Here, `Resource` word used in policy, is if resource hooks are invoked. So, in the above policy, 
+Here, `Resource` word used in policy, is if resource hooks are invoked. So, in the above policy,
 user with role `admin` is only allowed to view full output of uri `https://example.com/data`. Where, the user is of `employee` role, it can only see the redacted versionaaaaa of the resource output.
 
 
@@ -282,7 +282,7 @@ user with role `admin` is only allowed to view full output of uri `https://examp
         view_redacted: "view_redacted_output"
 ```
 
-has been provided, so everytime a user defines a policy, if it wants to control the output visibility of 
+has been provided, so everytime a user defines a policy, if it wants to control the output visibility of
 any of the tool, prompt, resource or agent in MCP gateway, it can provide the keyword, it's supposed to use in the policy in `policy_output_keywords`. CedarPolicyPlugin will internally use this mapping to redact or fully display the tool, prompt or resource response in post hooks.
 
 
@@ -325,7 +325,7 @@ run `make test` to run all the test cases.
 
 
 
-## Difference from OPAPlugin 
+## Difference from OPAPlugin
 
 The OPA plugin runs an OPA server to enforce policies, whereas the Cedar plugin uses the `cedarpy` library and performs policy enforcement locally without requiring an external service.
 OPA plugin requires to know `rego` to define policies by user while the `Cedar` plugin can be defined either in `cedar` or user friendly `custom_dsl` language.

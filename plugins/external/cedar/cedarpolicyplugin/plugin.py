@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """A plugin that does policy decision and enforcement using cedar.
 
 Copyright 2025
