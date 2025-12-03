@@ -56,7 +56,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
         ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*" }
+    policy_redaction_spec = {"pattern": "\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -91,24 +91,28 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id=req["resource"], user=req["user"]))
         result = await plugin.tool_post_invoke(payload, context)
         if result.modified_payload and "[REDACTED]" in result.modified_payload.result["text"]:
-            redact_count+=1
+            redact_count += 1
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert redact_count == 1
     assert allow_count == 3
     assert deny_count == 1
 
+
 """This test case is responsible for verifying cedarplugin functionality for post tool hooks"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     """Test plugin for post tool invocation"""
-    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
+    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n\
+    [role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\
+    \nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n\
+    [role:employee:server/askHR]\nview_redacted_output'
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*" }
+    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -143,11 +147,11 @@ async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id=req["resource"], user=req["user"]))
         result = await plugin.tool_post_invoke(payload, context)
         if result.modified_payload and "[REDACTED]" in result.modified_payload.result["text"]:
-            redact_count+=1
+            redact_count += 1
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert redact_count == 1
     assert allow_count == 3
@@ -224,14 +228,14 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id=req["resource"], user=req["user"]))
         result = await plugin.tool_pre_invoke(payload, context)
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert allow_count == 3
     assert deny_count == 1
 
-# # """This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
     """Test plugin tool pre invoke."""
@@ -271,9 +275,9 @@ async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id=req["resource"], user=req["user"]))
         result = await plugin.tool_pre_invoke(payload, context)
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert allow_count == 3
     assert deny_count == 1
@@ -337,9 +341,9 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.prompt_pre_fetch(payload, context)
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert allow_count == 2
     assert deny_count == 1
@@ -387,9 +391,9 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.prompt_pre_fetch(payload, context)
         if result.continue_processing:
-            allow_count+=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
     assert allow_count == 2
     assert deny_count == 1
@@ -456,11 +460,11 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.prompt_post_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
             if result.modified_payload and "[REDACTED]" in result.modified_payload.result.messages[0].content.text:
-                redact_count+=1
+                redact_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
@@ -514,11 +518,11 @@ async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.prompt_post_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
             if result.modified_payload and "[REDACTED]" in result.modified_payload.result.messages[0].content.text:
-                redact_count+=1
+                redact_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
@@ -585,9 +589,9 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_pre_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
@@ -636,9 +640,9 @@ async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_pre_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
@@ -711,11 +715,11 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_post_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
             if result.modified_payload and "[REDACTED]" in result.modified_payload.content.text:
-                redact_count+=1
+                redact_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
@@ -772,11 +776,11 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_post_fetch(payload, context)
         if result.continue_processing:
-            allow_count +=1
+            allow_count += 1
             if result.modified_payload and "[REDACTED]" in result.modified_payload.content.text:
-                redact_count+=1
+                redact_count += 1
         if not result.continue_processing:
-            deny_count +=1
+            deny_count += 1
 
 
     assert allow_count == 2
