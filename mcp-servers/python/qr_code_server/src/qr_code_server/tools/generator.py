@@ -1,19 +1,19 @@
 import base64
 import logging
 from io import BytesIO
+import os
 
-import qrcode
 from pydantic import BaseModel
-from qrcode import QRCode
 from qrcode.image.pil import PilImage
-from qrcode.image.svg import SvgImage
 
 from qr_code_server.config import config
 from qr_code_server.utils.file_utils import resolve_output_path
-from qr_code_server.utils.image_utils import ImageAscii
+from qr_code_server.utils.image_utils import create_qr_image, index_image_generator, ImageAscii
+import zipfile
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_ZIP_FILE_NAME = "qr.zip"
 
 class QRGenerationRequest(BaseModel):
     data: str
@@ -27,39 +27,25 @@ class QRGenerationRequest(BaseModel):
     return_base64: bool = False
 
 
+class BatchQRGenerationRequest(BaseModel):
+    data_list: list[str]  # List of data to encode
+    format: str = "png"
+    size: int = 10
+    naming_pattern: str = "qr_{index}"  # File naming pattern
+    output_directory: str = "./qr_codes/"
+    zip_output: bool = False  # Create ZIP archive
+
+
 def create_qr_code(request: QRGenerationRequest):
 
-    ec_map = {
-        "L": qrcode.constants.ERROR_CORRECT_L,
-        "M": qrcode.constants.ERROR_CORRECT_M,
-        "Q": qrcode.constants.ERROR_CORRECT_Q,
-        "H": qrcode.constants.ERROR_CORRECT_H,
-    }
-
-    request.format = "txt" if request.format == "ascii" else request.format
-
-    factory_map = {
-        "png": PilImage,
-        "svg": SvgImage,
-        "txt": ImageAscii
-    }
-
-    qr = QRCode(
-        version=None,
-        error_correction=ec_map[request.error_correction],
-        box_size=request.size,
+    img = create_qr_image(
+        data=request.data,
+        format=request.format,
+        error_correction=request.error_correction,
+        size=request.size,
         border=request.border,
-    )
-
-    qr.add_data(request.data)
-    qr.make(fit=True)
-
-    factory = factory_map.get(request.format, PilImage)
-
-    img = qr.make_image(
-        image_factory=factory,
         fill_color=request.fill_color,
-        back_color=request.back_color,
+        back_color=request.back_color
     )
 
     if request.return_base64:
@@ -77,11 +63,15 @@ def create_qr_code(request: QRGenerationRequest):
             logger.error(f"Error encoding qr code to base 64: {e}")
             return {"success": False, "error": str(e)}
 
-    save_path = resolve_output_path(
-        output_path=request.save_path,
-        default_path=config.output.default_directory,
-        file_extension=request.format
-    )
+    try:
+        save_path = resolve_output_path(
+            output_path=request.save_path or config.output.default_directory,
+            file_extension=request.format
+        )
+    except Exception as e:
+        # propagate as structured result so callers/tests can handle it
+        logger.error("Error resolving output path: %s", e)
+        return {"success": False, "error": str(e)}
 
     try:
         img.save(save_path)
@@ -93,3 +83,58 @@ def create_qr_code(request: QRGenerationRequest):
     except Exception as e:
         logger.error(f"Error saving qr code image: {e}")
         return {"success": False, "error": str(e)}
+
+
+def create_batch_qr_codes(request: BatchQRGenerationRequest):
+
+    try:
+        os.makedirs(request.output_directory, exist_ok=True)
+    except OSError as e:
+        return {"success": False, "error": str(e)}
+
+    if request.zip_output:
+        zip_file_path = os.path.join(request.output_directory, DEFAULT_ZIP_FILE_NAME)
+        with zipfile.ZipFile(zip_file_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for index, img in index_image_generator(
+                data=request.data_list,
+                format=request.format,
+                size=request.size,
+            ):
+                filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
+
+                # yield acii as string and pil as bytes
+                if hasattr(img, "to_string"):
+                    img =img.to_string()
+                elif isinstance(img, PilImage):
+                    img = img.tobytes()
+                try:
+                    zf.writestr(filename, img)
+                except Exception as e:
+                    logger.error(f"Error adding image {filename} to zip: {e}")
+                    return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "message": f"QR code images saved in zip archive at {zip_file_path}",
+        }
+
+    else:
+        for index, img in index_image_generator(
+            data=request.data_list,
+            format=request.format,
+            size=request.size,
+        ):
+            filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
+            file_path = os.path.join(request.output_directory, filename)
+            try:
+                img.save(file_path)
+            except Exception as e:
+                logger.error(f"Error saving image {filename}: {e}")
+                return {"success": False, "error": str(e)}
+        return {
+            "success": True,
+            "message": f"QR code images saved at {request.output_directory}",
+        }
+
+
+
+
