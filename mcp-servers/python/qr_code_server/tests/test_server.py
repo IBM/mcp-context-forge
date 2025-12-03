@@ -19,3 +19,4 @@ async def test_tool_registration():
         tools = await client.list_tools()
         names = [t.name for t in tools]
         assert "generate_qr_code" in names
+        assert "generate_batch_qr_codes" in names
