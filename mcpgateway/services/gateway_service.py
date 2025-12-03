@@ -80,10 +80,10 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
-from mcpgateway.services.event_service import EventService
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -1767,6 +1767,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if gateway.enabled or include_inactive:
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+            
+            # Structured logging: Log gateway view
+            structured_logger.log(
+                level="INFO",
+                message="Gateway retrieved successfully",
+                event_type="gateway_viewed",
+                component="gateway_service",
+                team_id=getattr(gateway, "team_id", None),
+                resource_type="gateway",
+                resource_id=str(gateway.id),
+                custom_fields={
+                    "gateway_name": gateway.name,
+                    "gateway_url": gateway.url,
+                    "include_inactive": include_inactive,
+                },
+                db=db,
+            )
+            
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")

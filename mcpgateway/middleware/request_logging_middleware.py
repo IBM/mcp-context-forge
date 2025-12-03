@@ -20,9 +20,9 @@ from typing import Callable
 
 # Third-Party
 from fastapi.security import HTTPAuthorizationCredentials
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.auth import get_current_user
@@ -36,7 +36,7 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 # Initialize structured logger for gateway boundary logging
-structured_logger = get_structured_logger("gateway")
+structured_logger = get_structured_logger("http_gateway")
 
 SENSITIVE_KEYS = {"password", "secret", "token", "apikey", "access_token", "refresh_token", "client_secret", "authorization", "jwt_token"}
 
@@ -211,7 +211,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 structured_logger.log(
                     level="INFO",
                     message=f"Request started: {method} {path}",
-                    component="gateway",
+                    component="http_gateway",
                     correlation_id=correlation_id,
                     user_email=user_email,
                     user_id=user_id,
@@ -237,7 +237,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     structured_logger.log(
                         level=log_level,
                         message=f"Request completed: {method} {path} - {response.status_code}",
-                        component="gateway",
+                        component="http_gateway",
                         correlation_id=correlation_id,
                         user_email=user_email,
                         user_id=user_id,
