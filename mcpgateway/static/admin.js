@@ -23234,8 +23234,7 @@ function applyUnifiedFilters(entityType, searchText = "", filterTags = []) {
                     // Virtual Servers: search name, description, and tool names
                     const cells = row.querySelectorAll("td");
                     if (cells.length >= 5) {
-                        const name =
-                            cells[3]?.textContent?.toLowerCase() || "";
+                        const name = cells[3]?.textContent?.toLowerCase() || "";
                         const description =
                             cells[4]?.textContent?.toLowerCase() || "";
                         const tools =
