@@ -413,7 +413,7 @@ class Settings(BaseSettings):
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
     # ============================================================================
-    # Session Pooling Configuration (Issue #975)
+    # Session Pooling Configuration - MCP Gateway
     # ============================================================================
     
     # Global Session Management
@@ -511,6 +511,102 @@ class Settings(BaseSettings):
         default=300,
         ge=60,
         description="Interval for metrics aggregation in seconds"
+    )
+
+    # Redis Backend for Distributed Pooling
+    redis_pool_backend_enabled: bool = Field(
+        default=False,
+        description="Enable Redis backend for distributed session pool state management"
+    )
+    redis_pool_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis connection URL for pool backend"
+    )
+    redis_pool_prefix: str = Field(
+        default="mcpgateway:pool:",
+        description="Redis key prefix for pool data"
+    )
+    redis_pool_size: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Redis connection pool size"
+    )
+    redis_pool_timeout: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Redis operation timeout in seconds"
+    )
+    redis_pool_retry_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Number of retry attempts for Redis operations"
+    )
+    redis_pool_retry_delay: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=5.0,
+        description="Delay between Redis retry attempts in seconds"
+    )
+    
+    # Circuit Breaker Configuration
+    circuit_breaker_enabled: bool = Field(
+        default=True,
+        description="Enable circuit breaker pattern for pool failure handling"
+    )
+    circuit_breaker_failure_threshold: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description="Number of consecutive failures before opening circuit"
+    )
+    circuit_breaker_timeout: int = Field(
+        default=60,
+        ge=10,
+        le=600,
+        description="Timeout in seconds before attempting to close circuit"
+    )
+    circuit_breaker_half_open_max_calls: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum calls allowed in half-open state"
+    )
+    
+    # Rate Limiting Configuration
+    pool_rate_limit_enabled: bool = Field(
+        default=True,
+        description="Enable rate limiting per pool to prevent exhaustion"
+    )
+    pool_rate_limit_requests: int = Field(
+        default=100,
+        ge=1,
+        le=10000,
+        description="Maximum requests per window per pool"
+    )
+    pool_rate_limit_window: int = Field(
+        default=60,
+        ge=1,
+        le=3600,
+        description="Rate limit window size in seconds"
+    )
+    pool_rate_limit_adaptive: bool = Field(
+        default=True,
+        description="Enable adaptive rate limiting based on pool performance"
+    )
+    pool_rate_limit_adaptive_min_rate: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=1.0,
+        description="Minimum rate multiplier for adaptive rate limiting (0.1-1.0)"
+    )
+    pool_rate_limit_adaptive_max_rate: float = Field(
+        default=2.0,
+        ge=1.0,
+        le=10.0,
+        description="Maximum rate multiplier for adaptive rate limiting (1.0-10.0)"
     )
 
 

@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/alembic/versions/l6f7g8h9i0j1_create_session_pools_table.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 create_session_pools_table
 

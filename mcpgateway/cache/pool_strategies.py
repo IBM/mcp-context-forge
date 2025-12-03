@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/cache/pool_strategies.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Implementation for Issue #975
+Authors: Mihai Criveti
 
 Session Pool Strategy Enumerations.
 

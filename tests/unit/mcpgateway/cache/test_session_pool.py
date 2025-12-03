@@ -2,7 +2,7 @@
 """Location: ./tests/unit/mcpgateway/test_session_pool.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 Unit tests for session pool implementation.
 

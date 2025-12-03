@@ -259,10 +259,10 @@ class ServerPoolConfig(BaseModelWithConfigDict):
     """
     
     enabled: bool = Field(default=False, description="Whether pooling is enabled")
-    size: int = Field(default=5, ge=1, le=100, description="Target pool size")
+    size: int = Field(default=5, ge=1, le=1000, description="Target pool size (1-1000)")
     strategy: str = Field(default="round_robin", description="Pooling strategy")
     min_size: int = Field(default=1, ge=1, description="Minimum pool size")
-    max_size: int = Field(default=10, ge=1, le=100, description="Maximum pool size")
+    max_size: int = Field(default=10, ge=1, le=1000, description="Maximum pool size (1-1000)")
     timeout: int = Field(default=30, ge=1, description="Acquisition timeout in seconds")
     max_idle_time: int = Field(default=3600, ge=60, description="Max idle time in seconds")
     health_check_interval: int = Field(default=60, ge=10, description="Health check interval in seconds")

@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/cache/session_pool.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 Session Pool Implementation for MCP Gateway.
 

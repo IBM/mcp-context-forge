@@ -105,27 +105,61 @@ def setup_metrics(app):
         custom_labels["engine"] = db_engine
 
         if custom_labels:
-            app_info_gauge = Gauge(
-                "app_info",
-                "Static labels for the application",
-                labelnames=list(custom_labels.keys()),
-                registry=REGISTRY,
-            )
-            app_info_gauge.labels(**custom_labels).set(1)
+            # Check if app_info gauge already exists to avoid duplication
+            try:
+                app_info_gauge = REGISTRY._names_to_collectors.get("app_info")
+                if app_info_gauge is None:
+                    app_info_gauge = Gauge(
+                        "app_info",
+                        "Static labels for the application",
+                        labelnames=list(custom_labels.keys()),
+                        registry=REGISTRY,
+                    )
+            except Exception:
+                # If anything goes wrong, try to create it anyway
+                try:
+                    app_info_gauge = Gauge(
+                        "app_info",
+                        "Static labels for the application",
+                        labelnames=list(custom_labels.keys()),
+                        registry=REGISTRY,
+                    )
+                except Exception:
+                    # Collector already exists, retrieve it
+                    app_info_gauge = REGISTRY._names_to_collectors.get("app_info")
+            
+            if app_info_gauge is not None:
+                app_info_gauge.labels(**custom_labels).set(1)
 
         excluded = [pattern.strip() for pattern in (settings.METRICS_EXCLUDED_HANDLERS or "").split(",") if pattern.strip()]
 
-        # Add database metrics gauge
-        db_info_gauge = Gauge(
-            "database_info",
-            "Database engine information",
-            labelnames=["engine", "url_scheme"],
-            registry=REGISTRY,
-        )
+        # Add database metrics gauge - check if already exists
+        try:
+            db_info_gauge = REGISTRY._names_to_collectors.get("database_info")
+            if db_info_gauge is None:
+                db_info_gauge = Gauge(
+                    "database_info",
+                    "Database engine information",
+                    labelnames=["engine", "url_scheme"],
+                    registry=REGISTRY,
+                )
+        except Exception:
+            # If anything goes wrong, try to create it anyway
+            try:
+                db_info_gauge = Gauge(
+                    "database_info",
+                    "Database engine information",
+                    labelnames=["engine", "url_scheme"],
+                    registry=REGISTRY,
+                )
+            except Exception:
+                # Collector already exists, retrieve it
+                db_info_gauge = REGISTRY._names_to_collectors.get("database_info")
 
         # Extract URL scheme for additional context
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
-        db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
+        if db_info_gauge is not None:
+            db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
         # Create instrumentator instance
         instrumentator = Instrumentator(

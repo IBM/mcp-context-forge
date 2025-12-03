@@ -166,7 +166,9 @@ class StdioTransport(Transport):
         self._stdout_writer = asyncio.StreamWriter(transport, protocol, reader, loop)
 
         self._connected = True
-        logger.info(f"Stdio transport connected: {self._session_id}")
+        # Keep a stable log message expected by tests, include session id at debug level
+        logger.info("stdio transport connected")
+        logger.debug(f"Stdio transport session id: {self._session_id}")
 
     async def disconnect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None, healthy: bool = True, error: Optional[str] = None) -> None:
         """Clean up stdio streams and release session back to pool if applicable.

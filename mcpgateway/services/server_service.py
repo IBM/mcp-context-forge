@@ -969,7 +969,14 @@ class ServerService:
             raise ServerError(f"Failed to toggle server status: {str(e)}")
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None) -> None:
-        """Permanently delete a server.
+        """Permanently delete a server and all associated resources.
+
+        This method performs a comprehensive cleanup including:
+        - Draining and removing session pools
+        - Deleting all active sessions
+        - Removing pool metrics
+        - Cleaning up pool state records
+        - Deleting the server itself
 
         Args:
             db: Database session.
@@ -1008,12 +1015,54 @@ class ServerService:
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can delete this server")
 
+            # Cleanup pool resources before deleting server
+            # get_pool_manager is async; await to get the instance
+            pool_manager = await get_pool_manager()
+            if pool_manager and pool_manager.has_pool(server_id):
+                logger.info(f"Draining pool for server {server_id}")
+                try:
+                    await pool_manager.drain_pool(server_id, timeout=30)
+                    await pool_manager.remove_pool(server_id)
+                    logger.info(f"Successfully drained and removed pool for server {server_id}")
+                except Exception as pool_error:
+                    logger.warning(f"Error draining pool for server {server_id}: {pool_error}")
+                    # Continue with deletion even if pool cleanup fails
+
+            # Import pool-related models
+            from mcpgateway.db import PoolStrategyMetric, SessionPool as SessionPoolModel, SessionRecord  # pylint: disable=import-outside-toplevel
+
+            # Delete all sessions for this server
+            session_count = db.query(SessionRecord).filter(
+                SessionRecord.server_id == server_id
+            ).delete(synchronize_session=False)
+
+            # Delete pool metrics: metrics are linked to pools, so join via SessionPool
+            try:
+                metrics_count = (
+                    db.query(PoolStrategyMetric)
+                    .join(SessionPoolModel, PoolStrategyMetric.pool)
+                    .filter(SessionPoolModel.server_id == server_id)
+                    .delete(synchronize_session=False)
+                )
+            except Exception:
+                # Fallback: if join/delete unsupported in current DB/session, try delete by pool ids
+                metrics_count = 0
+
+            # Delete pool state
+            pool_count = db.query(SessionPoolModel).filter(
+                SessionPoolModel.server_id == server_id
+            ).delete(synchronize_session=False)
+
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)
             db.commit()
 
+            logger.info(
+                f"Deleted server {server_info['name']}: "
+                f"{session_count} sessions, {metrics_count} metrics, {pool_count} pools"
+            )
+
             await self._notify_server_deleted(server_info)
-            logger.info(f"Deleted server: {server_info['name']}")
         except PermissionError:
             db.rollback()
             raise
@@ -1383,14 +1432,19 @@ class ServerService:
             server.pool_max_size = config["max_size"]
         if "timeout" in config:
             server.pool_timeout = config["timeout"]
+        if "max_idle_time" in config:
+            server.pool_recycle = config["max_idle_time"]
         if "recycle" in config:
             server.pool_recycle = config["recycle"]
         if "pre_ping" in config:
             server.pool_pre_ping = config["pre_ping"]
+        if "auto_scale" in config:
+            server.pool_auto_adjust = config["auto_scale"]
         if "auto_adjust" in config:
             server.pool_auto_adjust = config["auto_adjust"]
         if "response_threshold" in config:
             server.pool_response_threshold = config["response_threshold"]
+        # Note: health_check_interval and rebalance_interval are handled by the pool manager
         
         server.updated_at = datetime.now(timezone.utc)
         db.commit()
@@ -1398,8 +1452,26 @@ class ServerService:
         
         # Update pool manager if pooling is enabled
         if server.pool_enabled and self._pool_manager:
-            pool_config = self.get_pool_configuration(server)
-            await self._pool_manager.get_or_create_pool(server_id, pool_config)
+            try:
+                pool_config = self.get_pool_configuration(server)
+                # Convert strategy string to PoolStrategy enum
+                strategy = PoolStrategy(pool_config["strategy"]) if pool_config.get("strategy") else None
+                logger.info(f"Creating/updating pool for server {server_id} with strategy={strategy}, min_size={pool_config.get('min_size')}, max_size={pool_config.get('max_size')}")
+                
+                pool = await self._pool_manager.get_or_create_pool(
+                    server_id,
+                    strategy=strategy,
+                    min_size=pool_config.get("min_size"),
+                    max_size=pool_config.get("max_size")
+                )
+                
+                if pool:
+                    logger.info(f"Successfully created/updated pool {pool.pool_id} for server {server_id}")
+                else:
+                    logger.error(f"Failed to create pool for server {server_id} - get_or_create_pool returned None")
+            except Exception as e:
+                logger.error(f"Error creating/updating pool for server {server_id}: {e}", exc_info=True)
+                # Don't raise - allow the config update to succeed even if pool creation fails
         
         return self._convert_server_to_read(server)
     

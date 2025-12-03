@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/alembic/versions/m7g8h9i0j1k2_add_pooling_to_mcp_sessions.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 add_pooling_to_mcp_sessions
 

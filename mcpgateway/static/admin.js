@@ -13606,8 +13606,18 @@ window.addEventListener("error", (e) => {
 
 window.addEventListener("unhandledrejection", (e) => {
     console.error("Unhandled promise rejection:", e.reason);
-    // Show user error for unhandled promises as they're often more serious
-    showErrorMessage("An unexpected error occurred. Please refresh the page.");
+    // Prevent recursion by checking if error is already being handled
+    if (e.reason && e.reason.message && e.reason.message.includes("Maximum call stack")) {
+        console.error("Stack overflow detected - skipping error message to prevent recursion");
+        return;
+    }
+    try {
+        // Show user error for unhandled promises as they're often more serious
+        showErrorMessage("An unexpected error occurred. Please refresh the page.");
+    } catch (err) {
+        // If showing error message fails, just log it
+        console.error("Failed to show error message:", err);
+    }
 });
 
 // Enhanced cleanup function for page unload

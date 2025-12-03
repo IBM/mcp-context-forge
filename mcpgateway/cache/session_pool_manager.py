@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/cache/session_pool_manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 Session Pool Manager for MCP Gateway.
 
@@ -51,9 +51,14 @@ class SessionPoolManager:
         self._enabled = settings.session_pool_enabled
         
         logger.info(
-            f"Initialized SessionPoolManager (enabled={self._enabled}, "
-            f"default_strategy={settings.session_pool_strategy})"
-        )
+            f"Initialized SessionPoolManager (enabled={self._enabled},"
+            f"default_strategy={settings.session_pool_strategy})")
+        
+        # Graceful degradation
+        self._overflow_pool: Optional[SessionPool] = None
+        self._emergency_mode = False
+        self._direct_connection_count = 0
+        
 
     async def initialize(self) -> None:
         """Initialize the pool manager and load existing pools from database."""
@@ -234,6 +239,55 @@ class SessionPoolManager:
                     pool_stats = await pool.get_stats()
                     stats.append(pool_stats)
         return stats
+
+    def has_pool(self, server_id: str) -> bool:
+        """Check if a pool exists for the given server.
+        
+        Args:
+            server_id: ID of the server
+            
+        Returns:
+            True if pool exists, False otherwise
+        """
+        for pool in self._pools.values():
+            if pool.server_id == server_id:
+                return True
+        return False
+
+    async def drain_pool(self, server_id: str, timeout: int = 30) -> None:
+        """Drain a pool by preventing new acquisitions and waiting for active sessions.
+        
+        Args:
+            server_id: ID of the server
+            timeout: Maximum time to wait for active sessions to complete
+        """
+        pool = await self.get_pool_for_server(server_id)
+        if pool:
+            logger.info(f"Draining pool for server {server_id}")
+            await pool.drain()
+            logger.info(f"Pool for server {server_id} drained successfully")
+
+    async def remove_pool(self, server_id: str) -> None:
+        """Remove and shutdown a pool for a server.
+        
+        Args:
+            server_id: ID of the server
+        """
+        async with self._lock:
+            pool_to_remove = None
+            pool_id_to_remove = None
+            
+            for pool_id, pool in self._pools.items():
+                if pool.server_id == server_id:
+                    pool_to_remove = pool
+                    pool_id_to_remove = pool_id
+                    break
+            
+            if pool_to_remove and pool_id_to_remove:
+                logger.info(f"Removing pool {pool_id_to_remove} for server {server_id}")
+                await pool_to_remove.shutdown()
+                del self._pools[pool_id_to_remove]
+                logger.info(f"Pool for server {server_id} removed successfully")
 
     async def optimize_pool_strategy(self, server_id: str) -> Optional[PoolStrategy]:
         """Analyze pool performance and recommend optimal strategy.

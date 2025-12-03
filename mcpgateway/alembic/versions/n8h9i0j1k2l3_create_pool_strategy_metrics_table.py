@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/alembic/versions/n8h9i0j1k2l3_create_pool_strategy_metrics_table.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: IBM Bob
+Authors: Mihai Criveti
 
 create_pool_strategy_metrics_table
 

@@ -28,7 +28,7 @@ Structure:
 # Standard
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os as _os  # local alias to avoid collisions
 import sys
@@ -89,6 +89,7 @@ from mcpgateway.schemas import (
     GatewayRead,
     GatewayUpdate,
     JsonPathModifier,
+    PoolStrategyMetricRead,
     PromptCreate,
     PromptExecuteArgs,
     PromptRead,
@@ -99,6 +100,8 @@ from mcpgateway.schemas import (
     ResourceUpdate,
     RPCRequest,
     ServerCreate,
+    ServerPoolConfig,
+    ServerPoolStats,
     ServerRead,
     ServerUpdate,
     TaggedEntity,
@@ -458,20 +461,16 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
                     for server in active_servers:
                         if server.pool_enabled:
                             try:
-                                pool_config = {
-                                    "enabled": server.pool_enabled,
-                                    "size": server.pool_size,
-                                    "strategy": server.pool_strategy,
-                                    "min_size": server.pool_min_size,
-                                    "max_size": server.pool_max_size,
-                                    "timeout": server.pool_timeout,
-                                    "max_idle_time": server.pool_max_idle_time,
-                                    "health_check_interval": server.pool_health_check_interval,
-                                    "rebalance_interval": server.pool_rebalance_interval,
-                                    "auto_scale": server.pool_auto_scale,
-                                }
+                                # Convert strategy string to PoolStrategy enum
+                                from mcpgateway.cache.session_pool import PoolStrategy
+                                strategy = PoolStrategy(server.pool_strategy) if server.pool_strategy else None
                                 
-                                await session_pool_manager.get_or_create_pool(server.id, pool_config)
+                                await session_pool_manager.get_or_create_pool(
+                                    server.id,
+                                    strategy=strategy,
+                                    min_size=server.pool_min_size,
+                                    max_size=server.pool_max_size
+                                )
                                 pools_created += 1
                                 logger.info(f"Created session pool for server {server.name} (ID: {server.id})")
                             except Exception as e:
@@ -2384,7 +2383,7 @@ async def get_server_pool_metrics(
 @require_permission("servers.update")
 async def resize_server_pool(
     server_id: str,
-    size: int = Query(..., ge=1, le=100, description="New pool size"),
+    size: int = Query(..., ge=1, le=1000, description="New pool size (1-1000)"),
     request: Request = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -2471,9 +2470,24 @@ async def reset_server_pool(
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail="Pooling not enabled for this server")
         
-        pool_manager = request.app.state.pool_manager
-        await pool_manager.reset_pool(server_id)
+        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        if not pool_manager:
+            raise HTTPException(status_code=503, detail="Pool manager not available")
         
+        # Reset by removing and recreating the pool
+        await pool_manager.remove_pool(server_id)
+        
+        # Recreate the pool with current server config
+        from mcpgateway.cache.session_pool import PoolStrategy
+        strategy = PoolStrategy(server.pool_strategy) if server.pool_strategy else None
+        await pool_manager.get_or_create_pool(
+            server_id,
+            strategy=strategy,
+            min_size=server.pool_min_size,
+            max_size=server.pool_max_size
+        )
+        
+        logger.info(f"User {user} reset pool for server {server_id}")
         return {"message": f"Pool for server {server_id} has been reset"}
     except HTTPException:
         raise
@@ -2520,9 +2534,21 @@ async def get_pools_health(
     try:
         pool_manager = getattr(request.app.state, 'pool_manager', None)
         if not pool_manager:
-            raise HTTPException(status_code=503, detail="Pool manager not available")
+            logger.warning("Pool manager not available")
+            # Return empty health data when pool manager is not initialized
+            return {
+                "total_pools": 0,
+                "healthy_pools": 0,
+                "unhealthy_pools": 0,
+                "total_sessions": 0,
+                "active_sessions": 0,
+                "overall_health_score": 0.0,
+                "pools": [],
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "message": "Pool manager not initialized"
+            }
         
-        all_stats = await pool_manager.get_all_stats()
+        all_stats = await pool_manager.get_pool_stats()
         
         total_pools = len(all_stats)
         total_sessions = sum(s.get("total_sessions", 0) for s in all_stats)
@@ -2570,8 +2596,8 @@ async def get_pools_health(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting pools health: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error getting pools health: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to get pool health: {str(e)}")
 
 
 @server_router.get("/pools/strategies", response_model=List[Dict[str, Any]])
