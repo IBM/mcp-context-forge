@@ -247,7 +247,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                 if isinstance(value, dict) and "email" in value and "db" in value:
                     user_context = value
                     break
-
+            
             # Check args if not found
             if not user_context:
                 for arg in args:
@@ -261,8 +261,15 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             # Create permission service
             permission_service = PermissionService(user_context["db"])
 
+            request = user_context.get("request")
+
+            team_id = None
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
+
+            if team_id is None:
+                form = await request.form()
+                team_id = form.get('team_id')
 
             # First, check if any plugins want to handle permission checking
             # First-Party
@@ -316,7 +323,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     )
 
             # Retrieve user permissions from request state if available (from TokenScopingMiddleware)
-            request = user_context.get("request")
             user_permissions = None
             if request and hasattr(request, "state") and hasattr(request.state, "user_permissions"):
                 user_permissions = request.state.user_permissions

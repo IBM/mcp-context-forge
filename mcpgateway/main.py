@@ -283,8 +283,20 @@ async def get_allowed_team_ids(request: Request) -> Optional[List[str]]:
     """
     if hasattr(request.state, "allowed_team_ids"):
         return request.state.allowed_team_ids
-    return None
+    
+    user_permissions = getattr(request.state, "user_permissions", [])
+    allowed_teams: List[str] = []
 
+    if not user_permissions:
+        return []
+
+    for scope in user_permissions:
+        if scope.get("scope") == "team":
+            team_id = scope.get("scope_id")
+            if team_id:
+                allowed_teams.append(team_id)
+
+    return allowed_teams
 
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
