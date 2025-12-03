@@ -644,8 +644,9 @@ class ResourceService:
         """
         logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
         query = (
-            select(DbResource).join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
-            # .where(DbResource.uri_template.is_(None))
+            select(DbResource)
+            .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
+            .where(DbResource.uri_template.is_(None))
             .where(server_resource_association.c.server_id == server_id)
         )
         if not include_inactive:
