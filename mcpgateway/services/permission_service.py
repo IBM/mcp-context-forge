@@ -98,7 +98,6 @@ class PermissionService:
             effective_perms = role.role.get_effective_permissions()
             granted_scopes.append({"scope": "personal", "scope_id": None, "permissions": list(effective_perms)})
 
-        logger.info(f'{granted_scopes=}')
         return granted_scopes
 
     async def check_permission(
