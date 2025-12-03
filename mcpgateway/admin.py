@@ -3471,13 +3471,13 @@ async def admin_view_team_members(
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
         # Get team members
-        members = await team_service.get_team_members(team_id)
+        members = await team_service.get_team_roles(team_id)
 
         # Count owners to determine if this is the last owner
-        owner_count = sum(1 for _, membership in members if membership.role == "team_owner")
+        owner_count = sum(1 for membership in members if membership.role.name == "team_owner")
 
         # Check if current user is team owner
-        current_user_role = await team_service.get_user_role_in_team(user_email, team_id)
+        current_user_role = [role.role.name for role in members if role.user_email == user_email][0]
         is_team_owner = current_user_role == "team_owner"
 
         # Build member table with inline role editing for team owners
@@ -3489,10 +3489,10 @@ async def admin_view_team_members(
             <div class="divide-y divide-gray-200 dark:divide-gray-700">
         """
 
-        for member_user, membership in members:
-            role_display = membership.role.replace("_", " ").title() if membership.role else "team_member"
-            is_last_owner = membership.role == "team_owner" and owner_count == 1
-            is_current_user = member_user.email == user_email
+        for member in members:
+            role_display = member.role.name.replace("_", " ").title() if member.role else "team_member"
+            is_last_owner = member.role.name == "team_owner" and owner_count == 1
+            is_current_user = member.user_email == user_email
 
             # Role selection - only show for team owners and not for last owner
             if is_team_owner and not is_last_owner:
@@ -3501,18 +3501,18 @@ async def admin_view_team_members(
                         name="role"
                         class="text-xs px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                         hx-post="{root_path}/admin/teams/{team_id}/update-member-role"
-                        hx-vals='{{"user_email": "{member_user.email}"}}'
+                        hx-vals='{{"user_email": "{member.user_email}"}}'
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         hx-trigger="change">
-                        <option value="team_member" {"selected" if membership.role == "team_member" else ""}>Member</option>
-                        <option value="team_owner" {"selected" if membership.role == "team_owner" else ""}>Owner</option>
+                        <option value="team_member" {"selected" if member.role.name == "team_member" else ""}>Member</option>
+                        <option value="team_owner" {"selected" if memberrole.name == "team_owner" else ""}>Owner</option>
                     </select>
                 """
             else:
                 # Show static role badge
                 role_color = (
-                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if membership.role == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+                    "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200" if member.role.name == "team_owner" else "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
                 )
                 role_selector = f'<span class="px-2 py-1 text-xs font-medium {role_color} rounded-full">{role_display}</span>'
 
@@ -3522,8 +3522,8 @@ async def admin_view_team_members(
                     <button
                         class="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 focus:outline-none"
                         hx-post="{root_path}/admin/teams/{team_id}/remove-member"
-                        hx-vals='{{"user_email": "{member_user.email}"}}'
-                        hx-confirm="Remove {member_user.email} from this team?"
+                        hx-vals='{{"user_email": "{member.user_email}"}}'
+                        hx-confirm="Remove {member.user_email} from this team?"
                         hx-target="#team-edit-modal-content"
                         hx-swap="innerHTML"
                         title="Remove member">
@@ -3549,16 +3549,16 @@ async def admin_view_team_members(
                     <div class="flex items-center space-x-4 flex-1">
                         <div class="flex-shrink-0">
                             <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member_user.email[0].upper()}</span>
+                                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{member.user_email.upper()}</span>
                             </div>
                         </div>
                         <div class="min-w-0 flex-1">
                             <div class="flex items-center space-x-2">
-                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member_user.full_name or member_user.email}</p>
+                                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{member.user.full_name or member.user_email}</p>
                                 {" ".join(indicators)}
                             </div>
-                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member_user.email}</p>
-                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {membership.joined_at.strftime("%b %d, %Y") if membership.joined_at else "Unknown"}</p>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">{member.user_email}</p>
+                            <p class="text-xs text-gray-400 dark:text-gray-500">Joined: {member.granted_at.strftime("%b %d, %Y") if member.granted_at else "Unknown"}</p>
                         </div>
                     </div>
                     <div class="flex items-center space-x-3">
@@ -3620,8 +3620,8 @@ async def admin_view_team_members(
 
                 # Get current team members
                 team_management_service = TeamManagementService(db)
-                team_members = await team_management_service.get_team_members(team.id)
-                member_emails = {team_user.email for team_user, membership in team_members}
+                team_members = await team_management_service.get_team_roles(team.id)
+                member_emails = {member.user_email for member in team_members}
 
                 # Filter out existing members
                 available_users = [team_user for team_user in all_users if team_user.email not in member_emails]
