@@ -108,16 +108,19 @@ def test_get_settings_is_lru_cached(mock_settings):
     """Constructor must run only once regardless of repeated calls."""
     get_settings.cache_clear()
 
-    inst1 = MagicMock()
-    inst1.validate_transport.return_value = None
-    inst1.validate_database.return_value = None
+    try:
+        inst1 = MagicMock()
+        inst1.validate_transport.return_value = None
+        inst1.validate_database.return_value = None
 
-    inst2 = MagicMock()
-    mock_settings.side_effect = [inst1, inst2]
+        inst2 = MagicMock()
+        mock_settings.side_effect = [inst1, inst2]
 
-    assert get_settings() is inst1
-    assert get_settings() is inst1  # cached
-    assert mock_settings.call_count == 1
+        assert get_settings() is inst1
+        assert get_settings() is inst1  # cached
+        assert mock_settings.call_count == 1
+    finally:
+        get_settings.cache_clear()
 
 
 # --------------------------------------------------------------------------- #

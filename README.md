@@ -355,7 +355,7 @@ Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.exam
 <summary><strong>🚀 End-to-end demo (register a local MCP server)</strong></summary>
 
 ```bash
-# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker
+# 1️⃣  Spin up the sample GO MCP time server using mcpgateway.translate & docker (replace docker with podman if needed)
 python3 -m mcpgateway.translate \
      --stdio "docker run --rm -i ghcr.io/ibm/fast-time-server:latest -transport=stdio" \
      --expose-sse \
@@ -389,21 +389,21 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:444
 # 4️⃣  Create a *virtual server* bundling those tools. Use the ID of tools from the tool catalog (Step #3) and pass them in the associatedTools list.
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":[<ID_OF_TOOLS>]}' \
+     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":[<ID_OF_TOOLS>]}}' \
      http://localhost:4444/servers | jq
 
 # Example curl
 curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
      -H "Content-Type: application/json"
-     -d '{"name":"time_server","description":"Fast time tools","associatedTools":["6018ca46d32a4ac6b4c054c13a1726a2"]}' \
+     -d '{"server":{"name":"time_server","description":"Fast time tools","associated_tools":["6018ca46d32a4ac6b4c054c13a1726a2"]}}' \
      http://localhost:4444/servers | jq
 
 # 5️⃣  List servers (should now include the UUID of the newly created virtual server)
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/servers | jq
 
-# 6️⃣  Client SSE endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
+# 6️⃣  Client HTTP endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
 npx -y @modelcontextprotocol/inspector
-# Transport Type: SSE, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/sse,  Header Name: "Authorization", Bearer Token
+# Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp,  Header Name: "Authorization", Bearer Token
 ```
 
 </details>
@@ -465,9 +465,92 @@ When using a MCP Client such as Claude with stdio:
 Use the official OCI image from GHCR with **Docker** *or* **Podman**.
 Please note: Currently, arm64 is not supported. If you are e.g. running on MacOS, install via PyPi.
 
+### 🚀 Quick Start - Docker Compose
+
+Get a full stack running with MariaDB and Redis in under 30 seconds:
+
+```bash
+# Clone and start the stack
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge
+
+# Start with MariaDB (recommended for production)
+docker compose up -d
+
+# Or start with PostgreSQL
+# Uncomment postgres in docker-compose.yml and comment mariadb section
+# docker compose up -d
+
+# Check status
+docker compose ps
+
+# View logs
+docker compose logs -f gateway
+
+# Access Admin UI: http://localhost:4444/admin (admin/changeme)
+# Generate API token
+docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret my-test-key
+```
+
+**What you get:**
+- 🗄️ **MariaDB 10.6** - Production-ready database with 36+ tables
+- 🚀 **MCP Gateway** - Full-featured gateway with Admin UI
+- 📊 **Redis** - High-performance caching and session storage
+- 🔧 **Admin Tools** - pgAdmin, Redis Insight for database management
+- 🌐 **Nginx Proxy** - Caching reverse proxy (optional)
+
+### ☸️ Quick Start - Helm (Kubernetes)
+
+Deploy to Kubernetes with enterprise-grade features:
+
+```bash
+# Add Helm repository (when available)
+# helm repo add mcp-context-forge https://ibm.github.io/mcp-context-forge
+# helm repo update
+
+# For now, use local chart
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge/charts/mcp-stack
+
+# Install with MariaDB
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key \
+  --set postgres.enabled=false \
+  --set mariadb.enabled=true
+
+# Or install with PostgreSQL (default)
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
+  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
+
+# Check deployment status
+kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
+
+# Port forward to access Admin UI
+kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
+# Access: http://localhost:4444/admin
+
+# Generate API token
+kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
+  python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@yourcompany.com --exp 10080 --secret your-secret-key
+```
+
+**Enterprise Features:**
+- 🔄 **Auto-scaling** - HPA with CPU/memory targets
+- 🗄️ **Database Choice** - PostgreSQL, MariaDB, or MySQL
+- 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
+- 🔒 **Security** - RBAC, network policies, secret management
+- 🚀 **High Availability** - Multi-replica deployments with Redis clustering
+- 📈 **Monitoring** - Built-in Grafana dashboards and alerting
+
 ---
 
-### 🐳 Docker
+### 🐳 Docker (Single Container)
 
 #### 1 - Minimum viable run
 
@@ -1210,6 +1293,14 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### ToolOps
+
+ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `TOOLOPS_ENABLED`             | Enable ToolOps functionality          | `false` | bool    |
+
 ### LLM Chat MCP Client
 
 The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers. This feature enables natural language interaction with tools, resources, and prompts exposed by MCP servers.
@@ -1281,10 +1372,15 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
 | `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
 
+> ⚙️ **ToolOps**: To manage the complete tool workflow — enrich tools, generate test cases automatically, and validate them with ease.
 > 🤖 **LLM Chat Integration**: Chat with MCP servers using natural language powered by Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, or Ollama
 > 🔧 **Flexible Providers**: Switch between different LLM providers without changing your MCP integration
 > 🔒 **Security**: API keys and credentials are securely stored and never exposed in responses
 > 🎛️ **Admin UI**: Dedicated LLM Chat tab in the admin interface for interactive conversations
+
+**ToolOps Configuration Effects:**
+- `TOOLOPS_ENABLED=false` (default): Completely disables ToolOps features (API endpoints return 404, admin tab hidden)
+- `TOOLOPS_ENABLED=true`: Enables ToolOps functionality in the UI
 
 **LLM Chat Configuration Effects:**
 - `LLMCHAT_ENABLED=false` (default): Completely disables LLM Chat features (API endpoints return 404, admin tab hidden)
@@ -1502,7 +1598,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `SECURE_COOKIES`          | Force secure cookie flags     | `true`                                         | bool       |
 | `COOKIE_SAMESITE`         | Cookie SameSite attribute      | `lax`                                          | `strict`/`lax`/`none` |
 | `SECURITY_HEADERS_ENABLED` | Enable security headers middleware | `true`                                     | bool       |
-| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN` |
+| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN`/`""`/`null` |
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
@@ -1521,7 +1617,13 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 >
 > **Security Validation**: Set `REQUIRE_STRONG_SECRETS=true` to enforce minimum lengths for JWT secrets and passwords at startup. This helps prevent weak credentials in production. Default is `false` for backward compatibility.
 >
-> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or disable with `X_FRAME_OPTIONS=""`. Also update CSP `frame-ancestors` directive if needed.
+> **iframe Embedding**: The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive (both are automatically synced). Options:
+> - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
+> - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only  
+> - `X_FRAME_OPTIONS=""`: Allows embedding from all sources (sets `frame-ancestors * file: http: https:`)
+> - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions (no headers sent)
+>
+> Modern browsers prioritize CSP `frame-ancestors` over the legacy `X-Frame-Options` header. Both are now kept in sync automatically.
 >
 > **Cookie Security**: Authentication cookies are automatically configured with HttpOnly, Secure (in production), and SameSite attributes for CSRF protection.
 >
@@ -1900,6 +2002,7 @@ ENABLE_METRICS=false
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
+| `MAX_CONCURRENT_HEALTH_CHECKS` | Max Concurrent health checks        | `20`     | int > 0 |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 

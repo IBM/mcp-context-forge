@@ -118,6 +118,21 @@ async def get_current_user_with_permissions(
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+
+        # If auth is disabled, return the stock admin user
+        if not settings.auth_required:
+            return {
+                "email": settings.platform_admin_email,
+                "full_name": "Platform Admin",
+                "is_admin": True,
+                "ip_address": request.client.host if request.client else None,
+                "user_agent": request.headers.get("user-agent"),
+                "db": db,
+                "auth_method": "disabled",
+                "request_id": getattr(request.state, "request_id", None),
+                "team_id": getattr(request.state, "team_id", None),
+            }
+
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization token required")
 
     try:
@@ -135,6 +150,11 @@ async def get_current_user_with_permissions(
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
 
+        # Read plugin context data from request.state for cross-hook context sharing
+        # (set by HttpAuthMiddleware for passing contexts between different hook types)
+        plugin_context_table = getattr(request.state, "plugin_context_table", None)
+        plugin_global_context = getattr(request.state, "plugin_global_context", None)
+
         # Add request context for permission auditing
         return {
             "email": user.email,
@@ -146,6 +166,8 @@ async def get_current_user_with_permissions(
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
+            "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
+            "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
     except Exception as e:
         logger.error(f"Authentication failed: {type(e).__name__}: {e}")
@@ -232,27 +254,28 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
 
             # First, check if any plugins want to handle permission checking
             # First-Party
-            from mcpgateway.plugins.framework import (  # pylint: disable=import-outside-toplevel
-                get_plugin_manager,
-                GlobalContext,
-                HttpAuthCheckPermissionPayload,
-                HttpHookType,
-            )
+            from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
 
             plugin_manager = get_plugin_manager()
             if plugin_manager:
-                # Get request_id from user_context (passed from get_current_user_with_permissions)
-                # Generate a fallback if not present
-                request_id = user_context.get("request_id") or uuid.uuid4().hex
+                # Get plugin contexts from user_context (stored in request.state by HttpAuthMiddleware)
+                # These enable cross-hook context sharing between HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
+                plugin_context_table = user_context.get("plugin_context_table")
+                plugin_global_context = user_context.get("plugin_global_context")
 
-                # Create global context for plugin invocation
-                global_context = GlobalContext(
-                    request_id=request_id,
-                    server_id=None,
-                    tenant_id=None,
-                )
+                # Reuse existing global context from middleware if available for consistency
+                # Otherwise create a new one (fallback for cases where middleware didn't run)
+                if plugin_global_context:
+                    global_context = plugin_global_context
+                else:
+                    request_id = user_context.get("request_id") or uuid.uuid4().hex
+                    global_context = GlobalContext(
+                        request_id=request_id,
+                        server_id=None,
+                        tenant_id=None,
+                    )
 
-                # Invoke permission check hook
+                # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
                 result, _ = await plugin_manager.invoke_hook(
                     HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
                     payload=HttpAuthCheckPermissionPayload(
@@ -266,6 +289,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                         user_agent=user_context.get("user_agent"),
                     ),
                     global_context=global_context,
+                    local_contexts=plugin_context_table,  # Pass context table for cross-hook state
                 )
 
                 # If a plugin made a decision, respect it

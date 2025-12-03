@@ -16,7 +16,16 @@ from mcpgateway.config import settings
 
 
 class JWTConfigurationError(Exception):
-    """Raised when JWT configuration is invalid or incomplete."""
+    """Raised when JWT configuration is invalid or incomplete.
+
+    Examples:
+        >>> # Create a configuration error
+        >>> error = JWTConfigurationError("Missing secret key")
+        >>> str(error)
+        'Missing secret key'
+        >>> isinstance(error, Exception)
+        True
+    """
 
 
 def validate_jwt_algo_and_keys() -> None:
@@ -79,6 +88,12 @@ def get_jwt_private_key_or_secret() -> str:
 
     Returns:
         str: The signing key as string
+
+    Examples:
+        >>> # Function returns a string key
+        >>> result = get_jwt_private_key_or_secret()
+        >>> isinstance(result, str)
+        True
     """
     algorithm = settings.jwt_algorithm.upper()
 
@@ -100,6 +115,12 @@ def get_jwt_public_key_or_secret() -> str:
 
     Returns:
         str: The verification key as string
+
+    Examples:
+        >>> # Function returns a string key
+        >>> result = get_jwt_public_key_or_secret()
+        >>> isinstance(result, str)
+        True
     """
     algorithm = settings.jwt_algorithm.upper()
 

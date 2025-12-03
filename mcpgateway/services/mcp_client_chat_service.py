@@ -30,8 +30,8 @@ try:
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
-    from langchain_ollama import ChatOllama
-    from langchain_openai import AzureChatOpenAI, ChatOpenAI
+    from langchain_ollama import ChatOllama, OllamaLLM
+    from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI
     from langgraph.prebuilt import create_react_agent
 
     _LLMCHAT_AVAILABLE = True
@@ -45,37 +45,43 @@ except ImportError:
     BaseTool = None  # type: ignore
     MultiServerMCPClient = None  # type: ignore
     ChatOllama = None  # type: ignore
+    OllamaLLM = None
     AzureChatOpenAI = None  # type: ignore
+    AzureOpenAI = None
     ChatOpenAI = None  # type: ignore
+    OpenAI = None
     create_react_agent = None  # type: ignore
 
 # Try to import Anthropic and Bedrock providers (they may not be installed)
 try:
     # Third-Party
-    from langchain_anthropic import ChatAnthropic
+    from langchain_anthropic import AnthropicLLM, ChatAnthropic
 
     _ANTHROPIC_AVAILABLE = True
 except ImportError:
     _ANTHROPIC_AVAILABLE = False
     ChatAnthropic = None  # type: ignore
+    AnthropicLLM = None
 
 try:
     # Third-Party
-    from langchain_aws import ChatBedrock
+    from langchain_aws import BedrockLLM, ChatBedrock
 
     _BEDROCK_AVAILABLE = True
 except ImportError:
     _BEDROCK_AVAILABLE = False
     ChatBedrock = None  # type: ignore
+    BedrockLLM = None
 
 try:
     # Third-Party
-    from langchain_ibm import WatsonxLLM
+    from langchain_ibm import ChatWatsonx, WatsonxLLM
 
     _WATSONX_AVAILABLE = True
 except ImportError:
     _WATSONX_AVAILABLE = False
     WatsonxLLM = None  # type: ignore
+    ChatWatsonx = None
 
 # Third-Party
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -361,6 +367,7 @@ class OpenAIConfig(BaseModel):
     max_tokens: Optional[int] = Field(None, gt=0, description="Maximum tokens to generate")
     timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
     max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+    default_headers: Optional[dict] = Field(None, description="optional default headers required by the provider")
 
     model_config = {
         "json_schema_extra": {
@@ -713,12 +720,15 @@ class AzureOpenAIProvider:
         self._llm = None
         logger.info(f"Initializing Azure OpenAI provider with deployment: {config.azure_deployment}")
 
-    def get_llm(self) -> AzureChatOpenAI:
+    def get_llm(self, model_type: str = "chat") -> Union[AzureChatOpenAI, AzureOpenAI]:
         """
         Get Azure OpenAI LLM instance with lazy initialization.
 
         Creates and caches the Azure OpenAI chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             AzureChatOpenAI: Configured Azure OpenAI chat model.
@@ -737,17 +747,30 @@ class AzureOpenAIProvider:
         """
         if self._llm is None:
             try:
-                self._llm = AzureChatOpenAI(
-                    api_key=self.config.api_key,
-                    azure_endpoint=self.config.azure_endpoint,
-                    api_version=self.config.api_version,
-                    azure_deployment=self.config.azure_deployment,
-                    model=self.config.model,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    timeout=self.config.timeout,
-                    max_retries=self.config.max_retries,
-                )
+                if model_type == "chat":
+                    self._llm = AzureChatOpenAI(
+                        api_key=self.config.api_key,
+                        azure_endpoint=self.config.azure_endpoint,
+                        api_version=self.config.api_version,
+                        azure_deployment=self.config.azure_deployment,
+                        model=self.config.model,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                        timeout=self.config.timeout,
+                        max_retries=self.config.max_retries,
+                    )
+                elif model_type == "completion":
+                    self._llm = AzureOpenAI(
+                        api_key=self.config.api_key,
+                        azure_endpoint=self.config.azure_endpoint,
+                        api_version=self.config.api_version,
+                        azure_deployment=self.config.azure_deployment,
+                        model=self.config.model,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                        timeout=self.config.timeout,
+                        max_retries=self.config.max_retries,
+                    )
                 logger.info("Azure OpenAI LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create Azure OpenAI LLM: {e}")
@@ -814,12 +837,15 @@ class OllamaProvider:
         self._llm = None
         logger.info(f"Initializing Ollama provider with model: {config.model}")
 
-    def get_llm(self) -> ChatOllama:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatOllama, OllamaLLM]:
         """
         Get Ollama LLM instance with lazy initialization.
 
         Creates and caches the Ollama chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatOllama: Configured Ollama chat model.
@@ -839,8 +865,10 @@ class OllamaProvider:
                 if self.config.num_ctx is not None:
                     model_kwargs["num_ctx"] = self.config.num_ctx
 
-                self._llm = ChatOllama(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
-
+                if model_type == "chat":
+                    self._llm = ChatOllama(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
+                elif model_type == "completion":
+                    self._llm = OllamaLLM(base_url=self.config.base_url, model=self.config.model, temperature=self.config.temperature, timeout=self.config.timeout, **model_kwargs)
                 logger.info("Ollama LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create Ollama LLM: {e}")
@@ -898,12 +926,15 @@ class OpenAIProvider:
         self._llm = None
         logger.info(f"Initializing OpenAI provider with model: {config.model}")
 
-    def get_llm(self) -> ChatOpenAI:
+    def get_llm(self, model_type="chat") -> Union[ChatOpenAI, OpenAI]:
         """
         Get OpenAI LLM instance with lazy initialization.
 
         Creates and caches the OpenAI chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatOpenAI: Configured OpenAI chat model.
@@ -933,7 +964,14 @@ class OpenAIProvider:
                 if self.config.base_url:
                     kwargs["base_url"] = self.config.base_url
 
-                self._llm = ChatOpenAI(**kwargs)
+                # add default headers if present
+                if self.config.default_headers is not None:
+                    kwargs["default_headers"] = self.config.default_headers
+
+                if model_type == "chat":
+                    self._llm = ChatOpenAI(**kwargs)
+                elif model_type == "completion":
+                    self._llm = OpenAI(**kwargs)
 
                 logger.info("OpenAI LLM instance created successfully")
             except Exception as e:
@@ -1007,12 +1045,15 @@ class AnthropicProvider:
         self._llm = None
         logger.info(f"Initializing Anthropic provider with model: {config.model}")
 
-    def get_llm(self) -> ChatAnthropic:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatAnthropic, AnthropicLLM]:
         """
         Get Anthropic LLM instance with lazy initialization.
 
         Creates and caches the Anthropic chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatAnthropic: Configured Anthropic chat model.
@@ -1030,14 +1071,24 @@ class AnthropicProvider:
         """
         if self._llm is None:
             try:
-                self._llm = ChatAnthropic(
-                    api_key=self.config.api_key,
-                    model=self.config.model,
-                    temperature=self.config.temperature,
-                    max_tokens=self.config.max_tokens,
-                    timeout=self.config.timeout,
-                    max_retries=self.config.max_retries,
-                )
+                if model_type == "chat":
+                    self._llm = ChatAnthropic(
+                        api_key=self.config.api_key,
+                        model=self.config.model,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                        timeout=self.config.timeout,
+                        max_retries=self.config.max_retries,
+                    )
+                elif model_type == "completion":
+                    self._llm = AnthropicLLM(
+                        api_key=self.config.api_key,
+                        model=self.config.model,
+                        temperature=self.config.temperature,
+                        max_tokens=self.config.max_tokens,
+                        timeout=self.config.timeout,
+                        max_retries=self.config.max_retries,
+                    )
                 logger.info("Anthropic LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create Anthropic LLM: {e}")
@@ -1111,12 +1162,15 @@ class AWSBedrockProvider:
         self._llm = None
         logger.info(f"Initializing AWS Bedrock provider with model: {config.model_id}")
 
-    def get_llm(self) -> ChatBedrock:
+    def get_llm(self, model_type: str = "chat") -> Union[ChatBedrock, BedrockLLM]:
         """
         Get AWS Bedrock LLM instance with lazy initialization.
 
         Creates and caches the Bedrock chat model instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             ChatBedrock: Configured AWS Bedrock chat model.
@@ -1143,15 +1197,26 @@ class AWSBedrockProvider:
                 if self.config.aws_session_token:
                     credentials_kwargs["aws_session_token"] = self.config.aws_session_token
 
-                self._llm = ChatBedrock(
-                    model_id=self.config.model_id,
-                    region_name=self.config.region_name,
-                    model_kwargs={
-                        "temperature": self.config.temperature,
-                        "max_tokens": self.config.max_tokens,
-                    },
-                    **credentials_kwargs,
-                )
+                if model_type == "chat":
+                    self._llm = ChatBedrock(
+                        model_id=self.config.model_id,
+                        region_name=self.config.region_name,
+                        model_kwargs={
+                            "temperature": self.config.temperature,
+                            "max_tokens": self.config.max_tokens,
+                        },
+                        **credentials_kwargs,
+                    )
+                elif model_type == "completion":
+                    self._llm = BedrockLLM(
+                        model_id=self.config.model_id,
+                        region_name=self.config.region_name,
+                        model_kwargs={
+                            "temperature": self.config.temperature,
+                            "max_tokens": self.config.max_tokens,
+                        },
+                        **credentials_kwargs,
+                    )
                 logger.info("AWS Bedrock LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create AWS Bedrock LLM: {e}")
@@ -1227,12 +1292,15 @@ class WatsonxProvider:
         self.llm = None
         logger.info(f"Initializing IBM watsonx.ai provider with model {config.model_id}")
 
-    def get_llm(self) -> WatsonxLLM:
+    def get_llm(self, model_type="chat") -> Union[WatsonxLLM, ChatWatsonx]:
         """
         Get IBM watsonx.ai LLM instance with lazy initialization.
 
         Creates and caches the watsonx LLM instance on first call.
         Subsequent calls return the cached instance.
+
+        Args:
+            model_type: LLM inference model type such as 'chat' model , text 'completion' model
 
         Returns:
             WatsonxLLM: Configured IBM watsonx.ai LLM model.
@@ -1264,15 +1332,24 @@ class WatsonxProvider:
                     params["top_k"] = self.config.top_k
                 if self.config.top_p is not None:
                     params["top_p"] = self.config.top_p
-
-                # Initialize WatsonxLLM
-                self.llm = WatsonxLLM(
-                    apikey=self.config.api_key,
-                    url=self.config.url,
-                    project_id=self.config.project_id,
-                    model_id=self.config.model_id,
-                    params=params,
-                )
+                if model_type == "completion":
+                    # Initialize WatsonxLLM
+                    self.llm = WatsonxLLM(
+                        apikey=self.config.api_key,
+                        url=self.config.url,
+                        project_id=self.config.project_id,
+                        model_id=self.config.model_id,
+                        params=params,
+                    )
+                elif model_type == "chat":
+                    # Initialize Chat WatsonxLLM
+                    self.llm = ChatWatsonx(
+                        apikey=self.config.api_key,
+                        url=self.config.url,
+                        project_id=self.config.project_id,
+                        model_id=self.config.model_id,
+                        params=params,
+                    )
                 logger.info("IBM watsonx.ai LLM instance created successfully")
             except Exception as e:
                 logger.error(f"Failed to create IBM watsonx.ai LLM: {e}")

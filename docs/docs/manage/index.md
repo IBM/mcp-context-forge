@@ -41,7 +41,7 @@ Most operational settings (logging level, database pool size, auth mode) are con
 !!! info "MariaDB & MySQL Fully Supported"
     MCP Gateway now has **complete MariaDB/MySQL support** alongside SQLite and PostgreSQL:
 
-    - **36+ database tables** work perfectly with MariaDB 12.0+ and MySQL 8.4+
+    - **36+ database tables** work perfectly with MariaDB 10.6+ and MySQL 8.0+
     - All **VARCHAR length issues** resolved for MariaDB/MySQL compatibility
     - Connection string: `DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp`
     - See [Configuration Reference](configuration.md) for complete setup instructions

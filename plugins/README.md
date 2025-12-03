@@ -521,7 +521,7 @@ async def tool_pre_invoke(
     user = context.global_context.user
     tenant_id = context.global_context.tenant_id
 
-    # Store plugin-specific state (persists across pre/post hooks)
+    # Store plugin-specific state (persists across all hooks in the request)
     context.state["invocation_count"] = context.state.get("invocation_count", 0) + 1
 
     # Add metadata
