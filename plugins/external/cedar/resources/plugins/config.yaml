@@ -14,7 +14,7 @@ plugins:
         tenant_ids: []  # Apply to all tenants
     config:
       policy_lang: cedar
-      policy_output_keywords: 
+      policy_output_keywords:
         view_full: "view_full_output"
         view_redacted: "view_redacted_output"
       policy_redaction_spec:
@@ -34,7 +34,7 @@ plugins:
           effect: Permit
           principal: Role::"manager"
           action:
-            - Action::"get_leave_balance" 
+            - Action::"get_leave_balance"
             - Action::"approve_leave"
             - Action::"promote_employee"
             - Action::"view_performance"
@@ -73,7 +73,7 @@ plugins:
           principal: Role::"employee"
           action:
             - Action::"view_redacted_output"
-          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>          
+          resource: Resource::""https://example.com/data"" #Resource::<resource_uri>
 
         - id: allow-admin-prompts # policy for resources
           effect: Permit
@@ -100,3 +100,4 @@ plugin_settings:
   fail_on_plugin_error: false
   enable_plugin_api: true
   plugin_health_check_interval: 60
+
