@@ -19,7 +19,7 @@ from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, Tool
 from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
 
 
-# """This test case is responsible for verifying cedarplugin functionality for post tool hooks"""
+# This test case is responsible for verifying cedarplugin functionality for post tool hooks in cdear native mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_rbac():
     """Test plugin for post tool invocation"""
@@ -56,7 +56,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
         ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern": "\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -102,7 +102,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
     assert deny_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for post tool hooks"""
+# This test case is responsible for verifying cedarplugin functionality for post tool invocation with policy in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     """Test plugin for post tool invocation"""
@@ -112,7 +112,7 @@ async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     [role:employee:server/askHR]\nview_redacted_output'
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -157,7 +157,8 @@ async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     assert allow_count == 3
     assert deny_count == 1
 
-# """This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+
+# This test case is responsible for verifying cedarplugin functionality for tool pre invoke in cedar native mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
     """Test plugin tool pre invoke hook."""
@@ -173,7 +174,7 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
             'id': 'allow-manager-full-access',
             'effect': 'Permit',
             'principal': 'Role::"manager"',
-            'action':  ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"','Action::"view_full_output"'],
+            'action':  ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"', 'Action::"view_full_output"'],
             'resource':  ['Agent::"manager_agent"', 'Server::"payroll_tool"']
         },
         {
@@ -194,7 +195,7 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
         ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*" }
+    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -235,13 +236,18 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
     assert allow_count == 3
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for tool pre invoke"""
+
+# This test case is responsible for verifying cedarplugin functionality for tool pre invoke in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
     """Test plugin tool pre invoke."""
-    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
+    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\n\
+    get_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\n\
+    view_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\n\
+    view_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\n\
+    view_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "\$\d{1,}(,\d{1,})*" }
+    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -282,7 +288,8 @@ async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
     assert allow_count == 3
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for prompt pre fetch"""
+
+# This test case is responsible for verifying cedarplugin functionality for prompt pre fetch in cedar mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
     """Test plugin prompt prefetch hook."""
@@ -296,16 +303,16 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
 
         },
         {
-            'id': 'allow-admin-prompts', # policy for resources
+            'id': 'allow-admin-prompts',  # policy for resources
             'effect': 'Permit',
             'principal': 'Role::"admin"',
-            'action':['Action::"view_full_output"'],
-            'resource': 'Prompt::"judge_prompts"' #Prompt::<prompt_name>
+            'action': ['Action::"view_full_output"'],
+            'resource': 'Prompt::"judge_prompts"'  # Prompt::<prompt_name>
         }
         ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all" }
+    policy_redaction_spec = {"pattern":  "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -326,9 +333,9 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "judge_prompts"},  #allow
-        {"user": "robert", "resource": "judge_prompts"},  #allow
-        {"user": "carol", "resource": "judge_prompts"}, # deny
+        {"user": "alice", "resource": "judge_prompts"},  # allow
+        {"user": "robert", "resource": "judge_prompts"},  # allow
+        {"user": "carol", "resource": "judge_prompts"},  # deny
         ]
 
     allow_count = 0
@@ -348,14 +355,15 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for prompt pre fetch"""
+
+# This test case is responsible for verifying cedarplugin functionality for prompt pre fetch in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
     """Test plugin prompt prefetch hook."""
     policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all" }
+    policy_redaction_spec = {"pattern":  "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -376,9 +384,9 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "judge_prompts"},  #allow
-        {"user": "robert", "resource": "judge_prompts"},  #allow
-        {"user": "carol", "resource": "judge_prompts"}, # deny
+        {"user": "alice", "resource": "judge_prompts"},  # allow
+        {"user": "robert", "resource": "judge_prompts"},  # allow
+        {"user": "carol", "resource": "judge_prompts"},  # deny
         ]
 
     allow_count = 0
@@ -398,7 +406,8 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for prompt post fetch"""
+
+# This test case is responsible for verifying cedarplugin functionality for prompt post fetch in cedar native mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
     """Test plugin prompt postfetch hook."""
@@ -412,16 +421,16 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
 
         },
         {
-            'id': 'allow-admin-prompts', # policy for resources
+            'id': 'allow-admin-prompts',  # policy for resources
             'effect': 'Permit',
             'principal': 'Role::"admin"',
-            'action':['Action::"view_full_output"'],
-            'resource': 'Prompt::"judge_prompts"' #Prompt::<prompt_name>
+            'action': ['Action::"view_full_output"'],
+            'resource': 'Prompt::"judge_prompts"'  # Prompt::<prompt_name>
         }
         ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all" }
+    policy_redaction_spec = {"pattern":  "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -442,9 +451,9 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "judge_prompts"},  #allow
-        {"user": "robert", "resource": "judge_prompts"},  #allow
-        {"user": "carol", "resource": "judge_prompts"}, # deny
+        {"user": "alice", "resource": "judge_prompts"},  # allow
+        {"user": "robert", "resource": "judge_prompts"},  # allow
+        {"user": "carol", "resource": "judge_prompts"},  # deny
         ]
 
     allow_count = 0
@@ -466,20 +475,19 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
         if not result.continue_processing:
             deny_count += 1
 
-
     assert allow_count == 2
     assert deny_count == 1
     assert redact_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for prompt post fetch"""
+# This test case is responsible for verifying cedarplugin functionality for prompt post fetch in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
     """Test plugin prompt postfetch hook."""
     policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all" }
+    policy_redaction_spec = {"pattern":  "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
@@ -500,9 +508,9 @@ async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "judge_prompts"},  #allow
-        {"user": "robert", "resource": "judge_prompts"},  #allow
-        {"user": "carol", "resource": "judge_prompts"}, # deny
+        {"user": "alice", "resource": "judge_prompts"},  # allow
+        {"user": "robert", "resource": "judge_prompts"},  # allow
+        {"user": "carol", "resource": "judge_prompts"},  # deny
         ]
 
     allow_count = 0
@@ -524,13 +532,12 @@ async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
         if not result.continue_processing:
             deny_count += 1
 
-
     assert allow_count == 2
     assert deny_count == 1
     assert redact_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for resource pre fetch"""
+# This test case is responsible for verifying cedarplugin functionality for resource pre fetch in cedar native mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
     """Test plugin resource prefetch hook."""
@@ -544,10 +551,10 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
 
         },
         {
-            'id': 'allow-admin-resources', # policy for resources
+            'id': 'allow-admin-resources',  # policy for resources
             'effect': 'Permit',
             'principal': 'Role::"admin"',
-            'action':['Action::"view_full_output"'],
+            'action': ['Action::"view_full_output"'],
             'resource': 'Resource::"https://example.com/data"'
         }
         ]
@@ -574,9 +581,9 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "https://example.com/data"},  #allow
-        {"user": "robert", "resource": "https://example.com/data"},  #allow
-        {"user": "carol", "resource": "https://example.com/data"}, # deny
+        {"user": "alice", "resource": "https://example.com/data"},  # allow
+        {"user": "robert", "resource": "https://example.com/data"},  # allow
+        {"user": "carol", "resource": "https://example.com/data"},  # deny
         ]
 
     allow_count = 0
@@ -593,11 +600,11 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
         if not result.continue_processing:
             deny_count += 1
 
-
     assert allow_count == 2
     assert deny_count == 1
 
-"""This test case is responsible for verifying cedarplugin functionality for resource pre fetch"""
+
+# This test case is responsible for verifying cedarplugin functionality for resource pre fetch in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
     """Test plugin resource prefetch hook."""
@@ -625,9 +632,9 @@ async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "https://example.com/data"},  #allow
-        {"user": "robert", "resource": "https://example.com/data"},  #allow
-        {"user": "carol", "resource": "https://example.com/data"}, # deny
+        {"user": "alice", "resource": "https://example.com/data"},  # allow
+        {"user": "robert", "resource": "https://example.com/data"},  # allow
+        {"user": "carol", "resource": "https://example.com/data"},  # deny
         ]
 
     allow_count = 0
@@ -644,12 +651,11 @@ async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
         if not result.continue_processing:
             deny_count += 1
 
-
     assert allow_count == 2
     assert deny_count == 1
 
 
-"""This test case is responsible for verifying cedarplugin functionality for resource post fetch"""
+# This test case is responsible for verifying cedarplugin functionality for resource post fetch in cedar native mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     """Test plugin resource post fetch."""
@@ -663,10 +669,10 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
 
         },
         {
-            'id': 'allow-admin-resources', # policy for resources
+            'id': 'allow-admin-resources',  # policy for resources
             'effect': 'Permit',
             'principal': 'Role::"admin"',
-            'action':['Action::"view_full_output"'],
+            'action': ['Action::"view_full_output"'],
             'resource': 'Resource::"https://example.com/data"'
         }
         ]
@@ -693,9 +699,9 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "https://example.com/data"},  #allow
-        {"user": "robert", "resource": "https://example.com/data"},  #allow
-        {"user": "carol", "resource": "https://example.com/data"}, # deny
+        {"user": "alice", "resource": "https://example.com/data"},  # allow
+        {"user": "robert", "resource": "https://example.com/data"},  # allow
+        {"user": "carol", "resource": "https://example.com/data"},  # deny
         ]
 
     allow_count = 0
@@ -721,13 +727,12 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
         if not result.continue_processing:
             deny_count += 1
 
-
     assert allow_count == 2
     assert deny_count == 1
     assert redact_count == 1
 
 
-# # """This test case is responsible for verifying cedarplugin functionality for resource post fetch"""
+# This test case is responsible for verifying cedarplugin functionality for resource post fetch in custom dsl mode
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     """Test plugin resource postfetch hook."""
@@ -754,9 +759,9 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
         }
     plugin._set_jwt_info(info)
     requests = [
-        {"user": "alice", "resource": "https://example.com/data"},  #allow
-        {"user": "robert", "resource": "https://example.com/data"},  #allow
-        {"user": "carol", "resource": "https://example.com/data"}, # deny
+        {"user": "alice", "resource": "https://example.com/data"},  # allow
+        {"user": "robert", "resource": "https://example.com/data"},  # allow
+        {"user": "carol", "resource": "https://example.com/data"},  # deny
         ]
 
     allow_count = 0
@@ -781,7 +786,6 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
                 redact_count += 1
         if not result.continue_processing:
             deny_count += 1
-
 
     assert allow_count == 2
     assert deny_count == 1
