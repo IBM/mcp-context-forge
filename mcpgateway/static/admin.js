@@ -124,24 +124,27 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize search functionality for all entity types
     initializeSearchInputs();
-    
+
     // Re-initialize search inputs when HTMX content loads
-    document.body.addEventListener('htmx:afterSwap', function(event) {
+    document.body.addEventListener("htmx:afterSwap", function (event) {
         setTimeout(() => {
             initializeSearchInputs();
         }, 200);
     });
-    
+
     // Also listen for htmx:load event
-    document.body.addEventListener('htmx:load', function(event) {
+    document.body.addEventListener("htmx:load", function (event) {
         setTimeout(() => {
             initializeSearchInputs();
         }, 200);
     });
-    
+
     // Initialize search when switching tabs
-    document.addEventListener('click', function(event) {
-        if (event.target.matches('[onclick*="showTab"]') || event.target.closest('[onclick*="showTab"]')) {
+    document.addEventListener("click", function (event) {
+        if (
+            event.target.matches('[onclick*="showTab"]') ||
+            event.target.closest('[onclick*="showTab"]')
+        ) {
             setTimeout(() => {
                 initializeSearchInputs();
             }, 300);
@@ -14536,16 +14539,19 @@ function filterServerTable(searchText) {
             for (let i = 1; i < cells.length - 1; i++) {
                 searchableColumnIndices.push(i);
             }
-            
+
             searchableColumnIndices.forEach((index) => {
                 if (cells[index]) {
                     // Clean the text content and make it searchable
-                    const cellText = cells[index].textContent.replace(/\s+/g, ' ').trim();
+                    const cellText = cells[index].textContent
+                        .replace(/\s+/g, " ")
+                        .trim();
                     textContent += " " + cellText;
                 }
             });
 
-            const isMatch = search === "" || textContent.toLowerCase().includes(search);
+            const isMatch =
+                search === "" || textContent.toLowerCase().includes(search);
             if (isMatch) {
                 row.style.display = "";
             } else {
@@ -14565,13 +14571,13 @@ window.filterServerTable = filterServerTable;
  */
 function filterToolsTable(searchText) {
     try {
-        const tbody = document.querySelector('#tools-table-body');
+        const tbody = document.querySelector("#tools-table-body");
         if (!tbody) {
             console.warn("Tools table body not found");
             return;
         }
 
-        const rows = tbody.querySelectorAll('tr');
+        const rows = tbody.querySelectorAll("tr");
         const search = searchText.toLowerCase().trim();
 
         rows.forEach((row) => {
@@ -14581,16 +14587,19 @@ function filterToolsTable(searchText) {
             // Tools columns: S.No.(0), Gateway Name(1), Name(2), URL(3), Type(4), Request Type(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Visibility(11), Status(12), Actions(13)
             const cells = row.querySelectorAll("td");
             const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude S.No. and Actions
-            
+
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
                     // Clean the text content and make it searchable
-                    const cellText = cells[index].textContent.replace(/\s+/g, ' ').trim();
+                    const cellText = cells[index].textContent
+                        .replace(/\s+/g, " ")
+                        .trim();
                     textContent += " " + cellText;
                 }
             });
 
-            const isMatch = search === "" || textContent.toLowerCase().includes(search);
+            const isMatch =
+                search === "" || textContent.toLowerCase().includes(search);
             if (isMatch) {
                 row.style.display = "";
             } else {
@@ -14607,13 +14616,13 @@ function filterToolsTable(searchText) {
  */
 function filterResourcesTable(searchText) {
     try {
-        const tbody = document.querySelector('#resources-table-body');
+        const tbody = document.querySelector("#resources-table-body");
         if (!tbody) {
             console.warn("Resources table body not found");
             return;
         }
 
-        const rows = tbody.querySelectorAll('tr');
+        const rows = tbody.querySelectorAll("tr");
         const search = searchText.toLowerCase().trim();
 
         rows.forEach((row) => {
@@ -14623,7 +14632,7 @@ function filterResourcesTable(searchText) {
             // Resources columns: ID(0), URI(1), Name(2), Description(3), MIME Type(4), Tags(5), Owner(6), Team(7), Visibility(8), Status(9), Actions(10)
             const cells = row.querySelectorAll("td");
             const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // All except Actions
-            
+
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
                     textContent += " " + cells[index].textContent;
@@ -14646,13 +14655,13 @@ function filterResourcesTable(searchText) {
  */
 function filterPromptsTable(searchText) {
     try {
-        const tbody = document.querySelector('#prompts-table-body');
+        const tbody = document.querySelector("#prompts-table-body");
         if (!tbody) {
             console.warn("Prompts table body not found");
             return;
         }
 
-        const rows = tbody.querySelectorAll('tr');
+        const rows = tbody.querySelectorAll("tr");
         const search = searchText.toLowerCase().trim();
 
         rows.forEach((row) => {
@@ -14662,7 +14671,7 @@ function filterPromptsTable(searchText) {
             // Prompts columns: S.No.(0), Name(1), Description(2), Tags(3), Owner(4), Team(5), Visibility(6), Status(7), Actions(8)
             const cells = row.querySelectorAll("td");
             const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7]; // All except Actions
-            
+
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
                     textContent += " " + cells[index].textContent;
@@ -14685,13 +14694,13 @@ function filterPromptsTable(searchText) {
  */
 function filterA2AAgentsTable(searchText) {
     try {
-        const tbody = document.querySelector('#a2a-agents-panel tbody');
+        const tbody = document.querySelector("#a2a-agents-panel tbody");
         if (!tbody) {
             console.warn("A2A Agents table body not found");
             return;
         }
 
-        const rows = tbody.querySelectorAll('tr');
+        const rows = tbody.querySelectorAll("tr");
         const search = searchText.toLowerCase().trim();
 
         rows.forEach((row) => {
@@ -14701,7 +14710,7 @@ function filterA2AAgentsTable(searchText) {
             // A2A Agents columns: ID(0), Name(1), Description(2), Endpoint(3), Tags(4), Type(5), Status(6), Reachability(7), Owner(8), Team(9), Visibility(10), Actions(11)
             const cells = row.querySelectorAll("td");
             const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude ID and Actions
-            
+
             searchableColumns.forEach((index) => {
                 if (cells[index]) {
                     textContent += " " + cells[index].textContent;
@@ -14725,35 +14734,43 @@ function filterA2AAgentsTable(searchText) {
 function filterGatewaysTable(searchText) {
     try {
         console.log("🔍 Starting MCP Servers search for:", searchText);
-        
+
         // Find the MCP servers table - use multiple strategies
         let table = null;
-        
+
         // Strategy 1: Direct selector for gateways panel
-        const gatewaysPanel = document.querySelector('#gateways-panel');
+        const gatewaysPanel = document.querySelector("#gateways-panel");
         if (gatewaysPanel) {
-            table = gatewaysPanel.querySelector('table');
+            table = gatewaysPanel.querySelector("table");
             console.log("✅ Found table in gateways panel");
         }
-        
+
         // Strategy 2: Look for table in currently visible tab
         if (!table) {
-            const visiblePanel = document.querySelector('.tab-panel:not(.hidden)');
+            const visiblePanel = document.querySelector(
+                ".tab-panel:not(.hidden)",
+            );
             if (visiblePanel) {
-                table = visiblePanel.querySelector('table');
+                table = visiblePanel.querySelector("table");
                 console.log("✅ Found table in visible panel");
             }
         }
-        
+
         // Strategy 3: Just look for any table with MCP server structure
         if (!table) {
-            const allTables = document.querySelectorAll('table');
-            for (let t of allTables) {
-                const headers = t.querySelectorAll('thead th');
+            const allTables = document.querySelectorAll("table");
+            for (const t of allTables) {
+                const headers = t.querySelectorAll("thead th");
                 if (headers.length >= 8) {
                     // Check for MCP server specific headers
-                    const headerTexts = Array.from(headers).map(h => h.textContent.toLowerCase().trim());
-                    if (headerTexts.includes('name') && headerTexts.includes('url') && headerTexts.includes('status')) {
+                    const headerTexts = Array.from(headers).map((h) =>
+                        h.textContent.toLowerCase().trim(),
+                    );
+                    if (
+                        headerTexts.includes("name") &&
+                        headerTexts.includes("url") &&
+                        headerTexts.includes("status")
+                    ) {
                         table = t;
                         console.log("✅ Found MCP table by header matching");
                         break;
@@ -14767,13 +14784,13 @@ function filterGatewaysTable(searchText) {
             return;
         }
 
-        const tbody = table.querySelector('tbody');
+        const tbody = table.querySelector("tbody");
         if (!tbody) {
             console.warn("❌ No tbody found");
             return;
         }
 
-        const rows = tbody.querySelectorAll('tr');
+        const rows = tbody.querySelectorAll("tr");
         if (rows.length === 0) {
             console.warn("❌ No rows found");
             return;
@@ -14783,10 +14800,10 @@ function filterGatewaysTable(searchText) {
         console.log(`🔍 Searching ${rows.length} rows for: "${search}"`);
 
         let visibleCount = 0;
-        
+
         rows.forEach((row, index) => {
             const cells = row.querySelectorAll("td");
-            
+
             if (cells.length === 0) {
                 return;
             }
@@ -14802,12 +14819,14 @@ function filterGatewaysTable(searchText) {
 
             const fullText = searchContent.trim().toLowerCase();
             const shouldShow = search === "" || fullText.includes(search);
-            
+
             // Debug first few rows
             if (index < 3) {
-                console.log(`Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`);
+                console.log(
+                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`,
+                );
             }
-            
+
             // Show/hide the row
             if (shouldShow) {
                 row.style.display = "";
@@ -14818,9 +14837,10 @@ function filterGatewaysTable(searchText) {
                 row.style.visibility = "hidden";
             }
         });
-        
-        console.log(`✅ Search complete: ${visibleCount}/${rows.length} rows visible`);
-        
+
+        console.log(
+            `✅ Search complete: ${visibleCount}/${rows.length} rows visible`,
+        );
     } catch (error) {
         console.error("❌ Error in filterGatewaysTable:", error);
     }
@@ -14835,76 +14855,84 @@ window.filterA2AAgentsTable = filterA2AAgentsTable;
 window.filterGatewaysTable = filterGatewaysTable;
 
 // Add a test function for debugging
-window.testGatewaySearch = function(searchTerm = "Cou") {
+window.testGatewaySearch = function (searchTerm = "Cou") {
     console.log("🧪 Testing gateway search with:", searchTerm);
-    console.log("Available tables:", document.querySelectorAll('table').length);
-    
+    console.log("Available tables:", document.querySelectorAll("table").length);
+
     // Test the search input exists
-    const searchInput = document.getElementById('gateways-search-input');
+    const searchInput = document.getElementById("gateways-search-input");
     console.log("Search input found:", !!searchInput);
-    
+
     if (searchInput) {
         searchInput.value = searchTerm;
         console.log("Set search input value to:", searchInput.value);
     }
-    
+
     filterGatewaysTable(searchTerm);
 };
 
 // Simple fallback search function
-window.simpleGatewaySearch = function(searchTerm) {
+window.simpleGatewaySearch = function (searchTerm) {
     console.log("🔧 Simple gateway search for:", searchTerm);
-    
+
     // Find any table in the current tab/page
-    const tables = document.querySelectorAll('table');
+    const tables = document.querySelectorAll("table");
     console.log("Found tables:", tables.length);
-    
+
     tables.forEach((table, tableIndex) => {
-        const tbody = table.querySelector('tbody');
-        if (!tbody) return;
-        
-        const rows = tbody.querySelectorAll('tr');
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
         console.log(`Table ${tableIndex}: ${rows.length} rows`);
-        
+
         if (rows.length > 0) {
             // Check if this looks like the MCP servers table
             const firstRow = rows[0];
-            const cells = firstRow.querySelectorAll('td');
-            
-            if (cells.length >= 8) { // MCP servers table should have many columns
-                console.log(`Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`);
-                
+            const cells = firstRow.querySelectorAll("td");
+
+            if (cells.length >= 8) {
+                // MCP servers table should have many columns
+                console.log(
+                    `Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`,
+                );
+
                 const search = searchTerm.toLowerCase().trim();
                 let visibleCount = 0;
-                
+
                 rows.forEach((row) => {
-                    const cells = row.querySelectorAll('td');
-                    let rowText = '';
-                    
+                    const cells = row.querySelectorAll("td");
+                    let rowText = "";
+
                     // Get text from all cells except last (Actions)
                     for (let i = 0; i < cells.length - 1; i++) {
-                        rowText += ' ' + cells[i].textContent.trim();
+                        rowText += " " + cells[i].textContent.trim();
                     }
-                    
-                    const shouldShow = search === '' || rowText.toLowerCase().includes(search);
-                    
+
+                    const shouldShow =
+                        search === "" || rowText.toLowerCase().includes(search);
+
                     if (shouldShow) {
-                        row.style.display = '';
+                        row.style.display = "";
                         visibleCount++;
                     } else {
-                        row.style.display = 'none';
+                        row.style.display = "none";
                     }
                 });
-                
-                console.log(`✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`);
-                return; // Found the table, stop searching
+
+                console.log(
+                    `✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`,
+                );
+                // Found the table, stop searching
             }
         }
     });
 };
 
 // Add initialization test function
-window.testSearchInit = function() {
+window.testSearchInit = function () {
     console.log("🧪 Testing search initialization...");
     initializeSearchInputs();
 };
@@ -14914,51 +14942,59 @@ window.testSearchInit = function() {
  */
 function clearSearch(entityType) {
     try {
-        if (entityType === 'catalog') {
-            const searchInput = document.getElementById('catalog-search-input');
+        if (entityType === "catalog") {
+            const searchInput = document.getElementById("catalog-search-input");
             if (searchInput) {
-                searchInput.value = '';
-                filterServerTable(''); // Clear the filter
+                searchInput.value = "";
+                filterServerTable(""); // Clear the filter
             }
-        } else if (entityType === 'tools') {
-            const searchInput = document.getElementById('tools-search-input');
+        } else if (entityType === "tools") {
+            const searchInput = document.getElementById("tools-search-input");
             if (searchInput) {
-                searchInput.value = '';
-                filterToolsTable(''); // Clear the filter
+                searchInput.value = "";
+                filterToolsTable(""); // Clear the filter
             }
-        } else if (entityType === 'resources') {
-            const searchInput = document.getElementById('resources-search-input');
+        } else if (entityType === "resources") {
+            const searchInput = document.getElementById(
+                "resources-search-input",
+            );
             if (searchInput) {
-                searchInput.value = '';
-                filterResourcesTable(''); // Clear the filter
+                searchInput.value = "";
+                filterResourcesTable(""); // Clear the filter
             }
-        } else if (entityType === 'prompts') {
-            const searchInput = document.getElementById('prompts-search-input');
+        } else if (entityType === "prompts") {
+            const searchInput = document.getElementById("prompts-search-input");
             if (searchInput) {
-                searchInput.value = '';
-                filterPromptsTable(''); // Clear the filter
+                searchInput.value = "";
+                filterPromptsTable(""); // Clear the filter
             }
-        } else if (entityType === 'a2a-agents') {
-            const searchInput = document.getElementById('a2a-agents-search-input');
+        } else if (entityType === "a2a-agents") {
+            const searchInput = document.getElementById(
+                "a2a-agents-search-input",
+            );
             if (searchInput) {
-                searchInput.value = '';
-                filterA2AAgentsTable(''); // Clear the filter
+                searchInput.value = "";
+                filterA2AAgentsTable(""); // Clear the filter
             }
-        } else if (entityType === 'gateways') {
-            const searchInput = document.getElementById('gateways-search-input');
+        } else if (entityType === "gateways") {
+            const searchInput = document.getElementById(
+                "gateways-search-input",
+            );
             if (searchInput) {
-                searchInput.value = '';
-                filterGatewaysTable(''); // Clear the filter
+                searchInput.value = "";
+                filterGatewaysTable(""); // Clear the filter
             }
-        } else if (entityType === 'gateways') {
-            const searchInput = document.getElementById('gateways-search-input');
+        } else if (entityType === "gateways") {
+            const searchInput = document.getElementById(
+                "gateways-search-input",
+            );
             if (searchInput) {
-                searchInput.value = '';
-                filterGatewaysTable(''); // Clear the filter
+                searchInput.value = "";
+                filterGatewaysTable(""); // Clear the filter
             }
         }
     } catch (error) {
-        console.error('Error clearing search:', error);
+        console.error("Error clearing search:", error);
     }
 }
 
@@ -14971,18 +15007,18 @@ window.clearSearch = clearSearch;
  */
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
-    
+
     // Remove existing event listeners to prevent duplicates
     const searchInputs = [
-        'catalog-search-input',
-        'gateways-search-input',
-        'tools-search-input', 
-        'resources-search-input',
-        'prompts-search-input',
-        'a2a-agents-search-input'
+        "catalog-search-input",
+        "gateways-search-input",
+        "tools-search-input",
+        "resources-search-input",
+        "prompts-search-input",
+        "a2a-agents-search-input",
     ];
-    
-    searchInputs.forEach(inputId => {
+
+    searchInputs.forEach((inputId) => {
         const input = document.getElementById(inputId);
         if (input) {
             // Clone the input to remove all event listeners, then replace it
@@ -14992,7 +15028,7 @@ function initializeSearchInputs() {
     });
 
     // Get fresh references to all search inputs after cloning
-    
+
     // Virtual Servers search
     const catalogSearchInput = document.getElementById("catalog-search-input");
     if (catalogSearchInput) {
@@ -15003,44 +15039,48 @@ function initializeSearchInputs() {
     }
 
     // MCP Servers (Gateways) search
-    const gatewaysSearchInput = document.getElementById("gateways-search-input");
+    const gatewaysSearchInput = document.getElementById(
+        "gateways-search-input",
+    );
     if (gatewaysSearchInput) {
         console.log("✅ Found MCP Servers search input");
-        
+
         // Use addEventListener instead of direct assignment
-        gatewaysSearchInput.addEventListener("input", function(e) {
+        gatewaysSearchInput.addEventListener("input", function (e) {
             const searchValue = e.target.value;
             console.log("🔍 MCP Servers search triggered:", searchValue);
             filterGatewaysTable(searchValue);
         });
-        
+
         // Add keyup as backup
-        gatewaysSearchInput.addEventListener("keyup", function(e) {
+        gatewaysSearchInput.addEventListener("keyup", function (e) {
             const searchValue = e.target.value;
             filterGatewaysTable(searchValue);
         });
-        
+
         // Add change as backup
-        gatewaysSearchInput.addEventListener("change", function(e) {
+        gatewaysSearchInput.addEventListener("change", function (e) {
             const searchValue = e.target.value;
             filterGatewaysTable(searchValue);
         });
-        
+
         console.log("✅ MCP Servers search events attached");
-        
+
         // Test the function works
         filterGatewaysTable("");
-        
     } else {
         console.error("❌ MCP Servers search input not found!");
-        
+
         // Debug available inputs
         const allInputs = document.querySelectorAll('input[type="text"]');
-        console.log("Available text inputs:", Array.from(allInputs).map(input => ({
-            id: input.id,
-            placeholder: input.placeholder,
-            className: input.className
-        })));
+        console.log(
+            "Available text inputs:",
+            Array.from(allInputs).map((input) => ({
+                id: input.id,
+                placeholder: input.placeholder,
+                className: input.className,
+            })),
+        );
     }
 
     // Tools search
@@ -15053,7 +15093,9 @@ function initializeSearchInputs() {
     }
 
     // Resources search
-    const resourcesSearchInput = document.getElementById("resources-search-input");
+    const resourcesSearchInput = document.getElementById(
+        "resources-search-input",
+    );
     if (resourcesSearchInput) {
         resourcesSearchInput.addEventListener("input", function () {
             filterResourcesTable(this.value);
@@ -15071,7 +15113,9 @@ function initializeSearchInputs() {
     }
 
     // A2A Agents search
-    const agentsSearchInput = document.getElementById("a2a-agents-search-input");
+    const agentsSearchInput = document.getElementById(
+        "a2a-agents-search-input",
+    );
     if (agentsSearchInput) {
         agentsSearchInput.addEventListener("input", function () {
             filterA2AAgentsTable(this.value);
@@ -23667,70 +23711,75 @@ function updateEntityActionButtons(cell, type, id, isEnabled) {
 console.log("🔧 LOADING MCP SERVERS SEARCH DEBUG FUNCTIONS...");
 
 // Emergency fix function for MCP Servers search
-window.emergencyFixMCPSearch = function() {
+window.emergencyFixMCPSearch = function () {
     console.log("🚨 EMERGENCY FIX: Attempting to fix MCP Servers search...");
-    
+
     // Find the search input
     const searchInput = document.getElementById("gateways-search-input");
     if (!searchInput) {
         console.error("❌ Cannot find gateways-search-input element");
         return false;
     }
-    
+
     console.log("✅ Found search input:", searchInput);
-    
+
     // Remove all existing event listeners by cloning
     const newSearchInput = searchInput.cloneNode(true);
     searchInput.parentNode.replaceChild(newSearchInput, searchInput);
-    
+
     // Add fresh event listener
     const finalSearchInput = document.getElementById("gateways-search-input");
-    finalSearchInput.addEventListener("input", function(e) {
+    finalSearchInput.addEventListener("input", function (e) {
         console.log("🔍 EMERGENCY SEARCH EVENT:", e.target.value);
         filterGatewaysTable(e.target.value);
     });
-    
-    console.log("✅ Emergency fix applied - test by typing in MCP Servers search box");
+
+    console.log(
+        "✅ Emergency fix applied - test by typing in MCP Servers search box",
+    );
     return true;
 };
 
 // Manual test function
-window.testMCPSearchManually = function(searchTerm = "github") {
+window.testMCPSearchManually = function (searchTerm = "github") {
     console.log("🧪 MANUAL TEST: Testing MCP search with:", searchTerm);
     filterGatewaysTable(searchTerm);
 };
 
 // Debug current state function
-window.debugMCPSearchState = function() {
+window.debugMCPSearchState = function () {
     console.log("🔍 DEBUGGING MCP SEARCH STATE:");
-    
+
     const searchInput = document.getElementById("gateways-search-input");
     console.log("Search input:", searchInput);
-    console.log("Search input value:", searchInput ? searchInput.value : "NOT FOUND");
-    
+    console.log(
+        "Search input value:",
+        searchInput ? searchInput.value : "NOT FOUND",
+    );
+
     const panel = document.getElementById("gateways-panel");
     console.log("Gateways panel:", panel);
-    
+
     const table = panel ? panel.querySelector("table") : null;
     console.log("Table in panel:", table);
-    
+
     const rows = table ? table.querySelectorAll("tbody tr") : [];
     console.log("Rows found:", rows.length);
-    
+
     if (rows.length > 0) {
         console.log("First row content:", rows[0].textContent);
     }
-    
+
     return {
         searchInput: !!searchInput,
         panel: !!panel,
         table: !!table,
-        rowCount: rows.length
+        rowCount: rows.length,
     };
 };
 
 // Auto-fix on page load
-setTimeout(function() {
+setTimeout(function () {
     console.log("🔄 AUTO-FIX: Attempting to fix MCP search after page load...");
     if (window.emergencyFixMCPSearch) {
         window.emergencyFixMCPSearch();
