@@ -5154,10 +5154,6 @@ if UI_ENABLED:
 
         Logs a debug message before redirecting.
 
-        Args:
-            request (Request): The incoming HTTP request (used only to build the
-                target URL via :pymeth:`starlette.requests.Request.url_for`).
-
         Returns:
             RedirectResponse: Redirects to /admin/.
 
