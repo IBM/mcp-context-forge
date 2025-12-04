@@ -1,3 +1,4 @@
+import base64
 import logging
 import types
 from pathlib import Path
@@ -50,6 +51,25 @@ def test_create_qr_saves_file_different_formats(file_format):
         assert result["output_format"] is req.format
 
 
+@pytest.mark.parametrize("file_format", ["png", "svg", "ascii"])
+def test_create_qr_saves_file_different_formats_base_64(file_format):
+    """Test that create_qr saves a files in different formats"""
+
+    req = QRGenerationRequest(
+        data="https://test.com",
+        format=file_format,
+        return_base64=True
+    )
+
+    result = create_qr_code(req)
+
+    assert result["success"] is True
+    assert result["output_format"] == file_format
+
+    b64 = result["image_base64"]
+    assert isinstance(b64, str)
+
+
 def test_create_qr_fail_to_save_file():
     """Test that create_qr handles file save errors gracefully."""
 
@@ -63,7 +83,7 @@ def test_create_qr_fail_to_save_file():
         dummy_img = MagicMock()
         dummy_img.save.side_effect = OSError("file error")
         with patch("qr_code_server.tools.generator.create_qr_image", return_value=dummy_img):
-                result = create_qr_code(req)
+            result = create_qr_code(req)
 
         assert result["error"] == "file error"
         assert result["success"] is False
@@ -145,6 +165,7 @@ def test_resolve_output_path_fail():
 
 # Batch gereration tests
 
+
 def test_create_batch_qr_codes_creates_output_directory():
     """Test that create_batch_qr_codes creates the output directory if it doesn't exist."""
     with TemporaryDirectory() as tmpdir:
@@ -175,6 +196,7 @@ def test_create_batch_qr_codes_fail_create_output_directory():
         assert result["success"] is False
         assert result["error"] == "disk error"
 
+
 @pytest.mark.parametrize("file_format", ["png", "svg", "ascii"])
 def test_create_batch_qr_codes_different_formats(file_format):
     """Test that create_batch_qr_codes creates files in different formats."""
@@ -183,8 +205,8 @@ def test_create_batch_qr_codes_different_formats(file_format):
 
         req = BatchQRGenerationRequest(
             data_list=["test1", "test2"],
-            format = file_format,
-            output_directory = str(output_dir),
+            format=file_format,
+            output_directory=str(output_dir),
         )
         result = create_batch_qr_codes(req)
         assert result["success"] is True
@@ -194,6 +216,7 @@ def test_create_batch_qr_codes_different_formats(file_format):
             assert file_path.exists()
             assert file_path.is_file()
 
+
 @pytest.mark.parametrize("file_format", ["png", "svg", "ascii"])
 def test_create_batch_qr_codes_different_formats_zipped(file_format):
     """Test that create_batch_qr_codes creates zipped files in different formats."""
@@ -202,8 +225,8 @@ def test_create_batch_qr_codes_different_formats_zipped(file_format):
 
         req = BatchQRGenerationRequest(
             data_list=["test1", "test2"],
-            format = file_format,
-            output_directory = str(output_dir),
+            format=file_format,
+            output_directory=str(output_dir),
             zip_output=True
         )
         result = create_batch_qr_codes(req)
