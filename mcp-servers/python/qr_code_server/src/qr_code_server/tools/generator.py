@@ -3,7 +3,7 @@ import logging
 from io import BytesIO
 import os
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from qrcode.image.pil import PilImage
 
 from qr_code_server.config import config
@@ -14,6 +14,7 @@ import zipfile
 logger = logging.getLogger(__name__)
 
 DEFAULT_ZIP_FILE_NAME = "qr.zip"
+
 
 class QRGenerationRequest(BaseModel):
     data: str
@@ -35,6 +36,25 @@ class BatchQRGenerationRequest(BaseModel):
     output_directory: str = "./qr_codes/"
     zip_output: bool = False  # Create ZIP archive
 
+    @field_validator("format")
+    @classmethod
+    def validate_format(cls, v: str) -> str:
+        v = v.lower().strip()
+        if v not in config.qr_generation.supported_formats:
+            raise ValueError("Unsupported format. Supported formats: png, svg, ascii")
+        return v
+
+    @field_validator("data_list")
+    @classmethod
+    def validate_batch_size(cls, v: list[str]) -> list[str]:
+        """Validate batch size does not exceed configured limit."""
+        max_size = config.output.max_batch_size
+        if len(v) > max_size:
+            raise ValueError(f"Batch size {len(v)} exceeds limit {max_size}")
+        if len(v) == 0:
+            raise ValueError("data_list cannot be empty")
+        return v
+
 
 def create_qr_code(request: QRGenerationRequest):
 
@@ -50,9 +70,12 @@ def create_qr_code(request: QRGenerationRequest):
 
     if request.return_base64:
         try:
-            buffer = BytesIO()
-            img.save(buffer)
-            img_base64 = base64.b64encode(buffer.getvalue()).decode()
+            if isinstance(img, ImageAscii):
+                img_base64 = base64.b64encode(img.to_string().encode()).decode()
+            else:
+                buffer = BytesIO()
+                img.save(buffer)
+                img_base64 = base64.b64encode(buffer.getvalue()).decode()
             return {
                 "success": True,
                 "output_format": request.format,
@@ -60,7 +83,7 @@ def create_qr_code(request: QRGenerationRequest):
                 "message": "QR code generated as base64 image",
             }
         except Exception as e:
-            logger.error(f"Error encoding qr code to base 64: {e}")
+            logger.error(f"Error encoding qr code to base64: {e}")
             return {"success": False, "error": str(e)}
 
     try:
@@ -104,7 +127,7 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
 
                 # yield acii as string and pil as bytes
                 if hasattr(img, "to_string"):
-                    img =img.to_string()
+                    img = img.to_string()
                 elif isinstance(img, PilImage):
                     img = img.tobytes()
                 try:
@@ -135,6 +158,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
             "message": f"QR code images saved at {request.output_directory}",
         }
 
-
-
-
+# if __name__ == "__main__":
+#     # Example usage
+#     req = QRGenerationRequest(data="https://example.com", format="ascii", return_base64=True)
+#     res = create_qr_code(req)
+#     print(res)
