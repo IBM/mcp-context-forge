@@ -35,7 +35,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Gateway as PydanticGateway
@@ -360,8 +360,9 @@ class ToolService:
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
-        tool_dict["execution_count"] = tool.execution_count
         tool_dict["metrics"] = tool.metrics_summary if include_metrics else None
+
+        tool_dict["execution_count"] = tool.execution_count if include_metrics else None
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
@@ -405,6 +406,7 @@ class ToolService:
         tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
         tool_dict["tags"] = getattr(tool, "tags", []) or []
         tool_dict["team"] = getattr(tool, "team", None)
+
         return ToolRead.model_validate(tool_dict)
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -848,7 +850,19 @@ class ToolService:
             True
         """
 
-        query = select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+        if include_metrics:
+            query = (
+                select(DbTool)
+                .options(joinedload(DbTool.gateway))
+                .options(selectinload(DbTool.metrics))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(server_tool_association.c.server_id == server_id)
+            )
+        else:
+            query = (
+                select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+            )
+
         cursor = None  # Placeholder for pagination; ignore for now
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
 
