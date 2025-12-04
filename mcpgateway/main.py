@@ -5148,7 +5148,7 @@ if UI_ENABLED:
 
     # Redirect root path to admin UI
     @app.get("/")
-    async def root_redirect(request: Request):
+    async def root_redirect():
         """
         Redirects the root path ("/") to "/admin/".
 
