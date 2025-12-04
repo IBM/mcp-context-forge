@@ -5950,6 +5950,32 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                             container.dispatchEvent(event);
                         }
                     }
+                    // If we're in the Add Server tools container, restore persisted selections
+                    else if (container.id === "associatedTools") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-tools",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("Error restoring associatedTools selections:", e);
+                        }
+                    }
                 }
             }, 10); // Small delay to ensure DOM is updated
         }
@@ -6998,6 +7024,37 @@ function initToolSelect(
         return;
     }
 
+    // Instrument changes to the data-selected-tools attribute for debugging
+    if (!container.dataset.attrObserverAttached) {
+        try {
+            const attrObserver = new MutationObserver((mutationsList) => {
+                for (const mut of mutationsList) {
+                    if (mut.type === "attributes" && mut.attributeName === "data-selected-tools") {
+                        const oldVal = mut.oldValue;
+                        const newVal = container.getAttribute("data-selected-tools");
+                        console.info(
+                            `[DATA-INSTRUMENT] ${selectId} data-selected-tools changed — old: ${oldVal} new: ${newVal}`,
+                        );
+                    }
+                }
+            });
+
+            // Observe attribute changes and capture previous value
+            attrObserver.observe(container, {
+                attributes: true,
+                attributeOldValue: true,
+                attributeFilter: ["data-selected-tools"],
+            });
+
+            // Prevent double attaching
+            container.dataset.attrObserverAttached = "true";
+            // Keep a reference so it doesn't get GC'd (and so we could disconnect if needed)
+            container._dbgAttrObserver = attrObserver;
+        } catch (e) {
+            console.error("[DATA-INSTRUMENT] failed to attach attribute observer:", e);
+        }
+    }
+
     const pillClasses =
         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
 
@@ -7316,6 +7373,56 @@ function initToolSelect(
                             "data-server-tools",
                             JSON.stringify(serverTools),
                         );
+                    }
+                }
+                // If we're in the Add Server tools container, persist selected IDs
+                else if (selectId === "associatedTools") {
+                    try {
+                        // Incrementally update persisted selection instead of
+                        // replacing it wholesale. This preserves selections made
+                        // in previous filtered views where those checkboxes are
+                        // not present in the current DOM.
+                        const changedEl = e.target;
+                        const changedId = changedEl.value;
+
+                        // Load existing persisted set: prefer container attribute,
+                        // fall back to the in-memory window variable.
+                        let persisted = [];
+                        const dataAttr = container.getAttribute("data-selected-tools");
+                        if (dataAttr) {
+                            try {
+                                const parsed = JSON.parse(dataAttr);
+                                if (Array.isArray(parsed)) persisted = parsed.slice();
+                            } catch (parseErr) {
+                                console.error("Error parsing existing data-selected-tools:", parseErr);
+                            }
+                        } else if (Array.isArray(window._selectedAssociatedTools)) {
+                            persisted = window._selectedAssociatedTools.slice();
+                        }
+
+                        if (changedEl.checked) {
+                            if (!persisted.includes(changedId)) persisted.push(changedId);
+                        } else {
+                            persisted = persisted.filter((x) => x !== changedId);
+                        }
+
+                        // Ensure any currently visible checked boxes are included
+                        const visibleChecked = Array.from(
+                            container.querySelectorAll('input[type="checkbox"]:checked'),
+                        ).map((cb) => cb.value);
+                        visibleChecked.forEach((id) => {
+                            if (!persisted.includes(id)) persisted.push(id);
+                        });
+
+                        // Persist back to both the container attribute and global fallback
+                        container.setAttribute("data-selected-tools", JSON.stringify(persisted));
+                        try {
+                            window._selectedAssociatedTools = persisted.slice();
+                        } catch (e) {
+                            console.error("Error persisting window._selectedAssociatedTools:", e);
+                        }
+                    } catch (err) {
+                        console.error("Error updating data-selected-tools (incremental):", err);
                     }
                 }
 
@@ -18554,8 +18661,8 @@ function resetImportSelection() {
                     // Many panels use specific ids — attempt to call generic initializers if they exist
                     initResourceSelect(
                         "associatedResources",
-                        "resource-pills",
-                        "resource-warn",
+                        "selectedResourcePills",
+                        "selectedResourceWarning",
                         10,
                         null,
                         null,
@@ -18564,8 +18671,8 @@ function resetImportSelection() {
                 if (typeof initToolSelect === "function") {
                     initToolSelect(
                         "associatedTools",
-                        "tool-pills",
-                        "tool-warn",
+                        "selectedToolsPills",
+                        "selectedToolsWarning",
                         10,
                         null,
                         null,
@@ -21246,6 +21353,61 @@ async function serverSideToolSearch(searchTerm) {
         return;
     }
 
+    // --- DOM instrumentation for debugging replacement during searches ---
+    // Assign a stable debug id to the container (persists through innerHTML swaps
+    // but will change if the element is replaced). Observe the parent node for
+    // childList mutations and log if the container is removed or replaced.
+    let _domInstrObserver = null;
+    let _domInstrId = null;
+    try {
+        if (!container.dataset.debugNodeId) {
+            container.dataset.debugNodeId = `dbg-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        }
+        _domInstrId = container.dataset.debugNodeId;
+        console.info(`[DOM-INSTRUMENT] serverSideToolSearch start for #associatedTools debugId=${_domInstrId} searchTerm='${searchTerm}'`);
+
+        const parentNode = container.parentNode;
+        if (parentNode) {
+            _domInstrObserver = new MutationObserver((mutationsList) => {
+                for (const mut of mutationsList) {
+                    if (mut.type === "childList") {
+                        const current = document.getElementById("associatedTools");
+                        if (!current) {
+                            console.warn(`[DOM-INSTRUMENT] associatedTools element REMOVED during search (original debugId=${_domInstrId})`, mut);
+                        } else {
+                            const curId = current.dataset.debugNodeId || null;
+                            if (curId !== _domInstrId) {
+                                console.warn(`[DOM-INSTRUMENT] associatedTools element REPLACED during search. original=${_domInstrId} current=${curId}`, mut);
+                            }
+                        }
+                    }
+                }
+            });
+            try {
+                _domInstrObserver.observe(parentNode, { childList: true });
+            } catch (e) {
+                console.error("[DOM-INSTRUMENT] Failed to observe parent node for associatedTools:", e);
+            }
+        }
+    } catch (e) {
+        console.error("[DOM-INSTRUMENT] setup error:", e);
+    }
+
+    // Persist current selections to window fallback before we replace/clear the container
+    try {
+        const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        if (!Array.isArray(window._selectedAssociatedTools) || window._selectedAssociatedTools.length === 0) {
+            // Only overwrite if not already set (preserve most recent explicit user selection if present)
+            window._selectedAssociatedTools = currentChecked.slice();
+        } else {
+            // Merge with any existing to avoid losing recently selected IDs
+            const merged = new Set([...(window._selectedAssociatedTools || []), ...currentChecked]);
+            window._selectedAssociatedTools = Array.from(merged);
+        }
+    } catch (e) {
+        console.error("Error capturing current selections before search:", e);
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -21267,13 +21429,57 @@ async function serverSideToolSearch(searchTerm) {
                 const html = await response.text();
                 container.innerHTML = html;
 
-                // Hide no results message
-                if (noResultsMessage) {
-                    noResultsMessage.style.display = "none";
-                }
+                // If the container has been re-rendered server-side and our
+                // `data-selected-tools` attribute was lost, restore from the
+                // global fallback `window._selectedAssociatedTools`.
+                try {
+                    updateToolMapping(container);
 
-                // Update tool mapping if needed
-                updateToolMapping(container);
+                    // Re-initialize selector so handlers are attached
+                    initToolSelect(
+                        "associatedTools",
+                        "selectedToolsPills",
+                        "selectedToolsWarning",
+                        6,
+                        "selectAllToolsBtn",
+                        "clearAllToolsBtn",
+                    );
+
+                    const dataAttr = container.getAttribute("data-selected-tools");
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error("Error parsing server data-selected-tools:", e);
+                        }
+                    }
+
+                    if ((!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) && Array.isArray(window._selectedAssociatedTools)) {
+                        selectedIds = window._selectedAssociatedTools.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll('input[name="associatedTools"]');
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        const firstCb = container.querySelector('input[type="checkbox"]');
+                        if (firstCb) {
+                            firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                        }
+                    }
+
+                    // Hide no results message
+                    if (noResultsMessage) {
+                        noResultsMessage.style.display = "none";
+                    }
+                } catch (e) {
+                    console.error("Error restoring selections after loading default tools:", e);
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
@@ -21328,9 +21534,94 @@ async function serverSideToolSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
+            // If server-side didn't provide `data-selected-tools` (or provided
+            // an empty array), restore/merge from the in-memory fallback so
+            // the attribute isn't left empty and selectors can pick it up.
+            try {
+                const existingAttr = container.getAttribute("data-selected-tools");
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error("Error parsing existing data-selected-tools after search insert:", e);
+                    }
+                }
+
+                if ((!existingIds || !Array.isArray(existingIds) || existingIds.length === 0) && Array.isArray(window._selectedAssociatedTools) && window._selectedAssociatedTools.length > 0) {
+                    // Write a merged view back to the container attribute so
+                    // subsequent init/observers see the selection
+                    container.setAttribute("data-selected-tools", JSON.stringify(window._selectedAssociatedTools.slice()));
+                } else if (Array.isArray(existingIds) && Array.isArray(window._selectedAssociatedTools) && window._selectedAssociatedTools.length > 0) {
+                    // Merge the two sets to avoid losing either
+                    const merged = new Set([...(existingIds || []), ...window._selectedAssociatedTools]);
+                    container.setAttribute("data-selected-tools", JSON.stringify(Array.from(merged)));
+                }
+            } catch (e) {
+                console.error("Error restoring data-selected-tools attribute after inserting search results:", e);
+            }
 
             // Update tool mapping with search results
             updateToolMapping(container);
+
+            // Re-initialize selector behavior for the add-server container
+            try {
+                initToolSelect(
+                    "associatedTools",
+                    "selectedToolsPills",
+                    "selectedToolsWarning",
+                    6,
+                    "selectAllToolsBtn",
+                    "clearAllToolsBtn",
+                );
+
+                // Restore any previously selected tool IDs stored on the container
+                try {
+                    const dataAttr = container.getAttribute("data-selected-tools");
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error("Error parsing data-selected-tools:", e);
+                        }
+                    }
+
+                    // If parsed attribute is missing or an empty array, fall back
+                    // to the in-memory `window._selectedAssociatedTools` saved earlier.
+                    if (
+                        (!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) &&
+                        Array.isArray(window._selectedAssociatedTools)
+                    ) {
+                        selectedIds = window._selectedAssociatedTools.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error restoring data-selected-tools after search:", e);
+                }
+            } catch (e) {
+                console.error("Error initializing associatedTools selector:", e);
+            }
 
             // Hide no results message
             if (noResultsMessage) {
