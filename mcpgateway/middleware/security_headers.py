@@ -295,7 +295,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             elif x_frame_upper.startswith("ALLOW-FROM"):
                 allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
                 frame_ancestors = allowed_uri
-            elif not x_frame:  # Empty string means allow all (including file:// scheme)
+            elif x_frame_upper == "ALLOW-ALL":
                 frame_ancestors = "* file: http: https:"
             else:
                 # Default to none for unknown values (matches DENY default)
