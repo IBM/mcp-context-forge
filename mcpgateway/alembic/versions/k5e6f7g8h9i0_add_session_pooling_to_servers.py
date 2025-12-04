@@ -97,4 +97,5 @@ def downgrade() -> None:
             except Exception as e:
                 print(f"Warning: Could not drop column {col_name}: {e}")
 
+
 # Made with Bob

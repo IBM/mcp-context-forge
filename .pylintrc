@@ -650,3 +650,8 @@ init-import=no
 # List of qualified module names which can have objects that can redefine
 # builtins.
 redefining-builtins-modules=six.moves,past.builtins,future.builtins,builtins,io
+
+# Disable specific warnings that are intentional design decisions
+disable=
+    duplicate-code,  # R0801: Transport classes intentionally share similar code
+    too-many-instance-attributes,  # R0902: SessionPool needs 18 attributes for full functionality

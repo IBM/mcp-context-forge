@@ -244,7 +244,7 @@ class A2AAgentMetrics(BaseModelWithConfigDict):
 class ServerPoolConfig(BaseModelWithConfigDict):
     """
     Configuration schema for server session pooling.
-    
+
     Attributes:
         enabled (bool): Whether pooling is enabled for this server
         size (int): Target pool size
@@ -257,7 +257,7 @@ class ServerPoolConfig(BaseModelWithConfigDict):
         rebalance_interval (int): Pool rebalancing interval in seconds
         auto_scale (bool): Enable automatic pool size adjustment
     """
-    
+
     enabled: bool = Field(default=False, description="Whether pooling is enabled")
     size: int = Field(default=5, ge=1, le=1000, description="Target pool size (1-1000)")
     strategy: str = Field(default="round_robin", description="Pooling strategy")
@@ -273,7 +273,7 @@ class ServerPoolConfig(BaseModelWithConfigDict):
 class ServerPoolStats(BaseModelWithConfigDict):
     """
     Statistics schema for server session pool.
-    
+
     Attributes:
         pool_id (str): Unique pool identifier
         server_id (str): Associated server ID
@@ -289,7 +289,7 @@ class ServerPoolStats(BaseModelWithConfigDict):
         session_reuse_rate (Optional[float]): Percentage of reused sessions
         health_score (Optional[float]): Pool health score (0-100)
     """
-    
+
     pool_id: str = Field(..., description="Pool identifier")
     server_id: str = Field(..., description="Server identifier")
     strategy: str = Field(..., description="Current strategy")
@@ -308,7 +308,7 @@ class ServerPoolStats(BaseModelWithConfigDict):
 class PoolStrategyMetricRead(BaseModelWithConfigDict):
     """
     Read schema for pool strategy performance metrics.
-    
+
     Attributes:
         id (str): Metric identifier
         pool_id (str): Associated pool ID
@@ -320,7 +320,7 @@ class PoolStrategyMetricRead(BaseModelWithConfigDict):
         wait_time (Optional[float]): Wait time in seconds
         error_message (Optional[str]): Error message if failed
     """
-    
+
     id: str = Field(..., description="Metric identifier")
     pool_id: str = Field(..., description="Pool identifier")
     strategy: str = Field(..., description="Strategy name")

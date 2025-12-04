@@ -50,11 +50,7 @@ def upgrade() -> None:
     )
 
     # Create composite index for efficient time-based queries
-    op.create_index(
-        "idx_pool_strategy_timestamp",
-        "pool_strategy_metrics",
-        ["pool_id", "strategy", "timestamp"]
-    )
+    op.create_index("idx_pool_strategy_timestamp", "pool_strategy_metrics", ["pool_id", "strategy", "timestamp"])
 
     # Create additional indexes for common query patterns
     op.create_index("idx_pool_strategy_metrics_pool_id", "pool_strategy_metrics", ["pool_id"])
@@ -77,7 +73,7 @@ def downgrade() -> None:
     # Drop indexes first
     try:
         existing_indexes = [idx["name"] for idx in inspector.get_indexes("pool_strategy_metrics")]
-        
+
         index_names = [
             "idx_pool_strategy_metrics_timestamp",
             "idx_pool_strategy_metrics_success",
@@ -85,7 +81,7 @@ def downgrade() -> None:
             "idx_pool_strategy_metrics_pool_id",
             "idx_pool_strategy_timestamp",
         ]
-        
+
         for index_name in index_names:
             if index_name in existing_indexes:
                 op.drop_index(index_name, table_name="pool_strategy_metrics")
@@ -96,5 +92,6 @@ def downgrade() -> None:
     # Drop table
     op.drop_table("pool_strategy_metrics")
     print("Dropped pool_strategy_metrics table")
+
 
 # Made with Bob

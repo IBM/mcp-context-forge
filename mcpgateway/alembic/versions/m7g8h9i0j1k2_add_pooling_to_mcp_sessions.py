@@ -71,27 +71,13 @@ def upgrade() -> None:
     # Add foreign key constraints if they don't exist
     try:
         existing_fks = [fk["name"] for fk in inspector.get_foreign_keys("mcp_sessions")]
-        
+
         if "fk_mcp_sessions_pool_id" not in existing_fks and "pool_id" in [col["name"] for col in inspector.get_columns("mcp_sessions")]:
-            op.create_foreign_key(
-                "fk_mcp_sessions_pool_id",
-                "mcp_sessions",
-                "session_pools",
-                ["pool_id"],
-                ["id"],
-                ondelete="SET NULL"
-            )
+            op.create_foreign_key("fk_mcp_sessions_pool_id", "mcp_sessions", "session_pools", ["pool_id"], ["id"], ondelete="SET NULL")
             print("Created foreign key constraint fk_mcp_sessions_pool_id")
 
         if "fk_mcp_sessions_server_id" not in existing_fks and "server_id" in [col["name"] for col in inspector.get_columns("mcp_sessions")]:
-            op.create_foreign_key(
-                "fk_mcp_sessions_server_id",
-                "mcp_sessions",
-                "servers",
-                ["server_id"],
-                ["id"],
-                ondelete="SET NULL"
-            )
+            op.create_foreign_key("fk_mcp_sessions_server_id", "mcp_sessions", "servers", ["server_id"], ["id"], ondelete="SET NULL")
             print("Created foreign key constraint fk_mcp_sessions_server_id")
     except Exception as e:
         print(f"Warning: Could not create foreign key constraints: {e}")
@@ -99,15 +85,15 @@ def upgrade() -> None:
     # Create indexes for efficient queries
     try:
         existing_indexes = [idx["name"] for idx in inspector.get_indexes("mcp_sessions")]
-        
+
         if "idx_mcp_sessions_pool_id" not in existing_indexes:
             op.create_index("idx_mcp_sessions_pool_id", "mcp_sessions", ["pool_id"])
             print("Created index idx_mcp_sessions_pool_id")
-        
+
         if "idx_mcp_sessions_server_id" not in existing_indexes:
             op.create_index("idx_mcp_sessions_server_id", "mcp_sessions", ["server_id"])
             print("Created index idx_mcp_sessions_server_id")
-        
+
         if "idx_mcp_sessions_is_pooled" not in existing_indexes:
             op.create_index("idx_mcp_sessions_is_pooled", "mcp_sessions", ["is_pooled"])
             print("Created index idx_mcp_sessions_is_pooled")
@@ -126,7 +112,7 @@ def downgrade() -> None:
     # Drop indexes first
     try:
         existing_indexes = [idx["name"] for idx in inspector.get_indexes("mcp_sessions")]
-        
+
         for index_name in ["idx_mcp_sessions_is_pooled", "idx_mcp_sessions_server_id", "idx_mcp_sessions_pool_id"]:
             if index_name in existing_indexes:
                 op.drop_index(index_name, table_name="mcp_sessions")
@@ -137,7 +123,7 @@ def downgrade() -> None:
     # Drop foreign key constraints
     try:
         existing_fks = [fk["name"] for fk in inspector.get_foreign_keys("mcp_sessions")]
-        
+
         for fk_name in ["fk_mcp_sessions_server_id", "fk_mcp_sessions_pool_id"]:
             if fk_name in existing_fks:
                 op.drop_constraint(fk_name, "mcp_sessions", type_="foreignkey")
@@ -166,5 +152,6 @@ def downgrade() -> None:
                 print(f"Dropped column {col_name} from mcp_sessions table")
             except Exception as e:
                 print(f"Warning: Could not drop column {col_name}: {e}")
+
 
 # Made with Bob

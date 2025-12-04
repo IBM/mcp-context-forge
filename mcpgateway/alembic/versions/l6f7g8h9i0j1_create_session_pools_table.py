@@ -84,4 +84,5 @@ def downgrade() -> None:
     op.drop_table("session_pools")
     print("Dropped session_pools table")
 
+
 # Made with Bob

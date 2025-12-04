@@ -3203,7 +3203,7 @@ class SessionMessageRecord(Base):
 
 class SessionPool(Base):
     """ORM model for session pools that manage reusable sessions for servers.
-    
+
     A session pool maintains a collection of sessions that can be reused across
     multiple requests to improve performance and reduce connection overhead.
     """
@@ -3237,7 +3237,7 @@ class SessionPool(Base):
 
 class PoolStrategyMetric(Base):
     """ORM model for tracking pool strategy performance metrics.
-    
+
     Records performance data for different pooling strategies to enable
     intelligent strategy selection and auto-adjustment.
     """

@@ -24,6 +24,7 @@ from mcpgateway.transports.base import Transport
 
 # TYPE_CHECKING import to avoid circular dependency
 if TYPE_CHECKING:
+    # First-Party
     from mcpgateway.cache.session_pool_manager import SessionPoolManager
 
 # Initialize logging service first
@@ -158,7 +159,13 @@ class WebSocketTransport(Transport):
 
         logger.info(f"WebSocket transport connected: {self._session_id}")
 
-    async def disconnect(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None, healthy: bool = True, error: Optional[str] = None) -> None:
+    async def disconnect(
+        self,
+        pool_manager: Optional["SessionPoolManager"] = None,  # pylint: disable=unused-argument
+        server_id: Optional[str] = None,  # pylint: disable=unused-argument
+        healthy: bool = True,
+        error: Optional[str] = None,
+    ) -> None:
         """Clean up WebSocket connection and release session back to pool if applicable.
 
         Args:
@@ -220,12 +227,7 @@ class WebSocketTransport(Transport):
                 # Release session back to pool if it was acquired from pool
                 if self._acquired_from_pool and self._pool_manager and self._server_id:
                     try:
-                        await self._pool_manager.release_session(
-                            self._server_id,
-                            self._session_id,
-                            healthy=healthy,
-                            error=error
-                        )
+                        await self._pool_manager.release_session(self._server_id, self._session_id, healthy=healthy, error=error)
                         logger.info(f"WebSocket transport released pooled session: {self._session_id} for server {self._server_id}")
                     except Exception as e:
                         logger.error(f"Failed to release pooled session: {e}")
@@ -470,13 +472,7 @@ class WebSocketTransport(Transport):
             await self._websocket.send_bytes(b"ping")
 
     @classmethod
-    async def create_pooled_session(
-        cls,
-        pool_manager: "SessionPoolManager",
-        server_id: str,
-        websocket: WebSocket,
-        timeout: Optional[int] = None
-    ) -> Optional["WebSocketTransport"]:
+    async def create_pooled_session(cls, pool_manager: "SessionPoolManager", server_id: str, websocket: WebSocket, timeout: Optional[int] = None) -> Optional["WebSocketTransport"]:
         """Create a new WebSocket transport using a pooled session.
 
         This is a factory method that creates a transport instance with a session
@@ -503,12 +499,7 @@ class WebSocketTransport(Transport):
                 logger.warning(f"Failed to acquire pooled session for server {server_id}")
                 return None
 
-            transport = cls(
-                websocket=websocket,
-                session_id=session_id,
-                pool_manager=pool_manager,
-                server_id=server_id
-            )
+            transport = cls(websocket=websocket, session_id=session_id, pool_manager=pool_manager, server_id=server_id)
             transport._acquired_from_pool = True
             logger.info(f"Created WebSocket transport with pooled session: {session_id} for server {server_id}")
             return transport
@@ -516,11 +507,7 @@ class WebSocketTransport(Transport):
             logger.error(f"Error creating pooled WebSocket transport: {e}")
             return None
 
-    async def get_or_create_session(
-        self,
-        pool_manager: Optional["SessionPoolManager"] = None,
-        server_id: Optional[str] = None
-    ) -> str:
+    async def get_or_create_session(self, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None) -> str:
         """Get existing session ID or create a new one, with pool fallback.
 
         This method attempts to use a pooled session if pool_manager and server_id
@@ -572,12 +559,7 @@ class WebSocketTransport(Transport):
 
         return self._session_id
 
-    async def migrate_session(
-        self,
-        new_websocket: WebSocket,
-        pool_manager: Optional["SessionPoolManager"] = None,
-        server_id: Optional[str] = None
-    ) -> bool:
+    async def migrate_session(self, new_websocket: WebSocket, pool_manager: Optional["SessionPoolManager"] = None, server_id: Optional[str] = None) -> bool:
         """Migrate this transport to a new WebSocket connection.
 
         This method is useful for handling reconnections while preserving the session.

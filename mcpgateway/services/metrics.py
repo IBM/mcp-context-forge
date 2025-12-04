@@ -107,7 +107,7 @@ def setup_metrics(app):
         if custom_labels:
             # Check if app_info gauge already exists to avoid duplication
             try:
-                app_info_gauge = REGISTRY._names_to_collectors.get("app_info")
+                app_info_gauge = REGISTRY._names_to_collectors.get("app_info")  # pylint: disable=protected-access
                 if app_info_gauge is None:
                     app_info_gauge = Gauge(
                         "app_info",
@@ -126,8 +126,8 @@ def setup_metrics(app):
                     )
                 except Exception:
                     # Collector already exists, retrieve it
-                    app_info_gauge = REGISTRY._names_to_collectors.get("app_info")
-            
+                    app_info_gauge = REGISTRY._names_to_collectors.get("app_info")  # pylint: disable=protected-access
+
             if app_info_gauge is not None:
                 app_info_gauge.labels(**custom_labels).set(1)
 
@@ -135,7 +135,7 @@ def setup_metrics(app):
 
         # Add database metrics gauge - check if already exists
         try:
-            db_info_gauge = REGISTRY._names_to_collectors.get("database_info")
+            db_info_gauge = REGISTRY._names_to_collectors.get("database_info")  # pylint: disable=protected-access
             if db_info_gauge is None:
                 db_info_gauge = Gauge(
                     "database_info",
@@ -154,7 +154,7 @@ def setup_metrics(app):
                 )
             except Exception:
                 # Collector already exists, retrieve it
-                db_info_gauge = REGISTRY._names_to_collectors.get("database_info")
+                db_info_gauge = REGISTRY._names_to_collectors.get("database_info")  # pylint: disable=protected-access
 
         # Extract URL scheme for additional context
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"

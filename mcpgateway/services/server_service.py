@@ -13,7 +13,7 @@ It also publishes event notifications for server changes.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 # Third-Party
@@ -32,7 +32,7 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import ServerMetric
+from mcpgateway.db import ServerMetric, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.logging_service import LoggingService
@@ -1029,38 +1029,29 @@ class ServerService:
                     # Continue with deletion even if pool cleanup fails
 
             # Import pool-related models
-            from mcpgateway.db import PoolStrategyMetric, SessionPool as SessionPoolModel, SessionRecord  # pylint: disable=import-outside-toplevel
+            # First-Party
+            from mcpgateway.db import PoolStrategyMetric  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import SessionPool as SessionPoolModel  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import SessionRecord  # pylint: disable=import-outside-toplevel
 
             # Delete all sessions for this server
-            session_count = db.query(SessionRecord).filter(
-                SessionRecord.server_id == server_id
-            ).delete(synchronize_session=False)
+            session_count = db.query(SessionRecord).filter(SessionRecord.server_id == server_id).delete(synchronize_session=False)
 
             # Delete pool metrics: metrics are linked to pools, so join via SessionPool
             try:
-                metrics_count = (
-                    db.query(PoolStrategyMetric)
-                    .join(SessionPoolModel, PoolStrategyMetric.pool)
-                    .filter(SessionPoolModel.server_id == server_id)
-                    .delete(synchronize_session=False)
-                )
+                metrics_count = db.query(PoolStrategyMetric).join(SessionPoolModel, PoolStrategyMetric.pool).filter(SessionPoolModel.server_id == server_id).delete(synchronize_session=False)
             except Exception:
                 # Fallback: if join/delete unsupported in current DB/session, try delete by pool ids
                 metrics_count = 0
 
             # Delete pool state
-            pool_count = db.query(SessionPoolModel).filter(
-                SessionPoolModel.server_id == server_id
-            ).delete(synchronize_session=False)
+            pool_count = db.query(SessionPoolModel).filter(SessionPoolModel.server_id == server_id).delete(synchronize_session=False)
 
             server_info = {"id": server.id, "name": server.name}
             db.delete(server)
             db.commit()
 
-            logger.info(
-                f"Deleted server {server_info['name']}: "
-                f"{session_count} sessions, {metrics_count} metrics, {pool_count} pools"
-            )
+            logger.info(f"Deleted server {server_info['name']}: " f"{session_count} sessions, {metrics_count} metrics, {pool_count} pools")
 
             await self._notify_server_deleted(server_info)
         except PermissionError:
@@ -1243,21 +1234,22 @@ class ServerService:
             avg_response_time=avg_response_time,
             last_execution_time=last_execution_time,
         )
+
     # --- Session Pool Management ---
     async def acquire_pooled_session(self, server_id: str, timeout: Optional[int] = None) -> Optional[str]:
         """Acquire a session from the pool for a specific server.
-        
+
         Args:
             server_id: ID of the server
             timeout: Optional timeout in seconds
-            
+
         Returns:
             Session ID if successful, None otherwise
         """
         if not self._pool_manager:
             logger.debug("Pool manager not initialized, pooling disabled")
             return None
-        
+
         try:
             session_id = await self._pool_manager.acquire_session(server_id, timeout=timeout)
             if session_id:
@@ -1267,15 +1259,9 @@ class ServerService:
             logger.error(f"Error acquiring pooled session for server {server_id}: {e}")
             return None
 
-    async def release_pooled_session(
-        self,
-        server_id: str,
-        session_id: str,
-        healthy: bool = True,
-        error: Optional[str] = None
-    ) -> None:
+    async def release_pooled_session(self, server_id: str, session_id: str, healthy: bool = True, error: Optional[str] = None) -> None:
         """Release a session back to the pool.
-        
+
         Args:
             server_id: ID of the server
             session_id: ID of the session to release
@@ -1284,7 +1270,7 @@ class ServerService:
         """
         if not self._pool_manager:
             return
-        
+
         try:
             await self._pool_manager.release_session(server_id, session_id, healthy=healthy, error=error)
             logger.debug(f"Released pooled session {session_id} for server {server_id}")
@@ -1293,16 +1279,16 @@ class ServerService:
 
     async def get_pool_stats(self, server_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Get statistics for all pools or a specific server's pool.
-        
+
         Args:
             server_id: Optional server ID to filter by
-            
+
         Returns:
             List of pool statistics dictionaries
         """
         if not self._pool_manager:
             return []
-        
+
         try:
             return await self._pool_manager.get_pool_stats(server_id=server_id)
         except Exception as e:
@@ -1311,16 +1297,16 @@ class ServerService:
 
     async def optimize_pool_strategy(self, server_id: str) -> Optional[str]:
         """Analyze pool performance and recommend optimal strategy.
-        
+
         Args:
             server_id: ID of the server
-            
+
         Returns:
             Recommended strategy name if optimization is possible, None otherwise
         """
         if not self._pool_manager:
             return None
-        
+
         try:
             recommended = await self._pool_manager.optimize_pool_strategy(server_id)
             if recommended:
@@ -1330,56 +1316,57 @@ class ServerService:
         except Exception as e:
             logger.error(f"Error optimizing pool strategy for server {server_id}: {e}")
             return None
+
     # --- Strategy Resolution Methods ---
-    
+
     def get_session_strategy(self, server: DbServer) -> str:
         """Get the current pooling strategy for a server.
-        
+
         Args:
             server: Server database model
-            
+
         Returns:
             Strategy name (round_robin, least_connections, sticky, weighted, none)
         """
         if not server.pool_enabled:
             return "none"
         return server.pool_strategy or "round_robin"
-    
-    def should_use_pooling(self, server: DbServer, user_id: Optional[str] = None) -> bool:
+
+    def should_use_pooling(self, server: DbServer, user_id: Optional[str] = None) -> bool:  # pylint: disable=unused-argument
         """Determine if pooling should be used for a server and user.
-        
+
         Args:
             server: Server database model
             user_id: Optional user identifier
-            
+
         Returns:
             True if pooling should be used, False otherwise
         """
         # Check if pooling is enabled for the server
         if not server.pool_enabled:
             return False
-        
+
         # Check if server is active
         if not server.is_active:
             return False
-        
+
         # Check if pool manager is available
         if not self._pool_manager:
             return False
-        
+
         # Additional checks could be added here:
         # - User-specific pooling preferences
         # - Server load thresholds
         # - Time-based rules
-        
+
         return True
-    
+
     def get_pool_configuration(self, server: DbServer) -> Dict[str, Any]:
         """Get complete pool configuration for a server.
-        
+
         Args:
             server: Server database model
-            
+
         Returns:
             Dictionary containing all pool configuration parameters
         """
@@ -1395,30 +1382,25 @@ class ServerService:
             "auto_adjust": server.pool_auto_adjust,
             "response_threshold": server.pool_response_threshold,
         }
-    
-    async def update_server_pool_config(
-        self,
-        db: Session,
-        server_id: str,
-        config: Dict[str, Any]
-    ) -> ServerRead:
+
+    async def update_server_pool_config(self, db: Session, server_id: str, config: Dict[str, Any]) -> ServerRead:
         """Update pool configuration for a server.
-        
+
         Args:
             db: Database session
             server_id: Server identifier
             config: Pool configuration dictionary
-            
+
         Returns:
             Updated server read schema
-            
+
         Raises:
             ServerNotFoundError: If server not found
         """
         server = db.get(DbServer, server_id)
         if not server:
             raise ServerNotFoundError(f"Server {server_id} not found")
-        
+
         # Update pool configuration fields
         if "enabled" in config:
             server.pool_enabled = config["enabled"]
@@ -1445,11 +1427,11 @@ class ServerService:
         if "response_threshold" in config:
             server.pool_response_threshold = config["response_threshold"]
         # Note: health_check_interval and rebalance_interval are handled by the pool manager
-        
+
         server.updated_at = datetime.now(timezone.utc)
         db.commit()
         db.refresh(server)
-        
+
         # Update pool manager if pooling is enabled
         if server.pool_enabled and self._pool_manager:
             try:
@@ -1457,14 +1439,9 @@ class ServerService:
                 # Convert strategy string to PoolStrategy enum
                 strategy = PoolStrategy(pool_config["strategy"]) if pool_config.get("strategy") else None
                 logger.info(f"Creating/updating pool for server {server_id} with strategy={strategy}, min_size={pool_config.get('min_size')}, max_size={pool_config.get('max_size')}")
-                
-                pool = await self._pool_manager.get_or_create_pool(
-                    server_id,
-                    strategy=strategy,
-                    min_size=pool_config.get("min_size"),
-                    max_size=pool_config.get("max_size")
-                )
-                
+
+                pool = await self._pool_manager.get_or_create_pool(server_id, strategy=strategy, min_size=pool_config.get("min_size"), max_size=pool_config.get("max_size"))
+
                 if pool:
                     logger.info(f"Successfully created/updated pool {pool.pool_id} for server {server_id}")
                 else:
@@ -1472,21 +1449,21 @@ class ServerService:
             except Exception as e:
                 logger.error(f"Error creating/updating pool for server {server_id}: {e}", exc_info=True)
                 # Don't raise - allow the config update to succeed even if pool creation fails
-        
+
         return self._convert_server_to_read(server)
-    
+
     async def _get_active_session_count(self, server_id: str) -> int:
         """Get count of active sessions for a server.
-        
+
         Args:
             server_id: Server identifier
-            
+
         Returns:
             Number of active sessions
         """
         if not self._pool_manager:
             return 0
-        
+
         try:
             stats = await self._pool_manager.get_pool_stats(server_id=server_id)
             if stats:
@@ -1495,76 +1472,72 @@ class ServerService:
         except Exception as e:
             logger.error(f"Error getting active session count for server {server_id}: {e}")
             return 0
-    
+
     def _calculate_server_load(self, server: DbServer) -> float:
         """Calculate current load for a server.
-        
+
         Args:
             server: Server database model
-            
+
         Returns:
             Load factor (0.0 to 1.0+)
         """
         # Calculate load based on metrics
         if not server.metrics:
             return 0.0
-        
+
         # Get recent metrics (last hour)
         recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
         recent_metrics = [m for m in server.metrics if m.timestamp >= recent_cutoff]
-        
+
         if not recent_metrics:
             return 0.0
-        
+
         # Calculate load factors
         total_requests = len(recent_metrics)
         failed_requests = sum(1 for m in recent_metrics if not m.is_success)
         avg_response_time = sum(m.response_time for m in recent_metrics) / len(recent_metrics)
-        
+
         # Normalize to 0-1 scale
         # High load = high request count + high failure rate + slow response
         request_factor = min(total_requests / 100.0, 1.0)  # 100 req/hr = full load
         failure_factor = failed_requests / total_requests if total_requests > 0 else 0.0
         response_factor = min(avg_response_time / server.pool_response_threshold, 1.0)
-        
+
         # Weighted average
         load = (request_factor * 0.4) + (failure_factor * 0.3) + (response_factor * 0.3)
         return min(load, 1.0)
-    
-    async def _should_switch_strategy(
-        self,
-        server: DbServer,
-        current_strategy: str
-    ) -> Optional[str]:
+
+    async def _should_switch_strategy(self, server: DbServer, current_strategy: str) -> Optional[str]:
         """Determine if strategy should be switched based on performance.
-        
+
         Args:
             server: Server database model
             current_strategy: Current pooling strategy
-            
+
         Returns:
             Recommended strategy name if switch is needed, None otherwise
         """
         if not server.pool_auto_adjust:
             return None
-        
+
         if not self._pool_manager:
             return None
-        
+
         try:
             # Get performance history
             history = await self.get_pool_performance_history(server.id, hours=1)
             if len(history) < 10:  # Need sufficient data
                 return None
-            
+
             # Calculate current strategy performance
             current_metrics = [m for m in history if m.get("strategy") == current_strategy]
             if not current_metrics:
                 return None
-            
+
             current_avg_response = sum(m.get("response_time", 0) for m in current_metrics) / len(current_metrics)
             current_success_rate = sum(1 for m in current_metrics if m.get("success", False)) / len(current_metrics)
-            
+
             # Check if performance is poor
             if current_success_rate < 0.9 or current_avg_response > server.pool_response_threshold * 1.5:
                 # Try to find better strategy
@@ -1572,20 +1545,15 @@ class ServerService:
                 if recommended and recommended.value != current_strategy:
                     logger.info(f"Recommending strategy switch for server {server.id}: {current_strategy} -> {recommended.value}")
                     return recommended.value
-            
+
             return None
         except Exception as e:
             logger.error(f"Error checking strategy switch for server {server.id}: {e}")
             return None
-    
-    async def record_pool_metrics(
-        self,
-        server_id: str,
-        strategy: str,
-        metrics: Dict[str, Any]
-    ) -> None:
+
+    async def record_pool_metrics(self, server_id: str, strategy: str, metrics: Dict[str, Any]) -> None:
         """Record pool performance metrics.
-        
+
         Args:
             server_id: Server identifier
             strategy: Strategy name
@@ -1593,49 +1561,42 @@ class ServerService:
         """
         if not self._pool_manager:
             return
-        
+
         try:
             # Metrics are automatically recorded by SessionPool
             # This method provides an explicit interface for external recording
             logger.debug(f"Recording pool metrics for server {server_id}, strategy {strategy}: {metrics}")
         except Exception as e:
             logger.error(f"Error recording pool metrics for server {server_id}: {e}")
-    
-    async def get_pool_performance_history(
-        self,
-        server_id: str,
-        hours: int = 24
-    ) -> List[Dict[str, Any]]:
+
+    async def get_pool_performance_history(self, server_id: str, hours: int = 24) -> List[Dict[str, Any]]:
         """Get pool performance history for a server.
-        
+
         Args:
             server_id: Server identifier
             hours: Number of hours of history to retrieve
-            
+
         Returns:
             List of metric dictionaries
         """
         if not self._pool_manager:
             return []
-        
+
         try:
             # Query PoolStrategyMetric table
-            from mcpgateway.db import PoolStrategyMetric, SessionPool
-            
+            from mcpgateway.db import PoolStrategyMetric, SessionPool  # pylint: disable=import-outside-toplevel
+
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-            
+
             with SessionLocal() as db:
                 # Get pool for this server
                 pool = db.query(SessionPool).filter(SessionPool.server_id == server_id).first()
                 if not pool:
                     return []
-                
+
                 # Get metrics
-                metrics = db.query(PoolStrategyMetric).filter(
-                    PoolStrategyMetric.pool_id == pool.id,
-                    PoolStrategyMetric.timestamp >= cutoff
-                ).order_by(PoolStrategyMetric.timestamp.desc()).all()
-                
+                metrics = db.query(PoolStrategyMetric).filter(PoolStrategyMetric.pool_id == pool.id, PoolStrategyMetric.timestamp >= cutoff).order_by(PoolStrategyMetric.timestamp.desc()).all()
+
                 return [
                     {
                         "strategy": m.strategy,
@@ -1651,39 +1612,39 @@ class ServerService:
         except Exception as e:
             logger.error(f"Error getting pool performance history for server {server_id}: {e}")
             return []
-    
+
     def recommend_pool_size(self, server: DbServer) -> int:
         """Recommend optimal pool size based on server metrics.
-        
+
         Args:
             server: Server database model
-            
+
         Returns:
             Recommended pool size
         """
         # Get recent metrics
         recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
         recent_metrics = [m for m in server.metrics if m.timestamp >= recent_cutoff]
-        
+
         if not recent_metrics:
             return server.pool_size  # Keep current size
-        
+
         # Calculate request rate (requests per minute)
         request_rate = len(recent_metrics) / 60.0
-        
+
         # Calculate average response time
         avg_response_time = sum(m.response_time for m in recent_metrics) / len(recent_metrics)
-        
+
         # Estimate concurrent requests
         # concurrent = request_rate * avg_response_time
         concurrent_estimate = int(request_rate * avg_response_time)
-        
+
         # Add buffer (20%)
         recommended = int(concurrent_estimate * 1.2)
-        
+
         # Clamp to min/max bounds
         recommended = max(server.pool_min_size, min(recommended, server.pool_max_size))
-        
+
         # Don't recommend drastic changes (max 50% change at once)
         max_change = int(server.pool_size * 0.5)
         if abs(recommended - server.pool_size) > max_change:
@@ -1691,10 +1652,8 @@ class ServerService:
                 recommended = server.pool_size + max_change
             else:
                 recommended = server.pool_size - max_change
-        
+
         return recommended
-
-
 
     async def reset_metrics(self, db: Session) -> None:
         """

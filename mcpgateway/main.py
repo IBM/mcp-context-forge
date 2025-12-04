@@ -64,12 +64,14 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.bootstrap_db import main as bootstrap_db
 from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.cache.session_pool_manager import SessionPoolManager
+# PoolStrategy imported locally in functions to avoid conflicts
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.config import settings
-from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
+from mcpgateway.db import refresh_slugs_on_startup
 from mcpgateway.db import Server as DbServer
+from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
@@ -451,35 +453,32 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.session_pool_enabled:
             logger.info("Initializing Session Pool Manager")
             session_pool_manager = SessionPoolManager()
-            
+
             # Create pools for all active servers with pooling enabled
             try:
                 with SessionLocal() as db:
-                    active_servers = db.query(DbServer).filter(DbServer.is_active == True).all()
+                    active_servers = db.query(DbServer).filter(DbServer.is_active is True).all()
                     pools_created = 0
-                    
+
                     for server in active_servers:
                         if server.pool_enabled:
                             try:
                                 # Convert strategy string to PoolStrategy enum
-                                from mcpgateway.cache.session_pool import PoolStrategy
+                                # First-Party
+                                from mcpgateway.cache.session_pool import PoolStrategy  # pylint: disable=import-outside-toplevel
+
                                 strategy = PoolStrategy(server.pool_strategy) if server.pool_strategy else None
-                                
-                                await session_pool_manager.get_or_create_pool(
-                                    server.id,
-                                    strategy=strategy,
-                                    min_size=server.pool_min_size,
-                                    max_size=server.pool_max_size
-                                )
+
+                                await session_pool_manager.get_or_create_pool(server.id, strategy=strategy, min_size=server.pool_min_size, max_size=server.pool_max_size)
                                 pools_created += 1
                                 logger.info(f"Created session pool for server {server.name} (ID: {server.id})")
                             except Exception as e:
                                 logger.error(f"Failed to create pool for server {server.name}: {e}")
-                    
+
                     logger.info(f"Session Pool Manager initialized with {pools_created} pools")
             except Exception as e:
                 logger.error(f"Error creating session pools: {e}")
-            
+
             # Add pool manager to app state for access in endpoints
             _app.state.pool_manager = session_pool_manager
         else:
@@ -520,13 +519,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         raise
     finally:
         # Shutdown Session Pool Manager
-        if settings.session_pool_enabled and hasattr(_app.state, 'pool_manager') and _app.state.pool_manager:
+        if settings.session_pool_enabled and hasattr(_app.state, "pool_manager") and _app.state.pool_manager:
             try:
                 await _app.state.pool_manager.shutdown()
                 logger.info("Session Pool Manager shutdown complete")
             except Exception as e:
                 logger.error(f"Error shutting down Session Pool Manager: {str(e)}")
-        
+
         # Shutdown plugin manager
         if plugin_manager:
             try:
@@ -1970,14 +1969,14 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
 
         # Create transport - pooling is handled internally by the transport
         transport = SSETransport(base_url=server_sse_url)
-        
+
         # Connect with pool manager if available (transport handles pool acquisition)
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         await transport.connect(pool_manager=pool_manager, server_id=server_id)
-        
+
         # Add to session registry
         await session_registry.add_session(transport.session_id, transport)
-        
+
         # Create SSE response
         response = await transport.create_sse_response(request)
 
@@ -1988,7 +1987,7 @@ async def sse_endpoint(request: Request, server_id: str, user=Depends(get_curren
         tasks = BackgroundTasks()
         tasks.add_task(session_registry.remove_session, transport.session_id)
         response.background = tasks
-        
+
         logger.info(f"SSE connection established: {transport.session_id} (pooled: {transport.is_pooled})")
         return response
     except Exception as e:
@@ -2155,27 +2154,28 @@ async def server_get_prompts(
 # Session Pool Management #
 ###########################
 
+
 @server_router.get("/{server_id}/pool/config", response_model=ServerPoolConfig)
 @require_permission("servers.read")
 async def get_server_pool_config(
     server_id: str,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> ServerPoolConfig:
     """
     Get pool configuration for a server.
-    
+
     Returns the current session pooling configuration including strategy,
     size constraints, timeouts, and auto-scaling settings.
-    
+
     Args:
         server_id: Server identifier
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         ServerPoolConfig: Pool configuration
-        
+
     Raises:
         HTTPException: 404 if server not found
     """
@@ -2183,7 +2183,7 @@ async def get_server_pool_config(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         config = server_service.get_pool_configuration(server)
         return ServerPoolConfig(**config)
     except Exception as e:
@@ -2201,19 +2201,19 @@ async def update_server_pool_config(
 ) -> ServerRead:
     """
     Update pool configuration for a server.
-    
+
     Updates the session pooling configuration and refreshes the pool
     if pooling is enabled. Changes take effect immediately.
-    
+
     Args:
         server_id: Server identifier
         config: New pool configuration
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         ServerRead: Updated server
-        
+
     Raises:
         HTTPException: 404 if server not found, 500 on error
     """
@@ -2235,23 +2235,23 @@ async def get_server_pool_stats(
     server_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> ServerPoolStats:
     """
     Get pool statistics for a server.
-    
+
     Returns real-time statistics about the session pool including
     active/available sessions, acquisition metrics, and health score.
-    
+
     Args:
         server_id: Server identifier
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         ServerPoolStats: Pool statistics
-        
+
     Raises:
         HTTPException: 404 if server/pool not found, 503 if pooling disabled
     """
@@ -2259,18 +2259,35 @@ async def get_server_pool_stats(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             raise HTTPException(status_code=503, detail="Pool manager not available")
-        
+
+        # Try to get existing pool stats
         stats_list = await pool_manager.get_pool_stats(server_id=server_id)
+
+        # If pool doesn't exist yet, create it
         if not stats_list:
-            raise HTTPException(status_code=404, detail=f"Pool not found for server {server_id}")
-        
+            logger.info(f"Pool not found for server {server_id}, creating it now")
+            from mcpgateway.cache.session_pool import PoolStrategy  # pylint: disable=import-outside-toplevel
+
+            strategy = PoolStrategy(server.pool_strategy) if server.pool_strategy else None
+            await pool_manager.get_or_create_pool(
+                server_id,
+                strategy=strategy,
+                min_size=server.pool_min_size or 1,
+                max_size=server.pool_max_size or 10
+            )
+
+            # Get stats again after creating pool
+            stats_list = await pool_manager.get_pool_stats(server_id=server_id)
+            if not stats_list:
+                raise HTTPException(status_code=500, detail=f"Failed to create pool for server {server_id}")
+
         stats = stats_list[0]
         return ServerPoolStats(**stats)
     except HTTPException:
@@ -2284,26 +2301,26 @@ async def get_server_pool_stats(
 @require_permission("servers.update")
 async def optimize_server_pool_strategy(
     server_id: str,
-    request: Request,
+    request: Request,  # pylint: disable=unused-argument
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, str]:
     """
     Trigger strategy optimization for a server pool.
-    
+
     Analyzes pool performance and recommends the optimal strategy
     based on historical metrics. Does not automatically apply the
     recommendation.
-    
+
     Args:
         server_id: Server identifier
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         Dict with recommended strategy or message
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2311,24 +2328,17 @@ async def optimize_server_pool_strategy(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
+
         recommended = await server_service.optimize_pool_strategy(server_id)
-        
+
         if recommended:
             logger.info(f"User {user} triggered optimization for server {server_id}, recommended: {recommended}")
-            return {
-                "current_strategy": server.pool_strategy,
-                "recommended_strategy": recommended,
-                "message": f"Recommended strategy: {recommended}"
-            }
-        else:
-            return {
-                "current_strategy": server.pool_strategy,
-                "message": "Current strategy is optimal or insufficient data for recommendation"
-            }
+            return {"current_strategy": server.pool_strategy, "recommended_strategy": recommended, "message": f"Recommended strategy: {recommended}"}
+
+        return {"current_strategy": server.pool_strategy, "message": "Current strategy is optimal or insufficient data for recommendation"}
     except HTTPException:
         raise
     except Exception as e:
@@ -2342,23 +2352,23 @@ async def get_server_pool_metrics(
     server_id: str,
     hours: int = Query(24, ge=1, le=168, description="Hours of history to retrieve"),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> List[PoolStrategyMetricRead]:
     """
     Get performance metrics history for a server pool.
-    
+
     Returns historical performance data including response times,
     success rates, and session reuse statistics.
-    
+
     Args:
         server_id: Server identifier
         hours: Hours of history (1-168, default 24)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         List[PoolStrategyMetricRead]: Performance metrics
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2366,10 +2376,10 @@ async def get_server_pool_metrics(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
+
         metrics = await server_service.get_pool_performance_history(server_id, hours=hours)
         return [PoolStrategyMetricRead(**m) for m in metrics]
     except HTTPException:
@@ -2390,20 +2400,20 @@ async def resize_server_pool(
 ) -> ServerPoolStats:
     """
     Manually resize a server pool.
-    
+
     Changes the target pool size and triggers immediate resizing.
     The pool will scale up or down to match the new size.
-    
+
     Args:
         server_id: Server identifier
         size: New pool size (1-100)
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         ServerPoolStats: Updated pool statistics
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2411,23 +2421,23 @@ async def resize_server_pool(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
+
         # Update pool size in database
         config = {"size": size}
         await server_service.update_server_pool_config(db, server_id, config)
-        
+
         logger.info(f"User {user} resized pool for server {server_id} to {size}")
-        
+
         # Get updated stats
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if pool_manager:
             stats_list = await pool_manager.get_pool_stats(server_id=server_id)
             if stats_list:
                 return ServerPoolStats(**stats_list[0])
-        
+
         raise HTTPException(status_code=503, detail="Pool manager not available")
     except HTTPException:
         raise
@@ -2446,19 +2456,19 @@ async def reset_server_pool(
 ) -> Dict[str, str]:
     """
     Reset a server pool (clear all sessions).
-    
+
     Removes all sessions from the pool and recreates it.
     Use this to recover from pool issues or force fresh connections.
-    
+
     Args:
         server_id: Server identifier
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         Dict with success message
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2466,27 +2476,24 @@ async def reset_server_pool(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail="Pooling not enabled for this server")
-        
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             raise HTTPException(status_code=503, detail="Pool manager not available")
-        
+
         # Reset by removing and recreating the pool
         await pool_manager.remove_pool(server_id)
-        
+
         # Recreate the pool with current server config
-        from mcpgateway.cache.session_pool import PoolStrategy
+        # First-Party
+        from mcpgateway.cache.session_pool import PoolStrategy  # pylint: disable=import-outside-toplevel
+
         strategy = PoolStrategy(server.pool_strategy) if server.pool_strategy else None
-        await pool_manager.get_or_create_pool(
-            server_id,
-            strategy=strategy,
-            min_size=server.pool_min_size,
-            max_size=server.pool_max_size
-        )
-        
+        await pool_manager.get_or_create_pool(server_id, strategy=strategy, min_size=server.pool_min_size, max_size=server.pool_max_size)
+
         logger.info(f"User {user} reset pool for server {server_id}")
         return {"message": f"Pool for server {server_id} has been reset"}
     except HTTPException:
@@ -2500,24 +2507,25 @@ async def reset_server_pool(
 # Pool Monitoring & Health Checks #
 ###################################
 
+
 @server_router.get("/pools/health", response_model=Dict[str, Any])
 @require_permission("servers.read")
 async def get_pools_health(
-    request: Request,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    request: Request,  # pylint: disable=unused-argument
+    db: Session = Depends(get_db),  # pylint: disable=unused-argument
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """
     Get overall pool health status across all servers.
-    
+
     Returns aggregated health metrics including total pools,
     healthy/unhealthy counts, and overall system health score.
-    
+
     Args:
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         Dict with health summary:
         - total_pools: Total number of pools
@@ -2527,12 +2535,12 @@ async def get_pools_health(
         - active_sessions: Total active sessions
         - overall_health_score: 0-100 health score
         - pools: List of pool health details
-        
+
     Raises:
         HTTPException: 503 if pool manager not available
     """
     try:
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             logger.warning("Pool manager not available")
             # Return empty health data when pool manager is not initialized
@@ -2545,44 +2553,46 @@ async def get_pools_health(
                 "overall_health_score": 0.0,
                 "pools": [],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "message": "Pool manager not initialized"
+                "message": "Pool manager not initialized",
             }
-        
+
         all_stats = await pool_manager.get_pool_stats()
-        
+
         total_pools = len(all_stats)
         total_sessions = sum(s.get("total_sessions", 0) for s in all_stats)
         active_sessions = sum(s.get("active_sessions", 0) for s in all_stats)
-        
+
         # Calculate health scores
         pool_health = []
         healthy_count = 0
         unhealthy_count = 0
-        
+
         for stats in all_stats:
             health_score = stats.get("health_score", 0)
             is_healthy = health_score >= 70  # 70% threshold
-            
+
             if is_healthy:
                 healthy_count += 1
             else:
                 unhealthy_count += 1
-            
-            pool_health.append({
-                "server_id": stats.get("server_id"),
-                "pool_id": stats.get("pool_id"),
-                "health_score": health_score,
-                "status": "healthy" if is_healthy else "unhealthy",
-                "active_sessions": stats.get("active_sessions", 0),
-                "total_sessions": stats.get("total_sessions", 0),
-            })
-        
+
+            pool_health.append(
+                {
+                    "server_id": stats.get("server_id"),
+                    "pool_id": stats.get("pool_id"),
+                    "health_score": health_score,
+                    "status": "healthy" if is_healthy else "unhealthy",
+                    "active_sessions": stats.get("active_sessions", 0),
+                    "total_sessions": stats.get("total_sessions", 0),
+                }
+            )
+
         # Calculate overall health score
         if total_pools > 0:
             overall_health = (healthy_count / total_pools) * 100
         else:
             overall_health = 100.0
-        
+
         return {
             "total_pools": total_pools,
             "healthy_pools": healthy_count,
@@ -2603,17 +2613,17 @@ async def get_pools_health(
 @server_router.get("/pools/strategies", response_model=List[Dict[str, Any]])
 @require_permission("servers.read")
 async def list_pool_strategies(
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> List[Dict[str, Any]]:
     """
     List available pooling strategies with descriptions.
-    
+
     Returns information about all available pooling strategies
     including their names, descriptions, and use cases.
-    
+
     Args:
         user: Authenticated user
-        
+
     Returns:
         List of strategy information:
         - name: Strategy name
@@ -2665,7 +2675,7 @@ async def list_pool_strategies(
             "cons": ["Higher overhead", "No connection reuse", "Slower"],
         },
     ]
-    
+
     return strategies
 
 
@@ -2675,20 +2685,20 @@ async def list_pool_sessions(
     server_id: str,
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> List[Dict[str, Any]]:
     """
     List sessions in a server's pool.
-    
+
     Returns detailed information about all sessions in the pool
     including their status, age, and usage statistics.
-    
+
     Args:
         server_id: Server identifier
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         List of session details:
         - session_id: Session identifier
@@ -2698,7 +2708,7 @@ async def list_pool_sessions(
         - reuse_count: Number of times reused
         - age_seconds: Age of session in seconds
         - is_healthy: Health status
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2706,47 +2716,46 @@ async def list_pool_sessions(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             raise HTTPException(status_code=503, detail="Pool manager not available")
-        
+
         # Get pool sessions from database
-        from mcpgateway.db import SessionRecord
-        
-        sessions = db.query(SessionRecord).filter(
-            SessionRecord.server_id == server_id,
-            SessionRecord.is_pooled == True
-        ).all()
-        
+        from mcpgateway.db import SessionRecord  # pylint: disable=import-outside-toplevel
+
+        sessions = db.query(SessionRecord).filter(SessionRecord.server_id == server_id, SessionRecord.is_pooled is True).all()
+
         session_list = []
         now = datetime.now(timezone.utc)
-        
+
         for session in sessions:
             age_seconds = (now - session.created_at).total_seconds() if session.created_at else 0
-            
+
             # Determine status
             if session.acquired_at and not session.released_at:
-                status = "active"
+                session_status = "active"  # pylint: disable=redefined-outer-name
             elif session.is_healthy:
-                status = "available"
+                session_status = "available"
             else:
-                status = "unhealthy"
-            
-            session_list.append({
-                "session_id": session.id,
-                "status": status,
-                "acquired_at": session.acquired_at.isoformat() if session.acquired_at else None,
-                "released_at": session.released_at.isoformat() if session.released_at else None,
-                "reuse_count": session.reuse_count or 0,
-                "age_seconds": round(age_seconds, 2),
-                "is_healthy": session.is_healthy,
-                "created_at": session.created_at.isoformat() if session.created_at else None,
-            })
-        
+                session_status = "unhealthy"
+
+            session_list.append(
+                {
+                    "session_id": session.id,
+                    "status": session_status,
+                    "acquired_at": session.acquired_at.isoformat() if session.acquired_at else None,
+                    "released_at": session.released_at.isoformat() if session.released_at else None,
+                    "reuse_count": session.reuse_count or 0,
+                    "age_seconds": round(age_seconds, 2),
+                    "is_healthy": session.is_healthy,
+                    "created_at": session.created_at.isoformat() if session.created_at else None,
+                }
+            )
+
         return session_list
     except HTTPException:
         raise
@@ -2766,25 +2775,25 @@ async def drain_server_pool(
 ) -> Dict[str, Any]:
     """
     Gracefully drain a server pool.
-    
+
     Stops accepting new sessions from the pool while allowing
     existing active sessions to complete. Useful for maintenance
     or before pool reconfiguration.
-    
+
     Args:
         server_id: Server identifier
         timeout: Maximum time to wait for drain (10-300 seconds)
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         Dict with drain status:
         - status: draining, drained, or timeout
         - active_sessions_remaining: Number of active sessions
         - drained_sessions: Number of sessions drained
         - elapsed_seconds: Time taken
-        
+
     Raises:
         HTTPException: 404 if server not found, 503 if pooling disabled
     """
@@ -2792,38 +2801,38 @@ async def drain_server_pool(
         server = db.get(DbServer, server_id)
         if not server:
             raise HTTPException(status_code=404, detail=f"Server {server_id} not found")
-        
+
         if not server.pool_enabled:
             raise HTTPException(status_code=503, detail=f"Pooling not enabled for server {server_id}")
-        
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             raise HTTPException(status_code=503, detail="Pool manager not available")
-        
+
         logger.info(f"User {user} initiated drain for server {server_id} pool (timeout: {timeout}s)")
-        
+
         start_time = datetime.now(timezone.utc)
         drained_count = 0
-        
+
         # Get initial stats
         initial_stats = await pool_manager.get_pool_stats(server_id=server_id)
         if not initial_stats:
             raise HTTPException(status_code=404, detail=f"Pool not found for server {server_id}")
-        
+
         initial_active = initial_stats[0].get("active_sessions", 0)
-        
+
         # Wait for active sessions to complete (simplified drain logic)
         elapsed = 0
         while elapsed < timeout:
             current_stats = await pool_manager.get_pool_stats(server_id=server_id)
             if current_stats:
                 active_sessions = current_stats[0].get("active_sessions", 0)
-                
+
                 if active_sessions == 0:
                     # All sessions drained
                     elapsed_seconds = (datetime.now(timezone.utc) - start_time).total_seconds()
                     logger.info(f"Pool for server {server_id} fully drained in {elapsed_seconds:.2f}s")
-                    
+
                     return {
                         "status": "drained",
                         "active_sessions_remaining": 0,
@@ -2831,18 +2840,18 @@ async def drain_server_pool(
                         "elapsed_seconds": round(elapsed_seconds, 2),
                         "message": f"Pool successfully drained in {elapsed_seconds:.2f} seconds",
                     }
-            
+
             # Wait a bit before checking again
             await asyncio.sleep(1)
             elapsed += 1
-        
+
         # Timeout reached
         final_stats = await pool_manager.get_pool_stats(server_id=server_id)
         remaining_active = final_stats[0].get("active_sessions", 0) if final_stats else 0
         drained_count = initial_active - remaining_active
-        
+
         logger.warning(f"Pool drain for server {server_id} timed out after {timeout}s, {remaining_active} sessions still active")
-        
+
         return {
             "status": "timeout",
             "active_sessions_remaining": remaining_active,
@@ -2863,38 +2872,38 @@ async def list_all_pools(
     active_only: bool = Query(True, description="Only show pools for active servers"),
     request: Request = None,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ) -> List[ServerPoolStats]:
     """
     List all session pools across servers.
-    
+
     Returns statistics for all pools, optionally filtered to
     only active servers.
-    
+
     Args:
         active_only: Only include pools for active servers
         request: FastAPI request (for pool manager access)
         db: Database session
         user: Authenticated user
-        
+
     Returns:
         List[ServerPoolStats]: Pool statistics for all servers
-        
+
     Raises:
         HTTPException: 503 if pool manager not available
     """
     try:
-        pool_manager = getattr(request.app.state, 'pool_manager', None)
+        pool_manager = getattr(request.app.state, "pool_manager", None)
         if not pool_manager:
             raise HTTPException(status_code=503, detail="Pool manager not available")
-        
+
         all_stats = await pool_manager.get_all_stats()
-        
+
         if active_only:
             # Filter to only active servers
-            active_server_ids = {s.id for s in db.query(DbServer).filter(DbServer.is_active == True).all()}
+            active_server_ids = {s.id for s in db.query(DbServer).filter(DbServer.is_active is True).all()}
             all_stats = [s for s in all_stats if s.get("server_id") in active_server_ids]
-        
+
         return [ServerPoolStats(**stats) for stats in all_stats]
     except HTTPException:
         raise
