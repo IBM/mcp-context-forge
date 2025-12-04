@@ -13,12 +13,16 @@ from enum import Enum
 from typing import Any
 import re
 
-# First-Party
-from mcpgateway.plugins.framework import PluginConfig, PluginContext, PluginViolation
+# Third-Party
+from cedarpolicyplugin.schema import CedarConfig, CedarInput
+from cedarpy import is_authorized, AuthzResult, Decision
+from urllib.parse import urlparse
 
+# First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
     PluginError,
+    PluginErrorModel,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
     ToolPostInvokePayload,
@@ -28,14 +32,9 @@ from mcpgateway.plugins.framework import (
     PromptPrehookResult,
     PromptPrehookPayload,
 )
-from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload, ResourcePostFetchPayload, ResourcePreFetchResult, ResourcePostFetchResult
-from mcpgateway.plugins.framework.errors import convert_exception_to_error
-
-# Third-Party
-from cedarpolicyplugin.schema import CedarConfig, CedarInput
-from cedarpy import is_authorized, AuthzResult, Decision
-from urllib.parse import urlparse
+from mcpgateway.plugins.framework import PluginConfig, PluginContext, PluginViolation
+from mcpgateway.services.logging_service import LoggingService
 
 
 # Initialize logging service first
@@ -44,7 +43,7 @@ logger = logging_service.get_logger(__name__)
 
 
 class CedarCodes(str, Enum):
-    """OPACodes implementation."""
+    """CedarCodes implementation."""
 
     ALLOW_CODE = "ALLOW"
     DENIAL_CODE = "DENY"
@@ -53,7 +52,7 @@ class CedarCodes(str, Enum):
 
 
 class CedarResponseTemplates(str, Enum):
-    """OPAResponseTemplates implementation."""
+    """CedarResponseTemplates implementation."""
 
     CEDAR_REASON = "Cedar policy denied for {hook_type}"
     CEDAR_DESC = "{hook_type} not allowed"
@@ -69,13 +68,14 @@ class CedarResourceTemplates(str, Enum):
 
 
 class CedarErrorCodes(str, Enum):
-    """Cedar plugin errors"""
+    """CedarPolicyPlugin errors"""
 
-    UNSPECIFIED_RESOURCE = "Unspecified resource types, accepted resources server, prompt, agent and resource"
+    UNSUPPORTED_RESOURCE_TYPE = "Unspecified resource types, accepted resources server, prompt, agent and resource"
     UNSPECIFIED_USER_ROLE = "User role is not defined"
     UNSPECIFIED_POLICY = "No policy has been provided"
     UNSPECIFIED_OUTPUT_ACTION = "Unspecified output action in policy configuration"
     UNSPECIFIED_SERVER = "Unspecified server for tool request"
+    UNSUPPORTED_CONTENT_TYPE = "Unsupported content type"
 
 
 class CedarPolicyPlugin(Plugin):
@@ -92,6 +92,7 @@ class CedarPolicyPlugin(Plugin):
         self.cedar_config = CedarConfig.model_validate(self._config.config)
         self.cedar_context_key = "cedar_policy_context"
         self.jwt_info = {}
+        logger.info(f"CedarPolicyPlugin initialised with configuration {self.cedar_config}")
 
     def _set_jwt_info(self, user_role_mapping: dict) -> None:
         """Sets user role mapping information from jwt tokens
@@ -122,7 +123,8 @@ class CedarPolicyPlugin(Plugin):
         elif hasattr(content, key):
             result[key].append(getattr(content, key))
         else:
-            logger.error(f"Can't handle content of {type(content)}")
+            logger.error(f"{CedarErrorCodes.UNSUPPORTED_CONTENT_TYPE.value}: {type(content)}")
+            raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSUPPORTED_CONTENT_TYPE.value, plugin_name="CedarPolicyPlugin"))
 
     def _evaluate_policy(self, request: dict, policy_expr: str) -> str:
         """Function that evaluates and enforce cedar policy using is_authorized function in cedarpy library
@@ -230,16 +232,14 @@ class CedarPolicyPlugin(Plugin):
         elif hook_type in ["prompt_post_fetch", "prompt_pre_fetch"]:
             resource_expr = CedarResourceTemplates.PROMPT.format(resource_type=resource)
         else:
-            logger.error("Unsupported resource type")
-            error_model = convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_RESOURCE.value), "CedarPolicyPlugin")
-            raise PluginError(error_model)
+            logger.error(f"{CedarErrorCodes.UNSUPPORTED_RESOURCE_TYPE.value}: {hook_type}")
+            raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSUPPORTED_RESOURCE_TYPE.value, plugin_name="CedarPolicyPlugin"))
 
         if len(self.jwt_info) > 0 and "users" in self.jwt_info:
             user_role = self.jwt_info["users"].get(user)
         else:
-            logger.error("Unspecified user roles")
-            error_model = convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_USER_ROLE.value), "CedarPolicyPlugin")
-            raise PluginError(error_model)
+            logger.error(f"{CedarErrorCodes.UNSPECIFIED_USER_ROLE.value}")
+            raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_USER_ROLE.value, plugin_name="CedarPolicyPlugin"))
 
         principal_expr = f'Role::"{user_role}"'
         action_expr = f'Action::"{action}"'
@@ -291,12 +291,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -305,8 +307,8 @@ class CedarPolicyPlugin(Plugin):
             view_full = self.cedar_config.policy_output_keywords.get("view_full", None)
             view_redacted = self.cedar_config.policy_output_keywords.get("view_redacted", None)
             if not view_full and not view_redacted:
-                logger.error(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value)
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
             if view_full and policy:
                 request = self._preprocess_request(user, view_full, payload.prompt_id, hook_type)
                 result_full = self._evaluate_policy(request, policy)
@@ -350,12 +352,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -364,8 +368,8 @@ class CedarPolicyPlugin(Plugin):
             view_full = self.cedar_config.policy_output_keywords.get("view_full", None)
             view_redacted = self.cedar_config.policy_output_keywords.get("view_redacted", None)
             if not view_full and not view_redacted:
-                logger.error(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value)
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
             if view_full and policy:
                 request = self._preprocess_request(user, view_full, payload.prompt_id, hook_type)
                 result_full = self._evaluate_policy(request, policy)
@@ -417,12 +421,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -431,7 +437,8 @@ class CedarPolicyPlugin(Plugin):
         if server_id:
             request = self._preprocess_request(user, payload.name, server_id, hook_type)
         else:
-            raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_SERVER.value), "CedarPolicyPlugin"))
+            logger.error(f"{CedarErrorCodes.UNSPECIFIED_SERVER.value}")
+            raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_SERVER.value, plugin_name="CedarPolicyPlugin"))
 
         if policy:
             decision = self._evaluate_policy(request, policy)
@@ -473,12 +480,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -488,8 +497,8 @@ class CedarPolicyPlugin(Plugin):
             view_full = self.cedar_config.policy_output_keywords.get("view_full", None)
             view_redacted = self.cedar_config.policy_output_keywords.get("view_redacted", None)
             if not view_full and not view_redacted:
-                logger.error(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value)
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
             if view_full and policy:
                 request = self._preprocess_request(user, view_full, server_id, hook_type)
                 result_full = self._evaluate_policy(request, policy)
@@ -564,12 +573,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -578,8 +589,8 @@ class CedarPolicyPlugin(Plugin):
             view_full = self.cedar_config.policy_output_keywords.get("view_full", None)
             view_redacted = self.cedar_config.policy_output_keywords.get("view_redacted", None)
             if not view_full and not view_redacted:
-                logger.error(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value)
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
             if view_full and policy:
                 request = self._preprocess_request(user, view_full, payload.uri, hook_type)
                 result_full = self._evaluate_policy(request, policy)
@@ -621,12 +632,14 @@ class CedarPolicyPlugin(Plugin):
             if self.cedar_config.policy:
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
             else:
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_POLICY.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
 
         if context.global_context.user:
             user = context.global_context.user
@@ -635,8 +648,8 @@ class CedarPolicyPlugin(Plugin):
             view_full = self.cedar_config.policy_output_keywords.get("view_full", None)
             view_redacted = self.cedar_config.policy_output_keywords.get("view_redacted", None)
             if not view_full and not view_redacted:
-                logger.error(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value)
-                raise PluginError(convert_exception_to_error(ValueError(CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value), "CedarPolicyPlugin"))
+                logger.error(f"{CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value}")
+                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_OUTPUT_ACTION.value, plugin_name="CedarPolicyPlugin"))
             if view_full and policy:
                 request = self._preprocess_request(user, view_full, payload.uri, hook_type)
                 result_full = self._evaluate_policy(request, policy)
