@@ -11412,13 +11412,20 @@ async def get_routing_rules(
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
+        from mcpgateway.plugins.framework import get_plugin_manager
+
+        # Reload config to ensure we have fresh data from disk
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
+            LOGGER.info("Reloaded plugin config for get_routing_rules")
 
         route_service = get_plugin_route_service()
 
         # Get all routing rules from the config
         rules = []
-        if route_service._config and route_service._config.routes:
-            for idx, route in enumerate(route_service._config.routes):
+        if route_service.config and route_service.config.routes:
+            for idx, route in enumerate(route_service.config.routes):
                 # Try to get display name from metadata, fallback to entity name filter, then to index
                 display_name = route.metadata.get("display_name") if route.metadata else None
                 if not display_name:
@@ -11454,11 +11461,15 @@ async def get_routing_rules(
         # Get root_path for URL generation
         root_path = request.scope.get("root_path", "")
 
+        # Get all rule indices for bulk operations
+        rule_indices = [rule["index"] for rule in rules]
+
         context = {
             "request": request,
             "root_path": root_path,
             "rules": rules,
             "available_plugins": available_plugins,
+            "rule_indices": rule_indices,
         }
 
         return request.app.state.templates.TemplateResponse("routing_rules_list.html", context)
@@ -11476,6 +11487,116 @@ async def get_routing_rules(
         </div>
         """
         return HTMLResponse(content=error_html)
+
+
+@admin_router.get("/plugin-routing/entities")
+async def get_entities_by_type(
+    request: Request,
+    entity_types: str = "",  # Comma-separated list of entity types
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get entities filtered by type for plugin routing.
+
+    Args:
+        request: FastAPI request object.
+        entity_types: Comma-separated list of entity types (tool, prompt, resource, agent, virtual_server, mcp_server).
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSON response with entities grouped by type.
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import Tool, Prompt, Resource, A2AAgent, Server, Gateway
+
+        result = {}
+        types = [t.strip() for t in entity_types.split(",") if t.strip()]
+
+        for entity_type in types:
+            entities = []
+            if entity_type == "tool":
+                tools = db.query(Tool).filter(Tool.enabled == True).all()
+                entities = [{"id": t.id, "name": t.name, "display_name": t.original_name} for t in tools]
+            elif entity_type == "prompt":
+                prompts = db.query(Prompt).filter(Prompt.is_active == True).all()
+                entities = [{"id": p.id, "name": p.name, "display_name": p.name} for p in prompts]
+            elif entity_type == "resource":
+                resources = db.query(Resource).filter(Resource.is_active == True).all()
+                entities = [{"id": r.id, "name": r.name, "display_name": r.name} for r in resources]
+            elif entity_type == "agent":
+                agents = db.query(A2AAgent).filter(A2AAgent.enabled == True).all()
+                entities = [{"id": a.id, "name": a.name, "display_name": a.name} for a in agents]
+            elif entity_type == "virtual_server":
+                servers = db.query(Server).filter(Server.is_active == True).all()
+                entities = [{"id": s.id, "name": s.name, "display_name": s.name} for s in servers]
+            elif entity_type == "mcp_server":
+                gateways = db.query(Gateway).filter(Gateway.enabled == True).all()
+                entities = [{"id": g.id, "name": g.name, "display_name": g.name} for g in gateways]
+
+            result[entity_type] = entities
+
+        return result
+
+    except Exception as e:
+        LOGGER.error(f"Error fetching entities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@admin_router.get("/plugin-routing/tags")
+async def get_all_entity_tags(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Get all unique tags from all entities for plugin routing autocomplete.
+
+    Args:
+        request: FastAPI request object.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        JSON response with sorted list of unique tags.
+    """
+    try:
+        # First-Party
+        from mcpgateway.db import Tool, Prompt, Resource, A2AAgent, Server, Gateway
+
+        all_tags = set()
+
+        # Collect tags from all entity types
+        for tool in db.query(Tool).filter(Tool.enabled == True).all():
+            if tool.tags:
+                all_tags.update(tool.tags)
+
+        for prompt in db.query(Prompt).filter(Prompt.is_active == True).all():
+            if prompt.tags:
+                all_tags.update(prompt.tags)
+
+        for resource in db.query(Resource).filter(Resource.is_active == True).all():
+            if resource.tags:
+                all_tags.update(resource.tags)
+
+        for agent in db.query(A2AAgent).filter(A2AAgent.enabled == True).all():
+            if agent.tags:
+                all_tags.update(agent.tags)
+
+        for server in db.query(Server).filter(Server.is_active == True).all():
+            if server.tags:
+                all_tags.update(server.tags)
+
+        for gateway in db.query(Gateway).filter(Gateway.enabled == True).all():
+            if gateway.tags:
+                all_tags.update(gateway.tags)
+
+        # Return sorted list
+        return sorted(list(all_tags))
+
+    except Exception as e:
+        LOGGER.error(f"Error fetching entity tags: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @admin_router.get("/plugin-routing/rules/{rule_index}")
@@ -11499,6 +11620,13 @@ async def get_routing_rule(
     try:
         # First-Party
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
+        from mcpgateway.plugins.framework import get_plugin_manager
+
+        # Reload config to ensure we have fresh data from disk
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
+            LOGGER.info("Reloaded plugin config for get_routing_rule")
 
         route_service = get_plugin_route_service()
         rule = await route_service.get_rule(rule_index)
@@ -11541,6 +11669,74 @@ async def get_routing_rule(
     except Exception as e:
         LOGGER.error(f"Error getting routing rule {rule_index}: {e}", exc_info=True)
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@admin_router.post("/plugin-routing/rules/bulk-delete")
+async def bulk_delete_routing_rules(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Bulk delete routing rules by indices.
+
+    Args:
+        request: FastAPI request object with JSON body containing 'indices' array.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        HTML response with the updated rules list.
+    """
+    try:
+        # Standard
+        import json
+
+        # First-Party
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
+
+        # Parse request body
+        body = await request.body()
+        data = json.loads(body)
+        indices = [int(idx) for idx in data.get("indices", [])]
+
+        if not indices:
+            return HTMLResponse(content="No rules selected for deletion", status_code=400)
+
+        route_service = get_plugin_route_service()
+
+        # Sort indices in descending order to delete from end to start
+        # This prevents index shifting issues
+        sorted_indices = sorted(indices, reverse=True)
+
+        deleted_count = 0
+        failed_indices = []
+
+        for rule_index in sorted_indices:
+            try:
+                success = await route_service.delete_rule(rule_index)
+                if success:
+                    deleted_count += 1
+                else:
+                    failed_indices.append(rule_index)
+            except Exception as e:
+                LOGGER.error(f"Error deleting rule at index {rule_index}: {e}")
+                failed_indices.append(rule_index)
+
+        # Log the bulk operation
+        LOGGER.info(f"User {get_user_email(user)} bulk deleted {deleted_count} routing rules")
+
+        if failed_indices:
+            LOGGER.warning(f"Failed to delete rules at indices: {failed_indices}")
+
+        # Return updated rules list (HTMX will replace the content)
+        return await get_routing_rules(request, db, user)
+
+    except json.JSONDecodeError as e:
+        LOGGER.error(f"Invalid JSON in bulk delete request: {e}")
+        return HTMLResponse(content="Invalid request format", status_code=400)
+    except Exception as e:
+        LOGGER.error(f"Error in bulk delete: {e}", exc_info=True)
+        return HTMLResponse(content=f"Error: {str(e)}", status_code=500)
 
 
 @admin_router.post("/plugin-routing/rules")
@@ -11633,10 +11829,9 @@ async def create_or_update_routing_rule(
             metadata={"display_name": rule_name},  # Store friendly name in metadata
         )
 
-        # Save to config
+        # Save to config (add_or_update_rule saves internally with file locking)
         route_service = get_plugin_route_service()
         index = await route_service.add_or_update_rule(rule, rule_index)
-        await route_service.save_config()
 
         LOGGER.info(f"User {get_user_email(user)} {'updated' if rule_index is not None else 'created'} routing rule at index {index}")
 
@@ -11676,7 +11871,7 @@ async def delete_routing_rule(
         if not success:
             return HTMLResponse(content=f"Rule at index {rule_index} not found", status_code=404)
 
-        await route_service.save_config()
+        # Note: delete_rule saves internally with file locking
 
         LOGGER.info(f"User {get_user_email(user)} deleted routing rule at index {rule_index}")
 
@@ -11873,9 +12068,16 @@ async def get_bulk_plugin_status(
 
         # First-Party
         from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
+        from mcpgateway.plugins.framework import get_plugin_manager
 
         route_service = get_plugin_route_service()
         hook_registry = get_hook_registry()
+
+        # Reload config to ensure we have fresh data from disk
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
+            LOGGER.info("Reloaded plugin config for bulk plugin status")
 
         # First-Party
         from mcpgateway.plugins.framework.hooks.registry import HookPhase
@@ -12058,7 +12260,7 @@ async def add_bulk_plugins(
                 # Get tool from database
                 tool = await _get_entity_by_id(db, "tool", tool_id)
 
-                # Add plugin route
+                # Add plugin route (now saves internally with file locking)
                 await route_service.add_simple_route(
                     entity_type="tool",
                     entity_name=tool.name,
@@ -12074,12 +12276,7 @@ async def add_bulk_plugins(
                 failed_count += 1
                 errors.append({"tool_id": tool_id, "error": str(e)})
 
-        # Save configuration after all additions
-        try:
-            await route_service.save_config()
-        except Exception as e:
-            LOGGER.error(f"Failed to save plugin configuration: {e}")
-            return JSONResponse(status_code=500, content={"success": False, "message": "Failed to save plugin configuration", "error": str(e)})
+        # Note: No need to save config here - add_simple_route saves internally with file locking
 
         return JSONResponse(
             content={
@@ -12221,8 +12418,7 @@ async def remove_bulk_plugins(
                 failed_count += 1
                 errors.append({"tool_id": tool_id, "error": str(e)})
 
-        # Save config after clearing
-        await route_service.save_config()
+        # Note: No need to save - remove_plugin_from_entity saves internally with file locking
 
         return JSONResponse(
             content={
@@ -12259,12 +12455,7 @@ async def remove_bulk_plugins(
                 failed_count += 1
                 errors.append({"tool_id": tool_id, "plugin": plugin_name, "error": str(e)})
 
-    # Save configuration after all removals
-    try:
-        await route_service.save_config()
-    except Exception as e:
-        LOGGER.error(f"Failed to save plugin configuration: {e}")
-        return JSONResponse(status_code=500, content={"success": False, "message": "Failed to save plugin configuration", "error": str(e)})
+    # Note: No need to save config here - remove_plugin_from_entity saves internally with file locking
 
     return JSONResponse(
         content={

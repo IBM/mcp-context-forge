@@ -764,8 +764,8 @@ class EntityType(str, Enum):
         PROMPT: MCP prompt entity.
         RESOURCE: MCP resource entity.
         AGENT: LLM agent entity.
-        SERVER: MCP server entity.
-        GATEWAY: MCP gateway entity.
+        VIRTUAL_SERVER: Virtual server entity (composed from catalog items).
+        MCP_SERVER: MCP server/gateway entity (external MCP server).
 
     Examples:
         >>> EntityType.TOOL
@@ -780,8 +780,8 @@ class EntityType(str, Enum):
     PROMPT = "prompt"
     RESOURCE = "resource"
     AGENT = "agent"
-    SERVER = "server"
-    GATEWAY = "gateway"
+    VIRTUAL_SERVER = "virtual_server"
+    MCP_SERVER = "mcp_server"
 
 
 class FieldSelection(BaseModel):

@@ -2450,7 +2450,7 @@
             <!-- Table will be loaded via HTMX -->
             <div id="tools-table"
                  hx-get="{{ root_path }}/admin/tools/partial?page=1&per_page=50&include_inactive={{ include_inactive|default(false)|string|lower }}"
-                 hx-trigger="load"
+                 hx-trigger="load, refresh"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
               <!-- Loading placeholder -->

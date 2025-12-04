@@ -106,7 +106,7 @@
       <div
         id="routing-rules-list"
         hx-get="{{ root_path }}/admin/plugin-routing/rules"
-        hx-trigger="loadRules, rule-changed from:body, intersect once"
+        hx-trigger="load"
         hx-swap="innerHTML"
       >
         <!-- Loading state -->
@@ -622,6 +622,9 @@
       ruleName: '',
       entities: [],
       nameFilter: '',
+      availableEntities: {},
+      selectedEntityNames: [],
+      availableTags: [],
       tags: [],
       newTag: '',
       hooks: [],
@@ -637,18 +640,50 @@
             this.resetForm();
           }
         });
+        // Watch for changes to entity types and fetch available entities
+        this.$watch('entities', (newEntities) => {
+          if (newEntities.length > 0) {
+            this.fetchEntities();
+          } else {
+            this.availableEntities = {};
+            this.selectedEntityNames = [];
+          }
+        });
+        // Fetch available tags for autocomplete
+        this.fetchTags();
       },
       resetForm() {
         this.ruleIndex = null;
         this.ruleName = '';
         this.entities = [];
         this.nameFilter = '';
+        this.availableEntities = {};
+        this.selectedEntityNames = [];
         this.tags = [];
         this.newTag = '';
         this.hooks = [];
         this.whenExpression = '';
         this.reverseOrderOnPost = false;
         this.selectedPlugins = [];
+      },
+      async fetchEntities() {
+        if (this.entities.length === 0) {
+          this.availableEntities = {};
+          return;
+        }
+
+        try {
+          const entityTypes = this.entities.join(',');
+          const response = await fetch(`{{ root_path }}/admin/plugin-routing/entities?entity_types=${entityTypes}`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch entities: ${response.statusText}`);
+          }
+          this.availableEntities = await response.json();
+          console.log('Fetched entities:', this.availableEntities);
+        } catch (error) {
+          console.error('Failed to fetch entities:', error);
+          this.availableEntities = {};
+        }
       },
       async loadRule(index) {
         try {
@@ -658,20 +693,70 @@
             throw new Error(`Failed to load rule: ${response.statusText}`);
           }
           const ruleData = await response.json();
+          console.log('Loaded rule data:', ruleData);
+          console.log('Number of plugins:', ruleData.plugins ? ruleData.plugins.length : 0);
 
           // Populate form fields
           this.ruleName = ruleData.display_name || '';
           this.nameFilter = ruleData.name_filter || '';
           this.entities = ruleData.entities || [];
+
+          // Parse name_filter into selectedEntityNames if it exists
+          if (this.nameFilter) {
+            this.selectedEntityNames = this.nameFilter.split(',').map(s => s.trim()).filter(s => s);
+          } else {
+            this.selectedEntityNames = [];
+          }
+
           this.tags = ruleData.tags || [];
           this.hooks = ruleData.hooks || [];
           this.whenExpression = ruleData.when || '';
           this.reverseOrderOnPost = ruleData.reverse_order_on_post || false;
           this.selectedPlugins = ruleData.plugins || [];
+          console.log('selectedPlugins after assignment:', this.selectedPlugins.length);
+
+          // Fetch available entities after loading entity types
+          if (this.entities.length > 0) {
+            await this.fetchEntities();
+          }
         } catch (error) {
           console.error('Failed to load rule:', error);
           alert('Failed to load rule: ' + error.message);
           this.resetForm();
+        }
+      },
+      toggleEntityName(entityName) {
+        const index = this.selectedEntityNames.indexOf(entityName);
+        if (index > -1) {
+          this.selectedEntityNames.splice(index, 1);
+        } else {
+          this.selectedEntityNames.push(entityName);
+        }
+        // Update nameFilter to reflect selected entities
+        this.nameFilter = this.selectedEntityNames.join(',');
+      },
+      getEntityTypeLabel(entityType) {
+        const labels = {
+          'tool': 'Tools',
+          'prompt': 'Prompts',
+          'resource': 'Resources',
+          'agent': 'Agents',
+          'virtual_server': 'Virtual Servers',
+          'mcp_server': 'MCP Servers'
+        };
+        return labels[entityType] || entityType;
+      },
+      async fetchTags() {
+        try {
+          const response = await fetch(`{{ root_path }}/admin/plugin-routing/tags`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch tags: ${response.statusText}`);
+          }
+          this.availableTags = await response.json();
+          console.log('Fetched tags:', this.availableTags);
+        } catch (error) {
+          console.error('Failed to fetch tags:', error);
+          this.availableTags = [];
         }
       },
       addTag() {
@@ -732,8 +817,20 @@
           });
 
           if (response.ok) {
+            console.log('Rule saved successfully, triggering refresh');
             this.showModal = false;
-            htmx.trigger('#routing-rules-list', 'rule-changed');
+            // Directly reload the routing rules list using htmx.ajax
+            setTimeout(() => {
+              const listElement = document.getElementById('routing-rules-list');
+              if (listElement) {
+                const url = listElement.getAttribute('hx-get');
+                console.log('Reloading routing rules from:', url);
+                htmx.ajax('GET', url, {
+                  target: '#routing-rules-list',
+                  swap: 'innerHTML'
+                });
+              }
+            }, 100);
           } else {
             const error = await response.text();
             alert('Failed to save rule: ' + error);
@@ -801,33 +898,91 @@
               Entity Types
             </label>
             <div class="flex flex-wrap gap-2">
-              <template x-for="entityType in ['tool', 'prompt', 'resource', 'agent', 'server', 'gateway']" :key="entityType">
+              <template x-for="entityType in [
+                {value: 'tool', label: 'Tool'},
+                {value: 'prompt', label: 'Prompt'},
+                {value: 'resource', label: 'Resource'},
+                {value: 'agent', label: 'Agent'},
+                {value: 'virtual_server', label: 'Virtual Server'},
+                {value: 'mcp_server', label: 'MCP Server'}
+              ]" :key="entityType.value">
                 <label class="inline-flex items-center">
                   <input
                     type="checkbox"
-                    :value="entityType"
+                    :value="entityType.value"
                     x-model="entities"
                     class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                   />
-                  <span class="ml-2 text-sm text-gray-700 dark:text-gray-300 capitalize" x-text="entityType"></span>
+                  <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entityType.label"></span>
                 </label>
               </template>
             </div>
             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave empty for HTTP-level hooks</p>
           </div>
 
-          <!-- Name Filter -->
+          <!-- Entity Selection -->
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Entity Name Filter
+              Specific Entities
             </label>
-            <input
-              type="text"
-              x-model="nameFilter"
-              placeholder="e.g., create_user or create_user,update_user,delete_user"
-              class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
-            />
-            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Exact name match (comma-separated for multiple)</p>
+
+            <!-- Show entity selection when entity types are selected -->
+            <div x-show="entities.length > 0 && Object.keys(availableEntities).length > 0">
+              <div class="border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 max-h-64 overflow-y-auto">
+                <template x-for="(entityList, entityType) in availableEntities" :key="entityType">
+                  <div class="border-b border-gray-200 dark:border-gray-600 last:border-0">
+                    <div class="px-3 py-2 bg-gray-50 dark:bg-gray-800">
+                      <span class="text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase" x-text="getEntityTypeLabel(entityType)"></span>
+                      <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="'(' + entityList.length + ')'"></span>
+                    </div>
+                    <template x-for="entity in entityList" :key="entity.id">
+                      <label class="flex items-center px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          :value="entity.name"
+                          :checked="selectedEntityNames.includes(entity.name)"
+                          @change="toggleEntityName(entity.name)"
+                          class="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                        />
+                        <span class="ml-2 text-sm text-gray-700 dark:text-gray-300" x-text="entity.display_name"></span>
+                        <span class="ml-2 text-xs text-gray-400" x-text="'(' + entity.name + ')'"></span>
+                      </label>
+                    </template>
+                  </div>
+                </template>
+              </div>
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Select specific entities to filter, or leave empty to match all entities of the selected types
+              </p>
+            </div>
+
+            <!-- Show message when entity types are selected but no entities found -->
+            <div x-show="entities.length > 0 && Object.keys(availableEntities).length === 0" class="text-sm text-gray-500 dark:text-gray-400 italic">
+              Loading available entities...
+            </div>
+
+            <!-- Show manual input when no entity types are selected -->
+            <div x-show="entities.length === 0">
+              <input
+                type="text"
+                x-model="nameFilter"
+                placeholder="e.g., create_user or create_user,update_user,delete_user"
+                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
+              />
+              <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                Select entity types above to see available entities, or enter names manually (comma-separated)
+              </p>
+            </div>
+
+            <!-- Show selected entities as chips -->
+            <div class="flex flex-wrap gap-2 mt-2" x-show="selectedEntityNames.length > 0">
+              <template x-for="entityName in selectedEntityNames" :key="entityName">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200">
+                  <span x-text="entityName"></span>
+                  <button @click="toggleEntityName(entityName)" class="ml-2 text-indigo-600 dark:text-indigo-300 hover:text-indigo-800">&times;</button>
+                </span>
+              </template>
+            </div>
           </div>
 
           <!-- Tags -->
@@ -840,9 +995,15 @@
                 type="text"
                 x-model="newTag"
                 @keydown.enter.prevent="addTag()"
+                list="tag-suggestions"
                 placeholder="Add tag..."
                 class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"
               />
+              <datalist id="tag-suggestions">
+                <template x-for="tag in availableTags" :key="tag">
+                  <option :value="tag"></option>
+                </template>
+              </datalist>
               <button
                 @click="addTag()"
                 type="button"

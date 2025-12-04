@@ -6,6 +6,8 @@ uses YAML storage but can be migrated to database storage in the future.
 """
 
 # Standard
+from contextlib import contextmanager
+import fcntl
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -15,7 +17,6 @@ from sqlalchemy.orm import Session
 import yaml
 
 # First-Party
-from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.models import (
     Config,
     EntityType,
@@ -50,23 +51,63 @@ class PluginRouteService:
         """
         self.config_path = config_path
         self.resolver = RuleBasedResolver()
-        self._config: Optional[Config] = None
-        self._load_config()
 
-    def _load_config(self) -> None:
-        """Load plugin configuration using ConfigLoader."""
-        try:
-            self._config = ConfigLoader.load_config(str(self.config_path))
-            logger.info(f"=== CONFIG LOADED === {len(self._config.routes)} routing rules from {self.config_path}")
-        except Exception as e:
-            logger.error(f"Failed to load plugin config: {e}")
-            # ConfigLoader already provides graceful fallback
-            self._config = ConfigLoader.load_config("")  # Returns empty config
+    @property
+    def config(self) -> Optional[Config]:
+        """Get config from PluginManager (single source of truth).
 
-    def reload_config(self) -> None:
-        """Reload configuration from disk."""
-        logger.info("=== RELOAD CONFIG CALLED ===")
-        self._load_config()
+        Returns:
+            Plugin configuration from PluginManager, or None if not available.
+        """
+        # First-Party
+        from mcpgateway.plugins.framework import get_plugin_manager
+
+        plugin_manager = get_plugin_manager()
+        return plugin_manager.config if plugin_manager else None
+
+    @contextmanager
+    def _config_write_lock(self):
+        """Context manager for exclusive write access to config file.
+
+        Acquires file lock, reloads config from disk to get latest state,
+        yields for modifications, then caller must save before exit.
+
+        This ensures multi-worker safety:
+        1. Lock prevents concurrent writes
+        2. Reload gets latest disk state (including other workers' changes)
+        3. Modifications happen on fresh state
+        4. Save persists changes atomically
+
+        Usage:
+            with self._config_write_lock():
+                # modify self.config
+                await self.save_config()
+        """
+        lock_file = self.config_path.with_suffix(".lock")
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(lock_file, "w") as lock_fd:
+            try:
+                # Acquire exclusive lock (blocks until available)
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_EX)
+                logger.info(f"Acquired config write lock for {self.config_path}")
+
+                # Reload PluginManager's config from disk to get latest state (critical for multi-worker!)
+                # First-Party
+                from mcpgateway.plugins.framework import get_plugin_manager
+
+                plugin_manager = get_plugin_manager()
+                if plugin_manager:
+                    plugin_manager.reload_config()
+                    logger.info(f"Reloaded config from disk: {len(self.config.routes) if self.config else 0} routes")
+
+                # Yield to caller for modifications
+                yield
+
+            finally:
+                # Release lock
+                fcntl.flock(lock_fd.fileno(), fcntl.LOCK_UN)
+                logger.info(f"Released config write lock for {self.config_path}")
 
     async def get_routes_for_entity(
         self,
@@ -94,7 +135,7 @@ class PluginRouteService:
         Returns:
             List of PluginAttachment objects in execution order.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return []
 
         # Create context for rule matching
@@ -110,12 +151,12 @@ class PluginRouteService:
 
         # Get merge strategy from config
         merge_strategy = "most_specific"
-        if self._config.plugin_settings:
-            merge_strategy = self._config.plugin_settings.rule_merge_strategy
+        if self.config.plugin_settings:
+            merge_strategy = self.config.plugin_settings.rule_merge_strategy
 
         # Resolve plugins using the rule resolver
         plugins = self.resolver.resolve_for_entity(
-            rules=self._config.routes,
+            rules=self.config.routes,
             context=context,
             hook_type=hook_type,
             merge_strategy=merge_strategy,
@@ -138,13 +179,13 @@ class PluginRouteService:
             Dictionary mapping entity types to entity names.
             Example: {"tools": ["create_customer", "update_customer"], "prompts": [...]}
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return {}
 
         entities: dict[str, list[str]] = {}
 
         # Scan all rules for this plugin
-        for rule in self._config.routes:
+        for rule in self.config.routes:
             # Check if this rule includes the plugin
             plugin_in_rule = any(p.name == plugin_name for p in rule.plugins)
             if not plugin_in_rule:
@@ -187,7 +228,7 @@ class PluginRouteService:
         Returns:
             List of rule dictionaries with metadata.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return []
 
         matching = []
@@ -197,7 +238,7 @@ class PluginRouteService:
             tags=tags or [],
         )
 
-        for i, rule in enumerate(self._config.routes):
+        for i, rule in enumerate(self.config.routes):
             # Check if rule matches (basic check - no when evaluation)
             if rule.entities:
                 entity_type_enum = EntityType(entity_type) if entity_type in [e.value for e in EntityType] else None
@@ -246,16 +287,20 @@ class PluginRouteService:
     ) -> None:
         """Quick-add: Create or update a simple name-based rule.
 
-        Creates a rule like:
+        Creates ONE rule per entity with multiple plugins:
         - entities: [tool]
           name: create_customer
           hooks: [tool_pre_invoke, tool_post_invoke]
           plugins:
             - name: pii_filter
               priority: 10
+            - name: audit_logger
+              priority: 20
 
-        If a rule already exists for this plugin/entity, adds the new hooks to
-        the existing rule instead of creating a duplicate.
+        If a simple rule already exists for this entity, adds the plugin to that rule.
+        This ensures one consolidated rule per entity (not one rule per plugin per entity).
+
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
 
         Args:
             entity_type: Type of entity (tool, prompt, resource, etc.)
@@ -266,57 +311,75 @@ class PluginRouteService:
                    both pre and post hooks for the entity type.
             reverse_order_on_post: If True, reverse plugin order for post-hooks (wrapping behavior)
         """
-        if not self._config:
-            raise RuntimeError("Config not loaded")
+        with self._config_write_lock():
+            if not self.config:
+                raise RuntimeError("Config not loaded")
 
-        logger.info(f"Before adding route: {len(self._config.routes)} routes in config")
+            logger.info(f"Adding route: {plugin_name} -> {entity_type}:{entity_name} (current routes: {len(self.config.routes)})")
 
-        entity_type_enum = EntityType(entity_type)
+            entity_type_enum = EntityType(entity_type)
 
-        # Default to both hooks if none specified
-        if not hooks:
-            hooks = self._get_default_hooks(entity_type)
+            # Default to both hooks if none specified
+            if not hooks:
+                hooks = self._get_default_hooks(entity_type)
 
-        # Check if a rule already exists for this plugin and entity
-        for rule in self._config.routes:
-            if not rule.entities or entity_type_enum not in rule.entities:
-                continue
-            if rule.name != entity_name:
-                continue
-            if rule.tags or rule.when:
-                continue  # Skip complex rules
+            # Look for existing simple rule for this entity (one rule per entity approach)
+            # A "simple rule" is: exact entity name match, no tags, no when clause
+            existing_simple_rule = None
+            for rule in self.config.routes:
+                if not rule.entities or entity_type_enum not in rule.entities:
+                    continue
+                if rule.name != entity_name:
+                    continue
+                if rule.tags or rule.when:
+                    continue  # Skip complex rules - only looking for simple rules
 
-            # Check if this rule has the plugin
-            plugin_in_rule = None
-            for p in rule.plugins:
-                if p.name == plugin_name:
-                    plugin_in_rule = p
-                    break
+                # Found existing simple rule for this entity
+                existing_simple_rule = rule
+                break
 
-            if plugin_in_rule:
-                # Plugin exists - add new hooks to the rule
-                existing_hooks = set(rule.hooks) if rule.hooks else set()
+            if existing_simple_rule:
+                # Found a simple rule for this entity - add or update plugin in it
+                plugin_in_rule = None
+                for p in existing_simple_rule.plugins:
+                    if p.name == plugin_name:
+                        plugin_in_rule = p
+                        break
+
+                if plugin_in_rule:
+                    # Plugin already exists in this rule - update priority
+                    plugin_in_rule.priority = priority
+                    logger.info(f"Updated plugin priority in existing rule: {plugin_name} -> {entity_type}:{entity_name} priority={priority}")
+                else:
+                    # Plugin doesn't exist - add it to the rule
+                    existing_simple_rule.plugins.append(PluginAttachment(name=plugin_name, priority=priority))
+                    logger.info(f"Added plugin to existing rule: {plugin_name} -> {entity_type}:{entity_name} (now {len(existing_simple_rule.plugins)} plugins)")
+
+                # Merge hooks if needed
+                existing_hooks = set(existing_simple_rule.hooks) if existing_simple_rule.hooks else set()
                 new_hooks = set(hooks)
                 merged_hooks = existing_hooks | new_hooks
+                existing_simple_rule.hooks = list(merged_hooks)
 
-                rule.hooks = list(merged_hooks)
-                # Update priority if provided
-                plugin_in_rule.priority = priority
-                logger.info(f"Updated existing rule: {plugin_name} -> {entity_type}:{entity_name} hooks={rule.hooks}")
-                return
+                # Update reverse_order_on_post if specified
+                if reverse_order_on_post:
+                    existing_simple_rule.reverse_order_on_post = reverse_order_on_post
+            else:
+                # No existing simple rule for this entity - create new one
+                new_rule = PluginHookRule(
+                    entities=[entity_type_enum],
+                    name=entity_name,
+                    hooks=hooks,
+                    reverse_order_on_post=reverse_order_on_post,
+                    plugins=[PluginAttachment(name=plugin_name, priority=priority)],
+                )
 
-        # No existing rule found - create new one
-        new_rule = PluginHookRule(
-            entities=[entity_type_enum],
-            name=entity_name,
-            hooks=hooks,
-            reverse_order_on_post=reverse_order_on_post,
-            plugins=[PluginAttachment(name=plugin_name, priority=priority)],
-        )
+                self.config.routes.append(new_rule)
+                logger.info(f"Created new simple rule: {plugin_name} -> {entity_type}:{entity_name} hooks={hooks}")
 
-        self._config.routes.append(new_rule)
-        logger.info(f"Created new route: {plugin_name} -> {entity_type}:{entity_name} hooks={hooks}")
-        logger.info(f"After adding route: {len(self._config.routes)} routes in config")
+            # Save changes within the lock
+            await self.save_config()
+            logger.info(f"Saved config with {len(self.config.routes)} routes")
 
     def _get_default_hooks(self, entity_type: str) -> list[str]:
         """Get default hooks for an entity type (both pre and post).
@@ -341,86 +404,92 @@ class PluginRouteService:
         plugin_name: str,
         hook: Optional[str] = None,
     ) -> bool:
-        """Remove plugin from entity by modifying the hooks list on the rule.
+        """Remove plugin from entity's simple rule.
+
+        With consolidated rules (one rule per entity), this removes the plugin
+        from the entity's rule. If the rule has no plugins left, removes the rule.
 
         When a specific hook is provided:
         - Removes that hook from the rule's hooks list
         - If hooks list becomes empty, removes the entire rule
 
         When no hook is provided:
-        - Removes the entire rule (plugin removed from all hooks)
+        - Removes the plugin from the rule's plugins list
+        - If no plugins left in the rule, removes the entire rule
+
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
 
         Args:
             entity_type: Type of entity
             entity_name: Name of entity
             plugin_name: Name of plugin to remove
             hook: Optional specific hook to remove (e.g., "tool_pre_invoke").
-                  If None, removes from all hooks (deletes the rule).
+                  If None, removes plugin from all hooks.
 
         Returns:
             True if plugin was removed, False if not found.
         """
-        if not self._config or not self._config.routes:
-            return False
+        with self._config_write_lock():
+            if not self.config or not self.config.routes:
+                return False
 
-        entity_type_enum = EntityType(entity_type)
-        modified = False
-        rules_to_remove = []
+            entity_type_enum = EntityType(entity_type)
+            modified = False
+            rules_to_remove = []
 
-        for i, rule in enumerate(self._config.routes):
-            # Only modify simple name-based rules
-            if not rule.entities or entity_type_enum not in rule.entities:
-                continue
+            for i, rule in enumerate(self.config.routes):
+                # Only modify simple name-based rules
+                if not rule.entities or entity_type_enum not in rule.entities:
+                    continue
 
-            # Must have exact name match
-            if rule.name != entity_name:
-                continue
+                # Must have exact name match
+                if rule.name != entity_name:
+                    continue
 
-            # Must not have tags or when (simple rule only)
-            if rule.tags or rule.when:
-                continue
+                # Must not have tags or when (simple rule only)
+                if rule.tags or rule.when:
+                    continue
 
-            # Check if plugin exists in this rule
-            plugin_in_rule = any(p.name == plugin_name for p in rule.plugins)
-            if not plugin_in_rule:
-                continue
+                # Found the simple rule for this entity
+                if hook:
+                    # Remove specific hook from the hooks list
+                    if rule.hooks and hook in rule.hooks:
+                        rule.hooks.remove(hook)
+                        modified = True
+                        logger.info(f"Removed hook {hook} from rule for {entity_type}:{entity_name}")
 
-            # Found the rule with this plugin
-            if hook:
-                # Remove specific hook from the hooks list
-                if rule.hooks and hook in rule.hooks:
-                    rule.hooks.remove(hook)
-                    modified = True
-                    logger.info(f"Removed hook {hook} from rule for {plugin_name} -> {entity_type}:{entity_name}")
+                        # If no hooks left, mark rule for removal
+                        if not rule.hooks:
+                            rules_to_remove.append(i)
+                            logger.info("Rule has no hooks left, will be removed")
+                else:
+                    # No specific hook - remove the plugin from the rule's plugins list
+                    plugins_before = len(rule.plugins)
+                    rule.plugins = [p for p in rule.plugins if p.name != plugin_name]
+                    plugins_after = len(rule.plugins)
 
-                    # If no hooks left, mark rule for removal
-                    if not rule.hooks:
-                        rules_to_remove.append(i)
-                        logger.info("Rule has no hooks left, will be removed")
-                elif not rule.hooks:
-                    # Rule has no hooks defined (applies to all) - shouldn't happen with new logic
-                    # but handle gracefully by treating as "remove from all"
-                    rules_to_remove.append(i)
-                    modified = True
-                    logger.info("Rule had no hooks list, removing entirely")
-            else:
-                # No specific hook - remove the entire rule
-                rules_to_remove.append(i)
-                modified = True
-                logger.info(f"Removing entire rule for {plugin_name} -> {entity_type}:{entity_name}")
+                    if plugins_before > plugins_after:
+                        modified = True
+                        logger.info(f"Removed plugin {plugin_name} from rule for {entity_type}:{entity_name} ({plugins_after} plugins remaining)")
 
-            # Only process one matching rule per plugin/entity
-            break
+                        # If no plugins left in the rule, mark rule for removal
+                        if not rule.plugins:
+                            rules_to_remove.append(i)
+                            logger.info("Rule has no plugins left, will be removed")
 
-        # Remove marked rules (in reverse order to maintain indices)
-        for i in reversed(rules_to_remove):
-            del self._config.routes[i]
+                # Only process one matching rule per entity
+                break
 
-        if modified:
-            hook_msg = f" from hook {hook}" if hook else ""
-            logger.info(f"Removed {plugin_name}{hook_msg} from {entity_type}:{entity_name}")
+            # Remove marked rules (in reverse order to maintain indices)
+            for i in reversed(rules_to_remove):
+                del self.config.routes[i]
 
-        return modified
+            if modified:
+                hook_msg = f" from hook {hook}" if hook else ""
+                logger.info(f"Removed {plugin_name}{hook_msg} from {entity_type}:{entity_name}")
+                await self.save_config()
+
+            return modified
 
     def _get_other_hooks(self, entity_type: str, current_hook: str) -> list[str]:
         """Get the other hook types for an entity type.
@@ -464,7 +533,7 @@ class PluginRouteService:
         Returns:
             True if priority was changed, False if plugin not found or can't be moved.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             logger.warning("No config or routes available")
             return False
 
@@ -474,7 +543,7 @@ class PluginRouteService:
         # Each entry: (rule_index, plugin_index, plugin_attachment, priority)
         entity_plugins: list[tuple[int, int, PluginAttachment]] = []
 
-        for rule_idx, rule in enumerate(self._config.routes):
+        for rule_idx, rule in enumerate(self.config.routes):
             # Only check simple name-based rules
             if not rule.entities or entity_type_enum not in rule.entities:
                 continue
@@ -579,7 +648,7 @@ class PluginRouteService:
         Returns:
             True if priority was updated, False if plugin not found.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             logger.warning("No config or routes available")
             return False
 
@@ -587,7 +656,7 @@ class PluginRouteService:
         updated = False
 
         # Find all rules matching this entity
-        for rule in self._config.routes:
+        for rule in self.config.routes:
             # Only check simple name-based rules
             if not rule.entities or entity_type_enum not in rule.entities:
                 continue
@@ -627,7 +696,7 @@ class PluginRouteService:
         Returns:
             The new state (True if now reversed, False if normal order).
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return False
 
         # Note: use_enum_values=True causes rule.entities to contain strings, not enums
@@ -635,7 +704,7 @@ class PluginRouteService:
         matching_rules = []
         current_state = False
 
-        for rule in self._config.routes:
+        for rule in self.config.routes:
             if not rule.entities or entity_type not in rule.entities:
                 continue
             if rule.name != entity_name:
@@ -672,11 +741,11 @@ class PluginRouteService:
         Returns:
             True if reverse order is enabled, False otherwise.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return False
 
         # Note: use_enum_values=True causes rule.entities to contain strings, not enums
-        for rule in self._config.routes:
+        for rule in self.config.routes:
             if not rule.entities or entity_type not in rule.entities:
                 continue
             if rule.name != entity_name:
@@ -698,13 +767,13 @@ class PluginRouteService:
         Returns:
             The PluginHookRule at the given index, or None if not found.
         """
-        if not self._config or not self._config.routes:
+        if not self.config or not self.config.routes:
             return None
 
-        if index < 0 or index >= len(self._config.routes):
+        if index < 0 or index >= len(self.config.routes):
             return None
 
-        return self._config.routes[index]
+        return self.config.routes[index]
 
     async def add_or_update_rule(
         self,
@@ -712,6 +781,8 @@ class PluginRouteService:
         index: Optional[int] = None,
     ) -> int:
         """Add a new routing rule or update an existing one.
+
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
 
         Args:
             rule: The PluginHookRule to add or update.
@@ -723,25 +794,31 @@ class PluginRouteService:
         Raises:
             ValueError: If the index is out of range.
         """
-        if not self._config:
-            self._config = Config(routes=[])
+        with self._config_write_lock():
+            if not self.config:
+                self.config = Config(routes=[])
 
-        if index is not None:
-            # Update existing rule
-            if index < 0 or index >= len(self._config.routes):
-                raise ValueError(f"Rule index {index} is out of range")
-            self._config.routes[index] = rule
-            logger.info(f"Updated routing rule at index {index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
-            return index
-        else:
-            # Add new rule
-            self._config.routes.append(rule)
-            new_index = len(self._config.routes) - 1
-            logger.info(f"Added new routing rule at index {new_index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
-            return new_index
+            if index is not None:
+                # Update existing rule
+                if index < 0 or index >= len(self.config.routes):
+                    raise ValueError(f"Rule index {index} is out of range")
+                self.config.routes[index] = rule
+                logger.info(f"Updated routing rule at index {index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
+                result_index = index
+            else:
+                # Add new rule
+                self.config.routes.append(rule)
+                new_index = len(self.config.routes) - 1
+                logger.info(f"Added new routing rule at index {new_index}: {rule.name if hasattr(rule, 'name') else 'unnamed'}")
+                result_index = new_index
+
+            await self.save_config()
+            return result_index
 
     async def delete_rule(self, index: int) -> bool:
         """Delete a routing rule by index.
+
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
 
         Args:
             index: Index of the rule to delete.
@@ -752,22 +829,26 @@ class PluginRouteService:
         Raises:
             ValueError: If the index is out of range.
         """
-        if not self._config or not self._config.routes:
-            return False
+        with self._config_write_lock():
+            if not self.config or not self.config.routes:
+                return False
 
-        if index < 0 or index >= len(self._config.routes):
-            raise ValueError(f"Rule index {index} is out of range")
+            if index < 0 or index >= len(self.config.routes):
+                raise ValueError(f"Rule index {index} is out of range")
 
-        deleted_rule = self._config.routes.pop(index)
-        logger.info(f"Deleted routing rule at index {index}: {deleted_rule.name if hasattr(deleted_rule, 'name') else 'unnamed'}")
-        return True
+            deleted_rule = self.config.routes.pop(index)
+            logger.info(f"Deleted routing rule at index {index}: {deleted_rule.name if hasattr(deleted_rule, 'name') else 'unnamed'}")
+
+            await self.save_config()
+            return True
 
     async def save_config(self) -> None:
         """Save configuration to YAML file.
 
         Performs atomic write with backup to prevent data loss.
+        Also clears the PluginManager routing cache to ensure changes take effect immediately.
         """
-        if not self._config:
+        if not self.config:
             logger.warning("No config to save")
             return
 
@@ -782,7 +863,7 @@ class PluginRouteService:
 
             # Convert config to dict for YAML serialization
             # use_enum_values=True in Config model ensures enums are converted to strings
-            data = self._config.model_dump(by_alias=True, exclude_none=True)
+            data = self.config.model_dump(by_alias=True, exclude_none=True)
 
             # Write to temp file first (atomic write)
             temp_path = self.config_path.with_suffix(".yaml.tmp")
@@ -794,6 +875,16 @@ class PluginRouteService:
             temp_path.replace(self.config_path)
 
             logger.info(f"Saved plugin config to {self.config_path}")
+
+            # Reload PluginManager config so changes take effect immediately
+            # (PluginRouteService uses PluginManager's config via property, so no separate reload needed)
+            # First-Party
+            from mcpgateway.plugins.framework import get_plugin_manager
+
+            plugin_manager = get_plugin_manager()
+            if plugin_manager:
+                plugin_manager.reload_config()
+                logger.info("Reloaded PluginManager config after save")
 
         except Exception as e:
             logger.error(f"Failed to save plugin config: {e}")

@@ -458,6 +458,7 @@ class PluginManager:
     _initialized: bool = False
     _registry: PluginInstanceRegistry = PluginInstanceRegistry()
     _config: Config | None = None
+    _config_path: str = ""  # Store config path for reload_config()
     _executor: PluginExecutor = PluginExecutor()
     _resolver: RuleBasedResolver = RuleBasedResolver()
     # Cache for resolved AttachedHookRefs: (entity_type, entity_name, hook_type) -> list[AttachedHookRef]
@@ -479,6 +480,7 @@ class PluginManager:
         """
         self.__dict__ = self.__shared_state
         if config:
+            self._config_path = config  # Store for reload_config()
             self._config = ConfigLoader.load_config(config)
 
         # Update executor timeouts
@@ -1078,6 +1080,26 @@ class PluginManager:
         """
         self._routing_cache.clear()
         logger.info("Cleared plugin routing cache")
+
+    def reload_config(self):
+        """Reload plugin configuration from disk and update manager state.
+
+        This reloads the configuration from the stored config path, updates the executor
+        with the fresh config, and clears the routing cache. Use this when the config
+        file has been modified externally (e.g., by another worker process).
+
+        Examples:
+            >>> manager = PluginManager()
+            >>> manager.reload_config()
+        """
+        if not self._config_path:
+            logger.warning("Cannot reload config: no config path stored")
+            return
+
+        self._config = ConfigLoader.load_config(self._config_path)
+        self._executor.config = self._config
+        self.clear_routing_cache()
+        logger.info("Reloaded plugin configuration from %s", self._config_path)
 
     async def invoke_hook_for_plugin(
         self,

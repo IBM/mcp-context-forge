@@ -471,8 +471,8 @@ class RuleBasedResolver:
             "prompt": EntityType.PROMPT,
             "resource": EntityType.RESOURCE,
             "agent": EntityType.AGENT,
-            "server": EntityType.SERVER,
-            "gateway": EntityType.GATEWAY,
+            "virtual_server": EntityType.VIRTUAL_SERVER,
+            "mcp_server": EntityType.MCP_SERVER,
         }
 
         if entity_type not in type_map:
