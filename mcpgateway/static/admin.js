@@ -121,6 +121,32 @@ document.addEventListener("DOMContentLoaded", function () {
             setTimeout(initializeCACertUpload, 100);
         });
     }
+
+    // Initialize search functionality for all entity types
+    initializeSearchInputs();
+    
+    // Re-initialize search inputs when HTMX content loads
+    document.body.addEventListener('htmx:afterSwap', function(event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
+    });
+    
+    // Also listen for htmx:load event
+    document.body.addEventListener('htmx:load', function(event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
+    });
+    
+    // Initialize search when switching tabs
+    document.addEventListener('click', function(event) {
+        if (event.target.matches('[onclick*="showTab"]') || event.target.closest('[onclick*="showTab"]')) {
+            setTimeout(() => {
+                initializeSearchInputs();
+            }, 300);
+        }
+    });
 });
 /**
  * ====================================================================
@@ -14502,13 +14528,25 @@ function filterServerTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from all cells in the row
+            // Get text from all searchable cells (exclude only Actions column)
+            // Table columns: Icon(0), S.No.(1), UUID(2), Name(3), Description(4), Tools(5), Resources(6), Prompts(7), Tags(8), Owner(9), Team(10), Visibility(11), Actions(12)
             const cells = row.querySelectorAll("td");
-            cells.forEach((cell) => {
-                textContent += " " + cell.textContent;
+            // Search all columns except Icon and Actions columns
+            const searchableColumnIndices = [];
+            for (let i = 1; i < cells.length - 1; i++) {
+                searchableColumnIndices.push(i);
+            }
+            
+            searchableColumnIndices.forEach((index) => {
+                if (cells[index]) {
+                    // Clean the text content and make it searchable
+                    const cellText = cells[index].textContent.replace(/\s+/g, ' ').trim();
+                    textContent += " " + cellText;
+                }
             });
 
-            if (search === "" || textContent.toLowerCase().includes(search)) {
+            const isMatch = search === "" || textContent.toLowerCase().includes(search);
+            if (isMatch) {
                 row.style.display = "";
             } else {
                 row.style.display = "none";
@@ -14521,6 +14559,526 @@ function filterServerTable(searchText) {
 
 // Make server search function available globally
 window.filterServerTable = filterServerTable;
+
+/**
+ * Filter Tools table based on search text
+ */
+function filterToolsTable(searchText) {
+    try {
+        const tbody = document.querySelector('#tools-table-body');
+        if (!tbody) {
+            console.warn("Tools table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude S.No. and Actions columns)
+            // Tools columns: S.No.(0), Gateway Name(1), Name(2), URL(3), Type(4), Request Type(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Visibility(11), Status(12), Actions(13)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude S.No. and Actions
+            
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    // Clean the text content and make it searchable
+                    const cellText = cells[index].textContent.replace(/\s+/g, ' ').trim();
+                    textContent += " " + cellText;
+                }
+            });
+
+            const isMatch = search === "" || textContent.toLowerCase().includes(search);
+            if (isMatch) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering tools table:", error);
+    }
+}
+
+/**
+ * Filter Resources table based on search text
+ */
+function filterResourcesTable(searchText) {
+    try {
+        const tbody = document.querySelector('#resources-table-body');
+        if (!tbody) {
+            console.warn("Resources table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude Actions column)
+            // Resources columns: ID(0), URI(1), Name(2), Description(3), MIME Type(4), Tags(5), Owner(6), Team(7), Visibility(8), Status(9), Actions(10)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // All except Actions
+            
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering resources table:", error);
+    }
+}
+
+/**
+ * Filter Prompts table based on search text
+ */
+function filterPromptsTable(searchText) {
+    try {
+        const tbody = document.querySelector('#prompts-table-body');
+        if (!tbody) {
+            console.warn("Prompts table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude Actions column)
+            // Prompts columns: S.No.(0), Name(1), Description(2), Tags(3), Owner(4), Team(5), Visibility(6), Status(7), Actions(8)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7]; // All except Actions
+            
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering prompts table:", error);
+    }
+}
+
+/**
+ * Filter A2A Agents table based on search text
+ */
+function filterA2AAgentsTable(searchText) {
+    try {
+        const tbody = document.querySelector('#a2a-agents-panel tbody');
+        if (!tbody) {
+            console.warn("A2A Agents table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude ID and Actions columns)
+            // A2A Agents columns: ID(0), Name(1), Description(2), Endpoint(3), Tags(4), Type(5), Status(6), Reachability(7), Owner(8), Team(9), Visibility(10), Actions(11)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude ID and Actions
+            
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering A2A agents table:", error);
+    }
+}
+
+/**
+ * Filter MCP Servers (Gateways) table based on search text
+ */
+function filterGatewaysTable(searchText) {
+    try {
+        console.log("🔍 Starting MCP Servers search for:", searchText);
+        
+        // Find the MCP servers table - use multiple strategies
+        let table = null;
+        
+        // Strategy 1: Direct selector for gateways panel
+        const gatewaysPanel = document.querySelector('#gateways-panel');
+        if (gatewaysPanel) {
+            table = gatewaysPanel.querySelector('table');
+            console.log("✅ Found table in gateways panel");
+        }
+        
+        // Strategy 2: Look for table in currently visible tab
+        if (!table) {
+            const visiblePanel = document.querySelector('.tab-panel:not(.hidden)');
+            if (visiblePanel) {
+                table = visiblePanel.querySelector('table');
+                console.log("✅ Found table in visible panel");
+            }
+        }
+        
+        // Strategy 3: Just look for any table with MCP server structure
+        if (!table) {
+            const allTables = document.querySelectorAll('table');
+            for (let t of allTables) {
+                const headers = t.querySelectorAll('thead th');
+                if (headers.length >= 8) {
+                    // Check for MCP server specific headers
+                    const headerTexts = Array.from(headers).map(h => h.textContent.toLowerCase().trim());
+                    if (headerTexts.includes('name') && headerTexts.includes('url') && headerTexts.includes('status')) {
+                        table = t;
+                        console.log("✅ Found MCP table by header matching");
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!table) {
+            console.warn("❌ No MCP servers table found");
+            return;
+        }
+
+        const tbody = table.querySelector('tbody');
+        if (!tbody) {
+            console.warn("❌ No tbody found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll('tr');
+        if (rows.length === 0) {
+            console.warn("❌ No rows found");
+            return;
+        }
+
+        const search = searchText.toLowerCase().trim();
+        console.log(`🔍 Searching ${rows.length} rows for: "${search}"`);
+
+        let visibleCount = 0;
+        
+        rows.forEach((row, index) => {
+            const cells = row.querySelectorAll("td");
+            
+            if (cells.length === 0) {
+                return;
+            }
+
+            // Combine text from all cells except the last one (Actions column)
+            let searchContent = "";
+            for (let i = 0; i < cells.length - 1; i++) {
+                if (cells[i]) {
+                    const cellText = cells[i].textContent.trim();
+                    searchContent += " " + cellText;
+                }
+            }
+
+            const fullText = searchContent.trim().toLowerCase();
+            const shouldShow = search === "" || fullText.includes(search);
+            
+            // Debug first few rows
+            if (index < 3) {
+                console.log(`Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`);
+            }
+            
+            // Show/hide the row
+            if (shouldShow) {
+                row.style.display = "";
+                row.style.visibility = "visible";
+                visibleCount++;
+            } else {
+                row.style.display = "none";
+                row.style.visibility = "hidden";
+            }
+        });
+        
+        console.log(`✅ Search complete: ${visibleCount}/${rows.length} rows visible`);
+        
+    } catch (error) {
+        console.error("❌ Error in filterGatewaysTable:", error);
+    }
+}
+
+// Make filter functions available globally
+window.filterServerTable = filterServerTable;
+window.filterToolsTable = filterToolsTable;
+window.filterResourcesTable = filterResourcesTable;
+window.filterPromptsTable = filterPromptsTable;
+window.filterA2AAgentsTable = filterA2AAgentsTable;
+window.filterGatewaysTable = filterGatewaysTable;
+
+// Add a test function for debugging
+window.testGatewaySearch = function(searchTerm = "Cou") {
+    console.log("🧪 Testing gateway search with:", searchTerm);
+    console.log("Available tables:", document.querySelectorAll('table').length);
+    
+    // Test the search input exists
+    const searchInput = document.getElementById('gateways-search-input');
+    console.log("Search input found:", !!searchInput);
+    
+    if (searchInput) {
+        searchInput.value = searchTerm;
+        console.log("Set search input value to:", searchInput.value);
+    }
+    
+    filterGatewaysTable(searchTerm);
+};
+
+// Simple fallback search function
+window.simpleGatewaySearch = function(searchTerm) {
+    console.log("🔧 Simple gateway search for:", searchTerm);
+    
+    // Find any table in the current tab/page
+    const tables = document.querySelectorAll('table');
+    console.log("Found tables:", tables.length);
+    
+    tables.forEach((table, tableIndex) => {
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        
+        const rows = tbody.querySelectorAll('tr');
+        console.log(`Table ${tableIndex}: ${rows.length} rows`);
+        
+        if (rows.length > 0) {
+            // Check if this looks like the MCP servers table
+            const firstRow = rows[0];
+            const cells = firstRow.querySelectorAll('td');
+            
+            if (cells.length >= 8) { // MCP servers table should have many columns
+                console.log(`Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`);
+                
+                const search = searchTerm.toLowerCase().trim();
+                let visibleCount = 0;
+                
+                rows.forEach((row) => {
+                    const cells = row.querySelectorAll('td');
+                    let rowText = '';
+                    
+                    // Get text from all cells except last (Actions)
+                    for (let i = 0; i < cells.length - 1; i++) {
+                        rowText += ' ' + cells[i].textContent.trim();
+                    }
+                    
+                    const shouldShow = search === '' || rowText.toLowerCase().includes(search);
+                    
+                    if (shouldShow) {
+                        row.style.display = '';
+                        visibleCount++;
+                    } else {
+                        row.style.display = 'none';
+                    }
+                });
+                
+                console.log(`✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`);
+                return; // Found the table, stop searching
+            }
+        }
+    });
+};
+
+// Add initialization test function
+window.testSearchInit = function() {
+    console.log("🧪 Testing search initialization...");
+    initializeSearchInputs();
+};
+
+/**
+ * Clear search functionality for different entity types
+ */
+function clearSearch(entityType) {
+    try {
+        if (entityType === 'catalog') {
+            const searchInput = document.getElementById('catalog-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterServerTable(''); // Clear the filter
+            }
+        } else if (entityType === 'tools') {
+            const searchInput = document.getElementById('tools-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterToolsTable(''); // Clear the filter
+            }
+        } else if (entityType === 'resources') {
+            const searchInput = document.getElementById('resources-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterResourcesTable(''); // Clear the filter
+            }
+        } else if (entityType === 'prompts') {
+            const searchInput = document.getElementById('prompts-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterPromptsTable(''); // Clear the filter
+            }
+        } else if (entityType === 'a2a-agents') {
+            const searchInput = document.getElementById('a2a-agents-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterA2AAgentsTable(''); // Clear the filter
+            }
+        } else if (entityType === 'gateways') {
+            const searchInput = document.getElementById('gateways-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterGatewaysTable(''); // Clear the filter
+            }
+        } else if (entityType === 'gateways') {
+            const searchInput = document.getElementById('gateways-search-input');
+            if (searchInput) {
+                searchInput.value = '';
+                filterGatewaysTable(''); // Clear the filter
+            }
+        }
+    } catch (error) {
+        console.error('Error clearing search:', error);
+    }
+}
+
+// Make clearSearch function available globally
+window.clearSearch = clearSearch;
+
+/**
+ * Initialize search inputs for all entity types
+ * This function also handles re-initialization after HTMX content loads
+ */
+function initializeSearchInputs() {
+    console.log("🔍 Initializing search inputs...");
+    
+    // Remove existing event listeners to prevent duplicates
+    const searchInputs = [
+        'catalog-search-input',
+        'gateways-search-input',
+        'tools-search-input', 
+        'resources-search-input',
+        'prompts-search-input',
+        'a2a-agents-search-input'
+    ];
+    
+    searchInputs.forEach(inputId => {
+        const input = document.getElementById(inputId);
+        if (input) {
+            // Clone the input to remove all event listeners, then replace it
+            const newInput = input.cloneNode(true);
+            input.parentNode.replaceChild(newInput, input);
+        }
+    });
+
+    // Get fresh references to all search inputs after cloning
+    
+    // Virtual Servers search
+    const catalogSearchInput = document.getElementById("catalog-search-input");
+    if (catalogSearchInput) {
+        catalogSearchInput.addEventListener("input", function () {
+            filterServerTable(this.value);
+        });
+        console.log("✅ Virtual Servers search initialized");
+    }
+
+    // MCP Servers (Gateways) search
+    const gatewaysSearchInput = document.getElementById("gateways-search-input");
+    if (gatewaysSearchInput) {
+        console.log("✅ Found MCP Servers search input");
+        
+        // Use addEventListener instead of direct assignment
+        gatewaysSearchInput.addEventListener("input", function(e) {
+            const searchValue = e.target.value;
+            console.log("🔍 MCP Servers search triggered:", searchValue);
+            filterGatewaysTable(searchValue);
+        });
+        
+        // Add keyup as backup
+        gatewaysSearchInput.addEventListener("keyup", function(e) {
+            const searchValue = e.target.value;
+            filterGatewaysTable(searchValue);
+        });
+        
+        // Add change as backup
+        gatewaysSearchInput.addEventListener("change", function(e) {
+            const searchValue = e.target.value;
+            filterGatewaysTable(searchValue);
+        });
+        
+        console.log("✅ MCP Servers search events attached");
+        
+        // Test the function works
+        filterGatewaysTable("");
+        
+    } else {
+        console.error("❌ MCP Servers search input not found!");
+        
+        // Debug available inputs
+        const allInputs = document.querySelectorAll('input[type="text"]');
+        console.log("Available text inputs:", Array.from(allInputs).map(input => ({
+            id: input.id,
+            placeholder: input.placeholder,
+            className: input.className
+        })));
+    }
+
+    // Tools search
+    const toolsSearchInput = document.getElementById("tools-search-input");
+    if (toolsSearchInput) {
+        toolsSearchInput.addEventListener("input", function () {
+            filterToolsTable(this.value);
+        });
+        console.log("✅ Tools search initialized");
+    }
+
+    // Resources search
+    const resourcesSearchInput = document.getElementById("resources-search-input");
+    if (resourcesSearchInput) {
+        resourcesSearchInput.addEventListener("input", function () {
+            filterResourcesTable(this.value);
+        });
+        console.log("✅ Resources search initialized");
+    }
+
+    // Prompts search
+    const promptsSearchInput = document.getElementById("prompts-search-input");
+    if (promptsSearchInput) {
+        promptsSearchInput.addEventListener("input", function () {
+            filterPromptsTable(this.value);
+        });
+        console.log("✅ Prompts search initialized");
+    }
+
+    // A2A Agents search
+    const agentsSearchInput = document.getElementById("a2a-agents-search-input");
+    if (agentsSearchInput) {
+        agentsSearchInput.addEventListener("input", function () {
+            filterA2AAgentsTable(this.value);
+        });
+        console.log("✅ A2A Agents search initialized");
+    }
+}
 
 function handleAuthTypeChange() {
     const authType = this.value;
@@ -23105,608 +23663,81 @@ function updateEntityActionButtons(cell, type, id, isEnabled) {
     }
 }
 
-// ===================================================================
-// UNIFIED SEARCH & FILTER COMPONENT - Cross-Tab Discovery
-// ===================================================================
+// CRITICAL DEBUG AND FIX FOR MCP SERVERS SEARCH
+console.log("🔧 LOADING MCP SERVERS SEARCH DEBUG FUNCTIONS...");
 
-/**
- * Configuration for search fields by entity type
- */
-const SEARCH_FIELD_CONFIG = {
-    catalog: ["name", "description"], // Virtual Servers (will add tool_names dynamically)
-    gateways: ["name", "description", "url"], // MCP Servers
-    tools: ["name", "description", "displayName"],
-    prompts: ["name", "description"],
-    resources: ["name", "uri", "mimeType", "description"],
-    "a2a-agents": ["name", "url", "description"],
+// Emergency fix function for MCP Servers search
+window.emergencyFixMCPSearch = function() {
+    console.log("🚨 EMERGENCY FIX: Attempting to fix MCP Servers search...");
+    
+    // Find the search input
+    const searchInput = document.getElementById("gateways-search-input");
+    if (!searchInput) {
+        console.error("❌ Cannot find gateways-search-input element");
+        return false;
+    }
+    
+    console.log("✅ Found search input:", searchInput);
+    
+    // Remove all existing event listeners by cloning
+    const newSearchInput = searchInput.cloneNode(true);
+    searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+    
+    // Add fresh event listener
+    const finalSearchInput = document.getElementById("gateways-search-input");
+    finalSearchInput.addEventListener("input", function(e) {
+        console.log("🔍 EMERGENCY SEARCH EVENT:", e.target.value);
+        filterGatewaysTable(e.target.value);
+    });
+    
+    console.log("✅ Emergency fix applied - test by typing in MCP Servers search box");
+    return true;
 };
 
-/**
- * Unified search state management
- */
-const SearchState = {
-    debounceTimers: {},
-    activeFilters: {},
-
-    reset(entityType) {
-        if (this.debounceTimers[entityType]) {
-            clearTimeout(this.debounceTimers[entityType]);
-            delete this.debounceTimers[entityType];
-        }
-        this.activeFilters[entityType] = {
-            search: "",
-            tags: [],
-        };
-    },
-
-    setSearch(entityType, value) {
-        if (!this.activeFilters[entityType]) {
-            this.activeFilters[entityType] = { search: "", tags: [] };
-        }
-        this.activeFilters[entityType].search = value;
-        this.updateFilterCount(entityType);
-    },
-
-    setTags(entityType, tags) {
-        if (!this.activeFilters[entityType]) {
-            this.activeFilters[entityType] = { search: "", tags: [] };
-        }
-        this.activeFilters[entityType].tags = tags;
-        this.updateFilterCount(entityType);
-    },
-
-    getActiveFilterCount(entityType) {
-        if (!this.activeFilters[entityType]) {
-            return 0;
-        }
-        const state = this.activeFilters[entityType];
-        let count = 0;
-        if (state.search.trim()) {
-            count++;
-        }
-        if (state.tags.length > 0) {
-            count += state.tags.length;
-        }
-        return count;
-    },
-
-    updateFilterCount(entityType) {
-        const count = this.getActiveFilterCount(entityType);
-        const badge = safeGetElement(`${entityType}-filter-count-badge`);
-        const clearAllBtn = safeGetElement(`${entityType}-clear-all-filters`);
-
-        if (badge) {
-            if (count > 0) {
-                badge.textContent = `${count} filter${count > 1 ? "s" : ""} active`;
-                badge.classList.remove("hidden");
-            } else {
-                badge.classList.add("hidden");
-            }
-        }
-
-        if (clearAllBtn) {
-            if (count > 0) {
-                clearAllBtn.classList.remove("hidden");
-            } else {
-                clearAllBtn.classList.add("hidden");
-            }
-        }
-    },
+// Manual test function
+window.testMCPSearchManually = function(searchTerm = "github") {
+    console.log("🧪 MANUAL TEST: Testing MCP search with:", searchTerm);
+    filterGatewaysTable(searchTerm);
 };
 
-/**
- * Enhanced unified search and filter function
- * @param {string} entityType - The entity type (tools, prompts, etc.)
- * @param {string} searchText - Search text to filter by
- * @param {string[]} filterTags - Array of tags to filter by
- */
-function applyUnifiedFilters(entityType, searchText = "", filterTags = []) {
-    try {
-        // Update state
-        SearchState.setSearch(entityType, searchText);
-        SearchState.setTags(entityType, filterTags);
-
-        const searchFields = SEARCH_FIELD_CONFIG[entityType] || [
-            "name",
-            "description",
-        ];
-        const tableSelector = `#${entityType}-panel tbody tr`;
-        let rows = document.querySelectorAll(tableSelector);
-
-        // Handle special case for Virtual Servers (catalog)
-        if (entityType === "catalog") {
-            rows = document.querySelectorAll(
-                'tbody[data-testid="server-list"] tr[data-testid="server-item"]',
-            );
-        }
-
-        let visibleCount = 0;
-        const search = searchText.toLowerCase().trim();
-
-        rows.forEach((row) => {
-            let showRow = true;
-
-            // Search filtering (OR logic across search fields)
-            if (search) {
-                let matchesSearch = false;
-
-                if (entityType === "catalog") {
-                    // Virtual Servers: search name, description, and tool names
-                    const cells = row.querySelectorAll("td");
-                    if (cells.length >= 5) {
-                        const name = cells[3]?.textContent?.toLowerCase() || "";
-                        const description =
-                            cells[4]?.textContent?.toLowerCase() || "";
-                        const tools =
-                            cells[5]?.textContent?.toLowerCase() || "";
-                        matchesSearch =
-                            name.includes(search) ||
-                            description.includes(search) ||
-                            tools.includes(search);
-                    }
-                } else {
-                    // Other entity types: search based on field configuration
-                    const rowText = extractRowSearchText(
-                        row,
-                        searchFields,
-                    ).toLowerCase();
-                    matchesSearch = rowText.includes(search);
-                }
-
-                if (!matchesSearch) {
-                    showRow = false;
-                }
-            }
-
-            // Tag filtering (AND logic - row must have ALL specified tags)
-            if (showRow && filterTags.length > 0) {
-                const rowTags = extractRowTags(row);
-                const hasAllTags = filterTags.every((filterTag) =>
-                    rowTags.some(
-                        (rowTag) =>
-                            rowTag
-                                .toLowerCase()
-                                .includes(filterTag.toLowerCase()) ||
-                            filterTag
-                                .toLowerCase()
-                                .includes(rowTag.toLowerCase()),
-                    ),
-                );
-
-                if (!hasAllTags) {
-                    showRow = false;
-                }
-            }
-
-            // Apply visibility
-            row.style.display = showRow ? "" : "none";
-            if (showRow) {
-                visibleCount++;
-            }
-        });
-
-        // Update empty state
-        const hasActiveFilters = search || filterTags.length > 0;
-        updateUnifiedEmptyState(entityType, visibleCount, hasActiveFilters);
-
-        console.log(
-            `Applied unified filters to ${entityType}: ${visibleCount} visible items`,
-        );
-    } catch (error) {
-        console.error(
-            `Error applying unified filters to ${entityType}:`,
-            error,
-        );
+// Debug current state function
+window.debugMCPSearchState = function() {
+    console.log("🔍 DEBUGGING MCP SEARCH STATE:");
+    
+    const searchInput = document.getElementById("gateways-search-input");
+    console.log("Search input:", searchInput);
+    console.log("Search input value:", searchInput ? searchInput.value : "NOT FOUND");
+    
+    const panel = document.getElementById("gateways-panel");
+    console.log("Gateways panel:", panel);
+    
+    const table = panel ? panel.querySelector("table") : null;
+    console.log("Table in panel:", table);
+    
+    const rows = table ? table.querySelectorAll("tbody tr") : [];
+    console.log("Rows found:", rows.length);
+    
+    if (rows.length > 0) {
+        console.log("First row content:", rows[0].textContent);
     }
-}
+    
+    return {
+        searchInput: !!searchInput,
+        panel: !!panel,
+        table: !!table,
+        rowCount: rows.length
+    };
+};
 
-/**
- * Extract searchable text from a table row based on configured fields
- * @param {HTMLElement} row - Table row element
- * @param {string[]} searchFields - Array of field names to search
- * @return {string} Combined searchable text
- */
-function extractRowSearchText(row, searchFields) {
-    const cells = row.querySelectorAll("td");
-    let text = "";
-
-    // For most tables, search all cell content for now
-    // This can be refined per entity type as needed
-    cells.forEach((cell) => {
-        text += " " + (cell.textContent || "");
-    });
-
-    return text;
-}
-
-/**
- * Extract tags from a table row
- * @param {HTMLElement} row - Table row element
- * @return {string[]} Array of tag strings
- */
-function extractRowTags(row) {
-    const tags = [];
-
-    // Look for various tag element patterns
-    const tagSelectors = [
-        "span.inline-flex.items-center.px-2.py-0\\.5.rounded.text-xs.font-medium.bg-blue-100.text-blue-800",
-        "span.inline-block.bg-blue-100.text-blue-800.text-xs.px-2.py-1.rounded-full",
-        "span.inline-flex.items-center.px-2.py-1.rounded.text-xs.bg-gray-100.text-gray-700",
-        "span.inline-flex.items-center.px-2\\.5.py-0\\.5.rounded-full.text-xs.font-medium.bg-gray-100.text-gray-700",
-        ".bg-blue-100.text-blue-800", // Broader fallback
-    ];
-
-    tagSelectors.forEach((selector) => {
-        try {
-            const elements = row.querySelectorAll(selector);
-            elements.forEach((el) => {
-                const tagText = el.textContent?.trim();
-                if (tagText && !isStatusBadge(tagText)) {
-                    tags.push(tagText);
-                }
-            });
-        } catch (e) {
-            // Ignore selector errors
-        }
-    });
-
-    return [...new Set(tags)]; // Remove duplicates
-}
-
-/**
- * Check if text content is a status badge rather than a tag
- * @param {string} text - Text to check
- * @return {boolean} True if this is a status badge
- */
-function isStatusBadge(text) {
-    const statusTerms = [
-        "active",
-        "inactive",
-        "online",
-        "offline",
-        "enabled",
-        "disabled",
-        "public",
-        "private",
-        "team",
-        "none",
-        "no tags",
-        "n/a",
-    ];
-    return statusTerms.includes(text.toLowerCase());
-}
-
-/**
- * Debounced search function
- * @param {string} entityType - Entity type
- * @param {string} searchText - Search text
- * @param {number} delay - Debounce delay in milliseconds (default 300)
- */
-function debouncedSearch(entityType, searchText, delay = 300) {
-    // Clear existing timer
-    if (SearchState.debounceTimers[entityType]) {
-        clearTimeout(SearchState.debounceTimers[entityType]);
+// Auto-fix on page load
+setTimeout(function() {
+    console.log("🔄 AUTO-FIX: Attempting to fix MCP search after page load...");
+    if (window.emergencyFixMCPSearch) {
+        window.emergencyFixMCPSearch();
     }
+}, 1000);
 
-    // Set new timer
-    SearchState.debounceTimers[entityType] = setTimeout(() => {
-        const tagFilter = safeGetElement(`${entityType}-tag-filter`);
-        const currentTags = tagFilter
-            ? tagFilter.value
-                  .split(",")
-                  .map((t) => t.trim())
-                  .filter((t) => t)
-            : [];
-
-        applyUnifiedFilters(entityType, searchText, currentTags);
-        delete SearchState.debounceTimers[entityType];
-    }, delay);
-}
-
-/**
- * Clear search input
- * @param {string} entityType - Entity type
- */
-function clearSearch(entityType) {
-    const searchInput = safeGetElement(`${entityType}-search-input`);
-    if (searchInput) {
-        searchInput.value = "";
-        // Trigger search with empty value
-        debouncedSearch(entityType, "", 0);
-    }
-}
-
-/**
- * Clear all filters for an entity type
- * @param {string} entityType - Entity type
- */
-function clearAllFilters(entityType) {
-    // Clear search
-    const searchInput = safeGetElement(`${entityType}-search-input`);
-    if (searchInput) {
-        searchInput.value = "";
-    }
-
-    // Clear tag filter
-    const tagFilter = safeGetElement(`${entityType}-tag-filter`);
-    if (tagFilter) {
-        tagFilter.value = "";
-    }
-
-    // Reset state
-    SearchState.reset(entityType);
-
-    // Apply empty filters
-    applyUnifiedFilters(entityType, "", []);
-}
-
-/**
- * Enhanced empty state display
- * @param {string} entityType - Entity type
- * @param {number} visibleCount - Number of visible items
- * @param {boolean} hasActiveFilters - Whether any filters are active
- */
-function updateUnifiedEmptyState(entityType, visibleCount, hasActiveFilters) {
-    const tableContainer = document.querySelector(
-        `#${entityType}-panel .overflow-x-auto`,
-    );
-    if (!tableContainer) {
-        return;
-    }
-
-    let emptyMessage = tableContainer.querySelector(
-        ".unified-filter-empty-message",
-    );
-
-    if (visibleCount === 0 && hasActiveFilters) {
-        if (!emptyMessage) {
-            emptyMessage = document.createElement("div");
-            emptyMessage.className =
-                "unified-filter-empty-message text-center py-12 text-gray-500 dark:text-gray-400";
-
-            emptyMessage.innerHTML = `
-                <div class="flex flex-col items-center">
-                    <svg class="w-16 h-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" 
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-                        No matching ${entityType.replace("-", " ")}
-                    </h3>
-                    <p class="text-gray-500 dark:text-gray-400 mb-4 max-w-md">
-                        No ${entityType.replace("-", " ")} found with the current search and filter criteria. 
-                        Try adjusting your search terms or clearing some filters.
-                    </p>
-                    <button onclick="clearAllFilters('${entityType}')" 
-                            class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-indigo-600 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900 dark:text-indigo-200 dark:hover:bg-indigo-800 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
-                        Clear All Filters
-                    </button>
-                </div>
-            `;
-
-            // Insert after table
-            const table = tableContainer.querySelector("table");
-            if (table) {
-                table.parentNode.insertBefore(emptyMessage, table.nextSibling);
-            } else {
-                tableContainer.appendChild(emptyMessage);
-            }
-        }
-        emptyMessage.style.display = "block";
-    } else if (emptyMessage) {
-        emptyMessage.style.display = "none";
-    }
-}
-
-/**
- * Initialize unified search and filter for a specific entity type
- * @param {string} entityType - Entity type to initialize
- */
-function initializeUnifiedSearch(entityType) {
-    try {
-        // Initialize state
-        SearchState.reset(entityType);
-
-        // Set up search input listener with debounce
-        const searchInput = safeGetElement(`${entityType}-search-input`);
-        if (searchInput) {
-            searchInput.addEventListener("input", (e) => {
-                debouncedSearch(entityType, e.target.value);
-            });
-        }
-
-        // Set up tag filter listener
-        const tagFilter = safeGetElement(`${entityType}-tag-filter`);
-        if (tagFilter) {
-            tagFilter.addEventListener("input", (e) => {
-                const tags = e.target.value
-                    .split(",")
-                    .map((t) => t.trim())
-                    .filter((t) => t);
-                const searchText = searchInput ? searchInput.value : "";
-                applyUnifiedFilters(entityType, searchText, tags);
-            });
-        }
-
-        // Update available tags
-        updateAvailableTags(entityType);
-
-        console.log(`Initialized unified search for ${entityType}`);
-    } catch (error) {
-        console.error(
-            `Error initializing unified search for ${entityType}:`,
-            error,
-        );
-    }
-}
-
-// Expose unified search functions globally
-window.applyUnifiedFilters = applyUnifiedFilters;
-window.debouncedSearch = debouncedSearch;
-window.clearSearch = clearSearch;
-window.clearAllFilters = clearAllFilters;
-window.initializeUnifiedSearch = initializeUnifiedSearch;
-
-// ===================================================================
-// UNIFIED SEARCH INITIALIZATION & INTEGRATION
-// ===================================================================
-
-/**
- * Initialize unified search for all supported entity types
- */
-function initializeAllUnifiedSearch() {
-    const entityTypes = [
-        "catalog",
-        "gateways",
-        "tools",
-        "prompts",
-        "resources",
-        "a2a-agents",
-    ];
-
-    entityTypes.forEach((entityType) => {
-        try {
-            // Only initialize if the panel exists
-            const panel = safeGetElement(`${entityType}-panel`);
-            if (panel) {
-                initializeUnifiedSearch(entityType);
-
-                // Set up tab switching listeners to refresh search state
-                const tabButton = safeGetElement(
-                    `tab-${entityType === "catalog" ? "catalog" : entityType}`,
-                );
-                if (tabButton) {
-                    tabButton.addEventListener("click", () => {
-                        // Small delay to ensure tab content is visible
-                        setTimeout(() => {
-                            // Refresh available tags
-                            updateAvailableTags(entityType);
-                            // Re-apply any active filters
-                            const searchInput = safeGetElement(
-                                `${entityType}-search-input`,
-                            );
-                            const tagFilter = safeGetElement(
-                                `${entityType}-tag-filter`,
-                            );
-                            if (searchInput || tagFilter) {
-                                const searchText = searchInput
-                                    ? searchInput.value
-                                    : "";
-                                const tags = tagFilter
-                                    ? tagFilter.value
-                                          .split(",")
-                                          .map((t) => t.trim())
-                                          .filter((t) => t)
-                                    : [];
-                                applyUnifiedFilters(
-                                    entityType,
-                                    searchText,
-                                    tags,
-                                );
-                            }
-                        }, 100);
-                    });
-                }
-            }
-        } catch (error) {
-            console.error(
-                `Error initializing unified search for ${entityType}:`,
-                error,
-            );
-        }
-    });
-
-    console.log("Initialized unified search for all entity types");
-}
-
-/**
- * Enhanced backward compatibility with existing filterServerTable function
- */
-function enhancedFilterServerTable(searchText) {
-    // Use the new unified search for Virtual Servers
-    debouncedSearch("catalog", searchText, 100);
-}
-
-/**
- * Enhanced backward compatibility with existing filterEntitiesByTags function
- */
-function enhancedFilterEntitiesByTags(entityType, tagsInput) {
-    const searchInput = safeGetElement(`${entityType}-search-input`);
-    const searchText = searchInput ? searchInput.value : "";
-    const tags = tagsInput
-        .split(",")
-        .map((tag) => tag.trim().toLowerCase())
-        .filter((tag) => tag);
-
-    // Use the new unified search
-    applyUnifiedFilters(entityType, searchText, tags);
-}
-
-/**
- * Enhanced backward compatibility with existing clearTagFilter function
- */
-function enhancedClearTagFilter(entityType) {
-    // Clear tag filter
-    const tagFilter = safeGetElement(`${entityType}-tag-filter`);
-    if (tagFilter) {
-        tagFilter.value = "";
-    }
-
-    // Keep search but clear tags
-    const searchInput = safeGetElement(`${entityType}-search-input`);
-    const searchText = searchInput ? searchInput.value : "";
-
-    applyUnifiedFilters(entityType, searchText, []);
-}
-
-// ===================================================================
-// OVERRIDE EXISTING FUNCTIONS FOR BACKWARD COMPATIBILITY
-// ===================================================================
-
-// Replace the original functions with enhanced versions
-window.filterServerTable = enhancedFilterServerTable;
-window.filterEntitiesByTags = enhancedFilterEntitiesByTags;
-window.clearTagFilter = enhancedClearTagFilter;
-
-// ===================================================================
-// INITIALIZATION ON PAGE LOAD
-// ===================================================================
-
-// Initialize when DOM is ready
-document.addEventListener("DOMContentLoaded", function () {
-    // Initialize unified search after a short delay to ensure all elements are loaded
-    setTimeout(() => {
-        initializeAllUnifiedSearch();
-    }, 500);
-});
-
-// Re-initialize when HTMX content loads (for dynamically loaded tables)
-document.addEventListener("htmx:afterSwap", function (event) {
-    // Check if this was a table update
-    const target = event.target;
-    if (target && target.id) {
-        // Extract entity type from target ID (e.g., 'tools-table' -> 'tools')
-        const entityType = target.id
-            .replace("-table", "")
-            .replace("-list-container", "");
-
-        if (
-            [
-                "catalog",
-                "gateways",
-                "tools",
-                "prompts",
-                "resources",
-                "a2a-agents",
-            ].includes(entityType)
-        ) {
-            // Re-initialize search for this entity type after HTMX content loads
-            setTimeout(() => {
-                initializeUnifiedSearch(entityType);
-            }, 100);
-        }
-    }
-});
+console.log("🔧 MCP SERVERS SEARCH DEBUG FUNCTIONS LOADED!");
+console.log("💡 Use: window.emergencyFixMCPSearch() to fix search");
+console.log("💡 Use: window.testMCPSearchManually('github') to test search");
+console.log("💡 Use: window.debugMCPSearchState() to check current state");
