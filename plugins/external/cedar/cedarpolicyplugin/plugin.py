@@ -633,7 +633,7 @@ class CedarPolicyPlugin(Plugin):
                 policy = self._yamlpolicy2text(self.cedar_config.policy)
             else:
                 logger.error(f"{CedarErrorCodes.UNSPECIFIED_POLICY.value}")
-                raise PluginError(PluginErrorModel(message=CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
+                raise PluginError(PluginErrorModel(message = CedarErrorCodes.UNSPECIFIED_POLICY.value, plugin_name="CedarPolicyPlugin"))
         if self.cedar_config.policy_lang == "custom_dsl":
             if self.cedar_config.policy:
                 policy = self._dsl2cedar(self.cedar_config.policy)
