@@ -7725,6 +7725,48 @@ function initResourceSelect(
                         );
                     }
                 }
+                // If we're in the Add Server resources container, persist selected IDs incrementally
+                else if (selectId === "associatedResources") {
+                        try {
+                            const changedEl = e.target;
+                            const changedId = changedEl.value;
+
+                            let persisted = [];
+                            const dataAttr = container.getAttribute("data-selected-resources");
+                            if (dataAttr) {
+                                try {
+                                    const parsed = JSON.parse(dataAttr);
+                                    if (Array.isArray(parsed)) persisted = parsed.slice();
+                                } catch (parseErr) {
+                                    console.error("Error parsing existing data-selected-resources:", parseErr);
+                                }
+                            } else if (Array.isArray(window._selectedAssociatedResources)) {
+                                persisted = window._selectedAssociatedResources.slice();
+                            }
+
+                            if (changedEl.checked) {
+                                if (!persisted.includes(changedId)) persisted.push(changedId);
+                            } else {
+                                persisted = persisted.filter((x) => x !== changedId);
+                            }
+
+                            const visibleChecked = Array.from(
+                                container.querySelectorAll('input[type="checkbox"]:checked'),
+                            ).map((cb) => cb.value);
+                            visibleChecked.forEach((id) => {
+                                if (!persisted.includes(id)) persisted.push(id);
+                            });
+
+                            container.setAttribute("data-selected-resources", JSON.stringify(persisted));
+                            try {
+                                window._selectedAssociatedResources = persisted.slice();
+                            } catch (err) {
+                                console.error("Error persisting window._selectedAssociatedResources:", err);
+                            }
+                        } catch (err) {
+                            console.error("Error updating data-selected-resources (incremental):", err);
+                        }
+                    }
 
                 update();
             }
@@ -8021,6 +8063,49 @@ function initPromptSelect(
                             "Error updating data-server-prompts:",
                             err,
                         );
+                    }
+                }
+
+                // If we're in the Add Server prompts container, persist selected IDs incrementally
+                else if (selectId === "associatedPrompts") {
+                    try {
+                        const changedEl = e.target;
+                        const changedId = changedEl.value;
+
+                        let persisted = [];
+                        const dataAttr = container.getAttribute("data-selected-prompts");
+                        if (dataAttr) {
+                            try {
+                                const parsed = JSON.parse(dataAttr);
+                                if (Array.isArray(parsed)) persisted = parsed.slice();
+                            } catch (parseErr) {
+                                console.error("Error parsing existing data-selected-prompts:", parseErr);
+                            }
+                        } else if (Array.isArray(window._selectedAssociatedPrompts)) {
+                            persisted = window._selectedAssociatedPrompts.slice();
+                        }
+
+                        if (changedEl.checked) {
+                            if (!persisted.includes(changedId)) persisted.push(changedId);
+                        } else {
+                            persisted = persisted.filter((x) => x !== changedId);
+                        }
+
+                        const visibleChecked = Array.from(
+                            container.querySelectorAll('input[type="checkbox"]:checked'),
+                        ).map((cb) => cb.value);
+                        visibleChecked.forEach((id) => {
+                            if (!persisted.includes(id)) persisted.push(id);
+                        });
+
+                        container.setAttribute("data-selected-prompts", JSON.stringify(persisted));
+                        try {
+                            window._selectedAssociatedPrompts = persisted.slice();
+                        } catch (err) {
+                            console.error("Error persisting window._selectedAssociatedPrompts:", err);
+                        }
+                    } catch (err) {
+                        console.error("Error updating data-selected-prompts (incremental):", err);
                     }
                 }
 
@@ -8617,6 +8702,19 @@ function reloadAssociatedItems() {
                     "[Filter Update DEBUG] Resources fetch successful, HTML length:",
                     html.length,
                 );
+                // Persist current selections to window fallback before replacing container
+                try {
+                    const currentChecked = Array.from(resourcesContainer.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+                    if (!Array.isArray(window._selectedAssociatedResources) || window._selectedAssociatedResources.length === 0) {
+                        window._selectedAssociatedResources = currentChecked.slice();
+                    } else {
+                        const merged = new Set([...(window._selectedAssociatedResources || []), ...currentChecked]);
+                        window._selectedAssociatedResources = Array.from(merged);
+                    }
+                } catch (e) {
+                    console.error("Error capturing current resource selections before reload:", e);
+                }
+
                 resourcesContainer.innerHTML = html;
                 // If HTMX is available, process the newly-inserted HTML so hx-*
                 // triggers (like the infinite-scroll 'intersect' trigger) are
@@ -8684,6 +8782,28 @@ function reloadAssociatedItems() {
                 const resClearBtn = useEditContainers
                     ? "clearAllEditResourcesBtn"
                     : "clearAllResourcesBtn";
+
+                // Before initializing, if server didn't provide attribute, restore from fallback
+                try {
+                    const dataAttr = resourcesContainer.getAttribute("data-selected-resources");
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error("Error parsing data-selected-resources:", e);
+                        }
+                    }
+
+                    if ((!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) && Array.isArray(window._selectedAssociatedResources)) {
+                        resourcesContainer.setAttribute("data-selected-resources", JSON.stringify(window._selectedAssociatedResources.slice()));
+                    } else if (Array.isArray(selectedIds) && Array.isArray(window._selectedAssociatedResources) && window._selectedAssociatedResources.length > 0) {
+                        const merged = new Set([...(selectedIds || []), ...window._selectedAssociatedResources]);
+                        resourcesContainer.setAttribute("data-selected-resources", JSON.stringify(Array.from(merged)));
+                    }
+                } catch (e) {
+                    console.error("Error restoring data-selected-resources after fetch reload:", e);
+                }
 
                 initResourceSelect(
                     resourcesContainerId,
@@ -8753,11 +8873,47 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
+        // Persist current prompt selections before HTMX replaces the container
+        try {
+            const currentCheckedPrompts = Array.from(promptsContainer.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+            if (!Array.isArray(window._selectedAssociatedPrompts) || window._selectedAssociatedPrompts.length === 0) {
+                window._selectedAssociatedPrompts = currentCheckedPrompts.slice();
+            } else {
+                const merged = new Set([...(window._selectedAssociatedPrompts || []), ...currentCheckedPrompts]);
+                window._selectedAssociatedPrompts = Array.from(merged);
+            }
+        } catch (e) {
+            console.error("Error capturing current prompt selections before reload:", e);
+        }
+
         if (window.htmx) {
             htmx.ajax("GET", promptsUrl, {
                 target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
+                try {
+                    const containerEl = document.getElementById(promptsContainerId);
+                    if (containerEl) {
+                        const existingAttr = containerEl.getAttribute("data-selected-prompts");
+                        let existingIds = null;
+                        if (existingAttr) {
+                            try {
+                                existingIds = JSON.parse(existingAttr);
+                            } catch (e) {
+                                console.error("Error parsing existing data-selected-prompts after reload:", e);
+                            }
+                        }
+
+                        if ((!existingIds || !Array.isArray(existingIds) || existingIds.length === 0) && Array.isArray(window._selectedAssociatedPrompts) && window._selectedAssociatedPrompts.length > 0) {
+                            containerEl.setAttribute("data-selected-prompts", JSON.stringify(window._selectedAssociatedPrompts.slice()));
+                        } else if (Array.isArray(existingIds) && Array.isArray(window._selectedAssociatedPrompts) && window._selectedAssociatedPrompts.length > 0) {
+                            const merged = new Set([...(existingIds || []), ...window._selectedAssociatedPrompts]);
+                            containerEl.setAttribute("data-selected-prompts", JSON.stringify(Array.from(merged)));
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error restoring data-selected-prompts after HTMX reload:", e);
+                }
                 // Re-initialize the prompt select after content is loaded
                 const pPills = useEditContainers
                     ? "selectedEditPromptsPills"
@@ -21427,6 +21583,19 @@ async function serverSideToolSearch(searchTerm) {
             );
             if (response.ok) {
                 const html = await response.text();
+                // If our container may be replaced, persist current selections
+                try {
+                    const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+                    if (!Array.isArray(window._selectedAssociatedPrompts) || window._selectedAssociatedPrompts.length === 0) {
+                        window._selectedAssociatedPrompts = currentChecked.slice();
+                    } else {
+                        const merged = new Set([...(window._selectedAssociatedPrompts || []), ...currentChecked]);
+                        window._selectedAssociatedPrompts = Array.from(merged);
+                    }
+                } catch (e) {
+                    console.error("Error capturing current prompt selections before search:", e);
+                }
+
                 container.innerHTML = html;
 
                 // If the container has been re-rendered server-side and our
@@ -21728,6 +21897,19 @@ async function serverSidePromptSearch(searchTerm) {
         return;
     }
 
+    // Persist current selections to window fallback before we replace/clear the container
+    try {
+        const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        if (!Array.isArray(window._selectedAssociatedPrompts) || window._selectedAssociatedPrompts.length === 0) {
+            window._selectedAssociatedPrompts = currentChecked.slice();
+        } else {
+            const merged = new Set([...(window._selectedAssociatedPrompts || []), ...currentChecked]);
+            window._selectedAssociatedPrompts = Array.from(merged);
+        }
+    } catch (e) {
+        console.error("Error capturing current prompt selections before search:", e);
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -21754,8 +21936,25 @@ async function serverSidePromptSearch(searchTerm) {
                     noResultsMessage.style.display = "none";
                 }
 
-                // Initialize prompt mapping if needed
-                initPromptSelect(
+                try {
+                    // Update mapping and ensure persisted selections are applied
+                    // Initialize prompt mapping if needed
+                    // If the server did not supply `data-selected-prompts`, restore from fallback
+                    const dataAttr = container.getAttribute("data-selected-prompts");
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error("Error parsing server data-selected-prompts:", e);
+                        }
+                    }
+
+                    if ((!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) && Array.isArray(window._selectedAssociatedPrompts)) {
+                        selectedIds = window._selectedAssociatedPrompts.slice();
+                    }
+
+                    initPromptSelect(
                     "associatedPrompts",
                     "selectedPromptsPills",
                     "selectedPromptsWarning",
@@ -21763,6 +21962,18 @@ async function serverSidePromptSearch(searchTerm) {
                     "selectAllPromptsBtn",
                     "clearAllPromptsBtn",
                 );
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll('input[name="associatedPrompts"]');
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) cb.checked = true;
+                        });
+                        const firstCb = container.querySelector('input[type="checkbox"]');
+                        if (firstCb) firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                    }
+                } catch (e) {
+                    console.error("Error restoring selections after loading default prompts:", e);
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
@@ -21805,6 +22016,29 @@ async function serverSidePromptSearch(searchTerm) {
                     </label>
                 `;
             });
+
+
+            // Before initializing, ensure any persisted selections are merged into the container
+            try {
+                const existingAttr = container.getAttribute("data-selected-prompts");
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error("Error parsing existing data-selected-prompts after search insert:", e);
+                    }
+                }
+
+                if ((!existingIds || !Array.isArray(existingIds) || existingIds.length === 0) && Array.isArray(window._selectedAssociatedPrompts) && window._selectedAssociatedPrompts.length > 0) {
+                    container.setAttribute("data-selected-prompts", JSON.stringify(window._selectedAssociatedPrompts.slice()));
+                } else if (Array.isArray(existingIds) && Array.isArray(window._selectedAssociatedPrompts) && window._selectedAssociatedPrompts.length > 0) {
+                    const merged = new Set([...(existingIds || []), ...window._selectedAssociatedPrompts]);
+                    container.setAttribute("data-selected-prompts", JSON.stringify(Array.from(merged)));
+                }
+            } catch (e) {
+                console.error("Error restoring data-selected-prompts attribute after inserting search results:", e);
+            }
 
             container.innerHTML = searchResultsHtml;
 
@@ -21853,6 +22087,19 @@ async function serverSideResourceSearch(searchTerm) {
         return;
     }
 
+    // Persist current selections to window fallback before we replace/clear the container
+    try {
+        const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+        if (!Array.isArray(window._selectedAssociatedResources) || window._selectedAssociatedResources.length === 0) {
+            window._selectedAssociatedResources = currentChecked.slice();
+        } else {
+            const merged = new Set([...(window._selectedAssociatedResources || []), ...currentChecked]);
+            window._selectedAssociatedResources = Array.from(merged);
+        }
+    } catch (e) {
+        console.error("Error capturing current resource selections before search:", e);
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -21872,22 +22119,66 @@ async function serverSideResourceSearch(searchTerm) {
             );
             if (response.ok) {
                 const html = await response.text();
-                container.innerHTML = html;
 
-                // Hide no results message
-                if (noResultsMessage) {
-                    noResultsMessage.style.display = "none";
+                // Persist current selections to window fallback before we replace/clear the container
+                try {
+                    const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
+                    if (!Array.isArray(window._selectedAssociatedResources) || window._selectedAssociatedResources.length === 0) {
+                        window._selectedAssociatedResources = currentChecked.slice();
+                    } else {
+                        const merged = new Set([...(window._selectedAssociatedResources || []), ...currentChecked]);
+                        window._selectedAssociatedResources = Array.from(merged);
+                    }
+                } catch (e) {
+                    console.error("Error capturing current resource selections before search:", e);
                 }
 
-                // Initialize resource mapping if needed
-                initResourceSelect(
-                    "associatedResources",
-                    "selectedResourcesPills",
-                    "selectedResourcesWarning",
-                    6,
-                    "selectAllResourcesBtn",
-                    "clearAllResourcesBtn",
-                );
+                container.innerHTML = html;
+
+                // If the container has been re-rendered server-side and our
+                // `data-selected-resources` attribute was lost, restore from the
+                // global fallback `window._selectedAssociatedResources`.
+                try {
+                    // Initialize resource mapping if needed
+                    initResourceSelect(
+                        "associatedResources",
+                        "selectedResourcesPills",
+                        "selectedResourcesWarning",
+                        6,
+                        "selectAllResourcesBtn",
+                        "clearAllResourcesBtn",
+                    );
+
+                    const dataAttr = container.getAttribute("data-selected-resources");
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error("Error parsing server data-selected-resources:", e);
+                        }
+                    }
+
+                    if ((!selectedIds || !Array.isArray(selectedIds) || selectedIds.length === 0) && Array.isArray(window._selectedAssociatedResources)) {
+                        selectedIds = window._selectedAssociatedResources.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll('input[name="associatedResources"]');
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        const firstCb = container.querySelector('input[type="checkbox"]');
+                        if (firstCb) {
+                            firstCb.dispatchEvent(new Event("change", { bubbles: true }));
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error restoring selections after loading default resources:", e);
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
@@ -21930,6 +22221,30 @@ async function serverSideResourceSearch(searchTerm) {
                     </label>
                 `;
             });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Before initializing, ensure any persisted selections are merged into the container
+            try {
+                const existingAttr = container.getAttribute("data-selected-resources");
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error("Error parsing existing data-selected-resources after search insert:", e);
+                    }
+                }
+
+                if ((!existingIds || !Array.isArray(existingIds) || existingIds.length === 0) && Array.isArray(window._selectedAssociatedResources) && window._selectedAssociatedResources.length > 0) {
+                    container.setAttribute("data-selected-resources", JSON.stringify(window._selectedAssociatedResources.slice()));
+                } else if (Array.isArray(existingIds) && Array.isArray(window._selectedAssociatedResources) && window._selectedAssociatedResources.length > 0) {
+                    const merged = new Set([...(existingIds || []), ...window._selectedAssociatedResources]);
+                    container.setAttribute("data-selected-resources", JSON.stringify(Array.from(merged)));
+                }
+            } catch (e) {
+                console.error("Error restoring data-selected-resources attribute after inserting search results:", e);
+            }
 
             container.innerHTML = searchResultsHtml;
 
