@@ -1620,7 +1620,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 > **iframe Embedding**: The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive (both are automatically synced). Options:
 > - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
 > - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only  
-> - `X_FRAME_OPTIONS=""`: Allows embedding from all sources (sets `frame-ancestors * file: http: https:`)
+> - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources (sets `frame-ancestors * file: http: https:`)
 > - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions (no headers sent)
 >
 > Modern browsers prioritize CSP `frame-ancestors` over the legacy `X-Frame-Options` header. Both are now kept in sync automatically.
