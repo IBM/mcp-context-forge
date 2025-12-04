@@ -3826,12 +3826,12 @@ async function viewResource(resourceId) {
 /**
  * SECURE: Edit Resource function with validation
  */
-async function editResource(resourceUri) {
+async function editResource(resourceId) {
     try {
-        console.log(`Editing resource: ${resourceUri}`);
+        console.log(`Editing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}`,
+            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
@@ -3888,7 +3888,7 @@ async function editResource(resourceUri) {
 
         // Set form action and populate fields with validation
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}/edit`;
+            editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}/edit`;
         }
 
         // Validate inputs
