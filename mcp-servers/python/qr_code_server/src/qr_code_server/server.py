@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 import logging
 import sys
 
@@ -14,8 +16,30 @@ logging.basicConfig(
 logger = logging.getLogger("qr_code_server")
 
 
+# Concurrency control
+_request_semaphore = asyncio.Semaphore(config.performance.max_concurrent_requests)
+_pending_requests = 0
+_max_queue_size = config.performance.max_concurrent_requests * 3
+
+
 # Initialize server
 mcp = FastMCP(name="qr-code-server", version="0.1.0")
+
+@asynccontextmanager
+async def _acquire_request_slot(request_name: str):
+    """Acquire a request slot with queue size checks."""
+    global _pending_requests
+
+    if _pending_requests >= _max_queue_size:
+        logger.warning(f"Queue full ({_pending_requests}). Rejecting {request_name}")
+        raise RuntimeError(f"Server overloaded. Max queue size ({_max_queue_size}) exceeded.")
+
+    _pending_requests += 1
+    try:
+        async with _request_semaphore:
+            yield
+    finally:
+        _pending_requests -= 1
 
 
 @mcp.tool(description="Generate QR code")
@@ -30,20 +54,24 @@ async def generate_qr_code(
     save_path: str | None = config.output.default_directory,
     return_base64: bool = False,
 ) -> str:
-    request = QRGenerationRequest(
-        data=data,
-        format=format,
-        size=size,
-        border=border,
-        error_correction=error_correction,
-        fill_color=fill_color,
-        back_color=back_color,
-        save_path=save_path,
-        return_base64=return_base64,
-    )
     try:
-        return create_qr_code(request)
+        async with _acquire_request_slot("generate_qr_code"):
+            request = QRGenerationRequest(
+                data=data,
+                format=format,
+                size=size,
+                border=border,
+                error_correction=error_correction,
+                fill_color=fill_color,
+                back_color=back_color,
+                save_path=save_path,
+                return_base64=return_base64,
+            )
+            return create_qr_code(request)
+    except RuntimeError as e:
+        return {"success": False, "error": str(e)}
     except Exception as e:
+        logger.error(f"generate_qr_code error: {e}")
         return {"success": False, "error": str(e)}
 
 
@@ -66,16 +94,20 @@ async def generate_batch_qr_codes(
     output_directory: str = "./qr_codes/",
     zip_output: bool = False
 ):
-    request = BatchQRGenerationRequest(
-        data_list=data_list,
-        size=size,
-        naming_pattern=naming_pattern,
-        output_directory=output_directory,
-        zip_output=zip_output,
-    )
     try:
-        return create_batch_qr_codes(request)
+        async with _acquire_request_slot("generate_batch_qr_codes"):
+            request = BatchQRGenerationRequest(
+                data_list=data_list,
+                size=size,
+                naming_pattern=naming_pattern,
+                output_directory=output_directory,
+                zip_output=zip_output,
+            )
+            return create_batch_qr_codes(request)
+    except RuntimeError as e:
+        return {"success": False, "error": str(e)}
     except Exception as e:
+        logger.error(f"generate_batch_qr_codes error: {e}")
         return {"success": False, "error": str(e)}
 
 
