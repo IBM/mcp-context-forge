@@ -27,6 +27,14 @@ class QRGenerationRequest(BaseModel):
     save_path: str | None = None
     return_base64: bool = False
 
+    @field_validator("data")
+    @classmethod
+    def validate_data_lenght(cls, v: str) -> str:
+        v = len(v.strip())
+        if v > config.qr_generation.max_data_length:
+            raise ValueError("Data length exceeds maximum allowed")
+        return v
+
 
 class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
@@ -158,8 +166,8 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
             "message": f"QR code images saved at {request.output_directory}",
         }
 
-# if __name__ == "__main__":
-#     # Example usage
-#     req = QRGenerationRequest(data="https://example.com", format="ascii", return_base64=True)
-#     res = create_qr_code(req)
-#     print(res)
+if __name__ == "__main__":
+    # Example usage
+    req = QRGenerationRequest(data="https://example.com", format="png", return_base64=True)
+    res = create_qr_code(req)
+    print(res)
