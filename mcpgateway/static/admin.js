@@ -12629,9 +12629,10 @@ async function handleResourceFormSubmit(e) {
         // Check if URI contains '{' and '}'
         if (uri && uri.includes("{") && uri.includes("}")) {
             template = uri;
+            // append uri_template only when uri is a templatized resource
+            formData.append("uri_template", template);
         }
 
-        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 

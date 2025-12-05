@@ -157,7 +157,8 @@ class TestResourceServicePluginIntegration:
         assert resource_create.uri_template == "greetme://morning/{name}"
 
     @pytest.mark.asyncio
-    async def test_read_resource_with_pre_fetch_hook(self,resource_service_with_plugins):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_with_pre_fetch_hook(self, mock_ssl, resource_service_with_plugins):
         """Test read_resource executes pre-fetch hook and passes correct context."""
 
         service = resource_service_with_plugins
@@ -174,6 +175,9 @@ class TestResourceServicePluginIntegration:
             text="Test content",
         )
 
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
+        
         # Mock DB row returned by scalar_one_or_none
         mock_db_row = MagicMock()
         mock_db_row.content = fake_resource_content
@@ -264,7 +268,8 @@ class TestResourceServicePluginIntegration:
         mock_manager.invoke_hook.assert_called()
 
     @pytest.mark.asyncio
-    async def test_read_resource_uri_modified_by_plugin(self, mock_db, resource_service_with_plugins):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_uri_modified_by_plugin(self, mock_ssl, mock_db, resource_service_with_plugins):
         """Test read_resource with plugin modifying URI and a mocked SQLAlchemy Session."""
 
         service = resource_service_with_plugins
@@ -283,6 +288,9 @@ class TestResourceServicePluginIntegration:
         mock_db_row.content = fake_resource_content
         mock_db_row.uri = fake_resource_content.uri
         mock_db_row.uri_template = None
+        
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
 
         # Configure scalar_one_or_none to return the mocked row
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_row
@@ -290,6 +298,7 @@ class TestResourceServicePluginIntegration:
         # Plugin modifies the URI (can return same or a different URI)
         modified_payload = MagicMock()
         modified_payload.uri = "cached://test://resource"
+        modified_payload.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
 
         async def plugin_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
             if hook_type == ResourceHookType.RESOURCE_PRE_FETCH:
@@ -317,7 +326,8 @@ class TestResourceServicePluginIntegration:
 
 
     @pytest.mark.asyncio
-    async def test_read_resource_content_filtered_by_plugin(self, resource_service_with_plugins, mock_db):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_content_filtered_by_plugin(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with content filtering by post-fetch hook."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
@@ -327,6 +337,9 @@ class TestResourceServicePluginIntegration:
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
+
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
 
         # Setup mock resource with sensitive data
         mock_resource = MagicMock()
@@ -464,12 +477,16 @@ class TestResourceServicePluginIntegration:
         assert mock_manager.invoke_hook.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_read_resource_with_template(self, resource_service_with_plugins, mock_db):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_with_template(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with template resource and plugins."""
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
+
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
 
         # Setup mock resource
         mock_resource = MagicMock()
@@ -479,6 +496,7 @@ class TestResourceServicePluginIntegration:
             uri="test://123/data",
             text="Template content for id=123",
         )
+        mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
         mock_resource.content = mock_template_content
         mock_resource.uri = "test://123/data"  # Ensure uri is set at the top level
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
@@ -495,7 +513,8 @@ class TestResourceServicePluginIntegration:
         assert mock_manager.invoke_hook.call_count >= 2  # Pre and post fetch
 
     @pytest.mark.asyncio
-    async def test_read_resource_context_propagation(self, resource_service_with_plugins, mock_db):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_context_propagation(self,mock_ssl, resource_service_with_plugins, mock_db):
         """Test context propagation from pre-fetch to post-fetch."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
@@ -506,6 +525,9 @@ class TestResourceServicePluginIntegration:
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
 
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
+
         # Setup mock resource
         mock_resource = MagicMock()
         mock_resource.content = ResourceContent(
@@ -514,6 +536,7 @@ class TestResourceServicePluginIntegration:
             uri="test://resource",
             text="Test content",
         )
+        mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
@@ -583,17 +606,22 @@ class TestResourceServicePluginIntegration:
                 assert service._plugin_manager is None  # Should fail gracefully
 
     @pytest.mark.asyncio
-    async def test_read_resource_no_request_id(self, resource_service_with_plugins, mock_db):
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_no_request_id(self, mock_ssl,resource_service_with_plugins, mock_db):
         """Test read_resource generates request_id if not provided."""
         import mcpgateway.services.resource_service as resource_service_mod
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
 
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
+        
         # Setup mock resource
         mock_resource = MagicMock()
         mock_resource.content = ResourceContent(type="resource", id="test://resource", uri="test://resource", text="Test")
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
+        mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_resource
         mock_db.get.return_value = mock_resource  # Ensure resource_db is not None
 
