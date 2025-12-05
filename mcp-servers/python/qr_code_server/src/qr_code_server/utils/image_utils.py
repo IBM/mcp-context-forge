@@ -1,15 +1,23 @@
 
+import base64
+from io import BytesIO
+import os
+import cv2
 import numpy as np
 import qrcode
 from qrcode.image.pil import PilImage
 from qrcode.image.svg import SvgImage
 from qrcode.image.base import BaseImage
 from collections.abc import Generator
+from PIL import Image
+import numpy as np
 
 
 class SaveImageError(Exception):
     pass
 
+class LoadImageError(Exception):
+    pass
 
 class ImageAscii(BaseImage):
 
@@ -101,3 +109,25 @@ def create_qr_image(
         fill_color=fill_color,
         back_color=back_color,
     )
+
+
+def load_image(image_data: str):
+    """Load an image from a file path and convert to OpenCV format."""
+
+    if os.path.isfile(image_data):
+        try:
+            img = Image.open(image_data)
+        except Exception as e:
+            raise LoadImageError(f"Failed to open image file: {image_data}") from e
+
+    else:
+        try:
+            img_bytes = base64.b64decode(image_data.strip())
+            img = Image.open(BytesIO(img_bytes))
+        except Exception as e:
+            raise LoadImageError("Invalid base64 image data") from e
+
+    if getattr(img, "is_animated", False):
+        img.seek(0)
+
+    return np.array(img.convert("L"))
