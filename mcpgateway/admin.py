@@ -5603,14 +5603,11 @@ async def admin_tools_partial_html(
     # Get paginated data from the JSON endpoint logic
     user_email = get_user_email(user)
 
+    allowed_team_ids = await get_allowed_team_ids(request)
+
     # Validate and constrain parameters
     page = max(1, page)
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
-
-    # Build base query using tool_service's team filtering logic
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
 
     # Build query
     query = select(DbTool)
@@ -5637,23 +5634,10 @@ async def admin_tools_partial_html(
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
 
-    # Build access conditions (same logic as tool_service.list_tools_for_user)
-    access_conditions = []
-
-    # 1. User's personal tools (owner_email matches)
-    access_conditions.append(DbTool.owner_email == user_email)
-
-    # 2. Team tools where user is member
-    if team_ids:
-        access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-
-    # 3. Public tools
-    access_conditions.append(DbTool.visibility == "public")
-
-    query = query.where(or_(*access_conditions))
+    query = query.where(DbTool.team_id.in_(allowed_team_ids))
 
     # Count total items - must include gateway filter for accurate count
-    count_query = select(func.count()).select_from(DbTool).where(or_(*access_conditions))  # pylint: disable=not-callable
+    count_query = select(func.count()).select_from(DbTool).where(DbTool.team_id.in_(allowed_team_ids))  # pylint: disable=not-callable
     if gateway_id:
         gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
         if gateway_ids:
