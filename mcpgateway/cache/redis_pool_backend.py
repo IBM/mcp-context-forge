@@ -177,6 +177,9 @@ class RedisPoolBackend:
         key = f"{self.prefix}state:{pool_id}"
 
         async def _save():
+            """
+            Save the pool state as a Redis hash.
+            """
             # Convert state to JSON-serializable format
             serialized_state = {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in state.items()}
 
@@ -208,6 +211,9 @@ class RedisPoolBackend:
         key = f"{self.prefix}state:{pool_id}"
 
         async def _get():
+            """
+            Retrieve the pool state as a Redis hash.
+            """
             state = await self._client.hgetall(key)
             if not state:
                 return None
@@ -240,6 +246,9 @@ class RedisPoolBackend:
         key = f"{self.prefix}state:{pool_id}"
 
         async def _delete():
+            """
+            Delete the pool state key.
+            """
             await self._client.delete(key)
             logger.debug(f"Deleted pool state for {pool_id}")
 
@@ -266,6 +275,9 @@ class RedisPoolBackend:
         lock_value = f"{asyncio.current_task().get_name()}:{datetime.now(timezone.utc).isoformat()}"
 
         async def _acquire():
+            """
+            Attempt to acquire the lock.
+            """
             if blocking_timeout is None:
                 # Non-blocking acquire
                 result = await self._client.set(lock_key, lock_value, nx=True, ex=timeout)
@@ -307,6 +319,9 @@ class RedisPoolBackend:
         lock_key = f"{self.prefix}lock:{pool_id}"
 
         async def _release():
+            """
+            Release the lock key.
+            """
             await self._client.delete(lock_key)
             logger.debug(f"Released lock for pool {pool_id}")
 
@@ -328,6 +343,9 @@ class RedisPoolBackend:
         event = {"type": event_type, "timestamp": datetime.now(timezone.utc).isoformat(), "data": data}
 
         async def _publish():
+            """
+            Publish the event to the pub/sub channel.
+            """
             await self._client.publish(f"{self.prefix}events", json.dumps(event))
             logger.debug(f"Published event: {event_type}")
 
@@ -405,6 +423,9 @@ class RedisPoolBackend:
         key = f"{self.prefix}counter:{counter_name}"
 
         async def _increment():
+            """
+            Increment the counter by the specified amount.
+            """
             value = await self._client.incrby(key, amount)
             return value
 
@@ -450,6 +471,9 @@ class RedisPoolBackend:
         key = f"{self.prefix}temp:{key_name}"
 
         async def _set():
+            """
+            Set the value with expiration.
+            """
             await self._client.setex(key, ttl, value)
 
         await self._retry_operation(_set)

@@ -216,6 +216,20 @@ def run_migrations_online() -> None:
         target_metadata.naming_convention = mariadb_naming_convention
 
         def render_item(type_, obj, _autogen_context):
+            """
+            Apply MariaDB-specific type replacements during autogenerate.
+
+            Args:
+                type_: SQLAlchemy type object.
+                    The type of the database column being processed.
+                obj: SQLAlchemy object.
+                    The SQLAlchemy object (e.g., Column) being processed.
+                _autogen_context: Autogenerate context.
+                    The Alembic autogenerate context.
+            Returns:
+                str | bool: The rendered type string for MariaDB, or False to
+                            use the default rendering.
+            """
             # UUID → String(36)
             if isinstance(type_, postgresql.UUID):
                 return "String(36)"
