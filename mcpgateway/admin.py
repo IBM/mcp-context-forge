@@ -5798,6 +5798,7 @@ async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5811,6 +5812,7 @@ async def admin_search_tools(
         q (str): Search query string to match against tool names, IDs, or descriptions
         include_inactive (bool): Whether to include inactive tools in the search results
         limit (int): Maximum number of results to return (1-1000)
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -5830,6 +5832,24 @@ async def admin_search_tools(
     team_ids = [team.id for team in user_teams]
 
     query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
+
+    # Apply gateway filter if provided. Support special sentinel 'null' to
+    # request tools with NULL gateway_id (e.g., RestTool/no gateway).
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            # Treat literal 'null' (case-insensitive) as a request for NULL gateway_id
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tool search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tool search by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tool search by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
@@ -6342,6 +6362,7 @@ async def admin_search_resources(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6355,6 +6376,7 @@ async def admin_search_resources(
         q (str): Search query string.
         include_inactive (bool): When True include resources that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6373,6 +6395,23 @@ async def admin_search_resources(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering resource search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbResource.gateway_id.is_(None))
+                LOGGER.debug("Filtering resource search by NULL gateway_id")
+            else:
+                query = query.where(DbResource.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering resource search by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbResource.is_active.is_(True))
 
@@ -6405,6 +6444,7 @@ async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6418,6 +6458,7 @@ async def admin_search_prompts(
         q (str): Search query string.
         include_inactive (bool): When True include prompts that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6436,6 +6477,23 @@ async def admin_search_prompts(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbPrompt.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompt search by NULL gateway_id")
+            else:
+                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbPrompt.is_active.is_(True))
 

@@ -21696,6 +21696,12 @@ async function serverSideToolSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // --- DOM instrumentation for debugging replacement during searches ---
     // Assign a stable debug id to the container (persists through innerHTML swaps
     // but will change if the element is replaced). Observe the parent node for
@@ -21763,11 +21769,15 @@ async function serverSideToolSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default tool list
+        // If search term is empty, reload the default tool list with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
-            );
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Tool Search] Loading default tools with URL: ${toolsUrl}`);
+            
+            const response = await fetch(toolsUrl);
             if (response.ok) {
                 const html = await response.text();
                 // If our container may be replaced, persist current selections
@@ -21849,10 +21859,14 @@ async function serverSideToolSearch(searchTerm) {
     }
 
     try {
-        // Call the new search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Tool Search] Searching tools with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -22084,6 +22098,12 @@ async function serverSidePromptSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // Persist current selections to window fallback before we replace/clear the container
     try {
         const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
@@ -22109,11 +22129,15 @@ async function serverSidePromptSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompt selector
+        // If search term is empty, reload the default prompt selector with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
-            );
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Prompt Search] Loading default prompts with URL: ${promptsUrl}`);
+            
+            const response = await fetch(promptsUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22174,9 +22198,14 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Prompt Search] Searching prompts with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -22274,6 +22303,12 @@ async function serverSideResourceSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // Persist current selections to window fallback before we replace/clear the container
     try {
         const currentChecked = Array.from(container.querySelectorAll('input[type="checkbox"]:checked')).map((cb) => cb.value);
@@ -22299,11 +22334,15 @@ async function serverSideResourceSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompt selector
+        // If search term is empty, reload the default resource selector with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
-            );
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Resource Search] Loading default resources with URL: ${resourcesUrl}`);
+            
+            const response = await fetch(resourcesUrl);
             if (response.ok) {
                 const html = await response.text();
 
@@ -22379,9 +22418,14 @@ async function serverSideResourceSearch(searchTerm) {
     }
 
     try {
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Resource Search] Searching resources with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -22480,6 +22524,12 @@ async function serverSideEditToolSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Edit Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22492,11 +22542,15 @@ async function serverSideEditToolSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default tool selector partial
+        // If search term is empty, reload the default tool selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
-            );
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Edit Tool Search] Loading default tools with URL: ${toolsUrl}`);
+            
+            const response = await fetch(toolsUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22581,10 +22635,14 @@ async function serverSideEditToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Edit Tool Search] Searching tools with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -22718,6 +22776,12 @@ async function serverSideEditPromptsSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Edit Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22730,11 +22794,15 @@ async function serverSideEditPromptsSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompts selector partial
+        // If search term is empty, reload the default prompts selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
-            );
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Edit Prompt Search] Loading default prompts with URL: ${promptsUrl}`);
+            
+            const response = await fetch(promptsUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22823,10 +22891,14 @@ async function serverSideEditPromptsSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Edit Prompt Search] Searching prompts with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -22960,6 +23032,12 @@ async function serverSideEditResourcesSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds ? getSelectedGatewayIds() : [];
+    const gatewayIdParam = selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+    
+    console.log(`[Edit Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`);
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22972,11 +23050,15 @@ async function serverSideEditResourcesSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default resources selector partial
+        // If search term is empty, reload the default resources selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
-            );
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+            
+            console.log(`[Edit Resource Search] Loading default resources with URL: ${resourcesUrl}`);
+            
+            const response = await fetch(resourcesUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -23063,10 +23145,14 @@ async function serverSideEditResourcesSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+        
+        console.log(`[Edit Resource Search] Searching resources with URL: ${searchUrl}`);
+        
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
