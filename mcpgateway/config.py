@@ -1102,6 +1102,7 @@ Disallow: /
         "sso_auto_admin_domains",
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
+        "observability_exclude_paths",
         mode="before",
     )
     @classmethod
