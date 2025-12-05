@@ -44,3 +44,26 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
 
     # case 4: output_path does not have filename
     return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")
+
+
+
+def convert_to_bytes(size_str: str) -> int:
+    """Convert a human-readable size string (e.g., '10MB', '500KB') to bytes."""
+
+    unit_factors = {
+        'B': 1,
+        'KB': 1024,
+        'MB': 1024 ** 2,
+        'GB': 1024 ** 3,
+    }
+
+    size_str = size_str.strip().upper()
+    numbers = [n for n in size_str if n.isdigit() or n == '.']
+    units = ''.join([u for u in size_str if not (u.isdigit() or u == '.' or u.isspace())])
+    if not numbers:
+        raise ValueError(f"No numeric value found in size string: '{size_str}'")
+    size_value = float(''.join(numbers))
+    unit_factor = unit_factors.get(units, 1)
+
+    return int(size_value * unit_factor)
+
