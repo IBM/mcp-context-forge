@@ -7142,7 +7142,24 @@ function initToolSelect(
                 }
             }
 
+            // Get persisted selections for Add Server mode
+            let persistedToolIds = [];
+            if (selectId === "associatedTools") {
+                const dataAttr = container.getAttribute("data-selected-tools");
+                if (dataAttr) {
+                    try {
+                        persistedToolIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error("Error parsing data-selected-tools:", e);
+                    }
+                }
+                if ((!persistedToolIds || persistedToolIds.length === 0) && Array.isArray(window._selectedAssociatedTools)) {
+                    persistedToolIds = window._selectedAssociatedTools.slice();
+                }
+            }
+
             let count = checked.length;
+            let pillsData = [];
 
             // If Select All mode is active, use the count from allToolIds
             if (
@@ -7165,34 +7182,63 @@ function initToolSelect(
             ) {
                 count = serverTools.length;
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (selectId === "associatedTools" && persistedToolIds && persistedToolIds.length > 0) {
+                count = persistedToolIds.length;
+                // Build pill data from persisted IDs using toolMapping
+                if (window.toolMapping) {
+                    persistedToolIds.forEach(id => {
+                        const toolName = window.toolMapping[id];
+                        if (toolName) {
+                            pillsData.push({ id, name: toolName });
+                        }
+                    });
+                }
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            // In edit server mode, we want to show the server tools rather than just currently checked ones
-            let pillsToDisplay = checked;
-            if (
+            // Determine which pills to display based on mode
+            if (selectId === "associatedTools" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else if (
                 isEditServerMode &&
                 serverTools &&
                 Array.isArray(serverTools) &&
                 window.toolMapping
             ) {
-                // Create a list of tools that exist both in serverTools and currently loaded tools
+                // In edit server mode, show the server tools rather than just currently checked ones
                 const allLoadedTools = Array.from(checkboxes);
-                pillsToDisplay = allLoadedTools.filter((checkbox) => {
+                const pillsToDisplay = allLoadedTools.filter((checkbox) => {
                     const toolName = window.toolMapping[checkbox.value];
                     return toolName && serverTools.includes(toolName);
                 });
+                pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
             }
-
-            pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
@@ -7516,7 +7562,6 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            // const count = checked.length;
 
             // Select All handling
             const selectAllInput = container.querySelector(
@@ -7526,7 +7571,25 @@ function initResourceSelect(
                 'input[name="allResourceIds"]',
             );
 
+            // Get persisted selections for Add Server mode
+            let persistedResourceIds = [];
+            if (selectId === "associatedResources") {
+                const dataAttr = container.getAttribute("data-selected-resources");
+                if (dataAttr) {
+                    try {
+                        persistedResourceIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error("Error parsing data-selected-resources:", e);
+                    }
+                }
+                if ((!persistedResourceIds || persistedResourceIds.length === 0) && Array.isArray(window._selectedAssociatedResources)) {
+                    persistedResourceIds = window._selectedAssociatedResources.slice();
+                }
+            }
+
             let count = checked.length;
+            let pillsData = [];
+
             if (
                 selectAllInput &&
                 selectAllInput.value === "true" &&
@@ -7539,18 +7602,44 @@ function initResourceSelect(
                     console.error("Error parsing allResourceIds:", e);
                 }
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (selectId === "associatedResources" && persistedResourceIds && persistedResourceIds.length > 0) {
+                count = persistedResourceIds.length;
+                // Build pill data from persisted IDs - find matching checkboxes or use ID as fallback
+                const checkboxMap = new Map();
+                checkboxes.forEach(cb => {
+                    checkboxMap.set(cb.value, cb.nextElementSibling?.textContent?.trim() || cb.value);
+                });
+                persistedResourceIds.forEach(id => {
+                    const name = checkboxMap.get(id) || id;
+                    pillsData.push({ id, name });
+                });
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            checked.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
+            // Determine which pills to display based on mode
+            if (selectId === "associatedResources" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            }
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
@@ -7867,7 +7956,25 @@ function initPromptSelect(
                 'input[name="allPromptIds"]',
             );
 
+            // Get persisted selections for Add Server mode
+            let persistedPromptIds = [];
+            if (selectId === "associatedPrompts") {
+                const dataAttr = container.getAttribute("data-selected-prompts");
+                if (dataAttr) {
+                    try {
+                        persistedPromptIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error("Error parsing data-selected-prompts:", e);
+                    }
+                }
+                if ((!persistedPromptIds || persistedPromptIds.length === 0) && Array.isArray(window._selectedAssociatedPrompts)) {
+                    persistedPromptIds = window._selectedAssociatedPrompts.slice();
+                }
+            }
+
             let count = checked.length;
+            let pillsData = [];
+
             if (
                 selectAllInput &&
                 selectAllInput.value === "true" &&
@@ -7880,18 +7987,44 @@ function initPromptSelect(
                     console.error("Error parsing allPromptIds:", e);
                 }
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (selectId === "associatedPrompts" && persistedPromptIds && persistedPromptIds.length > 0) {
+                count = persistedPromptIds.length;
+                // Build pill data from persisted IDs - find matching checkboxes or use ID as fallback
+                const checkboxMap = new Map();
+                checkboxes.forEach(cb => {
+                    checkboxMap.set(cb.value, cb.nextElementSibling?.textContent?.trim() || cb.value);
+                });
+                persistedPromptIds.forEach(id => {
+                    const name = checkboxMap.get(id) || id;
+                    pillsData.push({ id, name });
+                });
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            checked.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
+            // Determine which pills to display based on mode
+            if (selectId === "associatedPrompts" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            }
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
