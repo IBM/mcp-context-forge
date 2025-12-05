@@ -272,31 +272,29 @@ def get_user_email(user):
     return str(user) if user else "unknown"
 
 
-async def get_allowed_team_ids(request: Request) -> Optional[List[str]]:
-    """Helper to get allowed team IDs from request state.
+async def get_allowed_team_ids(request: Request) -> List[str]:
+    """Extract allowed team IDs from request state.
 
     Args:
         request (Request): FastAPI request object, used to extract user permissions.
 
     Returns:
-        Optional[List[str]]: List of allowed team IDs or None if not set.
+        List[str]: List of allowed team IDs for the user.
     """
-    if hasattr(request.state, "allowed_team_ids"):
-        return request.state.allowed_team_ids
-    
-    user_permissions = getattr(request.state, "user_permissions", [])
+    granted_scopes = getattr(request.state, "granted_scopes", [])
     allowed_teams: List[str] = []
 
-    if not user_permissions:
+    if not granted_scopes:
         return []
 
-    for scope in user_permissions:
+    for scope in granted_scopes:
         if scope.get("scope") == "team":
             team_id = scope.get("scope_id")
             if team_id:
                 allowed_teams.append(team_id)
 
     return allowed_teams
+
 
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
