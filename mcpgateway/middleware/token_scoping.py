@@ -63,10 +63,13 @@ class TokenScopingMiddleware:
         """
         # Get authorization header
         auth_header = request.headers.get("Authorization")
-        if not auth_header or not auth_header.startswith("Bearer "):
+        cookie = request.headers.get("Cookie")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
+        elif cookie and cookie.startswith("jwt_token="):
+                token = cookie.split("jwt_token=")[1]
+        else:
             return None
-
-        token = auth_header.split(" ", 1)[1]
 
         try:
             # Use the centralized verify_jwt_token function for consistent JWT validation
