@@ -587,7 +587,7 @@ class CommonAttributes(BaseModel):
     enabled: Optional[bool] = None
     reachable: Optional[bool] = None
     auth_type: Optional[str] = None
-    tags: Optional[list[Dict[str,str]]] = None
+    tags: Optional[list[Dict[str, str]]] = None
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = None
     created_from_ip: Optional[str] = None
