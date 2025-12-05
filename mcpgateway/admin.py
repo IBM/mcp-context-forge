@@ -62,6 +62,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
+from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
@@ -886,6 +887,7 @@ async def get_configuration_settings(
 
 
 @admin_router.get("/servers", response_model=List[ServerRead])
+@require_permission(Permissions.SERVERS_READ)
 async def admin_list_servers(
     request: Request,
     include_inactive: bool = False,
@@ -1008,6 +1010,7 @@ async def admin_list_servers(
 
 
 @admin_router.get("/servers/{server_id}", response_model=ServerRead)
+@require_permission(Permissions.SERVERS_READ)
 async def admin_get_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve server details for the admin UI.
@@ -1121,6 +1124,7 @@ async def admin_get_server(server_id: str, request: Request, db: Session = Depen
 
 
 @admin_router.post("/servers", response_model=ServerRead)
+@require_permission(Permissions.SERVERS_CREATE)
 async def admin_add_server(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """
     Add a new server via the admin UI.
@@ -1342,6 +1346,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/servers/{server_id}/edit")
+@require_permission(Permissions.SERVERS_UPDATE)
 async def admin_edit_server(
     server_id: str,
     request: Request,
@@ -1557,6 +1562,7 @@ async def admin_edit_server(
 
 
 @admin_router.post("/servers/{server_id}/toggle")
+@require_permission(Permissions.SERVERS_UPDATE)
 async def admin_toggle_server(
     server_id: str,
     request: Request,
@@ -1683,6 +1689,7 @@ async def admin_toggle_server(
 
 
 @admin_router.post("/servers/{server_id}/delete")
+@require_permission(Permissions.SERVERS_DELETE)
 async def admin_delete_server(server_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a server via the admin UI.
@@ -1782,6 +1789,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
 
 @admin_router.get("/resources", response_model=List[ResourceRead])
+@require_permission(Permissions.RESOURCES_READ)
 async def admin_list_resources(
     request: Request,
     include_inactive: bool = False,
@@ -1899,6 +1907,7 @@ async def admin_list_resources(
 
 
 @admin_router.get("/prompts", response_model=List[PromptRead])
+@require_permission(Permissions.PROMPTS_READ)
 async def admin_list_prompts(
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -2008,6 +2017,7 @@ async def admin_list_prompts(
 
 
 @admin_router.get("/gateways", response_model=List[GatewayRead])
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_list_gateways(
     request: Request,
     include_inactive: bool = False,
@@ -2122,6 +2132,7 @@ async def admin_list_gateways(
 
 
 @admin_router.get("/gateways/ids")
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_list_gateway_ids(
     request: Request,
     include_inactive: bool = False,
@@ -2154,6 +2165,7 @@ async def admin_list_gateway_ids(
 
 
 @admin_router.post("/gateways/{gateway_id}/toggle")
+@require_permission(Permissions.GATEWAYS_UPDATE)
 async def admin_toggle_gateway(
     gateway_id: str,
     request: Request,
@@ -3241,7 +3253,7 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
 
 @admin_router.get("/teams")
-@require_permission("teams.read")
+@require_permission(Permissions.TEAMS_READ)
 async def admin_list_teams(
     request: Request,
     db: Session = Depends(get_db),
@@ -3336,7 +3348,7 @@ async def admin_list_teams(
 
 
 @admin_router.post("/teams")
-@require_permission("teams.create")
+@require_permission(Permissions.TEAMS_CREATE)
 async def admin_create_team(
     request: Request,
     db: Session = Depends(get_db),
@@ -3435,7 +3447,7 @@ async def admin_create_team(
 
 
 @admin_router.get("/teams/{team_id}/members")
-@require_permission("teams.read")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_view_team_members(
     team_id: str,
     request: Request,
@@ -3682,7 +3694,7 @@ async def admin_view_team_members(
 
 
 @admin_router.get("/teams/{team_id}/edit")
-@require_permission("teams.update")
+@require_permission(Permissions.TEAMS_UPDATE)
 async def admin_get_team_edit(
     team_id: str,
     _request: Request,
@@ -3759,7 +3771,7 @@ async def admin_get_team_edit(
 
 
 @admin_router.post("/teams/{team_id}/update")
-@require_permission("teams.update")
+@require_permission(Permissions.TEAMS_UPDATE)
 async def admin_update_team(
     team_id: str,
     request: Request,
@@ -3841,7 +3853,7 @@ async def admin_update_team(
 
 
 @admin_router.delete("/teams/{team_id}")
-@require_permission("teams.delete")
+@require_permission(Permissions.TEAMS_DELETE)
 async def admin_delete_team(
     team_id: str,
     _request: Request,
@@ -3895,7 +3907,7 @@ async def admin_delete_team(
 
 
 @admin_router.post("/teams/{team_id}/add-member")
-@require_permission("teams.manage_members")  # Team write permission instead of admin user management
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)  # Team write permission instead of admin user management
 async def admin_add_team_member(
     team_id: str,
     request: Request,
@@ -3979,7 +3991,7 @@ async def admin_add_team_member(
 
 
 @admin_router.post("/teams/{team_id}/update-member-role")
-@require_permission("teams.manage_members")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_update_team_member_role(
     team_id: str,
     request: Request,
@@ -4064,7 +4076,7 @@ async def admin_update_team_member_role(
 
 
 @admin_router.post("/teams/{team_id}/remove-member")
-@require_permission("teams.manage_members")  # Team write permission instead of admin user management
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)  # Team write permission instead of admin user management
 async def admin_remove_team_member(
     team_id: str,
     request: Request,
@@ -4145,7 +4157,7 @@ async def admin_remove_team_member(
 
 
 @admin_router.post("/teams/{team_id}/leave")
-@require_permission("teams.join")  # Users who can join can also leave
+@require_permission(Permissions.TEAMS_JOIN)  # Users who can join can also leave
 async def admin_leave_team(
     team_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -4230,6 +4242,7 @@ async def admin_leave_team(
 
 
 @admin_router.post("/teams/{team_id}/join-request")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_create_join_request(
     team_id: str,
     request: Request,
@@ -4311,7 +4324,7 @@ async def admin_create_join_request(
 
 
 @admin_router.delete("/teams/{team_id}/join-request/{request_id}")
-@require_permission("teams.join")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_cancel_join_request(
     team_id: str,
     request_id: str,
@@ -4358,7 +4371,7 @@ async def admin_cancel_join_request(
 
 
 @admin_router.get("/teams/{team_id}/join-requests")
-@require_permission("teams.manage_members")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_list_join_requests(
     team_id: str,
     request: Request,
@@ -4445,7 +4458,7 @@ async def admin_list_join_requests(
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/approve")
-@require_permission("teams.manage_members")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_approve_join_request(
     team_id: str,
     request_id: str,
@@ -4504,7 +4517,7 @@ async def admin_approve_join_request(
 
 
 @admin_router.post("/teams/{team_id}/join-requests/{request_id}/reject")
-@require_permission("teams.manage_members")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_reject_join_request(
     team_id: str,
     request_id: str,
@@ -4568,7 +4581,7 @@ async def admin_reject_join_request(
 
 
 @admin_router.get("/users")
-@require_permission("admin.user_management")
+@require_permission(Permissions.TEAMS_MANAGE_MEMBERS)
 async def admin_list_users(
     request: Request,
     db: Session = Depends(get_db),
@@ -4704,7 +4717,7 @@ async def admin_list_users(
 
 
 @admin_router.post("/users")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_CREATE)
 async def admin_create_user(
     request: Request,
     db: Session = Depends(get_db),
@@ -4786,7 +4799,7 @@ async def admin_create_user(
 
 
 @admin_router.get("/users/{user_email}/edit")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_UPDATE)
 async def admin_get_user_edit(
     user_email: str,
     _request: Request,
@@ -5034,7 +5047,7 @@ async def admin_get_user_edit(
 
 
 @admin_router.post("/users/{user_email}/update")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_UPDATE)
 async def admin_update_user(
     user_email: str,
     request: Request,
@@ -5116,7 +5129,7 @@ async def admin_update_user(
 
 
 @admin_router.post("/users/{user_email}/activate")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_UPDATE)
 async def admin_activate_user(
     user_email: str,
     _request: Request,
@@ -5183,7 +5196,7 @@ async def admin_activate_user(
 
 
 @admin_router.post("/users/{user_email}/deactivate")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_UPDATE)
 async def admin_deactivate_user(
     user_email: str,
     _request: Request,
@@ -5258,7 +5271,7 @@ async def admin_deactivate_user(
 
 
 @admin_router.delete("/users/{user_email}")
-@require_permission("admin.user_management")
+@require_permission(Permissions.USERS_DELETE)
 async def admin_delete_user(
     user_email: str,
     _request: Request,
@@ -5310,7 +5323,6 @@ async def admin_delete_user(
 
 
 @admin_router.post("/users/{user_email}/force-password-change")
-@require_permission("admin.user_management")
 async def admin_force_password_change(
     user_email: str,
     _request: Request,
@@ -5440,6 +5452,7 @@ async def admin_force_password_change(
 
 
 @admin_router.get("/tools")
+@require_permission(Permissions.TOOLS_READ)
 async def admin_list_tools(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -5553,6 +5566,7 @@ async def admin_list_tools(
 
 
 @admin_router.get("/tools/partial", response_class=HTMLResponse)
+@require_permission(Permissions.TOOLS_READ)
 async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -5740,6 +5754,7 @@ async def admin_tools_partial_html(
 
 
 @admin_router.get("/tools/ids", response_class=JSONResponse)
+@require_permission(Permissions.TOOLS_READ)
 async def admin_get_all_tool_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -5803,6 +5818,7 @@ async def admin_get_all_tool_ids(
 
 
 @admin_router.get("/tools/search", response_class=JSONResponse)
+@require_permission(Permissions.TOOLS_READ)
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -5904,6 +5920,7 @@ async def admin_search_tools(
 
 
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
+@require_permission(Permissions.PROMPTS_READ)
 async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1),
@@ -6080,6 +6097,7 @@ async def admin_prompts_partial_html(
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
+@require_permission(Permissions.RESOURCES_READ)
 async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -6253,6 +6271,7 @@ async def admin_resources_partial_html(
 
 
 @admin_router.get("/prompts/ids", response_class=JSONResponse)
+@require_permission(Permissions.PROMPTS_READ)
 async def admin_get_all_prompt_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -6311,6 +6330,7 @@ async def admin_get_all_prompt_ids(
 
 
 @admin_router.get("/resources/ids", response_class=JSONResponse)
+@require_permission(Permissions.RESOURCES_READ)
 async def admin_get_all_resource_ids(
     include_inactive: bool = False,
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -6369,6 +6389,7 @@ async def admin_get_all_resource_ids(
 
 
 @admin_router.get("/resources/search", response_class=JSONResponse)
+@require_permission(Permissions.RESOURCES_READ)
 async def admin_search_resources(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -6451,6 +6472,7 @@ async def admin_search_resources(
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
+@require_permission(Permissions.PROMPTS_READ)
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -6534,6 +6556,7 @@ async def admin_search_prompts(
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
+@require_permission(Permissions.TOOLS_READ)
 async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """
     Retrieve specific tool details for the admin UI.
@@ -6639,6 +6662,7 @@ async def admin_get_tool(tool_id: str, request: Request, db: Session = Depends(g
 
 @admin_router.post("/tools/")
 @admin_router.post("/tools")
+@require_permission(Permissions.TOOLS_CREATE)
 async def admin_add_tool(
     request: Request,
     db: Session = Depends(get_db),
@@ -6868,6 +6892,7 @@ async def admin_add_tool(
 
 @admin_router.post("/tools/{tool_id}/edit/", response_model=None)
 @admin_router.post("/tools/{tool_id}/edit", response_model=None)
+@require_permission(Permissions.TOOLS_UPDATE)
 async def admin_edit_tool(
     tool_id: str,
     request: Request,
@@ -7137,6 +7162,7 @@ async def admin_edit_tool(
 
 
 @admin_router.post("/tools/{tool_id}/delete")
+@require_permission(Permissions.TOOLS_DELETE)
 async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a tool via the admin UI.
@@ -7238,6 +7264,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
 
 @admin_router.post("/tools/{tool_id}/toggle")
+@require_permission(Permissions.TOOLS_UPDATE)
 async def admin_toggle_tool(
     tool_id: str,
     request: Request,
@@ -7365,7 +7392,7 @@ async def admin_toggle_tool(
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
-@require_permission("gateways.read")
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get gateway details for the admin UI.
 
@@ -7457,7 +7484,7 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
 
 
 @admin_router.post("/gateways")
-@require_permission("gateways.create")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def admin_add_gateway(request: Request, db: Session = Depends(get_db), user: dict[str, Any] = Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a gateway via the admin UI.
 
@@ -7793,6 +7820,7 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
 @admin_router.post("/gateways/{gateway_id}/edit")
+@require_permission(Permissions.GATEWAYS_UPDATE)
 async def admin_edit_gateway(
     gateway_id: str,
     request: Request,
@@ -8062,6 +8090,7 @@ async def admin_edit_gateway(
 
 
 @admin_router.post("/gateways/{gateway_id}/delete")
+@require_permission(Permissions.GATEWAYS_DELETE)
 async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a gateway via the admin UI.
@@ -8244,6 +8273,7 @@ async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), 
 
 
 @admin_router.get("/resources/{resource_id}")
+@require_permission(Permissions.RESOURCES_READ)
 async def admin_get_resource(resource_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
@@ -8346,6 +8376,7 @@ async def admin_get_resource(resource_id: int, request: Request, db: Session = D
 
 
 @admin_router.post("/resources")
+@require_permission(Permissions.RESOURCES_CREATE)
 async def admin_add_resource(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Response:
     """
     Add a resource via the admin UI.
@@ -8482,6 +8513,7 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
 
 
 @admin_router.post("/resources/{resource_id}/edit")
+@require_permission(Permissions.RESOURCES_UPDATE)
 async def admin_edit_resource(
     resource_id: str,
     request: Request,
@@ -8627,6 +8659,7 @@ async def admin_edit_resource(
 
 
 @admin_router.post("/resources/{resource_id}/delete")
+@require_permission(Permissions.RESOURCES_DELETE)
 async def admin_delete_resource(resource_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a resource via the admin UI.
@@ -8711,6 +8744,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
 
 @admin_router.post("/resources/{resource_id}/toggle")
+@require_permission(Permissions.RESOURCES_UPDATE)
 async def admin_toggle_resource(
     resource_id: str,
     request: Request,
@@ -8837,6 +8871,7 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{prompt_id}")
+@require_permission(Permissions.PROMPTS_READ)
 async def admin_get_prompt(prompt_id: int, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
@@ -8940,6 +8975,7 @@ async def admin_get_prompt(prompt_id: int, request: Request, db: Session = Depen
 
 
 @admin_router.post("/prompts")
+@require_permission(Permissions.PROMPTS_CREATE)
 async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> JSONResponse:
     """Add a prompt via the admin UI.
 
@@ -9054,6 +9090,7 @@ async def admin_add_prompt(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.post("/prompts/{prompt_id}/edit")
+@require_permission(Permissions.PROMPTS_UPDATE)
 async def admin_edit_prompt(
     prompt_id: str,
     request: Request,
@@ -9186,6 +9223,7 @@ async def admin_edit_prompt(
 
 
 @admin_router.post("/prompts/{prompt_id}/delete")
+@require_permission(Permissions.PROMPTS_DELETE)
 async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """
     Delete a prompt via the admin UI.
@@ -9269,6 +9307,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
+@require_permission(Permissions.PROMPTS_UPDATE)
 async def admin_toggle_prompt(
     prompt_id: str,
     request: Request,
@@ -9556,6 +9595,7 @@ MetricsDict = Dict[str, Union[ToolMetrics, ResourceMetrics, ServerMetrics, Promp
 
 
 @admin_router.get("/metrics")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_aggregated_metrics(
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -9595,6 +9635,7 @@ async def get_aggregated_metrics(
 
 
 @admin_router.get("/metrics/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_metrics_partial_html(
     request: Request,
     entity_type: str = Query("tools", description="Entity type: tools, resources, prompts, or servers"),
@@ -9676,6 +9717,7 @@ async def admin_metrics_partial_html(
 
 
 @admin_router.post("/metrics/reset", response_model=Dict[str, object])
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, object]:
     """
     Reset all metrics for tools, resources, servers, and prompts.
@@ -9726,6 +9768,7 @@ async def admin_reset_metrics(db: Session = Depends(get_db), user=Depends(get_cu
 
 
 @admin_router.post("/gateways/test", response_model=GatewayTestResponse)
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str] = Query(None), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> GatewayTestResponse:
     """
     Test a gateway by sending a request to its URL.
@@ -10006,6 +10049,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
 
 # Event Streaming via SSE to the Admin UI
 @admin_router.get("/events")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_events(request: Request, _user=Depends(get_current_user_with_permissions)):
     """
     Stream admin events from all services via SSE (Server-Sent Events).
@@ -10248,6 +10292,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
 
 @admin_router.get("/tags", response_model=List[Dict[str, Any]])
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_list_tags(
     entity_types: Optional[str] = None,
     include_entities: bool = False,
@@ -10328,6 +10373,7 @@ async def admin_list_tags(
 
 @admin_router.post("/tools/import/")
 @admin_router.post("/tools/import")
+@require_permission(Permissions.TOOLS_CREATE)
 @rate_limit(requests_per_minute=settings.mcpgateway_bulk_import_rate_limit)
 async def admin_import_tools(
     request: Request,
@@ -10494,6 +10540,7 @@ async def admin_import_tools(
 
 
 @admin_router.get("/logs")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_get_logs(
     entity_type: Optional[str] = None,
     entity_id: Optional[str] = None,
@@ -10584,6 +10631,7 @@ async def admin_get_logs(
 
 
 @admin_router.get("/logs/stream")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_stream_logs(
     request: Request,
     entity_type: Optional[str] = None,
@@ -10670,6 +10718,7 @@ async def admin_stream_logs(
 
 
 @admin_router.get("/logs/file")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_get_log_file(
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
@@ -10790,6 +10839,7 @@ async def admin_get_log_file(
 
 
 @admin_router.get("/logs/export")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_export_logs(
     export_format: str = Query("json", alias="format"),
     entity_type: Optional[str] = None,
@@ -10919,6 +10969,7 @@ async def admin_export_logs(
 
 
 @admin_router.get("/export/configuration")
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_export_configuration(
     request: Request,  # pylint: disable=unused-argument
     types: Optional[str] = None,
@@ -11005,6 +11056,7 @@ async def admin_export_configuration(
 
 
 @admin_router.post("/export/selective")
+@require_permission(Permissions.GATEWAYS_READ)
 async def admin_export_selective(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Export selected entities via Admin UI with entity selection.
@@ -11068,6 +11120,7 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
 
 
 @admin_router.post("/import/preview")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def admin_import_preview(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Preview import file to show available items for selective import.
@@ -11121,6 +11174,7 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
 
 
 @admin_router.post("/import/configuration")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def admin_import_configuration(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """
     Import configuration via Admin UI.
@@ -11184,6 +11238,7 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
 
 
 @admin_router.get("/import/status/{import_id}")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def admin_get_import_status(import_id: str, user=Depends(get_current_user_with_permissions)):
     """Get import status via Admin UI.
 
@@ -11207,6 +11262,7 @@ async def admin_get_import_status(import_id: str, user=Depends(get_current_user_
 
 
 @admin_router.get("/import/status")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def admin_list_import_statuses(user=Depends(get_current_user_with_permissions)):
     """List all import statuses via Admin UI.
 
@@ -11228,6 +11284,7 @@ async def admin_list_import_statuses(user=Depends(get_current_user_with_permissi
 
 
 @admin_router.get("/a2a/{agent_id}", response_model=A2AAgentRead)
+@require_permission(Permissions.AGENTS_READ)
 async def admin_get_agent(
     agent_id: str,
     request: Request,
@@ -11330,6 +11387,7 @@ async def admin_get_agent(
 
 
 @admin_router.get("/a2a")
+@require_permission(Permissions.AGENTS_READ)
 async def admin_list_a2a_agents(
     request: Request,
     include_inactive: bool = False,
@@ -11438,6 +11496,7 @@ async def admin_list_a2a_agents(
 
 
 @admin_router.post("/a2a")
+@require_permission(Permissions.AGENTS_CREATE)
 async def admin_add_a2a_agent(
     request: Request,
     db: Session = Depends(get_db),
@@ -11647,6 +11706,7 @@ async def admin_add_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/edit")
+@require_permission(Permissions.AGENTS_UPDATE)
 async def admin_edit_a2a_agent(
     agent_id: str,
     request: Request,
@@ -11933,6 +11993,7 @@ async def admin_edit_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/toggle")
+@require_permission(Permissions.AGENTS_UPDATE)
 async def admin_toggle_a2a_agent(
     agent_id: str,
     request: Request,
@@ -11993,6 +12054,7 @@ async def admin_toggle_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
+@require_permission(Permissions.AGENTS_DELETE)
 async def admin_delete_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -12043,6 +12105,7 @@ async def admin_delete_a2a_agent(
 
 
 @admin_router.post("/a2a/{agent_id}/test")
+@require_permission(Permissions.AGENTS_EXECUTE)
 async def admin_test_a2a_agent(
     agent_id: str,
     request: Request,  # pylint: disable=unused-argument
@@ -12105,6 +12168,7 @@ async def admin_test_a2a_agent(
 
 
 @admin_router.get("/grpc", response_model=List[GrpcServiceRead])
+@require_permission(Permissions.GRPC_READ)
 async def admin_list_grpc_services(
     include_inactive: bool = False,
     team_id: Optional[str] = Query(None),
@@ -12133,6 +12197,7 @@ async def admin_list_grpc_services(
 
 
 @admin_router.post("/grpc")
+@require_permission(Permissions.GRPC_CREATE)
 async def admin_create_grpc_service(
     service: GrpcServiceCreate,
     request: Request,
@@ -12169,6 +12234,7 @@ async def admin_create_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}", response_model=GrpcServiceRead)
+@require_permission(Permissions.GRPC_READ)
 async def admin_get_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -12198,6 +12264,7 @@ async def admin_get_grpc_service(
 
 
 @admin_router.put("/grpc/{service_id}")
+@require_permission(Permissions.GRPC_UPDATE)
 async def admin_update_grpc_service(
     service_id: str,
     service: GrpcServiceUpdate,
@@ -12238,6 +12305,7 @@ async def admin_update_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/toggle")
+@require_permission(Permissions.GRPC_UPDATE)
 async def admin_toggle_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -12268,6 +12336,7 @@ async def admin_toggle_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/delete")
+@require_permission(Permissions.GRPC_DELETE)
 async def admin_delete_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -12297,6 +12366,7 @@ async def admin_delete_grpc_service(
 
 
 @admin_router.post("/grpc/{service_id}/reflect")
+@require_permission(Permissions.GRPC_READ)
 async def admin_reflect_grpc_service(
     service_id: str,
     db: Session = Depends(get_db),
@@ -12329,6 +12399,7 @@ async def admin_reflect_grpc_service(
 
 
 @admin_router.get("/grpc/{service_id}/methods")
+@require_permission(Permissions.GRPC_READ)
 async def admin_get_grpc_methods(
     service_id: str,
     db: Session = Depends(get_db),
@@ -12360,6 +12431,7 @@ async def admin_get_grpc_methods(
 # Team-scoped resource section endpoints
 @admin_router.get("/sections/tools")
 @require_permission("admin")
+@require_permission(Permissions.TOOLS_READ)
 async def get_tools_section(
     request: Request,
     team_id: Optional[str] = None,
@@ -12413,6 +12485,7 @@ async def get_tools_section(
 
 @admin_router.get("/sections/resources")
 @require_permission("admin")
+@require_permission(Permissions.RESOURCES_READ)
 async def get_resources_section(
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -12468,6 +12541,7 @@ async def get_resources_section(
 
 @admin_router.get("/sections/prompts")
 @require_permission("admin")
+@require_permission(Permissions.PROMPTS_READ)
 async def get_prompts_section(
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -12524,6 +12598,7 @@ async def get_prompts_section(
 
 @admin_router.get("/sections/servers")
 @require_permission("admin")
+@require_permission(Permissions.SERVERS_READ)
 async def get_servers_section(
     team_id: Optional[str] = None,
     include_inactive: bool = False,
@@ -12580,6 +12655,7 @@ async def get_servers_section(
 
 @admin_router.get("/sections/gateways")
 @require_permission("admin")
+@require_permission(Permissions.GATEWAYS_READ)
 async def get_gateways_section(
     request: Request,
     team_id: Optional[str] = None,
@@ -12647,6 +12723,7 @@ async def get_gateways_section(
 
 
 @admin_router.get("/plugins/partial")
+@require_permission(Permissions.PLUGINS_READ)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
     """Render the plugins partial HTML template.
 
@@ -12696,6 +12773,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
 
 
 @admin_router.get("/plugins", response_model=PluginListResponse)
+@require_permission(Permissions.PLUGINS_READ)
 async def list_plugins(
     request: Request,
     search: Optional[str] = None,
@@ -12777,6 +12855,7 @@ async def list_plugins(
 
 
 @admin_router.get("/plugins/stats", response_model=PluginStatsResponse)
+@require_permission(Permissions.PLUGINS_READ)
 async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginStatsResponse:  # pylint: disable=unused-argument
     """Get plugin statistics.
 
@@ -12837,6 +12916,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
 
 
 @admin_router.get("/plugins/{name}", response_model=PluginDetail)
+@require_permission(Permissions.PLUGINS_READ)
 async def get_plugin_details(name: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> PluginDetail:  # pylint: disable=unused-argument
     """Get detailed information about a specific plugin.
 
@@ -12925,6 +13005,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
 
 
 @admin_router.get("/mcp-registry/servers", response_model=CatalogListResponse)
+@require_permission(Permissions.CATALOG_READ)
 async def list_catalog_servers(
     _request: Request,
     category: Optional[str] = None,
@@ -12980,7 +13061,7 @@ async def list_catalog_servers(
 
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
-@require_permission("servers.create")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def register_catalog_server(
     server_id: str,
     request: Optional[CatalogServerRegisterRequest] = None,
@@ -13008,6 +13089,7 @@ async def register_catalog_server(
 
 
 @admin_router.get("/mcp-registry/{server_id}/status", response_model=CatalogServerStatusResponse)
+@require_permission(Permissions.CATALOG_READ)
 async def check_catalog_server_status(
     server_id: str,
     _db: Session = Depends(get_db),
@@ -13033,7 +13115,7 @@ async def check_catalog_server_status(
 
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
-@require_permission("servers.create")
+@require_permission(Permissions.GATEWAYS_CREATE)
 async def bulk_register_catalog_servers(
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
@@ -13059,6 +13141,7 @@ async def bulk_register_catalog_servers(
 
 
 @admin_router.get("/mcp-registry/partial")
+@require_permission(Permissions.CATALOG_READ)
 async def catalog_partial(
     request: Request,
     category: Optional[str] = None,
@@ -13155,6 +13238,7 @@ async def catalog_partial(
 
 
 @admin_router.get("/system/stats")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_system_stats(
     request: Request,
     db: Session = Depends(get_db),
@@ -13220,6 +13304,7 @@ async def get_system_stats(
 
 
 @admin_router.get("/support-bundle/generate")
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def admin_generate_support_bundle(
     log_lines: int = Query(default=1000, description="Number of log lines to include"),
     include_logs: bool = Query(default=True, description="Include log files"),
@@ -13307,6 +13392,7 @@ async def admin_generate_support_bundle(
 
 
 @admin_router.get("/observability/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the observability dashboard partial.
 
@@ -13322,6 +13408,7 @@ async def get_observability_partial(request: Request, _user=Depends(get_current_
 
 
 @admin_router.get("/observability/metrics/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions)):
     """Render the advanced metrics dashboard partial.
 
@@ -13337,6 +13424,7 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
 
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions)):
     """Get observability statistics for the dashboard.
 
@@ -13375,6 +13463,7 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_traces(
     request: Request,
     time_range: str = Query("24h"),
@@ -13469,6 +13558,7 @@ async def get_observability_traces(
 
 
 @admin_router.get("/observability/trace/{trace_id}", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_trace_detail(request: Request, trace_id: str, _user=Depends(get_current_user_with_permissions)):
     """Get detailed trace information with spans.
 
@@ -13497,6 +13587,7 @@ async def get_observability_trace_detail(request: Request, trace_id: str, _user=
 
 
 @admin_router.post("/observability/queries", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def save_observability_query(
     request: Request,  # pylint: disable=unused-argument
     name: str = Body(..., description="Name for the saved query"),
@@ -13543,6 +13634,7 @@ async def save_observability_query(
 
 
 @admin_router.get("/observability/queries", response_model=list)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def list_observability_queries(request: Request, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """List saved observability queries for the current user.
 
@@ -13586,6 +13678,7 @@ async def list_observability_queries(request: Request, user=Depends(get_current_
 
 
 @admin_router.get("/observability/queries/{query_id}", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Get a specific saved query by ID.
 
@@ -13628,6 +13721,7 @@ async def get_observability_query(request: Request, query_id: int, user=Depends(
 
 
 @admin_router.put("/observability/queries/{query_id}", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def update_observability_query(
     request: Request,  # pylint: disable=unused-argument
     query_id: int,
@@ -13696,6 +13790,7 @@ async def update_observability_query(
 
 
 @admin_router.delete("/observability/queries/{query_id}", status_code=204)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def delete_observability_query(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Delete a saved query.
 
@@ -13724,6 +13819,7 @@ async def delete_observability_query(request: Request, query_id: int, user=Depen
 
 
 @admin_router.post("/observability/queries/{query_id}/use", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def track_query_usage(request: Request, query_id: int, user=Depends(get_current_user_with_permissions)):  # pylint: disable=unused-argument
     """Track usage of a saved query (increments use count and updates last_used_at).
 
@@ -13769,6 +13865,7 @@ async def track_query_usage(request: Request, query_id: int, user=Depends(get_cu
 
 
 @admin_router.get("/observability/metrics/percentiles", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_latency_percentiles(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -13845,6 +13942,7 @@ async def get_latency_percentiles(
 
 
 @admin_router.get("/observability/metrics/timeseries", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_timeseries_metrics(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -13920,6 +14018,7 @@ async def get_timeseries_metrics(
 
 
 @admin_router.get("/observability/metrics/top-slow", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_top_slow_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -13982,6 +14081,7 @@ async def get_top_slow_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-volume", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_top_volume_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14042,6 +14142,7 @@ async def get_top_volume_endpoints(
 
 
 @admin_router.get("/observability/metrics/top-errors", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_top_error_endpoints(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14105,6 +14206,7 @@ async def get_top_error_endpoints(
 
 
 @admin_router.get("/observability/metrics/heatmap", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_latency_heatmap(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14194,6 +14296,7 @@ async def get_latency_heatmap(
 
 
 @admin_router.get("/observability/tools/usage", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_tool_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14257,6 +14360,7 @@ async def get_tool_usage(
 
 
 @admin_router.get("/observability/tools/performance", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_tool_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14349,6 +14453,7 @@ async def get_tool_performance(
 
 
 @admin_router.get("/observability/tools/errors", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_tool_errors(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14411,6 +14516,7 @@ async def get_tool_errors(
 
 
 @admin_router.get("/observability/tools/chains", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_tool_chains(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14481,6 +14587,7 @@ async def get_tool_chains(
 
 
 @admin_router.get("/observability/tools/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_tools_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -14510,6 +14617,7 @@ async def get_tools_partial(
 
 
 @admin_router.get("/observability/prompts/usage", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_prompt_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14573,6 +14681,7 @@ async def get_prompt_usage(
 
 
 @admin_router.get("/observability/prompts/performance", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_prompt_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14665,6 +14774,7 @@ async def get_prompt_performance(
 
 
 @admin_router.get("/observability/prompts/errors", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_prompts_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -14719,6 +14829,7 @@ async def get_prompts_errors(
 
 
 @admin_router.get("/observability/prompts/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_prompts_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),
@@ -14748,6 +14859,7 @@ async def get_prompts_partial(
 
 
 @admin_router.get("/observability/resources/usage", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_resource_usage(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14811,6 +14923,7 @@ async def get_resource_usage(
 
 
 @admin_router.get("/observability/resources/performance", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_resource_performance(
     request: Request,  # pylint: disable=unused-argument
     hours: int = Query(24, ge=1, le=168, description="Time range in hours"),
@@ -14903,6 +15016,7 @@ async def get_resource_performance(
 
 
 @admin_router.get("/observability/resources/errors", response_model=dict)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_resources_errors(
     hours: int = Query(24, description="Time range in hours"),
     limit: int = Query(20, description="Maximum number of results"),
@@ -14957,6 +15071,7 @@ async def get_resources_errors(
 
 
 @admin_router.get("/observability/resources/partial", response_class=HTMLResponse)
+@require_permission(Permissions.ADMIN_SYSTEM_CONFIG)
 async def get_resources_partial(
     request: Request,
     _user=Depends(get_current_user_with_permissions),

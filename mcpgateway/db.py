@@ -476,6 +476,24 @@ class Permissions:
     AGENTS_DELETE = "agents.delete"
     AGENTS_EXECUTE = "agents.execute"
 
+    # gRPC permissions
+    GRPC_CREATE = "grpc.create"
+    GRPC_READ = "grpc.read"
+    GRPC_UPDATE = "grpc.update"
+    GRPC_DELETE = "grpc.delete"
+
+    # Plugin permissions
+    PLUGINS_CREATE = "plugins.create"
+    PLUGINS_READ = "plugins.read"
+    PLUGINS_UPDATE = "plugins.update"
+    PLUGINS_DELETE = "plugins.delete"
+
+    # Catalog permissions
+    CATALOG_CREATE = "catalog.create"
+    CATALOG_READ = "catalog.read"
+    CATALOG_UPDATE = "catalog.update"
+    CATALOG_DELETE = "catalog.delete"
+
     # Token permissions
     TOKENS_CREATE = "tokens.create"
     TOKENS_READ = "tokens.read"
