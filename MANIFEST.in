@@ -200,3 +200,12 @@ exclude plugins/external/llmguard/Containerfile
 exclude plugins/external/llmguard/MANIFEST.in
 exclude plugins/external/llmguard/pyproject.toml
 exclude plugins/external/llmguard/run-server.sh
+
+# Exclude cedar
+
+exclude plugins/external/cedar/.dockerignore
+exclude plugins/external/cedar/.env.template
+exclude plugins/external/cedar/.ruff.toml
+exclude plugins/external/cedar/Containerfile
+exclude plugins/external/cedar/MANIFEST.in
+exclude plugins/external/cedar/pyproject.toml

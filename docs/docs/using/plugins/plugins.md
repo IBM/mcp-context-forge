@@ -104,6 +104,7 @@ Plugins for enforcing custom policies and business rules.
 | Plugin | Type | Description |
 |--------|------|-------------|
 | [OPA Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/opa) | External | Enforces Rego policies on tool invocations via an OPA server. Allows selective policy application per tool with context injection and customizable policy endpoints |
+| [Cedar (RBAC) Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/cedar) | External | Enforces RBAC-based policies on MCP servers using Cedar (leveraging the cedarpy library) or a custom DSL, for local evaluation with flexible configuration and output redaction. |
 
 ## Plugin Types
 
