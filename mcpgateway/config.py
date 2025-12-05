@@ -208,6 +208,24 @@ class Settings(BaseSettings):
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
+
+    # Security Validation & Sanitization
+    experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
+    validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
+    sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
+    allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
+    max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
+    max_param_length: int = Field(default=10000, description="Maximum parameter length")
+    dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
+            r"\.\.[\\/]",  # Path traversal
+            r"[\x00-\x1f\x7f-\x9f]",  # Control characters
+        ],
+        description="Regex patterns for dangerous input",
+    )
+
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
     sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
 
@@ -428,6 +446,34 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
+    @field_validator("allowed_roots", mode="before")
+    @classmethod
+    def parse_allowed_roots(cls, v):
+        """Parse allowed roots from environment variable or config value.
+
+        Args:
+            v: The input value to parse
+
+        Returns:
+            list: Parsed list of allowed root paths
+        """
+        if isinstance(v, str):
+            # Support both JSON array and comma-separated values
+            v = v.strip()
+            if not v:
+                return []
+            # Try JSON first
+            try:
+                loaded = json.loads(v)
+                if isinstance(loaded, list):
+                    return loaded
+            except json.JSONDecodeError:
+                # Not a valid JSON array → fallback to comma-separated parsing
+                pass
+            # Fallback to comma-split
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod

@@ -76,6 +76,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.well_known import router as well_known_router
@@ -1153,6 +1154,13 @@ else:
 
 # Add security headers middleware
 app.add_middleware(SecurityHeadersMiddleware)
+
+# Add validation middleware if explicitly enabled
+if getattr(settings, "validation_middleware_enabled", False):
+    app.add_middleware(ValidationMiddleware)
+    logger.info("🔒 Input validation and output sanitization middleware enabled")
+else:
+    logger.info("🔒 Input validation and output sanitization middleware disabled")
 
 # Add MCP Protocol Version validation middleware (validates MCP-Protocol-Version header)
 app.add_middleware(MCPProtocolVersionMiddleware)
