@@ -10,13 +10,11 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
     """
     Return a resolved file path for saving output.
 
-    - If output_path ends with os.sep, or is dir treat it as a directory.
+    - If output_path ends with os.sep or is dir treat it as a directory.
     - If output_path includes a filename:
-        - return it unchanged when it already has an extension.
-        - otherwise append the given file_extension.
+        - return it unchanged when it already has the correct extension.
     - If no filename is provided, use DEFAULT_FILE_NAME.
     The function will attempt to create the target directory.
-    file_extension should not include a leading dot.
     """
 
     filename = ""
@@ -39,12 +37,12 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
         logger.error("Error creating output folder '%s': %s", base, e)
         # img.save will handle the error
 
-    # case 2: output_path has file extension
-    if ext:
+    # case 2: output file has correct extension, keep it
+    if ext == f".{file_extension}":
         return output_path
-    # case 3: output_path has filename without extension
+    # case 3: add extension to the filename
     elif filename:
-        return os.path.join(base, f"{filename}.{file_extension}")
+        return os.path.join(base, f"{filename.rstrip(".")}.{file_extension}")
 
     # case 4: output_path does not have filename
     return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")

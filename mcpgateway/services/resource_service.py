@@ -25,11 +25,16 @@ from datetime import datetime, timezone
 import mimetypes
 import os
 import re
+import ssl
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
+import httpx
+from mcp import ClientSession
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 import parse
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -39,6 +44,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric
 from mcpgateway.db import ResourceSubscription as DbSubscription
@@ -47,10 +53,13 @@ from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
+from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
 try:
@@ -115,6 +124,7 @@ class ResourceService:
         """Initialize the resource service."""
         self._event_service = EventService(channel_name="mcpgateway:resource_events")
         self._template_cache: Dict[str, ResourceTemplate] = {}
+        self.oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
 
         # Initialize plugin manager if plugins are enabled in settings
         self._plugin_manager = None
@@ -672,6 +682,423 @@ class ResourceService:
         db.add(metric)
         db.commit()
 
+    async def _record_invoke_resource_metric(self, db: Session, resource_id: str, start_time: float, success: bool, error_message: Optional[str]) -> None:
+        """
+        Records a metric for invoking resource.
+
+        Args:
+            db: Database Session
+            resource_id: unique identifier to access & invoke resource
+            start_time: Monotonic start time of the access
+            success: True if successful, False otherwise
+            error_message: Error message if failed, None otherwise
+        """
+        end_time = time.monotonic()
+        response_time = end_time - start_time
+
+        metric = ResourceMetric(
+            resource_id=resource_id,
+            response_time=response_time,
+            is_success=success,
+            error_message=error_message,
+        )
+        db.add(metric)
+        db.commit()
+
+    def create_ssl_context(self, ca_certificate: str) -> ssl.SSLContext:
+        """Create an SSL context with the provided CA certificate.
+
+        Args:
+            ca_certificate: CA certificate in PEM format
+
+        Returns:
+            ssl.SSLContext: Configured SSL context
+        """
+        ctx = ssl.create_default_context()
+        ctx.load_verify_locations(cadata=ca_certificate)
+        return ctx
+
+    async def invoke_resource(self, db: Session, resource_id: str, resource_uri: str, resource_template_uri: Optional[str] = None) -> Any:
+        """
+        Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
+
+        This method determines the correct URI to invoke, loads the associated resource
+        and gateway from the database, validates certificates if applicable, prepares
+        authentication headers (OAuth, header-based, or none), and then connects to
+        the gateway to read the resource using the appropriate transport.
+
+        The function supports:
+        - CA certificate validation / SSL context creation
+        - OAuth client-credentials and authorization-code flow
+        - Header-based auth
+        - SSE transport gateways
+        - StreamableHTTP transport gateways
+
+        Args:
+            db (Session):
+                SQLAlchemy session for retrieving resource and gateway information.
+            resource_id (str):
+                ID of the resource to invoke.
+            resource_uri (str):
+                Direct resource URI configured for the resource.
+            resource_template_uri (Optional[str]):
+                URI from the template. Overrides `resource_uri` when provided.
+
+        Returns:
+            Any: The text content returned by the remote resource, or ``None`` if the
+            gateway could not be contacted or an error occurred.
+
+        Raises:
+            Exception: Any unhandled internal errors (e.g., DB issues).
+
+        ---
+        Doctest Examples
+        ----------------
+
+        >>> class FakeDB:
+        ...     "Simple DB stub returning fake resource and gateway rows."
+        ...     def execute(self, query):
+        ...         class Result:
+        ...             def scalar_one_or_none(self):
+        ...                 # Return fake objects with the needed attributes
+        ...                 class FakeResource:
+        ...                     id = "res123"
+        ...                     name = "Demo Resource"
+        ...                     gateway_id = "gw1"
+        ...                 return FakeResource()
+        ...         return Result()
+
+        >>> class FakeGateway:
+        ...     id = "gw1"
+        ...     name = "Fake Gateway"
+        ...     url = "https://fake.gateway"
+        ...     ca_certificate = None
+        ...     ca_certificate_sig = None
+        ...     transport = "sse"
+        ...     auth_type = None
+        ...     auth_value = {}
+
+        >>> # Monkeypatch the DB lookup for gateway
+        >>> def fake_execute_gateway(self, query):
+        ...     class Result:
+        ...         def scalar_one_or_none(self_inner):
+        ...             return FakeGateway()
+        ...     return Result()
+
+        >>> FakeDB.execute_gateway = fake_execute_gateway
+
+        >>> class FakeService:
+        ...     "Service stub replacing network calls with predictable outputs."
+        ...     async def invoke_resource(self, db, resource_id, resource_uri, resource_template_uri=None):
+        ...         # Represent the behavior of a successful SSE response.
+        ...         return "hello from gateway"
+
+        >>> svc = FakeService()
+        >>> import asyncio
+        >>> asyncio.run(svc.invoke_resource(FakeDB(), "res123", "/test"))
+        'hello from gateway'
+
+        ---
+        Example: Template URI overrides resource URI
+        --------------------------------------------
+
+        >>> class FakeService2(FakeService):
+        ...     async def invoke_resource(self, db, resource_id, resource_uri, resource_template_uri=None):
+        ...         if resource_template_uri:
+        ...             return f"using template: {resource_template_uri}"
+        ...         return f"using direct: {resource_uri}"
+
+        >>> svc2 = FakeService2()
+        >>> asyncio.run(svc2.invoke_resource(FakeDB(), "res123", "/direct", "/template"))
+        'using template: /template'
+
+        """
+
+        uri = None
+        if resource_uri and resource_template_uri:
+            uri = resource_template_uri
+        elif resource_uri:
+            uri = resource_uri
+
+        logger.info(f"Invoking the resource: {uri}")
+        gateway_id = None
+        resource_info = None
+        resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+        user_email = settings.platform_admin_email
+
+        if resource_info:
+            gateway_id = getattr(resource_info, "gateway_id", None)
+            resource_name = getattr(resource_info, "name", None)
+            if gateway_id:
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+                start_time = time.monotonic()
+                success = False
+                error_message = None
+
+                # Create database span for observability dashboard
+                trace_id = current_trace_id.get()
+                db_span_id = None
+                db_span_ended = False
+                observability_service = ObservabilityService() if trace_id else None
+
+                if trace_id and observability_service:
+                    try:
+                        db_span_id = observability_service.start_span(
+                            db=db,
+                            trace_id=trace_id,
+                            name="invoke.resource",
+                            attributes={
+                                "resource.name": resource_name if resource_name else "unknown",
+                                "resource.id": str(resource_id) if resource_id else "unknown",
+                                "resource.uri": str(uri) or "unknown",
+                                "gateway.transport": getattr(gateway, "transport") or "uknown",
+                                "gateway.url": getattr(gateway, "url") or "unknown",
+                            },
+                        )
+                        logger.debug(f"✓ Created resource.read span: {db_span_id} for resource: {resource_id} & {uri}")
+                    except Exception as e:
+                        logger.warning(f"Failed to start the observability span for invoking resource: {e}")
+                        db_span_id = None
+
+                with create_span(
+                    "invoke.resource",
+                    {
+                        "resource.name": resource_name if resource_name else "unknown",
+                        "resource.id": str(resource_id) if resource_id else "unknown",
+                        "resource.uri": str(uri) or "unknown",
+                        "gateway.transport": getattr(gateway, "transport") or "uknown",
+                        "gateway.url": getattr(gateway, "url") or "unknown",
+                    },
+                ) as span:
+                    valid = False
+                    if gateway.ca_certificate:
+                        if settings.enable_ed25519_signing:
+                            public_key_pem = settings.ed25519_public_key
+                            valid = validate_signature(gateway.ca_certificate.encode(), gateway.ca_certificate_sig, public_key_pem)
+                        else:
+                            valid = True
+
+                    if valid:
+                        ssl_context = self.create_ssl_context(gateway.ca_certificate)
+                    else:
+                        ssl_context = None
+
+                    def _get_httpx_client_factory(
+                        headers: dict[str, str] | None = None,
+                        timeout: httpx.Timeout | None = None,
+                        auth: httpx.Auth | None = None,
+                    ) -> httpx.AsyncClient:
+                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+
+                        Args:
+                            headers: Optional headers for the client
+                            timeout: Optional timeout for the client
+                            auth: Optional auth for the client
+
+                        Returns:
+                            httpx.AsyncClient: Configured HTTPX async client
+                        """
+                        return httpx.AsyncClient(
+                            verify=ssl_context if ssl_context else True,  # pylint: disable=cell-var-from-loop
+                            follow_redirects=True,
+                            headers=headers,
+                            timeout=timeout or httpx.Timeout(30.0),
+                            auth=auth,
+                        )
+
+                    try:
+                        # Handle different authentication types
+                        headers = {}
+                        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
+                            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+
+                            if grant_type == "authorization_code":
+                                # For Authorization Code flow, try to get stored tokens
+                                try:
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                    token_storage = TokenStorageService(db)
+                                    # Get user-specific OAuth token
+                                    # if not user_email:
+                                    #     if span:
+                                    #         span.set_attribute("health.status", "unhealthy")
+                                    #         span.set_attribute("error.message", "User email required for OAuth token")
+                                    #     await self._handle_gateway_failure(gateway)
+
+                                    access_token: str = await token_storage.get_user_token(gateway.id, user_email)
+
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                    else:
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", "No valid OAuth token for user")
+                                        # await self._handle_gateway_failure(gateway)
+
+                                except Exception as e:
+                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                                    # await self._handle_gateway_failure(gateway)
+                            else:
+                                # For Client Credentials flow, get token directly
+                                try:
+                                    access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
+                                    headers["Authorization"] = f"Bearer {access_token}"
+                                except Exception as e:
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", str(e))
+                                    # await self._handle_gateway_failure(gateway)
+                        else:
+                            # Handle non-OAuth authentication (existing logic)
+                            auth_data = gateway.auth_value or {}
+                            if isinstance(auth_data, str):
+                                headers = decode_auth(auth_data)
+                            elif isinstance(auth_data, dict):
+                                headers = {str(k): str(v) for k, v in auth_data.items()}
+                            else:
+                                headers = {}
+
+                        async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to an SSE-based gateway and retrieve the text content of a resource.
+
+                            This helper establishes an SSE (Server-Sent Events) session with the remote
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first item in the
+                            response's `contents` list.
+
+                            If any error occurs (network failure, unexpected response format, session
+                            initialization failure, etc.), the method logs the exception and returns
+                            ``None`` instead of raising.
+
+                            Args:
+                                server_url (str):
+                                    The base URL of the SSE gateway to connect to.
+                                uri (str):
+                                    The resource URI that should be requested from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of headers (e.g., OAuth Bearer tokens) to
+                                    include in the SSE connection request. Defaults to an empty
+                                    dictionary when not provided.
+
+                            Returns:
+                                str | None:
+                                    The text content returned by the remote resource, or ``None`` if the
+                                    SSE connection fails or the response is invalid.
+
+                            Notes:
+                                - This function assumes the SSE client context manager yields:
+                                    ``(read_stream, write_stream, get_session_id)``.
+                                - The expected response object from `session.read_resource()` must have a
+                                `contents` attribute containing a list, where the first element has a
+                                `text` attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with sse_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to sse gateway: {e}")
+                                return None
+
+                        async def connect_to_streamablehttp_server(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
+                            """
+                            Connect to a StreamableHTTP gateway and retrieve the text content of a resource.
+
+                            This helper establishes a StreamableHTTP client session with the specified
+                            gateway, initializes a `ClientSession`, invokes `read_resource()` for the
+                            given URI, and returns the textual content from the first element in the
+                            response's `contents` list.
+
+                            If any exception occurs during connection, session initialization, or
+                            resource reading, the function logs the error and returns ``None`` instead
+                            of propagating the exception.
+
+                            Args:
+                                server_url (str):
+                                    The endpoint URL of the StreamableHTTP gateway.
+                                uri (str):
+                                    The resource URI to request from the gateway.
+                                authentication (Optional[Dict[str, str]]):
+                                    Optional dictionary of authentication headers (e.g., API keys or
+                                    Bearer tokens). Defaults to an empty dictionary when not provided.
+
+                            Returns:
+                                str | None:
+                                    The text content returned by the StreamableHTTP resource, or ``None``
+                                    if the connection fails or the response format is invalid.
+
+                            Notes:
+                                - The `streamablehttp_client` context manager must yield a tuple:
+                                ``(read_stream, write_stream, get_session_id)``.
+                                - The expected `resource_response` returned by ``session.read_resource()``
+                                must contain a `contents` list, whose first element exposes a `text`
+                                attribute.
+                            """
+                            if authentication is None:
+                                authentication = {}
+                            try:
+                                async with streamablehttp_client(url=server_url, headers=authentication, timeout=settings.health_check_timeout, httpx_client_factory=_get_httpx_client_factory) as (
+                                    read_stream,
+                                    write_stream,
+                                    _get_session_id,
+                                ):
+                                    async with ClientSession(read_stream, write_stream) as session:
+                                        _ = await session.initialize()
+                                        resource_response = await session.read_resource(uri=uri)
+                                        return getattr(getattr(resource_response, "contents")[0], "text")
+                            except Exception as e:
+                                logger.debug(f"Exception while connecting to streamablehttp gateway: {e}")
+                                return None
+
+                        if span:
+                            span.set_attribute("success", True)
+                            span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+
+                        resource_text = ""
+                        if (gateway.transport).lower() == "sse":
+                            resource_text = await connect_to_sse_session(server_url=gateway.url, authentication=headers, uri=uri)
+                        else:
+                            resource_text = await connect_to_streamablehttp_server(server_url=gateway.url, authentication=headers, uri=uri)
+                        return resource_text
+                    except Exception as e:
+                        success = False
+                        error_message = str(e)
+                        raise
+                    finally:
+                        if resource_text:
+                            try:
+                                await self._record_invoke_resource_metric(db, resource_id, start_time, success, error_message)
+                            except Exception as metrics_error:
+                                logger.warning(f"Failed to invoke resource metric: {metrics_error}")
+
+                            # End Invoke resource span for Observability dashboard
+                            if db_span_id and observability_service and not db_span_ended:
+                                try:
+                                    observability_service.end_span(
+                                        db=db,
+                                        span_id=db_span_id,
+                                        status="ok" if success else "error",
+                                        status_message=error_message if error_message else None,
+                                    )
+                                    db_span_ended = True
+                                    logger.debug(f"✓ Ended invoke.resource span: {db_span_id}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to end observability span for invoking resource: {e}")
+
     async def read_resource(
         self,
         db: Session,
@@ -919,9 +1346,24 @@ class ResourceService:
 
                 # If content is already a Pydantic content model, return as-is
                 if isinstance(content, (ResourceContent, TextContent)):
+                    resource_response = await self.invoke_resource(
+                        db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                    )
+                    if resource_response:
+                        setattr(content, "text", resource_response)
                     return content
                 # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
                 if hasattr(content, "text") or hasattr(content, "blob"):
+                    if hasattr(content, "blob"):
+                        resource_response = await self.invoke_resource(
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "blob") or None
+                        )
+                        setattr(content, "blob", resource_response)
+                    elif hasattr(content, "text"):
+                        resource_response = await self.invoke_resource(
+                            db=db, resource_id=getattr(content, "id"), resource_uri=getattr(content, "uri") or None, resource_template_uri=getattr(content, "text") or None
+                        )
+                        setattr(content, "text", resource_response)
                     return content
                 # Normalize primitive types to ResourceContent
                 if isinstance(content, bytes):

@@ -487,7 +487,7 @@
             },
             "X_FRAME_OPTIONS": {
               "type": "string",
-              "enum": ["DENY", "SAMEORIGIN"],
+              "enum": ["DENY", "SAMEORIGIN", "ALLOW-ALL"],
               "description": "X-Frame-Options header value",
               "default": "DENY"
             },
