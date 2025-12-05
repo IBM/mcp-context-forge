@@ -41,6 +41,7 @@ Examples:
     ...     s3.validate_transport()
     ... except ValueError as e:
     ...     print('error')
+    ...     raise
     error
     >>> s4 = Settings(database_url='sqlite:///./test.db')
     >>> isinstance(s4.database_settings, dict)
@@ -305,6 +306,10 @@ class Settings(BaseSettings):
     password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
     password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+
+    # Password Expiration Policy
+    password_expiration_days: int = Field(default=90, description="Number of days before a password expires")
+    password_notification_days: int = Field(default=14, description="Number of days before expiration to notify users")
 
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")

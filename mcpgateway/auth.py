@@ -11,7 +11,7 @@ across different parts of the application without creating circular imports.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import logging
 from typing import Any, Dict, Generator, Never, Optional
@@ -116,6 +116,30 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
         team_id = personal_team.id if personal_team else None
 
     return team_id
+
+
+def check_password_expiration(user):
+    """
+    Check if the user's password has expired or is nearing expiration.
+
+    Args:
+        user: The user object containing `password_last_changed`.
+
+    Raises:
+        HTTPException: If the password has expired or is not set.
+    """
+    if user.password_last_changed is None:
+        raise HTTPException(status_code=401, detail="Password has never been set. Please reset your password.")
+
+    expiration_date = user.password_last_changed + timedelta(days=settings.password_expiration_days)
+    notification_date = expiration_date - timedelta(days=settings.password_notification_days)
+    current_date = datetime.utcnow()
+
+    if current_date >= expiration_date:
+        raise HTTPException(status_code=401, detail="Password has expired. Please reset your password.")
+    elif current_date >= notification_date:
+        # Log or notify the user about the upcoming expiration
+        logging.info(f"User {user.email} should be notified about password expiration.")
 
 
 async def get_current_user(
@@ -415,5 +439,8 @@ async def get_current_user(
             detail="Account disabled",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # Check password expiration
+    check_password_expiration(user)
 
     return user

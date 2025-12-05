@@ -542,6 +542,7 @@ class EmailUser(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    password_last_changed: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:
         """String representation of the user.
@@ -2425,7 +2426,7 @@ class ResourceSubscription(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Client identifier
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)  # pylint: disable=not-callable
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     resource: Mapped["Resource"] = relationship(back_populates="subscriptions")
@@ -2903,7 +2904,7 @@ def update_tool_names_on_gateway_update(_mapper, connection, target):
     Args:
         _mapper: Mapper
         connection: Connection
-        target: Target
+        target: Target Gateway instance
     """
     # 1. Check if the 'name' field was actually part of the update.
     #    This is a concise way to see if the value has changed.
@@ -3185,12 +3186,12 @@ class OAuthToken(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
-    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
+    app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)  # MCP Gateway user
     access_token: Mapped[str] = mapped_column(Text, nullable=False)
     refresh_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -3207,19 +3208,16 @@ class OAuthState(Base):
 
     __tablename__ = "oauth_states"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
-    gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
-    state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
-    code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    # JWT ID as primary key
+    jti: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    # Relationships
-    gateway: Mapped["Gateway"] = relationship("Gateway")
+    # Revocation details
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    revoked_by: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
-    # Index for efficient lookups
-    __table_args__ = (Index("idx_oauth_state_lookup", "gateway_id", "state"),)
+    # Relationship
+    revoker: Mapped["EmailUser"] = relationship("EmailUser")
 
 
 class RegisteredOAuthClient(Base):
