@@ -10,7 +10,7 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
     """
     Return a resolved file path for saving output.
 
-    - If output_path ends with os.sep, treat it as a directory.
+    - If output_path ends with os.sep, or is dir treat it as a directory.
     - If output_path includes a filename:
         - return it unchanged when it already has an extension.
         - otherwise append the given file_extension.
@@ -21,13 +21,17 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
 
     filename = ""
     ext = ""
-    file_extension = file_extension.strip(".")
+    if output_path == "":
+        output_path = os.getcwd()
+
     # case 1: output_path is a folder
-    if output_path.endswith(os.sep):
-        base = output_path
+    if output_path.endswith(os.sep) or os.path.isdir(output_path):
+        base = os.path.abspath(output_path)
     else:
         base, filename = os.path.split(output_path)
         _, ext = os.path.splitext(filename)
+
+    base = base or os.getcwd()
 
     try:
         os.makedirs(base, exist_ok=True)
@@ -44,7 +48,6 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
 
     # case 4: output_path does not have filename
     return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")
-
 
 
 def convert_to_bytes(size_str: str) -> int:
@@ -66,4 +69,3 @@ def convert_to_bytes(size_str: str) -> int:
     unit_factor = unit_factors.get(units, 1)
 
     return int(size_value * unit_factor)
-
