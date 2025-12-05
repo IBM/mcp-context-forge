@@ -1,6 +1,7 @@
 
 import base64
 from io import BytesIO
+from logging import config
 import os
 import cv2
 import numpy as np
@@ -111,10 +112,12 @@ def create_qr_image(
     )
 
 
-def load_image(image_data: str):
+def load_image(image_data: str, max_image_size: int) -> np.ndarray:
     """Load an image from a file path and convert to OpenCV format."""
 
     if os.path.isfile(image_data):
+        if os.path.getsize(image_data) > max_image_size:
+            raise LoadImageError(f"Image file too large: {image_data}")
         try:
             img = Image.open(image_data)
         except Exception as e:
@@ -122,6 +125,8 @@ def load_image(image_data: str):
 
     else:
         try:
+            if int(4 * len(image_data) / 3) > max_image_size:
+                raise LoadImageError("Base64 image data too large")
             img_bytes = base64.b64decode(image_data.strip())
             img = Image.open(BytesIO(img_bytes))
         except Exception as e:
