@@ -1794,7 +1794,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         gateway_team_id = getattr(gateway, "team_id", None)
 
-        if gateway.visibility is not "public" or gateway_team_id not in (allowed_team_ids or []):
+        if gateway_team_id not in (allowed_team_ids or []):
             logger.info(f"User does not have access to gateway {gateway_id} with visibility {gateway.visibility} and team {gateway_team_id}")
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 

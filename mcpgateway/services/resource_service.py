@@ -2164,7 +2164,7 @@ class ResourceService:
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False, allowed_team_ids: Optional[List[str]] = None) -> ResourceRead:
         """
         Get a resource by ID.
 
@@ -2172,6 +2172,7 @@ class ResourceService:
             db: Database session
             resource_id: Resource ID
             include_inactive: Whether to include inactive resources
+            allowed_team_ids: List of team IDs the user has read access to.
 
         Returns:
             ResourceRead: The resource object
@@ -2207,6 +2208,10 @@ class ResourceService:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
 
             raise ResourceNotFoundError(f"Resource not found: {resource_id}")
+        
+        if allowed_team_ids is not None and resource.team_id not in allowed_team_ids:
+            logger.warning(f"Read access denied for team {resource.team_id}. Allowed: {allowed_team_ids}")
+            raise PermissionError(f"User does not have read access to team {resource.team_id}")
 
         resource_read = self._convert_resource_to_read(resource)
 

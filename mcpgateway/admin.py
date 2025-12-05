@@ -588,13 +588,13 @@ async def get_allowed_team_ids(request: Request) -> List[str]:
     Returns:
         List[str]: List of allowed team IDs for the user.
     """
-    user_permissions = getattr(request.state, "user_permissions", [])
+    granted_scopes = getattr(request.state, "granted_scopes", [])
     allowed_teams: List[str] = []
 
-    if not user_permissions:
+    if not granted_scopes:
         return []
 
-    for scope in user_permissions:
+    for scope in granted_scopes:
         if scope.get("scope") == "team":
             team_id = scope.get("scope_id")
             if team_id:
@@ -2430,7 +2430,8 @@ async def admin_ui(
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
     allowed_team_ids = await get_allowed_team_ids(request)
-    getattr(request.state, "user_permissions", [])
+    user_roles = getattr(request.state, "user_roles", [])
+    user_permissions = getattr(request.state, "user_permissions", [])
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
@@ -2480,6 +2481,7 @@ async def admin_ui(
     # Optionally you can raise HTTPException(403) if you prefer strict rejection.
     # --------------------------------------------------------------------------------
     selected_team_id = team_id
+    LOGGER.info(f'{selected_team_id=}')
     if team_id and getattr(settings, "email_auth_enabled", False):
         # If team list failed to load for some reason, be conservative and drop selection
         if not user_teams:
@@ -7471,10 +7473,12 @@ async def admin_get_gateway(gateway_id: str, request: Request, db: Session = Dep
         >>> gateway_service.get_gateway = original_get_gateway
     """
     user_email = get_user_email(user)
-    LOGGER.debug(f"User {user_email} requested details for gateway ID {gateway_id}")
+    LOGGER.info(f"User {user_email} requested details for gateway ID {gateway_id}")
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
+        LOGGER.info(f'{allowed_team_ids=}')
         gateway = await gateway_service.get_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
+        LOGGER.info(f'{gateway=}')
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -8167,6 +8171,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     error_message = None
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
+        LOGGER.info(f'{allowed_team_ids=}')
         await gateway_service.delete_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")
