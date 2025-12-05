@@ -9588,14 +9588,17 @@ async function loadTools() {
                     <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
                 </tr>
                 `;
-            const response = await fetch(`${window.ROOT_PATH}/tools`, {
+            const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
                 method: "GET",
             });
 
             if (!response.ok) {
                 throw new Error("Failed to load tools");
             }
-            const tools = await response.json(); // 👈 expect JSON array
+            let tools = await response.json(); // 👈 expect JSON array
+            if ("data" in tools) {
+                tools = tools.data;
+            }
             console.log("Fetched tools:", tools);
 
             //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
