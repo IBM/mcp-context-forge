@@ -1,6 +1,6 @@
 import pytest
 
-from qr_code_server.utils.file_utils import DEFAULT_FILE_NAME, resolve_output_path
+from qr_code_server.utils.file_utils import DEFAULT_FILE_NAME, convert_to_bytes, resolve_output_path
 
 @pytest.fixture
 def tmp(tmp_path):
@@ -82,3 +82,23 @@ def test_no_filename_dir_created(tmp):
     out = resolve_output_path(path, "png")
     assert out == str(tmp / "newdir" / f"{DEFAULT_FILE_NAME}.png")
     assert (tmp / "newdir").is_dir()
+
+
+def test_convert_to_bytes():
+    assert convert_to_bytes("100B") == 100
+    assert convert_to_bytes("100") == 100
+    assert convert_to_bytes("  50b  ") == 50
+    assert convert_to_bytes("2.5kb") == int(2.5 * 1024)
+    assert convert_to_bytes("0.5gb") == int(0.5 * 1024 ** 3)
+
+def test_convert_to_bytes_wrong_input():
+    with pytest.raises(ValueError):
+        convert_to_bytes("10TB")
+    with pytest.raises(ValueError):
+        convert_to_bytes("abc")
+    with pytest.raises(ValueError):
+        convert_to_bytes("100MBs")
+    with pytest.raises(ValueError):
+        convert_to_bytes("MB100")
+    with pytest.raises(ValueError):
+        convert_to_bytes("")
