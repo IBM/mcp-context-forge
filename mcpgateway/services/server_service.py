@@ -54,7 +54,7 @@ class ServerNotFoundError(ServerError):
 class ServerNameConflictError(ServerError):
     """Raised when a server name conflicts with an existing one."""
 
-    def __init__(self, name: str, is_active: bool = True, server_id: Optional[str] = None, visibility: str = "public") -> None:
+    def __init__(self, name: str, enabled: bool = True, server_id: Optional[str] = None, visibility: str = "public") -> None:
         """
         Initialize a ServerNameConflictError exception.
 
@@ -68,7 +68,7 @@ class ServerNameConflictError(ServerError):
 
         Args:
             name: The server name that caused the conflict.
-            is_active: Whether the conflicting server is currently active. Defaults to True.
+            enabled: Whether the conflicting server is currently active. Defaults to True.
             server_id: The ID of the conflicting server, if known. Only included in message for inactive servers.
             visibility: The visibility of the conflicting server (e.g., "public", "private", "team").
 
@@ -76,26 +76,26 @@ class ServerNameConflictError(ServerError):
             >>> error = ServerNameConflictError("My Server")
             >>> str(error)
             'Public Server already exists with name: My Server'
-            >>> error = ServerNameConflictError("My Server", is_active=False, server_id=123)
+            >>> error = ServerNameConflictError("My Server", enabled=False, server_id=123)
             >>> str(error)
             'Public Server already exists with name: My Server (currently inactive, ID: 123)'
-            >>> error.is_active
+            >>> error.enabled
             False
             >>> error.server_id
             123
-            >>> error = ServerNameConflictError("My Server", is_active=False, visibility="team")
+            >>> error = ServerNameConflictError("My Server", enabled=False, visibility="team")
             >>> str(error)
             'Team Server already exists with name: My Server (currently inactive, ID: None)'
-            >>> error.is_active
+            >>> error.enabled
             False
             >>> error.server_id is None
             True
         """
         self.name = name
-        self.is_active = is_active
+        self.enabled = enabled
         self.server_id = server_id
         message = f"{visibility.capitalize()} Server already exists with name: {name}"
-        if not is_active:
+        if not enabled:
             message += f" (currently inactive, ID: {server_id})"
         super().__init__(message)
 
@@ -208,7 +208,7 @@ class ServerService:
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.4, timestamp=now)
             >>> server = SimpleNamespace(
             ...     id='s1', name='S', description=None, icon=None,
-            ...     created_at=now, updated_at=now, is_active=True,
+            ...     created_at=now, updated_at=now, enabled=True,
             ...     associated_tools=[], associated_resources=[], associated_prompts=[], associated_a2a_agents=[],
             ...     tags=[], metrics=[m1, m2],
             ...     tools=[], resources=[], prompts=[], a2a_agents=[]
@@ -412,12 +412,13 @@ class ServerService:
             'server_read'
         """
         try:
+            logger.info(f"Registering server: {server_in.name}")
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
                 description=server_in.description,
                 icon=server_in.icon,
-                is_active=True,
+                enabled=True,
                 tags=server_in.tags or [],
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(server_in, "team_id", None) or team_id,
@@ -435,16 +436,17 @@ class ServerService:
                 # Check for existing public server with the same name
                 existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "public")).scalar_one_or_none()
                 if existing_server:
-                    raise ServerNameConflictError(server_in.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                    raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team server with the same name
                 existing_server = db.execute(select(DbServer).where(DbServer.name == server_in.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
                 if existing_server:
-                    raise ServerNameConflictError(server_in.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                    raise ServerNameConflictError(server_in.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
             # Set custom UUID if provided
             if server_in.id:
                 logger.info(f"Setting custom UUID for server: {server_in.id}")
                 db_server.id = server_in.id
+            logger.info(f"Adding server to DB session: {db_server.name}")
             db.add(db_server)
 
             # Associate tools, verifying each exists using bulk query when multiple items
@@ -467,7 +469,7 @@ class ServerService:
 
             # Associate resources, verifying each exists using bulk query when multiple items
             if server_in.associated_resources:
-                resource_ids = [int(resource_id.strip()) for resource_id in server_in.associated_resources if resource_id.strip()]
+                resource_ids = [resource_id.strip() for resource_id in server_in.associated_resources if resource_id.strip()]
                 if len(resource_ids) > 1:
                     # Use bulk query for multiple items
                     resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
@@ -485,7 +487,7 @@ class ServerService:
 
             # Associate prompts, verifying each exists using bulk query when multiple items
             if server_in.associated_prompts:
-                prompt_ids = [int(prompt_id.strip()) for prompt_id in server_in.associated_prompts if prompt_id.strip()]
+                prompt_ids = [prompt_id.strip() for prompt_id in server_in.associated_prompts if prompt_id.strip()]
                 if len(prompt_ids) > 1:
                     # Use bulk query for multiple items
                     prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
@@ -539,7 +541,7 @@ class ServerService:
                 "icon": db_server.icon,
                 "created_at": db_server.created_at,
                 "updated_at": db_server.updated_at,
-                "is_active": db_server.is_active,
+                "enabled": db_server.enabled,
                 "associated_tools": [str(tool.id) for tool in db_server.tools],
                 "associated_resources": [str(resource.id) for resource in db_server.resources],
                 "associated_prompts": [str(prompt.id) for prompt in db_server.prompts],
@@ -586,7 +588,7 @@ class ServerService:
         """
         query = select(DbServer)
         if not include_inactive:
-            query = query.where(DbServer.is_active)
+            query = query.where(DbServer.enabled)
 
         # Add tag filtering if tags are provided
         if tags:
@@ -635,7 +637,7 @@ class ServerService:
 
         # Apply active/inactive filter
         if not include_inactive:
-            query = query.where(DbServer.is_active)
+            query = query.where(DbServer.enabled)
 
         if team_id:
             if team_id not in team_ids:
@@ -722,7 +724,7 @@ class ServerService:
             "icon": server.icon,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
-            "is_active": server.is_active,
+            "enabled": server.enabled,
             "associated_tools": [tool.name for tool in server.tools],
             "associated_resources": [res.id for res in server.resources],
             "associated_prompts": [prompt.id for prompt in server.prompts],
@@ -810,12 +812,12 @@ class ServerService:
                     # Check for existing public server with the same name
                     existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "public")).scalar_one_or_none()
                     if existing_server:
-                        raise ServerNameConflictError(server_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team server with the same name
                     existing_server = db.execute(select(DbServer).where(DbServer.name == server_update.name, DbServer.visibility == "team", DbServer.team_id == team_id)).scalar_one_or_none()
                     if existing_server:
-                        raise ServerNameConflictError(server_update.name, is_active=existing_server.is_active, server_id=existing_server.id, visibility=existing_server.visibility)
+                        raise ServerNameConflictError(server_update.name, enabled=existing_server.enabled, server_id=existing_server.id, visibility=existing_server.visibility)
 
             # Update simple fields
             if server_update.id is not None and server_update.id != server.id:
@@ -884,7 +886,7 @@ class ServerService:
             if server_update.associated_resources is not None:
                 server.resources = []
                 if server_update.associated_resources:
-                    resource_ids = [int(resource_id) for resource_id in server_update.associated_resources if resource_id]
+                    resource_ids = [resource_id for resource_id in server_update.associated_resources if resource_id]
                     if resource_ids:
                         resources = db.execute(select(DbResource).where(DbResource.id.in_(resource_ids))).scalars().all()
                         server.resources = list(resources)
@@ -893,7 +895,7 @@ class ServerService:
             if server_update.associated_prompts is not None:
                 server.prompts = []
                 if server_update.associated_prompts:
-                    prompt_ids = [int(prompt_id) for prompt_id in server_update.associated_prompts if prompt_id]
+                    prompt_ids = [prompt_id for prompt_id in server_update.associated_prompts if prompt_id]
                     if prompt_ids:
                         prompts = db.execute(select(DbPrompt).where(DbPrompt.id.in_(prompt_ids))).scalars().all()
                         server.prompts = list(prompts)
@@ -934,7 +936,7 @@ class ServerService:
                 "team": self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
-                "is_active": server.is_active,
+                "enabled": server.enabled,
                 "associated_tools": [tool.id for tool in server.tools],
                 "associated_resources": [res.id for res in server.resources],
                 "associated_prompts": [prompt.id for prompt in server.prompts],
@@ -1001,8 +1003,8 @@ class ServerService:
                 if not await permission_service.check_resource_ownership(user_email, server):
                     raise PermissionError("Only the owner can activate the Server" if activate else "Only the owner can deactivate the Server")
 
-            if server.is_active != activate:
-                server.is_active = activate
+            if server.enabled != activate:
+                server.enabled = activate
                 server.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(server)
@@ -1020,12 +1022,12 @@ class ServerService:
                 "team": self._get_team_name(db, server.team_id),
                 "created_at": server.created_at,
                 "updated_at": server.updated_at,
-                "is_active": server.is_active,
+                "enabled": server.enabled,
                 "associated_tools": [tool.id for tool in server.tools],
                 "associated_resources": [res.id for res in server.resources],
                 "associated_prompts": [prompt.id for prompt in server.prompts],
             }
-            logger.debug(f"Server Data: {server_data}")
+            logger.info(f"Server Data: {server_data}")
             return self._convert_server_to_read(server)
         except PermissionError as e:
             raise e
@@ -1131,7 +1133,7 @@ class ServerService:
                 "associated_tools": associated_tools,
                 "associated_resources": associated_resources,
                 "associated_prompts": associated_prompts,
-                "is_active": server.is_active,
+                "enabled": server.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1157,7 +1159,7 @@ class ServerService:
                 "associated_tools": associated_tools,
                 "associated_resources": associated_resources,
                 "associated_prompts": associated_prompts,
-                "is_active": server.is_active,
+                "enabled": server.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1175,7 +1177,7 @@ class ServerService:
             "data": {
                 "id": server.id,
                 "name": server.name,
-                "is_active": True,
+                "enabled": True,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1193,7 +1195,7 @@ class ServerService:
             "data": {
                 "id": server.id,
                 "name": server.name,
-                "is_active": False,
+                "enabled": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }

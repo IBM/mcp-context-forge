@@ -77,21 +77,21 @@ class ResourceNotFoundError(ResourceError):
 class ResourceURIConflictError(ResourceError):
     """Raised when a resource URI conflicts with existing (active or inactive) resource."""
 
-    def __init__(self, uri: str, is_active: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
+    def __init__(self, uri: str, enabled: bool = True, resource_id: Optional[int] = None, visibility: str = "public") -> None:
         """Initialize the error with resource information.
 
         Args:
             uri: The conflicting resource URI
-            is_active: Whether the existing resource is active
+            enabled: Whether the existing resource is active
             resource_id: ID of the existing resource if available
             visibility: Visibility status of the resource
         """
         self.uri = uri
-        self.is_active = is_active
+        self.enabled = enabled
         self.resource_id = resource_id
         message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
         logger.info(f"ResourceURIConflictError: {message}")
-        if not is_active:
+        if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
 
@@ -216,8 +216,8 @@ class ResourceService:
             >>> m1 = SimpleNamespace(is_success=True, response_time=0.1, timestamp=now)
             >>> m2 = SimpleNamespace(is_success=False, response_time=0.3, timestamp=now)
             >>> r = SimpleNamespace(
-            ...     id=1, uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
-            ...     created_at=now, updated_at=now, is_active=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
+            ...     id="ca627760127d409080fdefc309147e08", uri='res://x', name='R', description=None, mime_type='text/plain', size=123,
+            ...     created_at=now, updated_at=now, enabled=True, tags=[{"id": "t", "label": "T"}], metrics=[m1, m2]
             ... )
             >>> out = svc._convert_resource_to_read(r)
             >>> out.metrics.total_executions
@@ -339,12 +339,12 @@ class ResourceService:
                 # Check for existing public resource with the same uri
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "public")).scalar_one_or_none()
                 if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team" and team_id:
                 # Check for existing team resource with the same uri
                 existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                 if existing_resource:
-                    raise ResourceURIConflictError(resource.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Detect mime type if not provided
             mime_type = resource.mime_type
@@ -462,7 +462,7 @@ class ResourceService:
             query = query.where(DbResource.id > last_id)
 
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         # Add tag filtering if tags are provided
         if tags:
@@ -555,7 +555,7 @@ class ResourceService:
 
         # Apply active/inactive filter
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         if team_id:
             if team_id not in team_ids:
@@ -632,6 +632,7 @@ class ResourceService:
             >>> isinstance(result, list)
             True
         """
+        logger.debug(f"Listing resources for server_id: {server_id}, include_inactive: {include_inactive}")
         query = (
             select(DbResource)
             .join(server_resource_association, DbResource.id == server_resource_association.c.resource_id)
@@ -639,7 +640,7 @@ class ResourceService:
             .where(server_resource_association.c.server_id == server_id)
         )
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         resources = db.execute(query).scalars().all()
         result = []
@@ -847,7 +848,7 @@ class ResourceService:
                     # Matches uri (modified value from pluggins if applicable)
                     # with uri from resource DB
                     # if uri is of type resource template then resource is retreived from DB
-                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.is_active)
+                    query = select(DbResource).where(DbResource.uri == str(uri)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
                     resource_db = db.execute(query).scalar_one_or_none()
@@ -856,7 +857,7 @@ class ResourceService:
                         content = resource_db.content
                     else:
                         # Check the inactivity first
-                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.is_active))).scalar_one_or_none()
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.uri == str(resource_uri)).where(not_(DbResource.enabled))).scalar_one_or_none()
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_uri}' exists but is inactive")
 
@@ -879,7 +880,7 @@ class ResourceService:
                 if resource_id:
                     # if resource_id provided instead of resource_uri
                     # retrieves resource based on resource_id
-                    query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.is_active)
+                    query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.id == str(resource_id))
                     resource_db = db.execute(query).scalar_one_or_none()
@@ -887,7 +888,7 @@ class ResourceService:
                         original_uri = resource_db.uri or None
                         content = resource_db.content
                     else:
-                        check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.is_active))).scalar_one_or_none()
+                        check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled))).scalar_one_or_none()
                         if check_inactivity:
                             raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
                         raise ResourceNotFoundError(f"Resource not found for the resource id: {resource_id}")
@@ -1007,8 +1008,8 @@ class ResourceService:
                     raise PermissionError("Only the owner can activate the Resource" if activate else "Only the owner can deactivate the Resource")
 
             # Update status if it's different
-            if resource.is_active != activate:
-                resource.is_active = activate
+            if resource.enabled != activate:
+                resource.enabled = activate
                 resource.updated_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(resource)
@@ -1052,11 +1053,11 @@ class ResourceService:
         """
         try:
             # Verify resource exists
-            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.is_active)).scalar_one_or_none()
+            resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(DbResource.enabled)).scalar_one_or_none()
 
             if not resource:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.is_active))).scalar_one_or_none()
+                inactive_resource = db.execute(select(DbResource).where(DbResource.uri == subscription.uri).where(not_(DbResource.enabled))).scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{subscription.uri}' exists but is inactive")
@@ -1176,12 +1177,12 @@ class ResourceService:
                     # Check for existing public resources with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "public")).scalar_one_or_none()
                     if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
                 elif visibility.lower() == "team" and team_id:
                     # Check for existing team resource with the same uri
                     existing_resource = db.execute(select(DbResource).where(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id)).scalar_one_or_none()
                     if existing_resource:
-                        raise ResourceURIConflictError(resource_update.uri, is_active=existing_resource.is_active, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
 
             # Check ownership if user_email provided
             if user_email:
@@ -1333,7 +1334,7 @@ class ResourceService:
             db.rollback()
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
-    async def get_resource_by_id(self, db: Session, resource_id: int, include_inactive: bool = False) -> ResourceRead:
+    async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
         """
         Get a resource by ID.
 
@@ -1357,20 +1358,20 @@ class ResourceService:
             >>> db.execute.return_value.scalar_one_or_none.return_value = resource
             >>> service._convert_resource_to_read = MagicMock(return_value='resource_read')
             >>> import asyncio
-            >>> asyncio.run(service.get_resource_by_id(db, 999))
+            >>> asyncio.run(service.get_resource_by_id(db, "39334ce0ed2644d79ede8913a66930c9"))
             'resource_read'
         """
         query = select(DbResource).where(DbResource.id == resource_id)
 
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
 
         resource = db.execute(query).scalar_one_or_none()
 
         if not resource:
             if not include_inactive:
                 # Check if inactive resource exists
-                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.is_active))).scalar_one_or_none()
+                inactive_resource = db.execute(select(DbResource).where(DbResource.id == resource_id).where(not_(DbResource.enabled))).scalar_one_or_none()
 
                 if inactive_resource:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
@@ -1392,7 +1393,7 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": True,
+                "enabled": True,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1411,7 +1412,7 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": False,
+                "enabled": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1444,7 +1445,7 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "name": resource.name,
-                "is_active": False,
+                "enabled": False,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1510,7 +1511,7 @@ class ResourceService:
                 break
 
         if template:
-            check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.is_active))).scalar_one_or_none()
+            check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(template.id)).where(not_(DbResource.enabled))).scalar_one_or_none()
             if check_inactivity:
                 raise ResourceNotFoundError(f"Resource '{template.id}' exists but is inactive")
         else:
@@ -1622,7 +1623,7 @@ class ResourceService:
                 "uri": resource.uri,
                 "name": resource.name,
                 "description": resource.description,
-                "is_active": resource.is_active,
+                "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1641,7 +1642,7 @@ class ResourceService:
                 "id": resource.id,
                 "uri": resource.uri,
                 "content": resource.content,
-                "is_active": resource.is_active,
+                "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -1684,7 +1685,7 @@ class ResourceService:
         """
         query = select(DbResource).where(DbResource.uri_template.isnot(None))
         if not include_inactive:
-            query = query.where(DbResource.is_active)
+            query = query.where(DbResource.enabled)
         # Cursor-based pagination logic can be implemented here in the future.
         templates = db.execute(query).scalars().all()
         result = [ResourceTemplate.model_validate(t) for t in templates]

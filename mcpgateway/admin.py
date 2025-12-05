@@ -854,10 +854,10 @@ async def admin_list_servers(
         ...     icon="test-icon.png",
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     associated_tools=["tool1", "tool2"],
-        ...     associated_resources=[1, 2],
-        ...     associated_prompts=[1],
+        ...     associated_resources=["1", "2"],
+        ...     associated_prompts=["1"],
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -960,10 +960,10 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
         ...     icon="test-icon.png",
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     associated_tools=["tool1"],
-        ...     associated_resources=[1],
-        ...     associated_prompts=[1],
+        ...     associated_resources=["1"],
+        ...     associated_prompts=["1"],
         ...     metrics=mock_metrics
         ... )
         >>>
@@ -1012,7 +1012,7 @@ async def admin_get_server(server_id: str, db: Session = Depends(get_db), user=D
     except ServerNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        LOGGER.error(f"Error getting gateway {server_id}: {e}")
+        LOGGER.error(f"Error getting server {server_id}: {e}")
         raise e
 
 
@@ -1143,9 +1143,7 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
 
     try:
         LOGGER.debug(f"User {get_user_email(user)} is adding a new server with name: {form['name']}")
-        server_id = form.get("id")
         visibility = str(form.get("visibility", "private"))
-        LOGGER.info(f" user input id::{server_id}")
 
         # Handle "Select All" for tools
         associated_tools_list = form.getlist("associatedTools")
@@ -1713,7 +1711,7 @@ async def admin_list_resources(
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
-        ...     id=1,
+        ...     id="39334ce0ed2644d79ede8913a66930c9",
         ...     uri="test://resource/1",
         ...     name="Test Resource",
         ...     description="A test resource",
@@ -1721,7 +1719,7 @@ async def admin_list_resources(
         ...     size=100,
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     metrics=ResourceMetrics(
         ...         total_executions=5, successful_executions=5, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.1, max_response_time=0.5,
@@ -1744,10 +1742,10 @@ async def admin_list_resources(
         >>>
         >>> # Test listing with inactive resources (if mock includes them)
         >>> mock_inactive_resource = ResourceRead(
-        ...     id=2, uri="test://resource/2", name="Inactive Resource",
+        ...     id="39334ce0ed2644d79ede8913a66930c9", uri="test://resource/2", name="Inactive Resource",
         ...     description="Another test", mime_type="application/json", size=50,
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=False, metrics=ResourceMetrics(
+        ...     enabled=False, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None),
@@ -1756,7 +1754,7 @@ async def admin_list_resources(
         >>> resource_service.list_resources_for_user = AsyncMock(return_value=[mock_resource, mock_inactive_resource])
         >>> async def test_admin_list_resources_all():
         ...     result = await admin_list_resources(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['isActive']
+        ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_resources_all())
         True
@@ -1823,14 +1821,14 @@ async def admin_list_prompts(
         >>>
         >>> # Mock prompt data
         >>> mock_prompt = PromptRead(
-        ...     id=1,
+        ...     id="ca627760127d409080fdefc309147e08",
         ...     name="Test Prompt",
         ...     description="A test prompt",
         ...     template="Hello {{name}}!",
         ...     arguments=[{"name": "name", "type": "string"}],
         ...     created_at=datetime.now(timezone.utc),
         ...     updated_at=datetime.now(timezone.utc),
-        ...     is_active=True,
+        ...     enabled=True,
         ...     metrics=PromptMetrics(
         ...         total_executions=10, successful_executions=10, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.01, max_response_time=0.1,
@@ -1853,9 +1851,9 @@ async def admin_list_prompts(
         >>>
         >>> # Test listing with inactive prompts (if mock includes them)
         >>> mock_inactive_prompt = PromptRead(
-        ...     id=2, name="Inactive Prompt", description="Another test", template="Bye!",
+        ...     id="39334ce0ed2644d79ede8913a66930c9", name="Inactive Prompt", description="Another test", template="Bye!",
         ...     arguments=[], created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
-        ...     is_active=False, metrics=PromptMetrics(
+        ...     enabled=False, metrics=PromptMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
         ...         avg_response_time=0.0, last_execution_time=None
@@ -1865,7 +1863,7 @@ async def admin_list_prompts(
         >>> prompt_service.list_prompts_for_user = AsyncMock(return_value=[mock_prompt, mock_inactive_prompt])
         >>> async def test_admin_list_prompts_all():
         ...     result = await admin_list_prompts(include_inactive=True, db=mock_db, user=mock_user)
-        ...     return len(result) == 2 and not result[1]['isActive']
+        ...     return len(result) == 2 and not result[1]['enabled']
         >>>
         >>> asyncio.run(test_admin_list_prompts_all())
         True
@@ -2235,7 +2233,7 @@ async def admin_ui(
         True
         >>>
         >>> # Test with populated data (mocking a few items)
-        >>> mock_server = ServerRead(id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), is_active=True, associated_tools=[], associated_resources=[], associated_prompts=[], icon="i", metrics=ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0, last_execution_time=None))
+        >>> mock_server = ServerRead(id="s1", name="S1", description="d", created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc), enabled=True, associated_tools=[], associated_resources=[], associated_prompts=[], icon="i", metrics=ServerMetrics(total_executions=0, successful_executions=0, failed_executions=0, failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0, last_execution_time=None))
         >>> mock_tool = ToolRead(
         ...     id="t1", name="T1", original_name="T1", url="http://t1.com", description="d",
         ...     created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc),
@@ -5941,7 +5939,7 @@ async def admin_prompts_partial_html(
                 LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     # Access conditions: owner, team, public
     access_conditions = [DbPrompt.owner_email == user_email]
@@ -5965,7 +5963,7 @@ async def admin_prompts_partial_html(
             else:
                 count_query = count_query.where(DbPrompt.gateway_id.in_(non_null_ids))
     if not include_inactive:
-        count_query = count_query.where(DbPrompt.is_active.is_(True))
+        count_query = count_query.where(DbPrompt.enabled.is_(True))
 
     total_items = db.scalar(count_query) or 0
 
@@ -6117,7 +6115,7 @@ async def admin_resources_partial_html(
 
     # Apply active/inactive filter
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     # Access conditions: owner, team, public
     access_conditions = [DbResource.owner_email == user_email]
@@ -6141,7 +6139,7 @@ async def admin_resources_partial_html(
             else:
                 count_query = count_query.where(DbResource.gateway_id.in_(non_null_ids))
     if not include_inactive:
-        count_query = count_query.where(DbResource.is_active.is_(True))
+        count_query = count_query.where(DbResource.enabled.is_(True))
 
     total_items = db.scalar(count_query) or 0
 
@@ -6160,7 +6158,6 @@ async def admin_resources_partial_html(
         except Exception as e:
             LOGGER.warning(f"Failed to convert resource {getattr(r, 'id', '<unknown>')} to schema: {e}")
             continue
-
     data = jsonable_encoder(resources_data)
 
     # Build pagination metadata
@@ -6268,7 +6265,7 @@ async def admin_get_all_prompt_ids(
                 LOGGER.debug(f"Filtering prompts by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
     if team_ids:
@@ -6326,7 +6323,7 @@ async def admin_get_all_resource_ids(
                 LOGGER.debug(f"Filtering resources by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
     if team_ids:
@@ -6374,7 +6371,7 @@ async def admin_search_resources(
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
     if not include_inactive:
-        query = query.where(DbResource.is_active.is_(True))
+        query = query.where(DbResource.enabled.is_(True))
 
     access_conditions = [DbResource.owner_email == user_email, DbResource.visibility == "public"]
     if team_ids:
@@ -6437,7 +6434,7 @@ async def admin_search_prompts(
 
     query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
     if not include_inactive:
-        query = query.where(DbPrompt.is_active.is_(True))
+        query = query.where(DbPrompt.enabled.is_(True))
 
     access_conditions = [DbPrompt.owner_email == user_email, DbPrompt.visibility == "public"]
     if team_ids:
@@ -8083,7 +8080,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
 
 @admin_router.get("/resources/{resource_id}")
-async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
 
     Args:
@@ -8109,13 +8106,13 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user", "db": mock_db}
         >>> resource_uri = "test://resource/get"
-        >>> resource_id = 1
+        >>> resource_id = "ca627760127d409080fdefc309147e08"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
         ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), is_active=True, metrics=ResourceMetrics(
+        ...     updated_at=datetime.now(timezone.utc), enabled=True, metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
         ...         last_execution_time=None
@@ -8142,7 +8139,7 @@ async def admin_get_resource(resource_id: int, db: Session = Depends(get_db), us
         >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
         >>> async def test_admin_get_resource_not_found():
         ...     try:
-        ...         await admin_get_resource(999, mock_db, mock_user)
+        ...         await admin_get_resource("39334ce0ed2644d79ede8913a66930c9", mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
@@ -8532,7 +8529,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
 @admin_router.post("/resources/{resource_id}/toggle")
 async def admin_toggle_resource(
-    resource_id: int,
+    resource_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -8546,7 +8543,7 @@ async def admin_toggle_resource(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        resource_id (int): The ID of the resource whose status to toggle.
+        resource_id (str): The ID of the resource whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -8656,7 +8653,7 @@ async def admin_toggle_resource(
 
 
 @admin_router.get("/prompts/{prompt_id}")
-async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def admin_get_prompt(prompt_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get prompt details for the admin UI.
 
     Args:
@@ -8695,14 +8692,14 @@ async def admin_get_prompt(prompt_id: int, db: Session = Depends(get_db), user=D
         ...     last_execution_time=datetime.now(timezone.utc)
         ... )
         >>> mock_prompt_details = {
-        ...     "id": 1,
+        ...     "id": "ca627760127d409080fdefc309147e08",
         ...     "name": prompt_name,
         ...     "description": "A test prompt",
         ...     "template": "Hello {{name}}!",
         ...     "arguments": [{"name": "name", "type": "string"}],
         ...     "created_at": datetime.now(timezone.utc),
         ...     "updated_at": datetime.now(timezone.utc),
-        ...     "is_active": True,
+        ...     "enabled": True,
         ...     "metrics": mock_metrics,
         ...     "tags": []
         ... }
@@ -8943,7 +8940,6 @@ async def admin_edit_prompt(
     """
     LOGGER.debug(f"User {get_user_email(user)} is editing prompt {prompt_id}")
     form = await request.form()
-    LOGGER.info(f"form data: {form}")
 
     visibility = str(form.get("visibility", "private"))
     user_email = get_user_email(user)
@@ -9087,7 +9083,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
 async def admin_toggle_prompt(
-    prompt_id: int,
+    prompt_id: str,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -9101,7 +9097,7 @@ async def admin_toggle_prompt(
     logs any errors that might occur during the status toggle operation.
 
     Args:
-        prompt_id (int): The ID of the prompt whose status to toggle.
+        prompt_id (str): The ID of the prompt whose status to toggle.
         request (Request): FastAPI request containing form data with the 'activate' field.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -12188,7 +12184,7 @@ async def get_resources_section(
                     "description": resource.description,
                     "uri": resource.uri,
                     "tags": resource.tags or [],
-                    "isActive": resource.is_active,
+                    "isActive": resource.enabled,
                     "team_id": getattr(resource, "team_id", None),
                     "visibility": getattr(resource, "visibility", "private"),
                 }
@@ -12243,7 +12239,8 @@ async def get_prompts_section(
                     "description": prompt.description,
                     "arguments": prompt.arguments or [],
                     "tags": prompt.tags or [],
-                    "isActive": prompt.is_active,
+                    # Prompt enabled/disabled state is stored on the prompt as `enabled`.
+                    "isActive": getattr(prompt, "enabled", False),
                     "team_id": getattr(prompt, "team_id", None),
                     "visibility": getattr(prompt, "visibility", "private"),
                 }
@@ -12297,7 +12294,7 @@ async def get_servers_section(
                     "name": server.name,
                     "description": server.description,
                     "tags": server.tags or [],
-                    "isActive": server.is_active,
+                    "isActive": server.enabled,
                     "team_id": getattr(server, "team_id", None),
                     "visibility": getattr(server, "visibility", "private"),
                 }
