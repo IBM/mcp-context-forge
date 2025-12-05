@@ -12629,9 +12629,10 @@ async function handleResourceFormSubmit(e) {
         // Check if URI contains '{' and '}'
         if (uri && uri.includes("{") && uri.includes("}")) {
             template = uri;
+            // append uri_template only when uri is a templatized resource
+            formData.append("uri_template", template);
         }
 
-        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -22839,8 +22840,11 @@ function initializeRealTimeMonitoring() {
 
     // --- Gateway Events ---
     // Handlers for specific states
-    // eventSource.addEventListener("gateway_activated", (e) => handleEntityEvent("gateway", e));
+
     // eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_activated", (e) =>
+        handleEntityEvent("gateway", e),
+    );
     eventSource.addEventListener("gateway_offline", (e) =>
         handleEntityEvent("gateway", e),
     );
@@ -22848,8 +22852,10 @@ function initializeRealTimeMonitoring() {
     // --- Tool Events ---
     // Handlers for specific states
 
-    // eventSource.addEventListener("tool_activated", (e) => handleEntityEvent("tool", e));
     // eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_activated", (e) =>
+        handleEntityEvent("tool", e),
+    );
     eventSource.addEventListener("tool_offline", (e) =>
         handleEntityEvent("tool", e),
     );

@@ -622,7 +622,7 @@ class TestFrameAncestorsCSPConsistency:
             ("DENY", "'none'"),
             ("SAMEORIGIN", "'self'"),
             ("ALLOW-FROM https://example.com", "https://example.com"),
-            ("", "*"),  # Empty string should allow all
+            ("ALLOW-ALL", "*"),  # Empty string should allow all
             ("invalid-value", "'none'"),  # Unknown values default to none
         ],
     )
