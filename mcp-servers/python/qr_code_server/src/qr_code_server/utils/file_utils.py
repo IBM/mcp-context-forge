@@ -61,11 +61,25 @@ def convert_to_bytes(size_str: str) -> int:
     }
 
     size_str = size_str.strip().upper()
+
+    if not size_str:
+        raise ValueError("Size string cannot be empty")
+
+    # Extract numbers and units
     numbers = [n for n in size_str if n.isdigit() or n == '.']
     units = ''.join([u for u in size_str if not (u.isdigit() or u == '.' or u.isspace())])
+
     if not numbers:
         raise ValueError(f"No numeric value found in size string: '{size_str}'")
+
+    # Validate that the number comes first, then unit (no interleaving)
+    if not size_str.startswith(''.join(numbers)):
+        raise ValueError(f"Invalid format for size string: '{size_str}'")
+
+    if units not in unit_factors and units != "":
+        raise ValueError(f"Unknown unit '{units}' in size string: '{size_str}'")
+
     size_value = float(''.join(numbers))
-    unit_factor = unit_factors.get(units, 1)
+    unit_factor = unit_factors.get(units, 1)  # default to bytes if no unit
 
     return int(size_value * unit_factor)
