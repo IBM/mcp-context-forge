@@ -6081,6 +6081,33 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                             );
                         }
                     }
+
+                    // If we're in the Add Server resources container, restore persisted selections
+                    else if (container.id === "associatedResources") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-resources",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("Error restoring associatedResources selections:", e);
+                        }
+                    }
                 }
             }, 10);
         }
@@ -6181,6 +6208,33 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                                 "Error parsing data-server-prompts:",
                                 e,
                             );
+                        }
+                    }
+
+                    // If we're in the Add Server prompts container, restore persisted selections
+                    else if (container.id === "associatedPrompts") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-prompts",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn("Error restoring associatedPrompts selections:", e);
                         }
                     }
                 }
