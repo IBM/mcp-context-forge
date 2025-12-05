@@ -828,7 +828,7 @@ class Settings(BaseSettings):
     observability_sample_rate: float = Field(default=1.0, ge=0.0, le=1.0, description="Trace sampling rate (0.0-1.0)")
 
     # Exclude paths from tracing (regex patterns)
-    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing (regex)")
+    observability_exclude_paths: List[str] = Field(default_factory=lambda: ["/health", "/healthz", "/ready", "/metrics", "/static/.*"], description="Paths to exclude from tracing")
 
     # Enable performance metrics
     observability_metrics_enabled: bool = Field(default=True, description="Enable metrics collection")
