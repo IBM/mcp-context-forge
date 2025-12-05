@@ -1693,23 +1693,40 @@
       <!-- Catalog Panel (Virtual Servers) -->
       <div id="catalog-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
-          <div>
-            <h2 class="text-2xl font-bold dark:text-gray-200">
-              Virtual MCP Servers
-            </h2>
+          <div class="flex items-center space-x-10">
+            <h2 class="text-2xl font-bold dark:text-gray-200">Virtual MCP Servers</h2>
             <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
               Virtual Servers let you combine Tools, Resources, and Prompts into
               an MCP Server with its own API key (see API Tokens).
             </p>
           </div>
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="show-inactive-servers"
+              class="mr-2"
+              onchange="toggleInactiveItems('servers')"
+            />
+            <label
+              for="show-inactive-servers"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Show Inactive</label
+            >
+          </div>
+        </div>
 
+        <!-- Tag Filtering for Virtual Servers -->
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
           <div class="flex items-center space-x-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Filter by Tags:</label
+            >
             <input
               type="text"
               id="search-servers"
               data-testid="search-input"
               placeholder="Search servers via tags..."
-              class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
               oninput="filterServerTable(this.value)"
             />
             <button
