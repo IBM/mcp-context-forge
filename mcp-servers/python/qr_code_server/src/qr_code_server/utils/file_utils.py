@@ -42,7 +42,7 @@ def resolve_output_path(output_path: str, file_extension: str) -> str:
         return output_path
     # case 3: add extension to the filename
     elif filename:
-        return os.path.join(base, f"{filename.rstrip(".")}.{file_extension}")
+        return os.path.join(base, f"{filename.rstrip('.')}.{file_extension}")
 
     # case 4: output_path does not have filename
     return os.path.join(base, f"{DEFAULT_FILE_NAME}.{file_extension}")
