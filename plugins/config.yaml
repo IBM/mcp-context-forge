@@ -899,3 +899,18 @@ plugins:
         api_key: "" # optional, can define ANTHROPIC_API_KEY instead
       model_id: "ibm/granite-3-3-8b-instruct" # note that this changes depending on provider
       length_threshold: 100000
+
+  # Tools Telemetry Exporter - export tool invocation telemetry to OpenTelemetry
+  - name: "ToolsTelemetryExporter"
+    kind: "plugins.tools_telemetry_exporter.telemetry_exporter.ToolsTelemetryExporterPlugin"
+    description: "Export comprehensive tool invocation telemetry to OpenTelemetry"
+    version: "0.1.0"
+    author: "Bar Haim"
+    hooks: ["tool_pre_invoke", "tool_post_invoke"]
+    tags: ["telemetry", "observability", "opentelemetry", "monitoring"]
+    mode: "disabled" # enforce | permissive | disabled
+    priority: 200  # Run late to capture all context
+    conditions: []  # Apply to all tools
+    config:
+        export_full_payload: true
+        max_payload_bytes_size: 10000
