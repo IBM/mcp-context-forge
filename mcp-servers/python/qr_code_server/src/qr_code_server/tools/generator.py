@@ -1,15 +1,15 @@
 import base64
 import logging
-from io import BytesIO
 import os
+import zipfile
+from io import BytesIO
 
 from pydantic import BaseModel, field_validator
 from qrcode.image.pil import PilImage
 
 from qr_code_server.config import config
 from qr_code_server.utils.file_utils import resolve_output_path
-from qr_code_server.utils.image_utils import create_qr_image, index_image_generator, ImageAscii
-import zipfile
+from qr_code_server.utils.image_utils import ImageAscii, create_qr_image, index_image_generator
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +19,9 @@ DEFAULT_ZIP_FILE_NAME = "qr.zip"
 class QRGenerationRequest(BaseModel):
     data: str
     format: str = "png"
-    size: int = 10
-    border: int = 4
-    error_correction: str = "M"
+    size: int = config.qr_generation.default_size
+    border: int = config.qr_generation.default_border
+    error_correction: str = config.qr_generation.default_error_correction
     fill_color: str = "black"
     back_color: str = "white"
     save_path: str | None = None
@@ -39,10 +39,10 @@ class QRGenerationRequest(BaseModel):
 class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
     format: str = "png"
-    size: int = 10
-    naming_pattern: str = "qr_{index}"  # File naming pattern
-    output_directory: str = "./qr_codes/"
-    zip_output: bool = False  # Create ZIP archive
+    size: int = config.qr_generation.default_size
+    naming_pattern: str = config.output.default_naming_pattern
+    output_directory: str = config.output.default_directory
+    zip_output: bool = config.output.default_zip_output
 
     @field_validator("format")
     @classmethod
@@ -57,6 +57,10 @@ class BatchQRGenerationRequest(BaseModel):
     def validate_batch_size(cls, v: list[str]) -> list[str]:
         """Validate batch size does not exceed configured limit."""
         max_size = config.output.max_batch_size
+        max_data_length = config.qr_generation.max_data_length
+        for data in v:
+            if len(data.strip()) > max_data_length:
+                raise ValueError(f"Data length exceeds maximum allowed of {max_data_length}")
         if len(v) > max_size:
             raise ValueError(f"Batch size {len(v)} exceeds limit {max_size}")
         if len(v) == 0:
@@ -165,9 +169,3 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
             "success": True,
             "message": f"QR code images saved at {request.output_directory}",
         }
-
-if __name__ == "__main__":
-    # Example usage
-    req = QRGenerationRequest(data="https://example.com", format="png", return_base64=True)
-    res = create_qr_code(req)
-    print(res)
