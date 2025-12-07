@@ -1,17 +1,15 @@
 
 import base64
-from io import BytesIO
-from logging import config
 import os
-import cv2
+from collections.abc import Generator
+from io import BytesIO
+
 import numpy as np
 import qrcode
+from PIL import Image
+from qrcode.image.base import BaseImage
 from qrcode.image.pil import PilImage
 from qrcode.image.svg import SvgImage
-from qrcode.image.base import BaseImage
-from collections.abc import Generator
-from PIL import Image
-import numpy as np
 
 
 class SaveImageError(Exception):
