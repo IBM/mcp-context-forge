@@ -2,6 +2,7 @@ import pytest
 
 from qr_code_server.utils.file_utils import DEFAULT_FILE_NAME, convert_to_bytes, resolve_output_path
 
+
 @pytest.fixture
 def tmp(tmp_path):
     return tmp_path
@@ -90,6 +91,7 @@ def test_convert_to_bytes():
     assert convert_to_bytes("  50b  ") == 50
     assert convert_to_bytes("2.5kb") == int(2.5 * 1024)
     assert convert_to_bytes("0.5gb") == int(0.5 * 1024 ** 3)
+
 
 def test_convert_to_bytes_wrong_input():
     with pytest.raises(ValueError):
