@@ -1,17 +1,17 @@
-from typing import Optional
+
 from pydantic import BaseModel, field_validator
 
 
 class QRValidationRequest(BaseModel):
     data: str
-    target_version: Optional[int] = None  # QR code version (1-40)
+    target_version: int | None = None  # QR code version (1-40)
     error_correction: str = "M"
     check_capacity: bool = True
     suggest_optimization: bool = True
 
     @field_validator("target_version")
     @classmethod
-    def validate_version(cls, v: Optional[int]) -> Optional[int]:
+    def validate_version(cls, v: int | None) -> int | None:
         if v is not None and (v < 1 or v > 40):
             raise ValueError("target_version must be between 1 and 40")
         return v
