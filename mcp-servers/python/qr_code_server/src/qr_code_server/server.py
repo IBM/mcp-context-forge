@@ -1,12 +1,18 @@
 import asyncio
-from contextlib import asynccontextmanager
 import logging
 import sys
+from contextlib import asynccontextmanager
 
 from fastmcp import FastMCP
 
 from qr_code_server.config import config
-from qr_code_server.tools.generator import BatchQRGenerationRequest, QRGenerationRequest, create_batch_qr_codes, create_qr_code
+from qr_code_server.tools.generator import (
+    BatchQRGenerationRequest,
+    QRGenerationRequest,
+    create_batch_qr_codes,
+    create_qr_code,
+)
+from qr_code_server.tools.validator import QRValidationRequest, validate
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +30,7 @@ _max_queue_size = config.performance.max_concurrent_requests * 3
 
 # Initialize server
 mcp = FastMCP(name="qr-code-server", version="0.1.0")
+
 
 @asynccontextmanager
 async def _acquire_request_slot(request_name: str):
@@ -75,17 +82,6 @@ async def generate_qr_code(
         return {"success": False, "error": str(e)}
 
 
-@mcp.tool(description="Decode QR code from image file")
-async def decode_qr_code(
-    image_data: str,
-    image_format: str = "auto",
-    multiple_codes: bool = False,
-    return_positions: bool = False,
-    preprocessing: bool = True,
-):
-    pass
-
-
 @mcp.tool(description="Generate multiple QR codes")
 async def generate_batch_qr_codes(
     data_list: list[str],
@@ -111,6 +107,17 @@ async def generate_batch_qr_codes(
         return {"success": False, "error": str(e)}
 
 
+@mcp.tool(description="Decode QR code from image file")
+async def decode_qr_code(
+    image_data: str,
+    image_format: str = "auto",
+    multiple_codes: bool = False,
+    return_positions: bool = False,
+    preprocessing: bool = True,
+):
+    pass
+
+
 @mcp.tool(description="Validate and analyze QR code data before generation")
 async def validate_qr_data(
     data: str,
@@ -119,7 +126,21 @@ async def validate_qr_data(
     check_capacity: bool = True,
     suggest_optimization: bool = True,
 ):
-    pass
+    try:
+        async with _acquire_request_slot("generate_batch_qr_codes"):
+            request = QRValidationRequest(
+                data=data,
+                target_version=target_version,
+                error_correction=error_correction,
+                check_capacity=check_capacity,
+                suggest_optimization=suggest_optimization,
+            )
+            return validate(request)
+    except RuntimeError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Validate QR code data error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def main():
@@ -134,7 +155,7 @@ def main():
         help="Transport mode (stdio or http)",
     )
     parser.add_argument("--host", default="0.0.0.0", help="HTTP host")
-    parser.add_argument("--port", type=int, default=9005, help="HTTP port")
+    parser.add_argument("--port", type=int, default=9001, help="HTTP port")
 
     args = parser.parse_args()
 
