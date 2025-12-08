@@ -108,11 +108,33 @@ class BuildableConfig(BaseModel):
     # Registry configuration
     registry: Optional[RegistryConfig] = Field(None, description="Container registry configuration")
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, _: Any) -> None:
         """Validate that either image or repo is specified
 
         Raises:
             ValueError: If neither image nor repo is specified
+
+        Examples:
+            >>> # Test that error is raised when neither image nor repo specified
+            >>> try:
+            ...     # BuildableConfig can't be instantiated directly, use GatewayConfig
+            ...     from mcpgateway.tools.builder.schema import GatewayConfig
+            ...     GatewayConfig()
+            ... except ValueError as e:
+            ...     "must specify either 'image' or 'repo'" in str(e)
+            True
+
+            >>> # Test valid config with image
+            >>> from mcpgateway.tools.builder.schema import GatewayConfig
+            >>> config = GatewayConfig(image="mcpgateway:latest")
+            >>> config.image
+            'mcpgateway:latest'
+
+            >>> # Test valid config with repo
+            >>> from mcpgateway.tools.builder.schema import GatewayConfig
+            >>> config = GatewayConfig(repo="https://github.com/example/repo")
+            >>> config.repo
+            'https://github.com/example/repo'
         """
         if not self.image and not self.repo:
             component_type = self.__class__.__name__.replace("Config", "")
@@ -163,6 +185,29 @@ class PluginConfig(BuildableConfig):
 
         Raises:
             ValueError: If plugin name is empty or whitespace only
+
+        Examples:
+            >>> # Test valid plugin names
+            >>> PluginConfig.validate_name("my-plugin")
+            'my-plugin'
+            >>> PluginConfig.validate_name("plugin_123")
+            'plugin_123'
+            >>> PluginConfig.validate_name("TestPlugin")
+            'TestPlugin'
+
+            >>> # Test empty name raises error
+            >>> try:
+            ...     PluginConfig.validate_name("")
+            ... except ValueError as e:
+            ...     "cannot be empty" in str(e)
+            True
+
+            >>> # Test whitespace-only name raises error
+            >>> try:
+            ...     PluginConfig.validate_name("   ")
+            ... except ValueError as e:
+            ...     "cannot be empty" in str(e)
+            True
         """
         if not v or not v.strip():
             raise ValueError("Plugin name cannot be empty")
@@ -256,6 +301,33 @@ class MCPStackConfig(BaseModel):
 
         Raises:
             ValueError: If duplicate plugin names are found
+
+        Examples:
+            >>> from mcpgateway.tools.builder.schema import PluginConfig
+            >>> # Test with unique names (valid)
+            >>> plugins = [
+            ...     PluginConfig(name="plugin1", image="img1:latest"),
+            ...     PluginConfig(name="plugin2", image="img2:latest")
+            ... ]
+            >>> result = MCPStackConfig.validate_plugin_names_unique(plugins)
+            >>> len(result) == 2
+            True
+
+            >>> # Test with duplicate names (invalid)
+            >>> try:
+            ...     duplicates = [
+            ...         PluginConfig(name="duplicate", image="img1:latest"),
+            ...         PluginConfig(name="duplicate", image="img2:latest")
+            ...     ]
+            ...     MCPStackConfig.validate_plugin_names_unique(duplicates)
+            ... except ValueError as e:
+            ...     "Duplicate plugin names found" in str(e)
+            True
+
+            >>> # Test with empty list (valid)
+            >>> empty = MCPStackConfig.validate_plugin_names_unique([])
+            >>> len(empty) == 0
+            True
         """
         names = [p.name for p in v]
         if len(names) != len(set(names)):

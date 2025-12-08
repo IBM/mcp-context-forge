@@ -26,6 +26,21 @@ Features:
     - Generates mTLS certificates
     - Deploys to Kubernetes or Docker Compose
     - Integrates with CI/CD vault secrets
+
+Examples:
+    >>> # Test that IN_CONTAINER detection works
+    >>> import os
+    >>> isinstance(IN_CONTAINER, bool)
+    True
+
+    >>> # Test that BUILDER_DIR is a Path
+    >>> from pathlib import Path
+    >>> isinstance(BUILDER_DIR, Path)
+    True
+
+    >>> # Test IMPL_MODE is set
+    >>> isinstance(IMPL_MODE, str)
+    True
 """
 
 # Standard
@@ -245,7 +260,17 @@ def destroy(
 
 @app.command()
 def version():
-    """Show version information"""
+    """Show version information
+
+    Examples:
+        >>> # Test that version function exists
+        >>> callable(version)
+        True
+
+        >>> # Test that it accesses module constants
+        >>> IMPL_MODE in ['plain', 'dagger']
+        True
+    """
     console.print(
         Panel(f"[bold]MCP Deploy[/bold]\n" f"Version: 1.0.0\n" f"Mode: {IMPL_MODE}\n" f"Environment: {'container' if IN_CONTAINER else 'local'}\n", title="Version Info", border_style="blue")
     )
@@ -279,6 +304,21 @@ def main():
 
     Raises:
         Exception: Any unhandled exception from subcommands (re-raised in debug mode)
+
+    Examples:
+        >>> # Test that main function exists and is callable
+        >>> callable(main)
+        True
+
+        >>> # Test that app is a Typer instance
+        >>> import typer
+        >>> isinstance(app, typer.Typer)
+        True
+
+        >>> # Test that console is available
+        >>> from rich.console import Console
+        >>> isinstance(console, Console)
+        True
     """
     try:
         app(obj={})

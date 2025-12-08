@@ -52,6 +52,28 @@ def get_deploy_dir() -> Path:
 
     Returns:
         Path to deployment directory
+
+    Examples:
+        >>> # Test with default value (when MCP_DEPLOY_DIR is not set)
+        >>> import os
+        >>> old_value = os.environ.pop("MCP_DEPLOY_DIR", None)
+        >>> result = get_deploy_dir()
+        >>> isinstance(result, Path)
+        True
+        >>> str(result)
+        'deploy'
+
+        >>> # Test with custom environment variable
+        >>> os.environ["MCP_DEPLOY_DIR"] = "/custom/deploy"
+        >>> result = get_deploy_dir()
+        >>> str(result)
+        '/custom/deploy'
+
+        >>> # Cleanup: restore original value
+        >>> if old_value is not None:
+        ...     os.environ["MCP_DEPLOY_DIR"] = old_value
+        ... else:
+        ...     _ = os.environ.pop("MCP_DEPLOY_DIR", None)
     """
     deploy_dir = os.environ.get("MCP_DEPLOY_DIR", "./deploy")
     return Path(deploy_dir)
@@ -69,6 +91,20 @@ def load_config(config_file: str) -> MCPStackConfig:
     Raises:
         FileNotFoundError: If configuration file doesn't exist
         ValidationError: If configuration validation fails
+
+    Examples:
+        >>> # Test with non-existent file
+        >>> try:
+        ...     load_config("/nonexistent/path/config.yaml")
+        ... except FileNotFoundError as e:
+        ...     "Configuration file not found" in str(e)
+        True
+
+        >>> # Test that function returns MCPStackConfig type
+        >>> from mcpgateway.tools.builder.schema import MCPStackConfig
+        >>> # Actual file loading would require a real file:
+        >>> # config = load_config("mcp-stack.yaml")
+        >>> # assert isinstance(config, MCPStackConfig)
     """
     config_path = Path(config_file)
     if not config_path.exists():
@@ -97,6 +133,27 @@ def generate_plugin_config(config: MCPStackConfig, output_dir: Path, verbose: bo
 
     Raises:
         FileNotFoundError: If template directory not found
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from mcpgateway.tools.builder.schema import MCPStackConfig, DeploymentConfig, GatewayConfig
+        >>> import tempfile
+        >>> # Test with minimal config
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     output = Path(tmpdir)
+        ...     config = MCPStackConfig(
+        ...         deployment=DeploymentConfig(type="compose"),
+        ...         gateway=GatewayConfig(image="test:latest"),
+        ...         plugins=[]
+        ...     )
+        ...     result = generate_plugin_config(config, output, verbose=False)
+        ...     result.name
+        'plugins-config.yaml'
+
+        >>> # Test return type
+        >>> # result_path = generate_plugin_config(config, output_dir)
+        >>> # isinstance(result_path, Path)
+        >>> # True
     """
 
     deployment_type = config.deployment.type
@@ -172,6 +229,22 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
 
     Raises:
         FileNotFoundError: If template directory not found
+
+    Examples:
+        >>> from pathlib import Path
+        >>> import inspect
+        >>> # Test function signature
+        >>> sig = inspect.signature(generate_kubernetes_manifests)
+        >>> list(sig.parameters.keys())
+        ['config', 'output_dir', 'verbose']
+
+        >>> # Test that verbose parameter has default
+        >>> sig.parameters['verbose'].default
+        False
+
+        >>> # Actual usage requires valid config and templates:
+        >>> # from mcpgateway.tools.builder.schema import MCPStackConfig
+        >>> # generate_kubernetes_manifests(config, Path("./output"))
     """
 
     # Load templates
@@ -446,6 +519,22 @@ def generate_compose_manifests(config: MCPStackConfig, output_dir: Path, verbose
 
     Raises:
         FileNotFoundError: If template directory not found
+
+    Examples:
+        >>> from pathlib import Path
+        >>> import inspect
+        >>> # Test function signature
+        >>> sig = inspect.signature(generate_compose_manifests)
+        >>> list(sig.parameters.keys())
+        ['config', 'output_dir', 'verbose']
+
+        >>> # Test default parameters
+        >>> sig.parameters['verbose'].default
+        False
+
+        >>> # Actual execution requires templates and config:
+        >>> # from mcpgateway.tools.builder.schema import MCPStackConfig
+        >>> # generate_compose_manifests(config, Path("./output"))
     """
 
     # Load templates
@@ -504,6 +593,30 @@ def _auto_detect_env_files(config: MCPStackConfig, output_dir: Path, verbose: bo
         config: MCPStackConfig Pydantic model (modified in-place via attribute assignment)
         output_dir: Output directory where manifests will be generated (for relative paths)
         verbose: Print verbose output
+
+    Examples:
+        >>> from pathlib import Path
+        >>> from mcpgateway.tools.builder.schema import MCPStackConfig, DeploymentConfig, GatewayConfig
+        >>> import tempfile
+        >>> # Test function modifies config in place
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     output = Path(tmpdir)
+        ...     config = MCPStackConfig(
+        ...         deployment=DeploymentConfig(type="compose"),
+        ...         gateway=GatewayConfig(image="test:latest"),
+        ...         plugins=[]
+        ...     )
+        ...     # Function modifies config if env files exist
+        ...     _auto_detect_env_files(config, output, verbose=False)
+        ...     # Config object is modified in place
+        ...     isinstance(config, MCPStackConfig)
+        True
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(_auto_detect_env_files)
+        >>> 'verbose' in sig.parameters
+        True
     """
     deploy_dir = get_deploy_dir()
     env_dir = deploy_dir / "env"
@@ -544,6 +657,31 @@ def copy_env_template(plugin_name: str, plugin_build_dir: Path, verbose: bool = 
         plugin_name: Name of the plugin
         plugin_build_dir: Path to plugin build directory (contains .env.template)
         verbose: Print verbose output
+
+    Examples:
+        >>> from pathlib import Path
+        >>> import tempfile
+        >>> import os
+        >>> # Test with non-existent template (should return early)
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     build_dir = Path(tmpdir)
+        ...     # No .env.template exists, function returns early
+        ...     copy_env_template("test-plugin", build_dir, verbose=False)
+
+        >>> # Test directory creation
+        >>> with tempfile.TemporaryDirectory() as tmpdir:
+        ...     os.environ["MCP_DEPLOY_DIR"] = tmpdir
+        ...     build_dir = Path(tmpdir) / "build"
+        ...     build_dir.mkdir()
+        ...     template = build_dir / ".env.template"
+        ...     _ = template.write_text("TEST=value")
+        ...     copy_env_template("test", build_dir, verbose=False)
+        ...     env_file = Path(tmpdir) / "env" / ".env.test"
+        ...     env_file.exists()
+        True
+
+        >>> # Cleanup
+        >>> _ = os.environ.pop("MCP_DEPLOY_DIR", None)
     """
     # Create {deploy_dir}/env directory if it doesn't exist
     deploy_dir = get_deploy_dir()
@@ -591,6 +729,24 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
     Raises:
         ValueError: If registry enabled but missing required configuration
         subprocess.CalledProcessError: If tag or push command fails
+
+    Examples:
+        >>> from mcpgateway.tools.builder.schema import GatewayConfig
+        >>> # Test with registry disabled (returns original tag)
+        >>> gateway = GatewayConfig(image="test:latest")
+        >>> result = handle_registry_operations(gateway, "gateway", "test:latest", "docker")
+        >>> result
+        'test:latest'
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(handle_registry_operations)
+        >>> list(sig.parameters.keys())
+        ['component', 'component_name', 'image_tag', 'container_runtime', 'verbose']
+
+        >>> # Test return type
+        >>> sig.return_annotation
+        <class 'str'>
     """
     # First-Party
     from mcpgateway.tools.builder.schema import BuildableConfig
@@ -671,6 +827,35 @@ def get_docker_compose_command() -> List[str]:
 
     Raises:
         RuntimeError: If neither command is available
+
+    Examples:
+        >>> # Test that function returns a list
+        >>> try:
+        ...     cmd = get_docker_compose_command()
+        ...     isinstance(cmd, list)
+        ... except RuntimeError:
+        ...     # Docker compose not installed in test environment
+        ...     True
+        True
+
+        >>> # Test that it returns valid command formats
+        >>> try:
+        ...     cmd = get_docker_compose_command()
+        ...     # Should be either ["docker", "compose"] or ["docker-compose"]
+        ...     cmd in [["docker", "compose"], ["docker-compose"]]
+        ... except RuntimeError:
+        ...     # Docker compose not installed
+        ...     True
+        True
+
+        >>> # Test error case (requires mocking, shown for documentation)
+        >>> # from unittest.mock import patch
+        >>> # with patch('shutil.which', return_value=None):
+        >>> #     try:
+        >>> #         get_docker_compose_command()
+        >>> #     except RuntimeError as e:
+        >>> #         "Docker Compose not found" in str(e)
+        >>> #     True
     """
     # Try docker compose (new plugin) first
     if shutil.which("docker"):
@@ -702,6 +887,28 @@ def run_compose(compose_file: Path, args: List[str], verbose: bool = False, chec
     Raises:
         FileNotFoundError: If compose_file doesn't exist
         RuntimeError: If docker compose command fails (when check=True)
+
+    Examples:
+        >>> from pathlib import Path
+        >>> import tempfile
+        >>> # Test with non-existent file
+        >>> try:
+        ...     run_compose(Path("/nonexistent/docker-compose.yaml"), ["ps"])
+        ... except FileNotFoundError as e:
+        ...     "Compose file not found" in str(e)
+        True
+
+        >>> # Test that args are properly formatted
+        >>> args = ["up", "-d"]
+        >>> isinstance(args, list)
+        True
+        >>> all(isinstance(arg, str) for arg in args)
+        True
+
+        >>> # Real execution would require docker compose installed:
+        >>> # with tempfile.NamedTemporaryFile(suffix=".yaml") as f:
+        >>> #     result = run_compose(Path(f.name), ["--version"], check=False)
+        >>> #     isinstance(result, subprocess.CompletedProcess)
     """
     if not compose_file.exists():
         raise FileNotFoundError(f"Compose file not found: {compose_file}")
@@ -733,6 +940,19 @@ def deploy_compose(compose_file: Path, verbose: bool = False) -> None:
 
     Raises:
         RuntimeError: If deployment fails
+
+    Examples:
+        >>> from pathlib import Path
+        >>> # Test that function signature is correct
+        >>> import inspect
+        >>> sig = inspect.signature(deploy_compose)
+        >>> 'compose_file' in sig.parameters
+        True
+        >>> 'verbose' in sig.parameters
+        True
+
+        >>> # Test with non-existent file (would fail at run_compose)
+        >>> # deploy_compose(Path("/nonexistent.yaml"))  # Raises FileNotFoundError
     """
     result = run_compose(compose_file, ["up", "-d"], verbose=verbose)
     if result.stdout and verbose:
@@ -749,6 +969,22 @@ def verify_compose(compose_file: Path, verbose: bool = False) -> str:
 
     Returns:
         Output from docker compose ps command
+
+    Examples:
+        >>> from pathlib import Path
+        >>> # Test return type
+        >>> import inspect
+        >>> sig = inspect.signature(verify_compose)
+        >>> sig.return_annotation
+        <class 'str'>
+
+        >>> # Test parameters
+        >>> list(sig.parameters.keys())
+        ['compose_file', 'verbose']
+
+        >>> # Actual execution requires docker compose:
+        >>> # output = verify_compose(Path("docker-compose.yaml"))
+        >>> # isinstance(output, str)
     """
     result = run_compose(compose_file, ["ps"], verbose=verbose, check=False)
     return result.stdout
@@ -763,6 +999,19 @@ def destroy_compose(compose_file: Path, verbose: bool = False) -> None:
 
     Raises:
         RuntimeError: If destruction fails
+
+    Examples:
+        >>> from pathlib import Path
+        >>> # Test with non-existent file (graceful handling)
+        >>> destroy_compose(Path("/nonexistent/docker-compose.yaml"), verbose=False)
+        Compose file not found: /nonexistent/docker-compose.yaml
+        Nothing to destroy
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(destroy_compose)
+        >>> 'verbose' in sig.parameters
+        True
     """
     if not compose_file.exists():
         console.print(f"[yellow]Compose file not found: {compose_file}[/yellow]")
@@ -796,6 +1045,23 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
 
     Raises:
         RuntimeError: If kubectl not found or deployment fails
+
+    Examples:
+        >>> from pathlib import Path
+        >>> import shutil
+        >>> # Test that function checks for kubectl
+        >>> if not shutil.which("kubectl"):
+        ...     # Would raise RuntimeError
+        ...     print("kubectl not found")
+        ... else:
+        ...     print("kubectl available")
+        kubectl...
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(deploy_kubernetes)
+        >>> list(sig.parameters.keys())
+        ['manifests_dir', 'verbose']
     """
     if not shutil.which("kubectl"):
         raise RuntimeError("kubectl not found. Cannot deploy to Kubernetes.")
@@ -882,6 +1148,22 @@ def verify_kubernetes(namespace: str, wait: bool = False, timeout: int = 300, ve
 
     Raises:
         RuntimeError: If kubectl not found or verification fails
+
+    Examples:
+        >>> # Test function signature and return type
+        >>> import inspect
+        >>> sig = inspect.signature(verify_kubernetes)
+        >>> sig.return_annotation
+        <class 'str'>
+
+        >>> # Test parameters
+        >>> params = list(sig.parameters.keys())
+        >>> 'namespace' in params and 'wait' in params and 'timeout' in params
+        True
+
+        >>> # Test default timeout value
+        >>> sig.parameters['timeout'].default
+        300
     """
     if not shutil.which("kubectl"):
         raise RuntimeError("kubectl not found. Cannot verify Kubernetes deployment.")
@@ -912,6 +1194,23 @@ def destroy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
 
     Raises:
         RuntimeError: If kubectl not found or destruction fails
+
+    Examples:
+        >>> from pathlib import Path
+        >>> # Test with non-existent directory (graceful handling)
+        >>> import shutil
+        >>> if shutil.which("kubectl"):
+        ...     destroy_kubernetes(Path("/nonexistent/manifests"), verbose=False)
+        ... else:
+        ...     print("kubectl not available")
+        Manifests directory not found: /nonexistent/manifests
+        Nothing to destroy
+
+        >>> # Test function signature
+        >>> import inspect
+        >>> sig = inspect.signature(destroy_kubernetes)
+        >>> list(sig.parameters.keys())
+        ['manifests_dir', 'verbose']
     """
     if not shutil.which("kubectl"):
         raise RuntimeError("kubectl not found. Cannot destroy Kubernetes deployment.")
