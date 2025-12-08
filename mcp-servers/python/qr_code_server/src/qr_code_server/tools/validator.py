@@ -5,7 +5,7 @@ from pydantic import BaseModel, field_validator
 
 logger = logging.getLogger(__name__)
 
-
+# based on https://www.thonky.com/qr-code-tutorial/error-correction-table
 DATA_CODEWORDS = {
     1:  {"L": 19,   "M": 16,   "Q": 13,   "H": 9},
     2:  {"L": 34,   "M": 28,   "Q": 22,   "H": 16},
