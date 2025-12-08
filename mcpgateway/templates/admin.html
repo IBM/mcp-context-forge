@@ -1975,7 +1975,7 @@
 
                       <!-- Row 3: Deactivate/Activate | Delete -->
                       <div class="col-span-2 flex flex-col space-y-1">
-                        {% if server.isActive %}
+                        {% if server.enabled %}
                         <form
                           method="POST"
                           action="{{ root_path }}/admin/servers/{{ server.id }}/toggle"

@@ -429,7 +429,8 @@ class ExportService:
                 "description": prompt.description,
                 "input_schema": input_schema,
                 "tags": prompt.tags or [],
-                "is_active": prompt.is_active,
+                # Use the new `enabled` attribute on prompt objects but keep export key `is_active` for compatibility
+                "is_active": getattr(prompt, "enabled", getattr(prompt, "is_active", False)),
             }
 
             # Convert arguments to input schema format
