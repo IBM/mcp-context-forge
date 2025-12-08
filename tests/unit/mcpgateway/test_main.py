@@ -55,10 +55,10 @@ MOCK_SERVER_READ = {
     "icon": "server-icon",
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "associated_tools": ["101"],
-    "associated_resources": [201],
-    "associated_prompts": [301],
+    "associated_resources": ["201"],
+    "associated_prompts": ["301"],
     "metrics": MOCK_METRICS,
 }
 
@@ -117,7 +117,7 @@ MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
 
 
 MOCK_RESOURCE_READ = {
-    "id": 1,
+    "id": "39334ce0ed2644d79ede8913a66930c9",
     "uri": "test/resource",
     "name": "Test Resource",
     "description": "A test resource",
@@ -125,19 +125,19 @@ MOCK_RESOURCE_READ = {
     "size": 12,
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "metrics": MOCK_METRICS,
 }
 
 MOCK_PROMPT_READ = {
-    "id": 1,
+    "id": "ca627760127d409080fdefc309147e08",
     "name": "test_prompt",
     "description": "A test prompt",
     "template": "Hello {name}",
     "arguments": [],
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "metrics": MOCK_METRICS,
 }
 
@@ -147,7 +147,6 @@ MOCK_GATEWAY_READ = {
     "url": "http://example.com",
     "description": "A test gateway",
     "transport": "SSE",
-    "auth_type": "none",
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
     "enabled": True,
@@ -506,7 +505,7 @@ class TestServerEndpoints:
     def test_toggle_server_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling server active/inactive status."""
         updated_server = MOCK_SERVER_READ.copy()
-        updated_server["is_active"] = False
+        updated_server["enabled"] = False
         mock_toggle.return_value = ServerRead(**updated_server)
         response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -741,7 +740,7 @@ class TestResourceEndpoints:
     def test_toggle_resource_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling resource active/inactive status."""
         mock_resource = MagicMock()
-        mock_resource.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_resource.model_dump.return_value = {"id": "1", "enabled": False}
         mock_toggle.return_value = mock_resource
         response = test_client.post("/resources/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -752,7 +751,7 @@ class TestResourceEndpoints:
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
         resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe/{resource_id}", headers=auth_headers)
+        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
@@ -796,7 +795,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {})
+        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -821,7 +820,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -872,7 +871,7 @@ class TestPromptEndpoints:
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
         assert response.status_code == 200
-        mock_get.assert_called_once_with(ANY, "test", {})
+        mock_get.assert_called_once_with(ANY, "test", {}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
     def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
@@ -898,7 +897,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -947,13 +946,29 @@ class TestGatewayEndpoints:
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
-    def test_delete_gateway_endpoint(self, mock_delete, test_client, auth_headers):
-        """Test deleting a gateway."""
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint_no_resources(self, mock_get, mock_delete, test_client, auth_headers):
+        """Test deleting a gateway that doesn't have resources."""
         mock_delete.return_value = None
+        mock_get.return_value.capabilities = {}
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
         mock_delete.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.delete_gateway")
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    @patch("mcpgateway.main.invalidate_resource_cache")
+    def test_delete_gateway_endpoint_with_resources(self, mock_invalidate_cache, mock_get, mock_delete, test_client, auth_headers):
+        """Test deleting a gateway that does have resources."""
+        mock_delete.return_value = None
+        mock_get.return_value = MagicMock()
+        mock_get.return_value.capabilities = {"resources": {"some": "thing"}}
+        response = test_client.delete("/gateways/1", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"] == "success"
+        mock_delete.assert_called_once()
+        mock_invalidate_cache.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.toggle_gateway_status")
     def test_toggle_gateway_status(self, mock_toggle, test_client, auth_headers):
@@ -1006,9 +1021,11 @@ class TestGatewayEndpoints:
         mock_update.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.delete_gateway")
-    def test_delete_gateway_endpoint(self, mock_delete, test_client, auth_headers):
+    @patch("mcpgateway.main.gateway_service.get_gateway")
+    def test_delete_gateway_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
         """Test deleting a gateway."""
         mock_delete.return_value = None
+        mock_get.return_value.capabilities = {}
         response = test_client.delete("/gateways/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
@@ -1096,7 +1113,15 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["content"][0]["text"] == "Tool response"
-        mock_invoke_tool.assert_called_once_with(db=ANY, name="test_tool", arguments={"param": "value"}, request_headers=ANY, app_user_email="test_user")
+        mock_invoke_tool.assert_called_once_with(
+            db=ANY,
+            name="test_tool",
+            arguments={"param": "value"},
+            request_headers=ANY,
+            app_user_email="test_user",
+            plugin_context_table=None,
+            plugin_global_context=ANY,
+        )
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
     # @patch("mcpgateway.main.validate_request")
@@ -1118,7 +1143,7 @@ class TestRPCEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["result"]["messages"][0]["content"]["text"] == "Rendered prompt"
-        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"})
+        mock_get_prompt.assert_called_once_with(ANY, "test_prompt", {"param": "value"}, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.tool_service.list_tools")
     # @patch("mcpgateway.main.validate_request")
@@ -1220,7 +1245,7 @@ class TestRealtimeEndpoints:
         mock_transport.create_sse_response.return_value = MagicMock()
         mock_transport_class.return_value = mock_transport
 
-        response = test_client.get("/sse", headers=auth_headers)
+        test_client.get("/sse", headers=auth_headers)
 
         # Note: This test may need adjustment based on actual SSE implementation
         # The exact assertion will depend on how SSE responses are structured
@@ -1582,6 +1607,24 @@ def test_jsonpath_modifier_invalid_expressions(sample_people):
 
     with pytest.raises(HTTPException):
         jsonpath_modifier(sample_people, "$[*]", mappings={"bad": "$["})  # invalid mapping expr
+
+
+# ----------------------------------------------------- #
+# Transform data with mappings
+# ----------------------------------------------------- #
+class TestTransformDataWithMappings:
+    def test_transform_data_with_mappings_valid_mapping(self, sample_people):
+        from mcpgateway.main import transform_data_with_mappings
+
+        mapping = {"n": "$.name"}
+        result = transform_data_with_mappings(sample_people, mapping)
+        assert result == [{"n": "Ada"}, {"n": "Bob"}]
+
+    def test_transform_data_with_mappings_invalid_mapping(self, sample_people):
+        from mcpgateway.main import transform_data_with_mappings
+
+        with pytest.raises(HTTPException):
+            transform_data_with_mappings(sample_people, {"bad": "$["})
 
 
 # ----------------------------------------------------- #

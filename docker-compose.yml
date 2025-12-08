@@ -165,6 +165,26 @@ services:
       retries: 5
       start_period: 20s
 
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      MARIADB_ROOT_PASSWORD: mysecretpassword
+      MARIADB_DATABASE: mcp
+      MARIADB_USER: mariadb
+      MARIADB_PASSWORD: mysecretpassword
+    volumes:
+      - mariadbdata:/var/lib/mysql
+    networks: [mcpnet]
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+
   # mariadb:
   #   image: mariadb:11
   #   environment:

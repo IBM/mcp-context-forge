@@ -121,6 +121,35 @@ document.addEventListener("DOMContentLoaded", function () {
             setTimeout(initializeCACertUpload, 100);
         });
     }
+
+    // Initialize search functionality for all entity types
+    initializeSearchInputs();
+
+    // Re-initialize search inputs when HTMX content loads
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
+    });
+
+    // Also listen for htmx:load event
+    document.body.addEventListener("htmx:load", function (event) {
+        setTimeout(() => {
+            initializeSearchInputs();
+        }, 200);
+    });
+
+    // Initialize search when switching tabs
+    document.addEventListener("click", function (event) {
+        if (
+            event.target.matches('[onclick*="showTab"]') ||
+            event.target.closest('[onclick*="showTab"]')
+        ) {
+            setTimeout(() => {
+                initializeSearchInputs();
+            }, 300);
+        }
+    });
 });
 /**
  * ====================================================================
@@ -2028,7 +2057,7 @@ function createStandardPaginationControls(
         get hasPrev() { return this.currentPage > 1; },
         get startItem() { return Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems); },
         get endItem() { return Math.min(this.currentPage * this.perPage, this.totalItems); },
-        
+
         goToPage(page) {
             if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
                 this.currentPage = page;
@@ -2556,6 +2585,7 @@ async function editTool(toolId) {
         }
 
         const tool = await response.json();
+
         const isInactiveCheckedBool = isInactiveChecked("tools");
         let hiddenField = safeGetElement("edit-show-inactive");
         if (!hiddenField) {
@@ -2603,6 +2633,10 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
+            );
             descField.value = tool.description || "";
         }
         if (typeField) {
@@ -2612,7 +2646,14 @@ async function editTool(toolId) {
         // Set tags field
         const tagsField = safeGetElement("edit-tool-tags");
         if (tagsField) {
-            tagsField.value = tool.tags ? tool.tags.join(", ") : "";
+            const rawTags = tool.tags
+                ? tool.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -3262,7 +3303,14 @@ async function editA2AAgent(agentId) {
         // Set tags field
         const tagsField = safeGetElement("a2a-agent-tags-edit");
         if (tagsField) {
-            tagsField.value = agent.tags ? agent.tags.join(", ") : "";
+            const rawTags = agent.tags
+                ? agent.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -3524,16 +3572,24 @@ function toggleA2AAuthFields(authType) {
 /**
  * SECURE: View Resource function with safe display
  */
-async function viewResource(resourceUri) {
+async function viewResource(resourceId) {
     try {
-        console.log(`Viewing resource: ${resourceUri}`);
+        console.log(`Viewing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}`,
+            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
         }
 
         const data = await response.json();
@@ -3890,7 +3946,14 @@ async function editResource(resourceUri) {
         // Set tags field
         const tagsField = safeGetElement("edit-resource-tags");
         if (tagsField) {
-            tagsField.value = resource.tags ? resource.tags.join(", ") : "";
+            const rawTags = resource.tags
+                ? resource.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (contentField) {
@@ -3992,7 +4055,11 @@ async function viewPrompt(promptName) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -4302,7 +4369,14 @@ async function editPrompt(promptId) {
         // Set tags field
         const tagsField = safeGetElement("edit-prompt-tags");
         if (tagsField) {
-            tagsField.value = prompt.tags ? prompt.tags.join(", ") : "";
+            const rawTags = prompt.tags
+                ? prompt.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         if (templateField) {
@@ -4611,7 +4685,14 @@ async function editGateway(gatewayId) {
         // Set tags field
         const tagsField = safeGetElement("edit-gateway-tags");
         if (tagsField) {
-            tagsField.value = gateway.tags ? gateway.tags.join(", ") : "";
+            const rawTags = gateway.tags
+                ? gateway.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         const teamId = new URL(window.location.href).searchParams.get(
@@ -4969,7 +5050,11 @@ async function viewServer(serverId) {
                     const tagSpan = document.createElement("span");
                     tagSpan.className =
                         "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
-                    tagSpan.textContent = tag;
+                    const raw =
+                        typeof tag === "object" && tag !== null
+                            ? tag.id || tag.label
+                            : tag;
+                    tagSpan.textContent = raw;
                     tagsP.appendChild(tagSpan);
                 });
             } else {
@@ -5449,7 +5534,14 @@ async function editServer(serverId) {
         // Set tags field
         const tagsField = safeGetElement("edit-server-tags");
         if (tagsField) {
-            tagsField.value = server.tags ? server.tags.join(", ") : "";
+            const rawTags = server.tags
+                ? server.tags.map((tag) =>
+                      typeof tag === "object" && tag !== null
+                          ? tag.label || tag.id
+                          : tag,
+                  )
+                : [];
+            tagsField.value = rawTags.join(", ");
         }
 
         // Set icon field
@@ -5493,8 +5585,20 @@ async function editServer(serverId) {
         }
 
         openModal("server-edit-modal");
+        // Initialize the select handlers for gateways, resources and prompts in the edit modal
+        // so that gateway changes will trigger filtering of associated items while editing.
+        if (document.getElementById("associatedEditGateways")) {
+            initGatewaySelect(
+                "associatedEditGateways",
+                "selectedEditGatewayPills",
+                "selectedEditGatewayWarning",
+                12,
+                "selectAllEditGatewayBtn",
+                "clearAllEditGatewayBtn",
+                "searchEditGateways",
+            );
+        }
 
-        // Initialize the select handlers for resources and prompts in the edit modal
         initResourceSelect(
             "edit-server-resources",
             "selectedEditResourcesPills",
@@ -5520,10 +5624,14 @@ async function editServer(serverId) {
 
         // Set associated items after modal is opened
         setTimeout(() => {
-            // Set associated tools checkboxes
-            const toolCheckboxes = document.querySelectorAll(
-                'input[name="associatedTools"]',
-            );
+            // Set associated tools checkboxes (scope to edit modal container only)
+            const editToolContainer =
+                document.getElementById("edit-server-tools");
+            const toolCheckboxes = editToolContainer
+                ? editToolContainer.querySelectorAll(
+                      'input[name="associatedTools"]',
+                  )
+                : document.querySelectorAll('input[name="associatedTools"]');
 
             toolCheckboxes.forEach((checkbox) => {
                 let isChecked = false;
@@ -5539,10 +5647,17 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated resources checkboxes
-            const resourceCheckboxes = document.querySelectorAll(
-                'input[name="associatedResources"]',
+            // Set associated resources checkboxes (scope to edit modal container only)
+            const editResourceContainer = document.getElementById(
+                "edit-server-resources",
             );
+            const resourceCheckboxes = editResourceContainer
+                ? editResourceContainer.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  )
+                : document.querySelectorAll(
+                      'input[name="associatedResources"]',
+                  );
 
             resourceCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5552,10 +5667,15 @@ async function editServer(serverId) {
                 checkbox.checked = isChecked;
             });
 
-            // Set associated prompts checkboxes
-            const promptCheckboxes = document.querySelectorAll(
-                'input[name="associatedPrompts"]',
+            // Set associated prompts checkboxes (scope to edit modal container only)
+            const editPromptContainer = document.getElementById(
+                "edit-server-prompts",
             );
+            const promptCheckboxes = editPromptContainer
+                ? editPromptContainer.querySelectorAll(
+                      'input[name="associatedPrompts"]',
+                  )
+                : document.querySelectorAll('input[name="associatedPrompts"]');
 
             promptCheckboxes.forEach((checkbox) => {
                 const checkboxValue = parseInt(checkbox.value);
@@ -5627,10 +5747,11 @@ async function editServer(serverId) {
 
 // Helper function to set edit server associations
 function setEditServerAssociations(server) {
-    // Set associated tools checkboxes
-    const toolCheckboxes = document.querySelectorAll(
-        'input[name="associatedTools"]',
-    );
+    // Set associated tools checkboxes (scope to edit modal container only)
+    const toolContainer = document.getElementById("edit-server-tools");
+    const toolCheckboxes = toolContainer
+        ? toolContainer.querySelectorAll('input[name="associatedTools"]')
+        : document.querySelectorAll('input[name="associatedTools"]');
 
     if (toolCheckboxes.length === 0) {
         return;
@@ -5649,10 +5770,13 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated resources checkboxes
-    const resourceCheckboxes = document.querySelectorAll(
-        'input[name="associatedResources"]',
-    );
+    // Set associated resources checkboxes (scope to edit modal container only)
+    const resourceContainer = document.getElementById("edit-server-resources");
+    const resourceCheckboxes = resourceContainer
+        ? resourceContainer.querySelectorAll(
+              'input[name="associatedResources"]',
+          )
+        : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -5662,10 +5786,11 @@ function setEditServerAssociations(server) {
         checkbox.checked = isChecked;
     });
 
-    // Set associated prompts checkboxes
-    const promptCheckboxes = document.querySelectorAll(
-        'input[name="associatedPrompts"]',
-    );
+    // Set associated prompts checkboxes (scope to edit modal container only)
+    const promptContainer = document.getElementById("edit-server-prompts");
+    const promptCheckboxes = promptContainer
+        ? promptContainer.querySelectorAll('input[name="associatedPrompts"]')
+        : document.querySelectorAll('input[name="associatedPrompts"]');
 
     promptCheckboxes.forEach((checkbox) => {
         const checkboxValue = parseInt(checkbox.value);
@@ -6260,7 +6385,7 @@ function showTab(tabName) {
 
                 if (tabName === "gateways") {
                     // Reload gateways list to show any newly registered servers
-                    const gatewaysSection = safeGetElement("gateways-section");
+                    const gatewaysSection = safeGetElement("gateways-panel");
                     if (gatewaysSection) {
                         const gatewaysTbody =
                             gatewaysSection.querySelector("tbody");
@@ -7478,6 +7603,51 @@ function initResourceSelect(
                     }
                 }
 
+                // If we're in the edit-server-resources container, maintain the
+                // `data-server-resources` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-resources") {
+                    try {
+                        let serverResources = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-resources",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverResources = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-resources:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverResources.includes(idVal)) {
+                                    serverResources.push(idVal);
+                                }
+                            } else {
+                                serverResources = serverResources.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-resources",
+                                JSON.stringify(serverResources),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-resources:",
+                            err,
+                        );
+                    }
+                }
+
                 update();
             }
         });
@@ -7728,6 +7898,51 @@ function initPromptSelect(
                         allIdsInput.value = JSON.stringify(allIds);
                     } catch (err) {
                         console.error("Error updating allPromptIds:", err);
+                    }
+                }
+
+                // If we're in the edit-server-prompts container, maintain the
+                // `data-server-prompts` attribute so user selections persist
+                // across gateway-filtered reloads.
+                else if (selectId === "edit-server-prompts") {
+                    try {
+                        let serverPrompts = [];
+                        const dataAttr = container.getAttribute(
+                            "data-server-prompts",
+                        );
+                        if (dataAttr) {
+                            try {
+                                serverPrompts = JSON.parse(dataAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing data-server-prompts:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        const idVal = parseInt(e.target.value);
+                        if (!Number.isNaN(idVal)) {
+                            if (e.target.checked) {
+                                if (!serverPrompts.includes(idVal)) {
+                                    serverPrompts.push(idVal);
+                                }
+                            } else {
+                                serverPrompts = serverPrompts.filter(
+                                    (x) => x !== idVal,
+                                );
+                            }
+
+                            container.setAttribute(
+                                "data-server-prompts",
+                                JSON.stringify(serverPrompts),
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-server-prompts:",
+                            err,
+                        );
                     }
                 }
 
@@ -8025,7 +8240,14 @@ function initGatewaySelect(
         container.addEventListener("change", (e) => {
             if (e.target.type === "checkbox") {
                 // Log gateway_id when checkbox is clicked
-                const gatewayId = e.target.value;
+                // Normalize the special null-gateway checkbox to the literal string "null"
+                let gatewayId = e.target.value;
+                if (
+                    e.target.dataset &&
+                    e.target.dataset.gatewayNull === "true"
+                ) {
+                    gatewayId = "null";
+                }
                 const gatewayName =
                     e.target.nextElementSibling?.textContent?.trim() ||
                     "Unknown";
@@ -8092,12 +8314,38 @@ function initGatewaySelect(
  * @returns {string[]} Array of selected gateway IDs
  */
 function getSelectedGatewayIds() {
-    const container = document.getElementById("associatedGateways");
-    console.log("[Gateway Selection DEBUG] Container found:", !!container);
+    // Prefer the gateway selection belonging to the currently active form.
+    // If the edit-server modal is open, use the edit modal's gateway container
+    // (`associatedEditGateways`). Otherwise use the create form container
+    // (`associatedGateways`). This allows the same filtering logic to work
+    // for both Add and Edit flows.
+    let container = document.getElementById("associatedGateways");
+    const editContainer = document.getElementById("associatedEditGateways");
+
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+
+    if (isEditModalOpen && editContainer) {
+        container = editContainer;
+    } else if (
+        editContainer &&
+        editContainer.offsetParent !== null &&
+        !container
+    ) {
+        // If edit container is visible (e.g. modal rendered) and associatedGateways
+        // not present, prefer edit container.
+        container = editContainer;
+    }
+
+    console.log(
+        "[Gateway Selection DEBUG] Container used:",
+        container ? container.id : null,
+    );
 
     if (!container) {
         console.warn(
-            "[Gateway Selection DEBUG] associatedGateways container not found",
+            "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
         );
         return [];
     }
@@ -8174,19 +8422,46 @@ function reloadAssociatedItems() {
         selectedGatewayIds,
     );
 
+    // Determine whether to reload the 'create server' containers (associated*)
+    // or the 'edit server' containers (edit-server-*). Prefer the edit
+    // containers when the edit modal is open or the edit-gateway selector
+    // exists and is visible.
+    const editModal = document.getElementById("server-edit-modal");
+    const isEditModalOpen =
+        editModal && !editModal.classList.contains("hidden");
+    const editGateways = document.getElementById("associatedEditGateways");
+
+    const useEditContainers =
+        isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
+
+    const toolsContainerId = useEditContainers
+        ? "edit-server-tools"
+        : "associatedTools";
+    const resourcesContainerId = useEditContainers
+        ? "edit-server-resources"
+        : "associatedResources";
+    const promptsContainerId = useEditContainers
+        ? "edit-server-prompts"
+        : "associatedPrompts";
+
     // Reload tools
-    const toolsContainer = document.getElementById("associatedTools");
+    const toolsContainer = document.getElementById(toolsContainerId);
     if (toolsContainer) {
         const toolsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
 
-        console.log("[Filter Update DEBUG] Tools URL:", toolsUrl);
+        console.log(
+            "[Filter Update DEBUG] Tools URL:",
+            toolsUrl,
+            "-> target:",
+            `#${toolsContainerId}`,
+        );
 
-        // Use HTMX to reload the content
+        // Use HTMX to reload the content into the chosen container
         if (window.htmx) {
             htmx.ajax("GET", toolsUrl, {
-                target: "#associatedTools",
+                target: `#${toolsContainerId}`,
                 swap: "innerHTML",
             })
                 .then(() => {
@@ -8194,13 +8469,26 @@ function reloadAssociatedItems() {
                         "[Filter Update DEBUG] Tools reloaded successfully",
                     );
                     // Re-initialize the tool select after content is loaded
+                    const pillsId = useEditContainers
+                        ? "selectedEditToolsPills"
+                        : "selectedToolsPills";
+                    const warnId = useEditContainers
+                        ? "selectedEditToolsWarning"
+                        : "selectedToolsWarning";
+                    const selectBtn = useEditContainers
+                        ? "selectAllEditToolsBtn"
+                        : "selectAllToolsBtn";
+                    const clearBtn = useEditContainers
+                        ? "clearAllEditToolsBtn"
+                        : "clearAllToolsBtn";
+
                     initToolSelect(
-                        "associatedTools",
-                        "selectedToolsPills",
-                        "selectedToolsWarning",
+                        toolsContainerId,
+                        pillsId,
+                        warnId,
                         6,
-                        "selectAllToolsBtn",
-                        "clearAllToolsBtn",
+                        selectBtn,
+                        clearBtn,
                     );
                 })
                 .catch((err) => {
@@ -8215,11 +8503,14 @@ function reloadAssociatedItems() {
             );
         }
     } else {
-        console.warn("[Filter Update DEBUG] Tools container not found");
+        console.warn(
+            "[Filter Update DEBUG] Tools container not found ->",
+            toolsContainerId,
+        );
     }
 
     // Reload resources - use fetch directly to avoid HTMX race conditions
-    const resourcesContainer = document.getElementById("associatedResources");
+    const resourcesContainer = document.getElementById(resourcesContainerId);
     if (resourcesContainer) {
         const resourcesUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8303,14 +8594,66 @@ function reloadAssociatedItems() {
                 }
 
                 // Re-initialize the resource select after content is loaded
+                const resPills = useEditContainers
+                    ? "selectedEditResourcesPills"
+                    : "selectedResourcesPills";
+                const resWarn = useEditContainers
+                    ? "selectedEditResourcesWarning"
+                    : "selectedResourcesWarning";
+                const resSelectBtn = useEditContainers
+                    ? "selectAllEditResourcesBtn"
+                    : "selectAllResourcesBtn";
+                const resClearBtn = useEditContainers
+                    ? "clearAllEditResourcesBtn"
+                    : "clearAllResourcesBtn";
+
                 initResourceSelect(
-                    "associatedResources",
-                    "selectedResourcesPills",
-                    "selectedResourcesWarning",
+                    resourcesContainerId,
+                    resPills,
+                    resWarn,
                     6,
-                    "selectAllResourcesBtn",
-                    "clearAllResourcesBtn",
+                    resSelectBtn,
+                    resClearBtn,
                 );
+                // Re-apply server-associated resource selections so selections
+                // persist across gateway-filtered reloads. The resources partial
+                // replaces checkbox inputs; use the container's
+                // `data-server-resources` attribute (set when opening edit modal)
+                // to restore checked state.
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const associated = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(associated) &&
+                            associated.length > 0
+                        ) {
+                            const resourceCheckboxes =
+                                resourcesContainer.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedResources"]',
+                                );
+                            resourceCheckboxes.forEach((cb) => {
+                                const val = parseInt(cb.value);
+                                if (
+                                    !Number.isNaN(val) &&
+                                    associated.includes(val)
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger change so pills and counts update
+                            const event = new Event("change", {
+                                bubbles: true,
+                            });
+                            resourcesContainer.dispatchEvent(event);
+                        }
+                    }
+                } catch (e) {
+                    console.warn("Error restoring associated resources:", e);
+                }
                 console.log(
                     "[Filter Update DEBUG] Resources reloaded successfully via fetch",
                 );
@@ -8326,7 +8669,7 @@ function reloadAssociatedItems() {
     }
 
     // Reload prompts
-    const promptsContainer = document.getElementById("associatedPrompts");
+    const promptsContainer = document.getElementById(promptsContainerId);
     if (promptsContainer) {
         const promptsUrl = gatewayIdParam
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
@@ -8334,17 +8677,30 @@ function reloadAssociatedItems() {
 
         if (window.htmx) {
             htmx.ajax("GET", promptsUrl, {
-                target: "#associatedPrompts",
+                target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
                 // Re-initialize the prompt select after content is loaded
+                const pPills = useEditContainers
+                    ? "selectedEditPromptsPills"
+                    : "selectedPromptsPills";
+                const pWarn = useEditContainers
+                    ? "selectedEditPromptsWarning"
+                    : "selectedPromptsWarning";
+                const pSelectBtn = useEditContainers
+                    ? "selectAllEditPromptsBtn"
+                    : "selectAllPromptsBtn";
+                const pClearBtn = useEditContainers
+                    ? "clearAllEditPromptsBtn"
+                    : "clearAllPromptsBtn";
+
                 initPromptSelect(
-                    "associatedPrompts",
-                    "selectedPromptsPills",
-                    "selectedPromptsWarning",
+                    promptsContainerId,
+                    pPills,
+                    pWarn,
                     6,
-                    "selectAllPromptsBtn",
-                    "clearAllPromptsBtn",
+                    pSelectBtn,
+                    pClearBtn,
                 );
             });
         }
@@ -8389,6 +8745,23 @@ function toggleInactiveItems(type) {
         window.history.replaceState({}, document.title, urlObj.toString());
     } catch (e) {
         // ignore (shouldn't happen)
+    }
+
+    // For servers (catalog), use loadServers function if available, otherwise reload page
+    if (type === "servers") {
+        if (typeof window.loadServers === "function") {
+            window.loadServers();
+            return;
+        }
+        // Fallback to page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
     }
 
     // Try to find the HTMX container that loads this entity's partial
@@ -8895,6 +9268,1752 @@ async function testTool(toolId) {
             testButton.disabled = false;
             testButton.textContent = "Test";
             testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function loadTools() {
+    const toolBody = document.getElementById("toolBody");
+    console.log("Loading tools...");
+    try {
+        if (toolBody !== null) {
+            toolBody.innerHTML = ` 
+                <tr>
+                    <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
+                </tr>
+                `;
+            const response = await fetch(`${window.ROOT_PATH}/tools`, {
+                method: "GET",
+            });
+
+            if (!response.ok) {
+                throw new Error("Failed to load tools");
+            }
+            const tools = await response.json(); // 👈 expect JSON array
+            console.log("Fetched tools:", tools);
+
+            //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
+
+            if (!tools.length) {
+                toolBody.innerHTML = `
+                <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
+                `;
+                return;
+            }
+
+            // ✅ Build HTML rows dynamically
+            const rows = tools
+                .map((tool) => {
+                    const { id, name, integrationType, enabled, reachable } =
+                        tool;
+                    let statusText = "";
+                    let statusClass = "";
+                    if (enabled && reachable) {
+                        statusText = "Online";
+                        statusClass = "bg-green-100 text-green-800";
+                    } else if (enabled) {
+                        statusText = "Offline";
+                        statusClass = "bg-yellow-100 text-yellow-800";
+                    } else {
+                        statusText = "Inactive";
+                        statusClass = "bg-red-100 text-red-800";
+                    }
+                    return `
+                <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
+                    <td class="px-4 py-3">
+                    <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
+                            data-tool="${name}###${id}">
+                    </td>
+                    <td class="px-4 py-3">${name}</td>
+                    <td class="px-4 py-3">${integrationType || "-"}</td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm w-12">
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${statusClass}">
+                        ${statusText}
+                    </span>
+                    </td>
+                    <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
+                    <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                        <button onclick="enrichTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
+                        Enrich
+                        </button>
+                        <button onclick="generateToolTestCases('${id}')"
+                        class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
+                        Generate Test Cases
+                        </button>
+                        <button onclick="validateTool('${id}')"
+                        class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
+                        Validate
+                        </button>
+                        <button onclick="viewTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
+                        View
+                        </button>
+                        <button onclick="editTool('${id}')"
+                        class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
+                        Edit
+                        </button>
+                    </div>
+                    </td>
+                </tr>
+                `;
+                })
+                .join("");
+            toolBody.innerHTML = rows;
+        }
+    } catch (error) {
+        console.error("Error loading tools:", error);
+        if (toolBody !== null) {
+            toolBody.innerHTML = `
+                <tr>
+                <td colspan="5" class="text-center py-4 text-red-500">Failed to load tools. Please try again.</td>
+                </tr>
+            `;
+        }
+    }
+}
+
+document.addEventListener("DOMContentLoaded", loadTools);
+
+async function enrichTool(toolId) {
+    try {
+        console.log(`Enriching tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const enrichButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (enrichButton) {
+            if (enrichButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            enrichButton.disabled = true;
+            enrichButton.textContent = "Enriching...";
+            enrichButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        // 6. MAKE REQUEST with increased timeout
+        //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
+        const response = await fetchWithTimeout(
+            `/toolops/enrichment/enrich_tool?tool_id=${toolId}`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+
+        const data = await response.json();
+        enrichButton.disabled = false;
+        enrichButton.textContent = "Enrich";
+        enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
+        console.log(`Tool ${toolId} enriched successfully`, data);
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+
+        const newDesc = safeGetElement("view-new-description");
+        const oldDesc = safeGetElement("view-old-description");
+
+        if (newDesc) {
+            newDesc.textContent = data.enriched_desc || "";
+        }
+        if (oldDesc) {
+            oldDesc.textContent =
+                data.original_desc.slice(0, data.original_desc.indexOf("*")) ||
+                "";
+        }
+        openModal("description-view-modal");
+        // showSuccessMessage(`Tool enriched successfully`);
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="enrichTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Enrich";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+    const toolBody = document.getElementById("toolBody");
+    const selectedList = document.getElementById("selectedList");
+    const selectedCount = document.getElementById("selectedCount");
+    const searchBox = document.getElementById("searchBox");
+
+    let selectedTools = [];
+    let selectedToolIds = [];
+
+    if (toolBody !== null) {
+        // ✅ Use event delegation for dynamically added checkboxes
+        toolBody.addEventListener("change", (event) => {
+            const cb = event.target;
+            if (cb.classList.contains("tool-checkbox")) {
+                const toolName = cb.getAttribute("data-tool");
+                if (cb.checked) {
+                    if (!selectedTools.includes(toolName)) {
+                        selectedTools.push(toolName.split("###")[0]);
+                        selectedToolIds.push(toolName.split("###")[1]);
+                    }
+                } else {
+                    selectedTools = selectedTools.filter(
+                        (t) => t !== toolName.split("###")[0],
+                    );
+                    selectedToolIds = selectedToolIds.filter(
+                        (t) => t !== toolName.split("###")[1],
+                    );
+                }
+                updateSelectedList();
+            }
+        });
+    }
+
+    function updateSelectedList() {
+        selectedList.innerHTML = "";
+        if (selectedTools.length === 0) {
+            selectedList.textContent = "No tools selected";
+        } else {
+            selectedTools.forEach((tool) => {
+                const item = document.createElement("div");
+                item.className =
+                    "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+                item.innerHTML = `
+                    <span>${tool}</span>
+                    <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
+                `;
+                item.querySelector(".remove-btn").addEventListener(
+                    "click",
+                    () => {
+                        selectedTools = selectedTools.filter((t) => t !== tool);
+                        const box = document.querySelector(`
+                            .tool-checkbox[data-tool="${tool}"]`);
+                        if (box) {
+                            box.checked = false;
+                        }
+                        updateSelectedList();
+                    },
+                );
+                selectedList.appendChild(item);
+            });
+        }
+        selectedCount.textContent = selectedTools.length;
+    }
+
+    // --- Search logic ---
+    if (searchBox !== null) {
+        searchBox.addEventListener("input", () => {
+            const query = searchBox.value.trim().toLowerCase();
+            document.querySelectorAll("#toolBody tr").forEach((row) => {
+                const name = row.dataset.name;
+                row.style.display = name.includes(query) ? "" : "none";
+            });
+        });
+    }
+    // Generic API call for Enrich/Validate
+    async function callEnrichment() {
+        // const selectedTools = getSelectedTools();
+
+        if (selectedTools.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
+        try {
+            console.log(selectedToolIds);
+            selectedToolIds.forEach((toolId) => {
+                console.log(toolId);
+                fetch(`/toolops/enrichment/enrich_tool?tool_id=${toolId}`, {
+                    method: "POST",
+                    headers: {
+                        "Cache-Control": "no-cache",
+                        Pragma: "no-cache",
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ tool_id: toolId }),
+                });
+            });
+            showSuccessMessage("Tool description enrichment has started.");
+            // Uncheck all checkboxes
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
+
+            // Empty the selected tools array
+            selectedTools = [];
+            selectedToolIds = [];
+
+            // Update the selected tools list UI
+            updateSelectedList();
+        } catch (err) {
+            //   responseDiv.textContent = `❌ Error: ${err.message}`;
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
+    }
+
+    function openTestCaseModal() {
+        if (selectedToolIds.length === 0) {
+            showErrorMessage("⚠️ Please select at least one tool.");
+            return;
+        }
+
+        // Show modal
+        document
+            .getElementById("bulk-testcase-gen-modal")
+            .classList.remove("hidden");
+        document
+            .getElementById("bulk-generate-btn")
+            .addEventListener("click", generateBulkTestCases);
+    }
+
+    async function generateBulkTestCases() {
+        const testCases = parseInt(
+            document.getElementById("gen-bulk-testcase-count").value,
+        );
+        const variations = parseInt(
+            document.getElementById("gen-bulk-nl-variation-count").value,
+        );
+
+        if (!testCases || !variations || testCases < 1 || variations < 1) {
+            showErrorMessage(
+                "⚠️ Please enter valid numbers for test cases and variations.",
+            );
+            return;
+        }
+
+        try {
+            for (const toolId of selectedToolIds) {
+                fetch(
+                    `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Cache-Control": "no-cache",
+                            Pragma: "no-cache",
+                            "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify({ tool_id: toolId }),
+                    },
+                );
+            }
+            showSuccessMessage(
+                "Test case generation for tool validation has started.",
+            );
+            // Reset selections
+            document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+                cb.checked = false;
+            });
+            selectedTools = [];
+            selectedToolIds = [];
+            updateSelectedList();
+
+            // Close modal immediately after clicking Generate
+            closeModal("bulk-testcase-gen-modal");
+        } catch (err) {
+            showErrorMessage(`❌ Error: ${err.message}`);
+        }
+    }
+    window.generateBulkTestCases = generateBulkTestCases;
+
+    function clearAllSelections() {
+        // Uncheck all checkboxes
+        document.querySelectorAll(".tool-checkbox").forEach((cb) => {
+            cb.checked = false;
+        });
+
+        // Empty the selected tools array
+        selectedTools = [];
+        selectedToolIds = [];
+
+        // Update the selected tools list UI
+        updateSelectedList();
+    }
+    // Button listeners
+    const enrichToolsBtn = document.getElementById("enrichToolsBtn");
+
+    if (enrichToolsBtn !== null) {
+        document
+            .getElementById("enrichToolsBtn")
+            .addEventListener("click", () => callEnrichment());
+        document
+            .getElementById("validateToolsBtn")
+            .addEventListener("click", () => openTestCaseModal());
+        document
+            .getElementById("clearToolsBtn")
+            .addEventListener("click", () => clearAllSelections());
+    }
+});
+
+async function generateToolTestCases(toolId) {
+    try {
+        console.log(`Generating Test cases for tool ID: ${toolId}`);
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const tcgButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (tcgButton) {
+            if (tcgButton.disabled) {
+                console.log(
+                    "Generate Test Cases button already disabled, request in progress",
+                );
+                return;
+            }
+            tcgButton.disabled = true;
+            tcgButton.textContent = "Generating Test Cases...";
+            tcgButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        const toolIdElement = safeGetElement("gen-test-tool-id");
+        if (toolIdElement) {
+            toolIdElement.textContent = toolId || "Unknown";
+        }
+        document.getElementById("gen-test-tool-id").style.display = "none";
+        // document.getElementById("gen-test-tool-id").style.display = 'block';
+
+        openModal("testcase-gen-modal");
+
+        tcgButton.disabled = false;
+        tcgButton.textContent = "Generate Test Cases";
+        tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Generate Test Cases";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function generateTestCases() {
+    const testCases = document.getElementById("gen-testcase-count").value;
+    const variations = document.getElementById("gen-nl-variation-count").value;
+    let toolId;
+    // const toolId = document.getElementById("gen-test-tool-id").value;
+    const toolIdElement = safeGetElement("gen-test-tool-id");
+    if (toolIdElement) {
+        toolId = toolIdElement.textContent || "Unknown";
+    }
+    console.log(
+        `Generate ${testCases} test cases with ${variations} variations for tool ${toolId}`,
+    );
+
+    try {
+        showSuccessMessage(
+            "Test case generation started successfully for the tool.",
+        );
+        closeModal("testcase-gen-modal");
+        const response = await fetch(
+            `/toolops/validation/generate_testcases?tool_id=${toolId}&number_of_test_cases=${testCases}&number_of_nl_variations=${variations}&mode=generate`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+        // const data = await response.json();
+        // console.log(data)
+        // showSuccessMessage(`Tool ${toolId} enriched successfully`);
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="generateToolTestCases('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Generate Test Cases";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function validateTool(toolId) {
+    try {
+        console.log(`Validating tool ID: ${toolId}`);
+
+        // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
+        const now = Date.now();
+        const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
+        const timeSinceLastRequest = now - lastRequest;
+        const enhancedDebounceDelay = 2000; // Increased from 1000ms
+
+        if (timeSinceLastRequest < enhancedDebounceDelay) {
+            console.log(
+                `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
+            );
+            const waitTime = Math.ceil(
+                (enhancedDebounceDelay - timeSinceLastRequest) / 1000,
+            );
+            showErrorMessage(
+                `Please wait ${waitTime} more second${waitTime > 1 ? "s" : ""} before testing again`,
+            );
+            return;
+        }
+
+        // 2. MODAL PROTECTION: Enhanced check
+        if (AppState.isModalActive("tool-validation-modal")) {
+            console.warn("Tool validation modal is already active");
+            return; // Silent fail for better UX
+        }
+
+        // 3. BUTTON STATE: Immediate feedback with better state management
+        const validateButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
+        if (validateButton) {
+            if (validateButton.disabled) {
+                console.log(
+                    "Test button already disabled, request in progress",
+                );
+                return;
+            }
+            validateButton.disabled = true;
+            validateButton.textContent = "Generating Test Cases...";
+            validateButton.classList.add("opacity-50", "cursor-not-allowed");
+        }
+
+        // 4. REQUEST CANCELLATION: Enhanced cleanup
+        const existingController = toolTestState.activeRequests.get(toolId);
+        if (existingController) {
+            console.log(`Cancelling existing request for tool ${toolId}`);
+            existingController.abort();
+            toolTestState.activeRequests.delete(toolId);
+        }
+
+        // 5. CREATE NEW REQUEST with longer timeout
+        const controller = new AbortController();
+        toolTestState.activeRequests.set(toolId, controller);
+        toolTestState.lastRequestTime.set(toolId, now);
+
+        // 6. MAKE REQUEST with increased timeout
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/tools/${toolId}`,
+            {
+                signal: controller.signal,
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                },
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (!response.ok) {
+            if (response.status === 404) {
+                throw new Error(
+                    `Tool with ID ${toolId} not found. It may have been deleted.`,
+                );
+            } else if (response.status === 429) {
+                throw new Error(
+                    "Too many requests. Please wait a moment before validating again.",
+                );
+            } else if (response.status >= 500) {
+                throw new Error(
+                    `Server error (${response.status}). The server may be overloaded. Please try again in a few seconds.`,
+                );
+            } else {
+                throw new Error(
+                    `HTTP ${response.status}: ${response.statusText}`,
+                );
+            }
+        }
+        const tool = await response.json();
+        console.log(`Tool ${toolId} fetched successfully`, tool);
+        toolInputSchemaRegistry = tool;
+
+        // 7. CLEAN STATE before proceeding
+        toolTestState.activeRequests.delete(toolId);
+
+        // Store in safe state
+        AppState.currentTestTool = tool;
+
+        // Set modal title and description safely - NO DOUBLE ESCAPING
+        const titleElement = safeGetElement("tool-validation-modal-title");
+        const descElement = safeGetElement("tool-validation-modal-description");
+
+        if (titleElement) {
+            titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
+        }
+        if (descElement) {
+            if (tool.description) {
+                // Escape HTML and then replace newlines with <br/> tags
+                tool.description = tool.description.slice(
+                    0,
+                    tool.description.indexOf("*"),
+                );
+                descElement.innerHTML = escapeHtml(tool.description).replace(
+                    /\n/g,
+                    "<br/>",
+                );
+            } else {
+                descElement.textContent = "No description available.";
+            }
+        }
+
+        const container = safeGetElement("tool-validation-form-fields");
+        if (!container) {
+            console.error("Tool validation form fields container not found");
+            return;
+        }
+
+        container.innerHTML = ""; // Clear previous fields
+
+        // Parse the input schema safely
+        let schema = tool.inputSchema;
+        if (typeof schema === "string") {
+            try {
+                schema = JSON.parse(schema);
+            } catch (e) {
+                console.error("Invalid JSON schema", e);
+                schema = {};
+            }
+        }
+
+        // Modal setup
+        const title = safeGetElement("tool-validation-modal-title");
+        const desc = safeGetElement("tool-validation-modal-description");
+        if (title) {
+            title.textContent = `Test Tool: ${tool.name || "Unknown"}`;
+        }
+        if (desc) {
+            desc.textContent = tool.description || "No description available.";
+        }
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "";
+
+        // Parse schema safely
+        if (typeof schema === "string") {
+            try {
+                schema = JSON.parse(schema);
+            } catch (e) {
+                console.error("Invalid schema JSON", e);
+                schema = {};
+            }
+        }
+
+        // Example validat cases (you can replace this with API-provided cases)
+        let testCases = tool.testCases || [
+            { id: "t1", name: "Test Case 1", input_parameters: {} },
+            { id: "t2", name: "Test Case 2", input_parameters: {} },
+        ];
+
+        const validationStatusResponse = await fetchWithTimeout(
+            `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=status`,
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ tool_id: toolId }),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        if (validationStatusResponse.ok) {
+            const vsres = await validationStatusResponse.json();
+            console.log(JSON.stringify(vsres));
+            let validationStatus = await vsres;
+
+            if (validationStatus.constructor === Array) {
+                validationStatus = validationStatus[0].status;
+                if (validationStatus === "not-initiated") {
+                    showErrorMessage(
+                        "Please generate test cases before running validation.",
+                    );
+                } else if (validationStatus === "in-progress") {
+                    showErrorMessage(
+                        "Test case generation is in progress. Please try validation once it is complete.",
+                    );
+                } else if (validationStatus === "failed") {
+                    showErrorMessage(
+                        "Test case generation failed. Please check your LLM connection and try again.",
+                    );
+                    console.log(
+                        "Previous error while generating test cases: ",
+                        vsres[0].error_message,
+                    );
+                } else {
+                    const validationResponse = await fetchWithTimeout(
+                        `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=query`,
+                        {
+                            method: "POST",
+                            headers: {
+                                "Cache-Control": "no-cache",
+                                Pragma: "no-cache",
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({ tool_id: toolId }),
+                        },
+                        toolTestState.requestTimeout, // Use the increased timeout
+                    );
+
+                    if (validationResponse.ok) {
+                        const vres = await validationResponse.json();
+                        // console.log(JSON.stringify(vres))
+                        testCases = await vres;
+                    }
+
+                    // Render accordion-style test cases
+                    testCases.forEach((test, index) => {
+                        const inputParameters = test.input_parameters;
+                        const acc = document.createElement("div");
+                        acc.className =
+                            "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
+
+                        const header = document.createElement("button");
+                        header.type = "button";
+                        header.className =
+                            "w-full flex justify-between items-center px-4 py-3 bg-gray-100 dark:bg-gray-800 text-gray-900 dark:text-gray-100 font-medium";
+                        header.innerHTML = `
+                            <span>${`Test Case ${index + 1}`}</span>
+                            <span class="toggle-icon">+</span>
+                        `;
+
+                        const body = document.createElement("div");
+                        body.className =
+                            "hidden bg-white dark:bg-gray-900 px-4 py-4 space-y-3";
+
+                        // Toggle open/close
+                        header.addEventListener("click", () => {
+                            const isOpen = !body.classList.contains("hidden");
+                            body.classList.toggle("hidden", isOpen);
+                            header.querySelector(".toggle-icon").textContent =
+                                isOpen ? "+" : "−";
+                        });
+
+                        acc.appendChild(header);
+                        acc.appendChild(body);
+                        container.appendChild(acc);
+
+                        // Render fields
+                        const formDiv = document.createElement("form");
+                        formDiv.id = `tool-validation-form-${index}`;
+                        formDiv.className = "space-y-3";
+
+                        if (schema && schema.properties) {
+                            for (const key in schema.properties) {
+                                const prop = schema.properties[key];
+
+                                // Validate the property name
+                                const keyValidation = validateInputName(
+                                    key,
+                                    "schema property",
+                                );
+                                if (!keyValidation.valid) {
+                                    console.warn(
+                                        `Skipping invalid schema property: ${key}`,
+                                    );
+                                    continue;
+                                }
+
+                                const fieldDiv = document.createElement("div");
+                                fieldDiv.className = "mb-4";
+
+                                // Field label - use textContent to avoid double escaping
+                                const label = document.createElement("label");
+                                // label.textContent = key;
+                                label.className =
+                                    "block text-sm font-medium text-gray-700 dark:text-gray-300";
+                                // Create span for label text
+                                const labelText =
+                                    document.createElement("span");
+                                labelText.textContent = keyValidation.value;
+                                label.appendChild(labelText);
+                                let defaultValue = "";
+                                if (keyValidation.value in inputParameters) {
+                                    defaultValue =
+                                        inputParameters[keyValidation.value];
+                                }
+
+                                // Add red star if field is required
+                                if (
+                                    schema.required &&
+                                    schema.required.includes(key)
+                                ) {
+                                    const requiredMark =
+                                        document.createElement("span");
+                                    requiredMark.textContent = " *";
+                                    requiredMark.className = "text-red-500";
+                                    label.appendChild(requiredMark);
+                                }
+
+                                fieldDiv.appendChild(label);
+
+                                // Description help text - use textContent
+                                if (prop.description) {
+                                    const description =
+                                        document.createElement("small");
+                                    description.textContent = prop.description;
+                                    description.className =
+                                        "text-gray-500 block mb-1";
+                                    fieldDiv.appendChild(description);
+                                }
+
+                                // const input = document.createElement("input");
+                                // input.name = key;
+                                // input.className =
+                                // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
+                                // input.value = test.inputs[key] || prop.default || "";
+                                // fieldDiv.appendChild(input);
+
+                                if (prop.type === "array") {
+                                    const arrayContainer =
+                                        document.createElement("div");
+                                    arrayContainer.className = "space-y-2";
+
+                                    function createArrayInput(value = "") {
+                                        const wrapper =
+                                            document.createElement("div");
+                                        wrapper.className =
+                                            "flex items-center space-x-2";
+
+                                        const input =
+                                            document.createElement("input");
+                                        input.name = keyValidation.value;
+                                        input.required =
+                                            schema.required &&
+                                            schema.required.includes(key);
+                                        input.className =
+                                            "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                                        const itemTypes = Array.isArray(
+                                            prop.items?.anyOf,
+                                        )
+                                            ? prop.items.anyOf.map(
+                                                  (t) => t.type,
+                                              )
+                                            : [prop.items?.type];
+
+                                        if (
+                                            itemTypes.includes("number") ||
+                                            itemTypes.includes("integer")
+                                        ) {
+                                            input.type = "number";
+                                            input.step = itemTypes.includes(
+                                                "integer",
+                                            )
+                                                ? "1"
+                                                : "any";
+                                        } else if (
+                                            itemTypes.includes("boolean")
+                                        ) {
+                                            input.type = "checkbox";
+                                            input.value = "true";
+                                            input.checked =
+                                                value === true ||
+                                                value === "true";
+                                        } else {
+                                            input.type = "text";
+                                        }
+
+                                        if (
+                                            typeof value === "string" ||
+                                            typeof value === "number"
+                                        ) {
+                                            input.value = value;
+                                        }
+
+                                        const delBtn =
+                                            document.createElement("button");
+                                        delBtn.type = "button";
+                                        delBtn.className =
+                                            "ml-2 text-red-600 hover:text-red-800 focus:outline-none";
+                                        delBtn.title = "Delete";
+                                        delBtn.textContent = "×";
+                                        delBtn.addEventListener("click", () => {
+                                            arrayContainer.removeChild(wrapper);
+                                        });
+
+                                        wrapper.appendChild(input);
+
+                                        if (itemTypes.includes("boolean")) {
+                                            const hidden =
+                                                document.createElement("input");
+                                            hidden.type = "hidden";
+                                            hidden.name = keyValidation.value;
+                                            hidden.value = "false";
+                                            wrapper.appendChild(hidden);
+                                        }
+
+                                        wrapper.appendChild(delBtn);
+                                        return wrapper;
+                                    }
+
+                                    const addBtn =
+                                        document.createElement("button");
+                                    addBtn.type = "button";
+                                    addBtn.className =
+                                        "mt-2 px-2 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 focus:outline-none";
+                                    addBtn.textContent = "Add items";
+                                    addBtn.addEventListener("click", () => {
+                                        arrayContainer.appendChild(
+                                            createArrayInput(),
+                                        );
+                                    });
+
+                                    defaultValue = defaultValue[0];
+                                    if (Array.isArray(defaultValue)) {
+                                        if (defaultValue.length > 0) {
+                                            defaultValue.forEach((val) => {
+                                                arrayContainer.appendChild(
+                                                    createArrayInput(val),
+                                                );
+                                            });
+                                        } else {
+                                            // Create one empty input for empty default arrays
+                                            arrayContainer.appendChild(
+                                                createArrayInput(),
+                                            );
+                                        }
+                                    } else {
+                                        arrayContainer.appendChild(
+                                            createArrayInput(),
+                                        );
+                                    }
+
+                                    fieldDiv.appendChild(arrayContainer);
+                                    fieldDiv.appendChild(addBtn);
+                                } else {
+                                    // Input field with validation (with multiline support)
+                                    let fieldInput;
+                                    const isTextType = prop.type === "text";
+                                    if (isTextType) {
+                                        fieldInput =
+                                            document.createElement("textarea");
+                                        fieldInput.rows = 4;
+                                    } else {
+                                        fieldInput =
+                                            document.createElement("input");
+                                        if (
+                                            prop.type === "number" ||
+                                            prop.type === "integer"
+                                        ) {
+                                            fieldInput.type = "number";
+                                        } else if (prop.type === "boolean") {
+                                            fieldInput.type = "checkbox";
+                                            fieldInput.value = "true";
+                                        } else {
+                                            fieldInput =
+                                                document.createElement(
+                                                    "textarea",
+                                                );
+                                            fieldInput.rows = 1;
+                                        }
+                                    }
+
+                                    fieldInput.name = keyValidation.value;
+                                    fieldInput.required =
+                                        schema.required &&
+                                        schema.required.includes(key);
+                                    fieldInput.className =
+                                        prop.type === "boolean"
+                                            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                                            : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+
+                                    // Set default values here
+                                    if (prop.default !== undefined) {
+                                        if (fieldInput.type === "checkbox") {
+                                            fieldInput.checked =
+                                                prop.default === true;
+                                        } else if (isTextType) {
+                                            fieldInput.value = prop.default;
+                                        } else {
+                                            fieldInput.value = prop.default;
+                                        }
+                                    }
+                                    fieldInput.value = defaultValue;
+                                    fieldDiv.appendChild(fieldInput);
+                                    if (prop.default !== undefined) {
+                                        if (fieldInput.type === "checkbox") {
+                                            const hiddenInput =
+                                                document.createElement("input");
+                                            hiddenInput.type = "hidden";
+                                            hiddenInput.value = "false";
+                                            hiddenInput.name =
+                                                keyValidation.value;
+                                            fieldDiv.appendChild(hiddenInput);
+                                        }
+                                    }
+                                }
+                                formDiv.appendChild(fieldDiv);
+                            }
+                        }
+
+                        // First section - Passthrough Headers
+                        const headerSection = document.createElement("div");
+                        headerSection.className = "mt-4 border-t pt-4";
+
+                        const headerDiv = document.createElement("div");
+
+                        const label = document.createElement("label");
+                        label.setAttribute(
+                            "for",
+                            "validation-passthrough-headers",
+                        );
+                        label.className =
+                            "block text-sm font-medium text-gray-700 dark:text-gray-400";
+                        label.textContent = "Passthrough Headers (Optional)";
+
+                        const small = document.createElement("small");
+                        small.className =
+                            "text-gray-500 dark:text-gray-400 block mb-2";
+                        small.textContent =
+                            'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
+
+                        const textarea = document.createElement("textarea");
+                        textarea.id = "validation-passthrough-headers";
+                        textarea.name = "passthrough_headers";
+                        textarea.rows = 3;
+                        textarea.placeholder =
+                            "Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456";
+                        textarea.className =
+                            "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
+
+                        headerDiv.appendChild(label);
+                        headerDiv.appendChild(small);
+                        headerDiv.appendChild(textarea);
+                        headerSection.appendChild(headerDiv);
+
+                        const nlUtteranceSection =
+                            document.createElement("div");
+                        nlUtteranceSection.className = "mt-4 border-t pt-4";
+                        const nlUtteranceDiv = document.createElement("div");
+                        const nlUtterancelabel =
+                            document.createElement("label");
+                        nlUtterancelabel.setAttribute(
+                            "for",
+                            "test-passthrough-nlUtterances",
+                        );
+                        nlUtterancelabel.className =
+                            "block text-sm font-bold text-green-700 dark:text-green-400";
+                        nlUtterancelabel.textContent =
+                            "Generated Test Utterance";
+
+                        const nlUtterancesmall =
+                            document.createElement("small");
+                        nlUtterancesmall.className =
+                            "text-gray-500 dark:text-gray-400 block mb-2";
+                        nlUtterancesmall.textContent =
+                            "Modify or add new utterances to test using the agent.";
+
+                        const nlutextarea = document.createElement("textarea");
+                        nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
+                        nlutextarea.name = "passthrough_nlUtterances";
+                        nlutextarea.rows = 3;
+                        nlutextarea.value = test.nl_utterance.join("\n\n");
+                        nlutextarea.className =
+                            "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
+
+                        nlUtteranceDiv.appendChild(nlUtterancelabel);
+                        nlUtteranceDiv.appendChild(nlUtterancesmall);
+                        nlUtteranceDiv.appendChild(nlutextarea);
+                        nlUtteranceSection.appendChild(nlUtteranceDiv);
+
+                        // // Result area
+                        // const resultBox = document.createElement("pre");
+                        // resultBox.id = `test-result-${index}`;
+                        // resultBox.className =
+                        // "bg-gray-50 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-200 p-3 rounded overflow-x-auto hidden border border-gray-200 dark:border-gray-700";
+
+                        // Run button
+                        const runBtn = document.createElement("button");
+                        runBtn.textContent = "Run Test";
+                        runBtn.className =
+                            "mt-2 mr-2 px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700";
+                        // Added: mr-2 for spacing
+                        runBtn.addEventListener("click", async () => {
+                            await runToolValidation(index);
+                        });
+
+                        // Run Agent button
+                        const runAgentBtn = document.createElement("button");
+                        runAgentBtn.textContent = "Run With Agent";
+                        runAgentBtn.className =
+                            "mt-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700";
+                        // Changed color to blue
+                        runAgentBtn.addEventListener("click", async () => {
+                            await runToolAgentValidation(index);
+                        });
+
+                        // Loading spinner
+                        const loadingDiv = document.createElement("div");
+                        loadingDiv.id = `tool-validation-loading-${index}`;
+                        loadingDiv.style.display = "none";
+
+                        const spinner = document.createElement("div");
+                        spinner.className = "spinner";
+                        loadingDiv.appendChild(spinner);
+
+                        // Result area
+                        const resultDiv = document.createElement("div");
+                        resultDiv.id = `tool-validation-result-${index}`;
+                        resultDiv.className =
+                            "mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300";
+                        resultDiv.style.height = "400px";
+
+                        body.appendChild(formDiv);
+                        body.appendChild(headerSection);
+                        body.appendChild(nlUtteranceSection);
+                        body.appendChild(runBtn);
+                        body.appendChild(runAgentBtn);
+                        body.appendChild(loadingDiv);
+                        body.appendChild(resultDiv);
+                    });
+
+                    // Run All Tests button
+                    const runAllDiv = document.createElement("div");
+                    runAllDiv.className = "mt-6 text-center";
+                    runAllDiv.innerHTML = `
+                        <button id="run-all-tests-btn"
+                        class="px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700">
+                        Run All Tests
+                        </button>`;
+                    container.appendChild(runAllDiv);
+
+                    // Run All Tests wit hAgent button
+                    // const runAGentAllDiv = document.createElement("div");
+                    // runAGentAllDiv.className = "mt-6 text-center";
+                    // runAGentAllDiv.innerHTML = `
+                    //     <button id="run-all-agent-tests-btn"
+                    //     class="px-4 py-2 bg-orange-600 text-white rounded hover:bg-orange-700">
+                    //     Run With Agent
+                    //     </button>`;
+                    // container.appendChild(runAGentAllDiv);
+
+                    // Hook up Run All button
+                    document
+                        .getElementById("run-all-tests-btn")
+                        ?.addEventListener("click", async () => {
+                            showSuccessMessage(
+                                "🔍 Validation in progress; View results by expanding each test case.",
+                            );
+                            const total = testCases.length;
+                            document
+                                .querySelectorAll(
+                                    "#tool-validation-form-fields > div",
+                                )
+                                .forEach((acc) => {
+                                    const body =
+                                        acc.querySelector("div.hidden");
+                                    const icon =
+                                        acc.querySelector(".toggle-icon");
+                                    if (body) {
+                                        body.classList.remove("hidden");
+                                    }
+                                    if (icon) {
+                                        icon.textContent = "−";
+                                    }
+                                });
+                            for (let i = 0; i < total; i++) {
+                                await runToolValidation(i);
+                            }
+                        });
+
+                    openModal("tool-validation-modal");
+                    console.log(
+                        "✓ Test modal with accordions loaded successfully",
+                    );
+                }
+            } else {
+                showErrorMessage(
+                    "Test case generation failed. Please check your LLM connection and try again.",
+                );
+            }
+        }
+    } catch (error) {
+        console.error("Error fetching tool details for testing:", error);
+        showErrorMessage(error.message);
+    } finally {
+        const testButton = document.querySelector(
+            `[onclick*="validateTool('${toolId}')"]`,
+        );
+        if (testButton) {
+            testButton.disabled = false;
+            testButton.textContent = "Validate";
+            testButton.classList.remove("opacity-50", "cursor-not-allowed");
+        }
+    }
+}
+
+async function runToolValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolValidation()"]',
+    );
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const formData = new FormData(form);
+        // const formData = {};
+        // form.querySelectorAll("input, textarea, select").forEach((input) => {
+        // formData[input.name] =
+        //     input.type === "checkbox" ? input.checked : input.value;
+        // });
+        const params = {};
+
+        const schema = toolInputSchemaRegistry.inputSchema;
+
+        if (schema && schema.properties) {
+            for (const key in schema.properties) {
+                const prop = schema.properties[key];
+                const keyValidation = validateInputName(key, "parameter");
+                if (!keyValidation.valid) {
+                    console.warn(`Skipping invalid parameter: ${key}`);
+                    continue;
+                }
+                let value;
+                if (prop.type === "array") {
+                    const inputValues = formData.getAll(key);
+                    try {
+                        // Convert values based on the items schema type
+                        if (prop.items) {
+                            const itemType = Array.isArray(prop.items.anyOf)
+                                ? prop.items.anyOf.map((t) => t.type)
+                                : [prop.items.type];
+
+                            if (
+                                itemType.includes("number") ||
+                                itemType.includes("integer")
+                            ) {
+                                value = inputValues.map((v) => {
+                                    const num = Number(v);
+                                    if (isNaN(num)) {
+                                        throw new Error(`Invalid number: ${v}`);
+                                    }
+                                    return num;
+                                });
+                            } else if (itemType.includes("boolean")) {
+                                value = inputValues.map(
+                                    (v) => v === "true" || v === true,
+                                );
+                            } else if (itemType.includes("object")) {
+                                value = inputValues.map((v) => {
+                                    try {
+                                        const parsed = JSON.parse(v);
+                                        if (
+                                            typeof parsed !== "object" ||
+                                            Array.isArray(parsed)
+                                        ) {
+                                            throw new Error(
+                                                "Value must be an object",
+                                            );
+                                        }
+                                        return parsed;
+                                    } catch {
+                                        throw new Error(
+                                            `Invalid object format for ${key}`,
+                                        );
+                                    }
+                                });
+                            } else {
+                                value = inputValues;
+                            }
+                        }
+
+                        // Handle empty values
+                        if (
+                            value.length === 0 ||
+                            (value.length === 1 && value[0] === "")
+                        ) {
+                            if (
+                                schema.required &&
+                                schema.required.includes(key)
+                            ) {
+                                params[keyValidation.value] = [];
+                            }
+                            continue;
+                        }
+                        params[keyValidation.value] = value;
+                    } catch (error) {
+                        console.error(
+                            `Error parsing array values for ${key}:`,
+                            error,
+                        );
+                        showErrorMessage(
+                            `Invalid input format for ${key}. Please check the values are in correct format.`,
+                        );
+                        throw error;
+                    }
+                } else {
+                    value = formData.get(key);
+                    if (value === null || value === undefined || value === "") {
+                        if (schema.required && schema.required.includes(key)) {
+                            params[keyValidation.value] = "";
+                        }
+                        continue;
+                    }
+                    if (prop.type === "number" || prop.type === "integer") {
+                        params[keyValidation.value] = Number(value);
+                    } else if (prop.type === "boolean") {
+                        params[keyValidation.value] =
+                            value === "true" || value === true;
+                    } else if (prop.enum) {
+                        if (prop.enum.includes(value)) {
+                            params[keyValidation.value] = value;
+                        }
+                    } else {
+                        params[keyValidation.value] = value;
+                    }
+                }
+            }
+        }
+
+        const payload = {
+            jsonrpc: "2.0",
+            id: Date.now(),
+            method: AppState.currentTestTool.name,
+            params,
+        };
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Use longer timeout for test execution
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/rpc`,
+            {
+                method: "POST",
+                headers: requestHeaders,
+                body: JSON.stringify(payload),
+                credentials: "include",
+            },
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
+        }
+    }
+}
+
+async function runToolAgentValidation(testIndex) {
+    const form = document.querySelector(`#tool-validation-form-${testIndex}`);
+    const resultContainer = document.querySelector(
+        `#tool-validation-result-${testIndex}`,
+    );
+    const loadingElement = safeGetElement(
+        `tool-validation-loading-${testIndex}`,
+    );
+    const runButton = document.querySelector(
+        'button[onclick="runToolAgentValidation()"]',
+    );
+
+    if (!form || !AppState.currentTestTool) {
+        console.error("Tool test form or current tool not found");
+        showErrorMessage("Tool test form not available");
+        return;
+    }
+
+    // Prevent multiple concurrent test runs
+    if (runButton && runButton.disabled) {
+        console.log("Tool test already running");
+        return;
+    }
+
+    try {
+        // Disable run button
+        if (runButton) {
+            runButton.disabled = true;
+            runButton.textContent = "Running...";
+            runButton.classList.add("opacity-50");
+        }
+
+        // Show loading
+        if (loadingElement) {
+            loadingElement.style.display = "block";
+        }
+        if (resultContainer) {
+            resultContainer.innerHTML = "";
+        }
+
+        const nlTestCases = document
+            .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
+            .value.split(/\r?\n\r?\n/);
+        const toolId = AppState.currentTestTool.id;
+
+        console.log(nlTestCases);
+        console.log(
+            "Running validation for the Tool: ",
+            AppState.currentTestTool.name,
+        );
+        console.log("Running validation for the Tool Id: ", toolId);
+
+        const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
+
+        // Parse custom headers from the passthrough headers field
+        const requestHeaders = {
+            "Content-Type": "application/json",
+        };
+
+        // Authentication will be handled automatically by the JWT cookie
+        // that was set when the admin UI loaded. The 'credentials: "include"'
+        // in the fetch request ensures the cookie is sent with the request.
+
+        const passthroughHeadersField = document.getElementById(
+            "validation-passthrough-headers",
+        );
+        if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
+            const headerLines = passthroughHeadersField.value
+                .trim()
+                .split("\n");
+            for (const line of headerLines) {
+                const trimmedLine = line.trim();
+                if (trimmedLine) {
+                    const colonIndex = trimmedLine.indexOf(":");
+                    if (colonIndex > 0) {
+                        const headerName = trimmedLine
+                            .substring(0, colonIndex)
+                            .trim();
+                        const headerValue = trimmedLine
+                            .substring(colonIndex + 1)
+                            .trim();
+
+                        // Validate header name and value
+                        const validation = validatePassthroughHeader(
+                            headerName,
+                            headerValue,
+                        );
+                        if (!validation.valid) {
+                            showErrorMessage(
+                                `Invalid header: ${validation.error}`,
+                            );
+                            return;
+                        }
+
+                        if (headerName && headerValue) {
+                            requestHeaders[headerName] = headerValue;
+                        }
+                    } else if (colonIndex === -1) {
+                        showErrorMessage(
+                            `Invalid header format: "${trimmedLine}". Expected format: "Header-Name: Value"`,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
+        const response = await fetchWithTimeout(
+            "/toolops/validation/execute_tool_nl_testcases",
+            {
+                method: "POST",
+                headers: {
+                    "Cache-Control": "no-cache",
+                    Pragma: "no-cache",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+            },
+            toolTestState.requestTimeout, // Use the increased timeout
+        );
+
+        const result = await response.json();
+        const resultStr = JSON.stringify(result, null, 2);
+
+        if (resultContainer && window.CodeMirror) {
+            try {
+                AppState.toolTestResultEditor = window.CodeMirror(
+                    resultContainer,
+                    {
+                        value: resultStr,
+                        mode: "application/json",
+                        theme: "monokai",
+                        readOnly: true,
+                        lineNumbers: true,
+                    },
+                );
+            } catch (editorError) {
+                console.error("Error creating CodeMirror editor:", editorError);
+                // Fallback to plain text
+                const pre = document.createElement("pre");
+                pre.className =
+                    "bg-gray-900 text-green-400 p-4 rounded overflow-auto max-h-96";
+                pre.textContent = resultStr;
+                resultContainer.appendChild(pre);
+            }
+        } else if (resultContainer) {
+            const pre = document.createElement("pre");
+            pre.className =
+                "bg-gray-100 p-4 rounded overflow-auto max-h-96 dark:bg-gray-800 dark:text-gray-100";
+            pre.textContent = resultStr;
+            resultContainer.appendChild(pre);
+        }
+
+        console.log("✓ Tool test completed successfully");
+    } catch (error) {
+        console.error("Tool test error:", error);
+        if (resultContainer) {
+            const errorMessage = handleFetchError(error, "run tool test");
+            const errorDiv = document.createElement("div");
+            errorDiv.className = "text-red-600 p-4";
+            errorDiv.textContent = `Error: ${errorMessage}`;
+            resultContainer.appendChild(errorDiv);
+        }
+    } finally {
+        // Always restore UI state
+        if (loadingElement) {
+            loadingElement.style.display = "none";
+        }
+        if (runButton) {
+            runButton.disabled = false;
+            runButton.textContent = "Run Tool";
+            runButton.classList.remove("opacity-50");
         }
     }
 }
@@ -9489,7 +11608,7 @@ async function runPromptTest() {
 
         // Call the prompt API endpoint
         const response = await fetch(
-            `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.name)}`,
+            `${window.ROOT_PATH}/prompts/${encodeURIComponent(promptTestState.currentTestPrompt.id)}`,
             {
                 method: "POST",
                 headers: {
@@ -9938,7 +12057,6 @@ async function viewTool(toolId) {
         }
 
         const tool = await response.json();
-
         // Build auth HTML safely with new styling
         let authHTML = "";
         if (tool.auth?.username && tool.auth?.password) {
@@ -10218,6 +12336,10 @@ async function viewTool(toolId) {
             setTextSafely(
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
+            );
+            tool.description = tool.description.slice(
+                0,
+                tool.description.indexOf("*"),
             );
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
@@ -10549,6 +12671,14 @@ async function handleResourceFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+            // append uri_template only when uri is a templatized resource
+            formData.append("uri_template", template);
+        }
+
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -11353,6 +13483,12 @@ async function handleEditResFormSubmit(e) {
         // Validate inputs
         const name = formData.get("name");
         const uri = formData.get("uri");
+        let template = null;
+        // Check if URI contains '{' and '}'
+        if (uri && uri.includes("{") && uri.includes("}")) {
+            template = uri;
+        }
+        formData.append("uri_template", template);
         const nameValidation = validateInputName(name, "resource");
         const uriValidation = validateInputName(uri, "resource URI");
 
@@ -12209,18 +14345,44 @@ function setupSelectorSearch() {
         });
     }
 
-    // Resources search
-    const searchResources = safeGetElement("searchResources", true);
-    if (searchResources) {
-        searchResources.addEventListener("input", function () {
-            filterSelectorItems(
-                this.value,
-                "#associatedResources",
-                ".resource-item",
-                "noResourcesMessage",
-                "searchResourcesQuery",
-            );
+    // Edit-server tools search (server-side, mirror of searchTools)
+    const searchEditTools = safeGetElement("searchEditTools", true);
+    if (searchEditTools) {
+        let editSearchTimeout;
+        searchEditTools.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditToolSearch(searchTerm);
+            }, 300);
         });
+
+        // If HTMX swaps/paginates the edit tools container, re-run server-side search
+        const editToolsContainer = document.getElementById("edit-server-tools");
+        if (editToolsContainer) {
+            editToolsContainer.addEventListener("htmx:afterSwap", function () {
+                try {
+                    const current = searchEditTools.value || "";
+                    if (current && current.trim() !== "") {
+                        serverSideEditToolSearch(current);
+                    } else {
+                        // No active search — ensure the selector is initialized
+                        initToolSelect(
+                            "edit-server-tools",
+                            "selectedEditToolsPills",
+                            "selectedEditToolsWarning",
+                            6,
+                            "selectAllEditToolsBtn",
+                            "clearAllEditToolsBtn",
+                        );
+                    }
+                } catch (err) {
+                    console.error("Error handling edit-tools afterSwap:", err);
+                }
+            });
+        }
     }
 
     // Prompts search (server-side)
@@ -12237,63 +14399,115 @@ function setupSelectorSearch() {
             }, 300);
         });
     }
-}
 
-/**
- * Generic function to filter items in multi-select dropdowns with no results message
- */
-function filterSelectorItems(
-    searchText,
-    containerSelector,
-    itemSelector,
-    noResultsId,
-    searchQueryId,
-) {
-    const container = document.querySelector(containerSelector);
-    if (!container) {
-        return;
-    }
-
-    const items = container.querySelectorAll(itemSelector);
-    const search = searchText.toLowerCase().trim();
-    let hasVisibleItems = false;
-
-    items.forEach((item) => {
-        let textContent = "";
-
-        // Get text from all text nodes within the item
-        const textElements = item.querySelectorAll(
-            "span, .text-xs, .font-medium",
-        );
-        textElements.forEach((el) => {
-            textContent += " " + el.textContent;
+    // Edit-server prompts search (server-side, mirror of searchPrompts)
+    const searchEditPrompts = safeGetElement("searchEditPrompts", true);
+    if (searchEditPrompts) {
+        let editSearchTimeout;
+        searchEditPrompts.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditPromptsSearch(searchTerm);
+            }, 300);
         });
 
-        // Also get direct text content
-        textContent += " " + item.textContent;
-
-        if (search === "" || textContent.toLowerCase().includes(search)) {
-            item.style.display = "";
-            hasVisibleItems = true;
-        } else {
-            item.style.display = "none";
+        // If HTMX swaps/paginates the edit prompts container, re-run server-side search
+        const editPromptsContainer = document.getElementById(
+            "edit-server-prompts",
+        );
+        if (editPromptsContainer) {
+            editPromptsContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditPrompts.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditPromptsSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initPromptSelect(
+                                "edit-server-prompts",
+                                "selectedEditPromptsPills",
+                                "selectedEditPromptsWarning",
+                                6,
+                                "selectAllEditPromptsBtn",
+                                "clearAllEditPromptsBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-prompts afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
-    });
+    }
 
-    // Handle no results message
-    const noResultsMessage = safeGetElement(noResultsId, true);
-    const searchQuerySpan = safeGetElement(searchQueryId, true);
+    // Resources search (server-side)
+    const searchResources = safeGetElement("searchResources", true);
+    if (searchResources) {
+        let resourceSearchTimeout;
+        searchResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (resourceSearchTimeout) {
+                clearTimeout(resourceSearchTimeout);
+            }
+            resourceSearchTimeout = setTimeout(() => {
+                serverSideResourceSearch(searchTerm);
+            }, 300);
+        });
+    }
 
-    if (search !== "" && !hasVisibleItems) {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "block";
-        }
-        if (searchQuerySpan) {
-            searchQuerySpan.textContent = searchText;
-        }
-    } else {
-        if (noResultsMessage) {
-            noResultsMessage.style.display = "none";
+    // Edit-server resources search (server-side, mirror of searchResources)
+    const searchEditResources = safeGetElement("searchEditResources", true);
+    if (searchEditResources) {
+        let editSearchTimeout;
+        searchEditResources.addEventListener("input", function () {
+            const searchTerm = this.value;
+            if (editSearchTimeout) {
+                clearTimeout(editSearchTimeout);
+            }
+            editSearchTimeout = setTimeout(() => {
+                serverSideEditResourcesSearch(searchTerm);
+            }, 300);
+        });
+
+        // If HTMX swaps/paginates the edit resources container, re-run server-side search
+        const editResourcesContainer = document.getElementById(
+            "edit-server-resources",
+        );
+        if (editResourcesContainer) {
+            editResourcesContainer.addEventListener(
+                "htmx:afterSwap",
+                function () {
+                    try {
+                        const current = searchEditResources.value || "";
+                        if (current && current.trim() !== "") {
+                            serverSideEditResourcesSearch(current);
+                        } else {
+                            // No active search — ensure the selector is initialized
+                            initResourceSelect(
+                                "edit-server-resources",
+                                "selectedEditResourcesPills",
+                                "selectedEditResourcesWarning",
+                                6,
+                                "selectAllEditResourcesBtn",
+                                "clearAllEditResourcesBtn",
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error handling edit-resources afterSwap:",
+                            err,
+                        );
+                    }
+                },
+            );
         }
     }
 }
@@ -12317,13 +14531,28 @@ function filterServerTable(searchText) {
         rows.forEach((row) => {
             let textContent = "";
 
-            // Get text from all cells in the row
+            // Get text from all searchable cells (exclude only Actions column)
+            // Table columns: Icon(0), S.No.(1), UUID(2), Name(3), Description(4), Tools(5), Resources(6), Prompts(7), Tags(8), Owner(9), Team(10), Visibility(11), Actions(12)
             const cells = row.querySelectorAll("td");
-            cells.forEach((cell) => {
-                textContent += " " + cell.textContent;
+            // Search all columns except Icon and Actions columns
+            const searchableColumnIndices = [];
+            for (let i = 1; i < cells.length - 1; i++) {
+                searchableColumnIndices.push(i);
+            }
+
+            searchableColumnIndices.forEach((index) => {
+                if (cells[index]) {
+                    // Clean the text content and make it searchable
+                    const cellText = cells[index].textContent
+                        .replace(/\s+/g, " ")
+                        .trim();
+                    textContent += " " + cellText;
+                }
             });
 
-            if (search === "" || textContent.toLowerCase().includes(search)) {
+            const isMatch =
+                search === "" || textContent.toLowerCase().includes(search);
+            if (isMatch) {
                 row.style.display = "";
             } else {
                 row.style.display = "none";
@@ -12336,6 +14565,564 @@ function filterServerTable(searchText) {
 
 // Make server search function available globally
 window.filterServerTable = filterServerTable;
+
+/**
+ * Filter Tools table based on search text
+ */
+function filterToolsTable(searchText) {
+    try {
+        const tbody = document.querySelector("#tools-table-body");
+        if (!tbody) {
+            console.warn("Tools table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude S.No. and Actions columns)
+            // Tools columns: S.No.(0), Gateway Name(1), Name(2), URL(3), Type(4), Request Type(5), Description(6), Annotations(7), Tags(8), Owner(9), Team(10), Visibility(11), Status(12), Actions(13)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]; // Exclude S.No. and Actions
+
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    // Clean the text content and make it searchable
+                    const cellText = cells[index].textContent
+                        .replace(/\s+/g, " ")
+                        .trim();
+                    textContent += " " + cellText;
+                }
+            });
+
+            const isMatch =
+                search === "" || textContent.toLowerCase().includes(search);
+            if (isMatch) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering tools table:", error);
+    }
+}
+
+/**
+ * Filter Resources table based on search text
+ */
+function filterResourcesTable(searchText) {
+    try {
+        const tbody = document.querySelector("#resources-table-body");
+        if (!tbody) {
+            console.warn("Resources table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude Actions column)
+            // Resources columns: ID(0), URI(1), Name(2), Description(3), MIME Type(4), Tags(5), Owner(6), Team(7), Visibility(8), Status(9), Actions(10)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; // All except Actions
+
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering resources table:", error);
+    }
+}
+
+/**
+ * Filter Prompts table based on search text
+ */
+function filterPromptsTable(searchText) {
+    try {
+        const tbody = document.querySelector("#prompts-table-body");
+        if (!tbody) {
+            console.warn("Prompts table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude Actions column)
+            // Prompts columns: S.No.(0), Name(1), Description(2), Tags(3), Owner(4), Team(5), Visibility(6), Status(7), Actions(8)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [0, 1, 2, 3, 4, 5, 6, 7]; // All except Actions
+
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering prompts table:", error);
+    }
+}
+
+/**
+ * Filter A2A Agents table based on search text
+ */
+function filterA2AAgentsTable(searchText) {
+    try {
+        const tbody = document.querySelector("#a2a-agents-panel tbody");
+        if (!tbody) {
+            console.warn("A2A Agents table body not found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        const search = searchText.toLowerCase().trim();
+
+        rows.forEach((row) => {
+            let textContent = "";
+
+            // Get text from searchable cells (exclude ID and Actions columns)
+            // A2A Agents columns: ID(0), Name(1), Description(2), Endpoint(3), Tags(4), Type(5), Status(6), Reachability(7), Owner(8), Team(9), Visibility(10), Actions(11)
+            const cells = row.querySelectorAll("td");
+            const searchableColumns = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude ID and Actions
+
+            searchableColumns.forEach((index) => {
+                if (cells[index]) {
+                    textContent += " " + cells[index].textContent;
+                }
+            });
+
+            if (search === "" || textContent.toLowerCase().includes(search)) {
+                row.style.display = "";
+            } else {
+                row.style.display = "none";
+            }
+        });
+    } catch (error) {
+        console.error("Error filtering A2A agents table:", error);
+    }
+}
+
+/**
+ * Filter MCP Servers (Gateways) table based on search text
+ */
+function filterGatewaysTable(searchText) {
+    try {
+        console.log("🔍 Starting MCP Servers search for:", searchText);
+
+        // Find the MCP servers table - use multiple strategies
+        let table = null;
+
+        // Strategy 1: Direct selector for gateways panel
+        const gatewaysPanel = document.querySelector("#gateways-panel");
+        if (gatewaysPanel) {
+            table = gatewaysPanel.querySelector("table");
+            console.log("✅ Found table in gateways panel");
+        }
+
+        // Strategy 2: Look for table in currently visible tab
+        if (!table) {
+            const visiblePanel = document.querySelector(
+                ".tab-panel:not(.hidden)",
+            );
+            if (visiblePanel) {
+                table = visiblePanel.querySelector("table");
+                console.log("✅ Found table in visible panel");
+            }
+        }
+
+        // Strategy 3: Just look for any table with MCP server structure
+        if (!table) {
+            const allTables = document.querySelectorAll("table");
+            for (const t of allTables) {
+                const headers = t.querySelectorAll("thead th");
+                if (headers.length >= 8) {
+                    // Check for MCP server specific headers
+                    const headerTexts = Array.from(headers).map((h) =>
+                        h.textContent.toLowerCase().trim(),
+                    );
+                    if (
+                        headerTexts.includes("name") &&
+                        headerTexts.includes("url") &&
+                        headerTexts.includes("status")
+                    ) {
+                        table = t;
+                        console.log("✅ Found MCP table by header matching");
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (!table) {
+            console.warn("❌ No MCP servers table found");
+            return;
+        }
+
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            console.warn("❌ No tbody found");
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        if (rows.length === 0) {
+            console.warn("❌ No rows found");
+            return;
+        }
+
+        const search = searchText.toLowerCase().trim();
+        console.log(`🔍 Searching ${rows.length} rows for: "${search}"`);
+
+        let visibleCount = 0;
+
+        rows.forEach((row, index) => {
+            const cells = row.querySelectorAll("td");
+
+            if (cells.length === 0) {
+                return;
+            }
+
+            // Combine text from all cells except the last one (Actions column)
+            let searchContent = "";
+            for (let i = 0; i < cells.length - 1; i++) {
+                if (cells[i]) {
+                    const cellText = cells[i].textContent.trim();
+                    searchContent += " " + cellText;
+                }
+            }
+
+            const fullText = searchContent.trim().toLowerCase();
+            const shouldShow = search === "" || fullText.includes(search);
+
+            // Debug first few rows
+            if (index < 3) {
+                console.log(
+                    `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Match: ${shouldShow}`,
+                );
+            }
+
+            // Show/hide the row
+            if (shouldShow) {
+                row.style.display = "";
+                row.style.visibility = "visible";
+                visibleCount++;
+            } else {
+                row.style.display = "none";
+                row.style.visibility = "hidden";
+            }
+        });
+
+        console.log(
+            `✅ Search complete: ${visibleCount}/${rows.length} rows visible`,
+        );
+    } catch (error) {
+        console.error("❌ Error in filterGatewaysTable:", error);
+    }
+}
+
+// Make filter functions available globally
+window.filterServerTable = filterServerTable;
+window.filterToolsTable = filterToolsTable;
+window.filterResourcesTable = filterResourcesTable;
+window.filterPromptsTable = filterPromptsTable;
+window.filterA2AAgentsTable = filterA2AAgentsTable;
+window.filterGatewaysTable = filterGatewaysTable;
+
+// Add a test function for debugging
+window.testGatewaySearch = function (searchTerm = "Cou") {
+    console.log("🧪 Testing gateway search with:", searchTerm);
+    console.log("Available tables:", document.querySelectorAll("table").length);
+
+    // Test the search input exists
+    const searchInput = document.getElementById("gateways-search-input");
+    console.log("Search input found:", !!searchInput);
+
+    if (searchInput) {
+        searchInput.value = searchTerm;
+        console.log("Set search input value to:", searchInput.value);
+    }
+
+    filterGatewaysTable(searchTerm);
+};
+
+// Simple fallback search function
+window.simpleGatewaySearch = function (searchTerm) {
+    console.log("🔧 Simple gateway search for:", searchTerm);
+
+    // Find any table in the current tab/page
+    const tables = document.querySelectorAll("table");
+    console.log("Found tables:", tables.length);
+
+    tables.forEach((table, tableIndex) => {
+        const tbody = table.querySelector("tbody");
+        if (!tbody) {
+            return;
+        }
+
+        const rows = tbody.querySelectorAll("tr");
+        console.log(`Table ${tableIndex}: ${rows.length} rows`);
+
+        if (rows.length > 0) {
+            // Check if this looks like the MCP servers table
+            const firstRow = rows[0];
+            const cells = firstRow.querySelectorAll("td");
+
+            if (cells.length >= 8) {
+                // MCP servers table should have many columns
+                console.log(
+                    `Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`,
+                );
+
+                const search = searchTerm.toLowerCase().trim();
+                let visibleCount = 0;
+
+                rows.forEach((row) => {
+                    const cells = row.querySelectorAll("td");
+                    let rowText = "";
+
+                    // Get text from all cells except last (Actions)
+                    for (let i = 0; i < cells.length - 1; i++) {
+                        rowText += " " + cells[i].textContent.trim();
+                    }
+
+                    const shouldShow =
+                        search === "" || rowText.toLowerCase().includes(search);
+
+                    if (shouldShow) {
+                        row.style.display = "";
+                        visibleCount++;
+                    } else {
+                        row.style.display = "none";
+                    }
+                });
+
+                console.log(
+                    `✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`,
+                );
+                // Found the table, stop searching
+            }
+        }
+    });
+};
+
+// Add initialization test function
+window.testSearchInit = function () {
+    console.log("🧪 Testing search initialization...");
+    initializeSearchInputs();
+};
+
+/**
+ * Clear search functionality for different entity types
+ */
+function clearSearch(entityType) {
+    try {
+        if (entityType === "catalog") {
+            const searchInput = document.getElementById("catalog-search-input");
+            if (searchInput) {
+                searchInput.value = "";
+                filterServerTable(""); // Clear the filter
+            }
+        } else if (entityType === "tools") {
+            const searchInput = document.getElementById("tools-search-input");
+            if (searchInput) {
+                searchInput.value = "";
+                filterToolsTable(""); // Clear the filter
+            }
+        } else if (entityType === "resources") {
+            const searchInput = document.getElementById(
+                "resources-search-input",
+            );
+            if (searchInput) {
+                searchInput.value = "";
+                filterResourcesTable(""); // Clear the filter
+            }
+        } else if (entityType === "prompts") {
+            const searchInput = document.getElementById("prompts-search-input");
+            if (searchInput) {
+                searchInput.value = "";
+                filterPromptsTable(""); // Clear the filter
+            }
+        } else if (entityType === "a2a-agents") {
+            const searchInput = document.getElementById(
+                "a2a-agents-search-input",
+            );
+            if (searchInput) {
+                searchInput.value = "";
+                filterA2AAgentsTable(""); // Clear the filter
+            }
+        } else if (entityType === "gateways") {
+            const searchInput = document.getElementById(
+                "gateways-search-input",
+            );
+            if (searchInput) {
+                searchInput.value = "";
+                filterGatewaysTable(""); // Clear the filter
+            }
+        } else if (entityType === "gateways") {
+            const searchInput = document.getElementById(
+                "gateways-search-input",
+            );
+            if (searchInput) {
+                searchInput.value = "";
+                filterGatewaysTable(""); // Clear the filter
+            }
+        }
+    } catch (error) {
+        console.error("Error clearing search:", error);
+    }
+}
+
+// Make clearSearch function available globally
+window.clearSearch = clearSearch;
+
+/**
+ * Initialize search inputs for all entity types
+ * This function also handles re-initialization after HTMX content loads
+ */
+function initializeSearchInputs() {
+    console.log("🔍 Initializing search inputs...");
+
+    // Remove existing event listeners to prevent duplicates
+    const searchInputs = [
+        "catalog-search-input",
+        "gateways-search-input",
+        "tools-search-input",
+        "resources-search-input",
+        "prompts-search-input",
+        "a2a-agents-search-input",
+    ];
+
+    searchInputs.forEach((inputId) => {
+        const input = document.getElementById(inputId);
+        if (input) {
+            // Clone the input to remove all event listeners, then replace it
+            const newInput = input.cloneNode(true);
+            input.parentNode.replaceChild(newInput, input);
+        }
+    });
+
+    // Get fresh references to all search inputs after cloning
+
+    // Virtual Servers search
+    const catalogSearchInput = document.getElementById("catalog-search-input");
+    if (catalogSearchInput) {
+        catalogSearchInput.addEventListener("input", function () {
+            filterServerTable(this.value);
+        });
+        console.log("✅ Virtual Servers search initialized");
+    }
+
+    // MCP Servers (Gateways) search
+    const gatewaysSearchInput = document.getElementById(
+        "gateways-search-input",
+    );
+    if (gatewaysSearchInput) {
+        console.log("✅ Found MCP Servers search input");
+
+        // Use addEventListener instead of direct assignment
+        gatewaysSearchInput.addEventListener("input", function (e) {
+            const searchValue = e.target.value;
+            console.log("🔍 MCP Servers search triggered:", searchValue);
+            filterGatewaysTable(searchValue);
+        });
+
+        // Add keyup as backup
+        gatewaysSearchInput.addEventListener("keyup", function (e) {
+            const searchValue = e.target.value;
+            filterGatewaysTable(searchValue);
+        });
+
+        // Add change as backup
+        gatewaysSearchInput.addEventListener("change", function (e) {
+            const searchValue = e.target.value;
+            filterGatewaysTable(searchValue);
+        });
+
+        console.log("✅ MCP Servers search events attached");
+
+        // Test the function works
+        filterGatewaysTable("");
+    } else {
+        console.error("❌ MCP Servers search input not found!");
+
+        // Debug available inputs
+        const allInputs = document.querySelectorAll('input[type="text"]');
+        console.log(
+            "Available text inputs:",
+            Array.from(allInputs).map((input) => ({
+                id: input.id,
+                placeholder: input.placeholder,
+                className: input.className,
+            })),
+        );
+    }
+
+    // Tools search
+    const toolsSearchInput = document.getElementById("tools-search-input");
+    if (toolsSearchInput) {
+        toolsSearchInput.addEventListener("input", function () {
+            filterToolsTable(this.value);
+        });
+        console.log("✅ Tools search initialized");
+    }
+
+    // Resources search
+    const resourcesSearchInput = document.getElementById(
+        "resources-search-input",
+    );
+    if (resourcesSearchInput) {
+        resourcesSearchInput.addEventListener("input", function () {
+            filterResourcesTable(this.value);
+        });
+        console.log("✅ Resources search initialized");
+    }
+
+    // Prompts search
+    const promptsSearchInput = document.getElementById("prompts-search-input");
+    if (promptsSearchInput) {
+        promptsSearchInput.addEventListener("input", function () {
+            filterPromptsTable(this.value);
+        });
+        console.log("✅ Prompts search initialized");
+    }
+
+    // A2A Agents search
+    const agentsSearchInput = document.getElementById(
+        "a2a-agents-search-input",
+    );
+    if (agentsSearchInput) {
+        agentsSearchInput.addEventListener("input", function () {
+            filterA2AAgentsTable(this.value);
+        });
+        console.log("✅ A2A Agents search initialized");
+    }
+}
 
 function handleAuthTypeChange() {
     const authType = this.value;
@@ -12636,12 +15423,34 @@ function initializeTabState() {
 // GLOBAL EXPORTS - Make functions available to HTML onclick handlers
 // ===================================================================
 
+/**
+ * Load servers (Virtual Servers / Catalog) with optional include_inactive parameter
+ */
+async function loadServers() {
+    const checkbox = safeGetElement("show-inactive-servers");
+    const includeInactive = checkbox ? checkbox.checked : false;
+
+    // Build URL with include_inactive parameter
+    const url = new URL(window.location);
+    if (includeInactive) {
+        url.searchParams.set("include_inactive", "true");
+    } else {
+        url.searchParams.delete("include_inactive");
+    }
+
+    // Reload the page with the updated parameters
+    // Since the catalog panel is server-side rendered, we need a full page reload
+    window.location.href = url.toString();
+}
+
 window.toggleInactiveItems = toggleInactiveItems;
+window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
 window.editTool = editTool;
 window.testTool = testTool;
+window.validateTool = validateTool;
 window.viewResource = viewResource;
 window.editResource = editResource;
 window.viewPrompt = viewPrompt;
@@ -12657,6 +15466,9 @@ window.testPrompt = testPrompt;
 window.runPromptTest = runPromptTest;
 window.closeModal = closeModal;
 window.testGateway = testGateway;
+window.generateToolTestCases = generateToolTestCases;
+window.generateTestCases = generateTestCases;
+window.enrichTool = enrichTool;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY
@@ -19208,6 +22020,52 @@ function updateToolMapping(container) {
 }
 
 /**
+ * Update the prompt mapping with prompts in the given container
+ */
+function updatePromptMapping(container) {
+    if (!window.promptMapping) {
+        window.promptMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedPrompts"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const promptId = checkbox.value;
+        const promptName =
+            checkbox.getAttribute("data-prompt-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            promptId;
+        if (promptId && promptName) {
+            window.promptMapping[promptId] = promptName;
+        }
+    });
+}
+
+/**
+ * Update the resource mapping with resources in the given container
+ */
+function updateResourceMapping(container) {
+    if (!window.resourceMapping) {
+        window.resourceMapping = {};
+    }
+
+    const checkboxes = container.querySelectorAll(
+        'input[name="associatedResources"]',
+    );
+    checkboxes.forEach((checkbox) => {
+        const resourceId = checkbox.value;
+        const resourceName =
+            checkbox.getAttribute("data-resource-name") ||
+            checkbox.nextElementSibling?.textContent?.trim() ||
+            resourceId;
+        if (resourceId && resourceName) {
+            window.resourceMapping[resourceId] = resourceName;
+        }
+    });
+}
+
+/**
  * Perform server-side search for prompts and update the prompt list
  */
 async function serverSidePromptSearch(searchTerm) {
@@ -19326,6 +22184,853 @@ async function serverSidePromptSearch(searchTerm) {
         console.error("Error searching prompts:", error);
         container.innerHTML =
             '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources and update the resouces list
+ */
+async function serverSideResourceSearch(searchTerm) {
+    const container = document.getElementById("associatedResources");
+    const noResultsMessage = safeGetElement("noResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchResourcesQuery", true);
+
+    if (!container) {
+        console.error("associatedResources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-purple-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompt selector
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Initialize resource mapping if needed
+                initResourceSelect(
+                    "associatedResources",
+                    "selectedResourcesPills",
+                    "selectedResourcesWarning",
+                    6,
+                    "selectAllResourcesBtn",
+                    "clearAllResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const displayName = resource.name || resource.id;
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(displayName)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Initialize Resource select mapping
+            initResourceSelect(
+                "associatedResources",
+                "selectedResourcesPills",
+                "selectedResourcesWarning",
+                6,
+                "selectAllResourcesBtn",
+                "clearAllResourcesBtn",
+            );
+
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for tools in the edit-server selector and update the list
+ */
+async function serverSideEditToolSearch(searchTerm) {
+    const container = document.getElementById("edit-server-tools");
+    const noResultsMessage = safeGetElement("noEditToolsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditTools", true);
+
+    if (!container) {
+        console.error("edit-server-tools container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching tools...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default tool selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update tool mapping
+                updateToolMapping(container);
+
+                // Restore checked state for any tools already associated with the server
+                try {
+                    const dataAttr =
+                        container.getAttribute("data-server-tools");
+                    if (dataAttr) {
+                        const serverTools = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverTools) &&
+                            serverTools.length > 0
+                        ) {
+                            // Normalize serverTools to a set of strings for robust comparison
+                            const serverToolSet = new Set(
+                                serverTools.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedTools"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const toolId = cb.value;
+                                const toolName =
+                                    cb.getAttribute("data-tool-name") ||
+                                    (window.toolMapping &&
+                                        window.toolMapping[cb.value]);
+                                if (
+                                    serverToolSet.has(toolId) ||
+                                    (toolName &&
+                                        serverToolSet.has(String(toolName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server tools checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container
+                initToolSelect(
+                    "edit-server-tools",
+                    "selectedEditToolsPills",
+                    "selectedEditToolsWarning",
+                    6,
+                    "selectAllEditToolsBtn",
+                    "clearAllEditToolsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
+            }
+        } catch (error) {
+            console.error("Error loading tools:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading tools</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.tools && data.tools.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.tools.forEach((tool) => {
+                const displayName =
+                    tool.display_name ||
+                    tool.custom_name ||
+                    tool.name ||
+                    tool.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 tool-item"
+                        data-tool-id="${escapeHtml(tool.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedTools"
+                            value="${escapeHtml(tool.id)}"
+                            data-tool-name="${escapeHtml(displayName)}"
+                            class="tool-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(displayName)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateToolMapping(container);
+
+            // Restore checked state for any tools already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-tools");
+                if (dataAttr) {
+                    const serverTools = JSON.parse(dataAttr);
+                    if (Array.isArray(serverTools) && serverTools.length > 0) {
+                        // Normalize serverTools to a set of strings for robust comparison
+                        const serverToolSet = new Set(
+                            serverTools.map((s) => String(s)),
+                        );
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const toolId = cb.value;
+                            const toolName =
+                                cb.getAttribute("data-tool-name") ||
+                                (window.toolMapping &&
+                                    window.toolMapping[cb.value]);
+                            if (
+                                serverToolSet.has(toolId) ||
+                                (toolName &&
+                                    serverToolSet.has(String(toolName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server tools checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initToolSelect(
+                "edit-server-tools",
+                "selectedEditToolsPills",
+                "selectedEditToolsWarning",
+                6,
+                "selectAllEditToolsBtn",
+                "clearAllEditToolsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching tools:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching tools</div>';
+
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for prompts in the edit-server selector and update the list
+ */
+async function serverSideEditPromptsSearch(searchTerm) {
+    const container = document.getElementById("edit-server-prompts");
+    const noResultsMessage = safeGetElement("noEditPromptsMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditPrompts", true);
+
+    if (!container) {
+        console.error("edit-server-prompts container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching prompts...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default prompts selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update prompt mapping
+                updatePromptMapping(container);
+
+                // Restore checked state for any prompts already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-prompts",
+                    );
+                    if (dataAttr) {
+                        const serverPrompts = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverPrompts) &&
+                            serverPrompts.length > 0
+                        ) {
+                            // Normalize serverPrompts to a set of strings for robust comparison
+                            const serverPromptSet = new Set(
+                                serverPrompts.map((s) => String(s)),
+                            );
+
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedPrompts"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const promptId = cb.value;
+                                const promptName =
+                                    cb.getAttribute("data-prompt-name") ||
+                                    (window.promptMapping &&
+                                        window.promptMapping[cb.value]);
+
+                                // Check by id first (string), then by name as a fallback
+                                if (
+                                    serverPromptSet.has(promptId) ||
+                                    (promptName &&
+                                        serverPromptSet.has(String(promptName)))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server prompts checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (prompt-specific)
+                initPromptSelect(
+                    "edit-server-prompts",
+                    "selectedEditPromptsPills",
+                    "selectedEditPromptsWarning",
+                    6,
+                    "selectAllEditPromptsBtn",
+                    "clearAllEditPromptsBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
+            }
+        } catch (error) {
+            console.error("Error loading prompts:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading prompts</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.prompts && data.prompts.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.prompts.forEach((prompt) => {
+                const name = prompt.name || prompt.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 prompt-item"
+                        data-prompt-id="${escapeHtml(prompt.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedPrompts"
+                            value="${escapeHtml(prompt.id)}"
+                            data-prompt-name="${escapeHtml(name)}"
+                            class="prompt-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updatePromptMapping(container);
+
+            // Restore checked state for any prompts already associated with the server
+            try {
+                const dataAttr = container.getAttribute("data-server-prompts");
+                if (dataAttr) {
+                    const serverPrompts = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverPrompts) &&
+                        serverPrompts.length > 0
+                    ) {
+                        // Normalize serverPrompts to a set of strings for robust comparison
+                        const serverPromptSet = new Set(
+                            serverPrompts.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const promptId = cb.value;
+                            const promptName =
+                                cb.getAttribute("data-prompt-name") ||
+                                (window.promptMapping &&
+                                    window.promptMapping[cb.value]);
+
+                            if (
+                                serverPromptSet.has(promptId) ||
+                                (promptName &&
+                                    serverPromptSet.has(String(promptName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server prompts checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initPromptSelect(
+                "edit-server-prompts",
+                "selectedEditPromptsPills",
+                "selectedEditPromptsWarning",
+                6,
+                "selectAllEditPromptsBtn",
+                "clearAllEditPromptsBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching prompts:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching prompts</div>';
+        if (noResultsMessage) {
+            noResultsMessage.style.display = "none";
+        }
+    }
+}
+
+/**
+ * Perform server-side search for resources in the edit-server selector and update the list
+ */
+async function serverSideEditResourcesSearch(searchTerm) {
+    const container = document.getElementById("edit-server-resources");
+    const noResultsMessage = safeGetElement("noEditResourcesMessage", true);
+    const searchQuerySpan = safeGetElement("searchQueryEditResources", true);
+
+    if (!container) {
+        console.error("edit-server-resources container not found");
+        return;
+    }
+
+    // Show loading state
+    container.innerHTML = `
+        <div class="text-center py-4">
+            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <p class="mt-2 text-sm text-gray-500">Searching Resources...</p>
+        </div>
+    `;
+
+    if (searchTerm.trim() === "") {
+        // If search term is empty, reload the default resources selector partial
+        try {
+            const response = await fetch(
+                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            );
+            if (response.ok) {
+                const html = await response.text();
+                container.innerHTML = html;
+
+                // Hide no results message
+                if (noResultsMessage) {
+                    noResultsMessage.style.display = "none";
+                }
+
+                // Update resource mapping
+                updateResourceMapping(container);
+                // Restore checked state for any resources already associated with the server
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-server-resources",
+                    );
+                    if (dataAttr) {
+                        const serverResources = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(serverResources) &&
+                            serverResources.length > 0
+                        ) {
+                            // Normalize serverResources to a set of strings for robust comparison
+                            const serverResourceSet = new Set(
+                                serverResources.map((s) => String(s)),
+                            );
+                            const checkboxes = container.querySelectorAll(
+                                'input[name="associatedResources"]',
+                            );
+                            checkboxes.forEach((cb) => {
+                                const resourceId = cb.value;
+                                const resourceName =
+                                    cb.getAttribute("data-resource-name") ||
+                                    (window.resourceMapping &&
+                                        window.resourceMapping[cb.value]);
+                                if (
+                                    serverResourceSet.has(resourceId) ||
+                                    (resourceName &&
+                                        serverResourceSet.has(
+                                            String(resourceName),
+                                        ))
+                                ) {
+                                    cb.checked = true;
+                                }
+                            });
+
+                            // Trigger update so pills/counts refresh
+                            const firstCb = container.querySelector(
+                                'input[type="checkbox"]',
+                            );
+                            if (firstCb) {
+                                firstCb.dispatchEvent(
+                                    new Event("change", { bubbles: true }),
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring edit-server resources checked state:",
+                        e,
+                    );
+                }
+
+                // Re-initialize the selector logic for the edit container (resource-specific)
+                initResourceSelect(
+                    "edit-server-resources",
+                    "selectedEditResourcesPills",
+                    "selectedEditResourcesWarning",
+                    6,
+                    "selectAllEditResourcesBtn",
+                    "clearAllEditResourcesBtn",
+                );
+            } else {
+                container.innerHTML =
+                    '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
+            }
+        } catch (error) {
+            console.error("Error loading resources:", error);
+            container.innerHTML =
+                '<div class="text-center py-4 text-red-600">Error loading resources</div>';
+        }
+        return;
+    }
+
+    try {
+        // Call the search API
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.resources && data.resources.length > 0) {
+            // Create HTML for search results
+            let searchResultsHtml = "";
+            data.resources.forEach((resource) => {
+                const name = resource.name || resource.id;
+
+                searchResultsHtml += `
+                    <label
+                        class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md p-1 resource-item"
+                        data-resource-id="${escapeHtml(resource.id)}"
+                    >
+                        <input
+                            type="checkbox"
+                            name="associatedResources"
+                            value="${escapeHtml(resource.id)}"
+                            data-resource-name="${escapeHtml(name)}"
+                            class="resource-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                        />
+                        <span class="select-none">${escapeHtml(name)}</span>
+                    </label>
+                `;
+            });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Update mapping
+            updateResourceMapping(container);
+
+            // Restore checked state for any resources already associated with the server
+            try {
+                const dataAttr = container.getAttribute(
+                    "data-server-resources",
+                );
+                if (dataAttr) {
+                    const serverResources = JSON.parse(dataAttr);
+                    if (
+                        Array.isArray(serverResources) &&
+                        serverResources.length > 0
+                    ) {
+                        // Normalize serverResources to a set of strings for robust comparison
+                        const serverResourceSet = new Set(
+                            serverResources.map((s) => String(s)),
+                        );
+
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const resourceId = cb.value;
+                            const resourceName =
+                                cb.getAttribute("data-resource-name") ||
+                                (window.resourceMapping &&
+                                    window.resourceMapping[cb.value]);
+                            // Check by id first (string), then by name as a fallback
+                            if (
+                                serverResourceSet.has(resourceId) ||
+                                (resourceName &&
+                                    serverResourceSet.has(String(resourceName)))
+                            ) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring edit-server resources checked state:",
+                    e,
+                );
+            }
+
+            // Initialize selector behavior
+            initResourceSelect(
+                "edit-server-resources",
+                "selectedEditResourcesPills",
+                "selectedEditResourcesWarning",
+                6,
+                "selectAllEditResourcesBtn",
+                "clearAllEditResourcesBtn",
+            );
+
+            // Hide no results message
+            if (noResultsMessage) {
+                noResultsMessage.style.display = "none";
+            }
+        } else {
+            // Show no results message
+            container.innerHTML = "";
+            if (noResultsMessage) {
+                if (searchQuerySpan) {
+                    searchQuerySpan.textContent = searchTerm;
+                }
+                noResultsMessage.style.display = "block";
+            }
+        }
+    } catch (error) {
+        console.error("Error searching resources:", error);
+        container.innerHTML =
+            '<div class="text-center py-4 text-red-600">Error searching resources</div>';
         if (noResultsMessage) {
             noResultsMessage.style.display = "none";
         }
@@ -19753,3 +23458,335 @@ function updateBodyLabel() {
 
 // Make it available globally for HTML onclick handlers
 window.updateBodyLabel = updateBodyLabel;
+
+/**
+ * ====================================================================
+ * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
+ * Handles live status updates for Gateways and Tools
+ * ====================================================================
+ */
+
+document.addEventListener("DOMContentLoaded", function () {
+    initializeRealTimeMonitoring();
+});
+
+function initializeRealTimeMonitoring() {
+    if (!window.EventSource) {
+        return;
+    }
+
+    // Connect to the admin events endpoint
+    const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
+
+    // --- Gateway Events ---
+    // Handlers for specific states
+
+    // eventSource.addEventListener("gateway_deactivated", (e) => handleEntityEvent("gateway", e));
+    eventSource.addEventListener("gateway_activated", (e) =>
+        handleEntityEvent("gateway", e),
+    );
+    eventSource.addEventListener("gateway_offline", (e) =>
+        handleEntityEvent("gateway", e),
+    );
+
+    // --- Tool Events ---
+    // Handlers for specific states
+
+    // eventSource.addEventListener("tool_deactivated", (e) => handleEntityEvent("tool", e));
+    eventSource.addEventListener("tool_activated", (e) =>
+        handleEntityEvent("tool", e),
+    );
+    eventSource.addEventListener("tool_offline", (e) =>
+        handleEntityEvent("tool", e),
+    );
+
+    eventSource.onopen = () =>
+        console.log("✅ SSE Connected for Real-time Monitoring");
+    eventSource.onerror = (err) =>
+        console.warn("⚠️ SSE Connection issue, retrying...", err);
+}
+
+/**
+ * Generic handler for entity events
+ */
+function handleEntityEvent(type, event) {
+    try {
+        const data = JSON.parse(event.data);
+        // Log the specific event type for debugging
+        // console.log(`Received ${type} event [${event.type}]:`, data);
+        updateEntityStatus(type, data);
+    } catch (err) {
+        console.error(`Error processing ${type} event:`, err);
+    }
+}
+
+/**
+ * Updates the status badge and action buttons for a row
+ */
+
+function updateEntityStatus(type, data) {
+    let row = null;
+
+    if (type === "gateway") {
+        // Gateways usually have explicit IDs
+        row = document.getElementById(`gateway-row-${data.id}`);
+    } else if (type === "tool") {
+        // 1. Try explicit ID (fastest)
+        row = document.getElementById(`tool-row-${data.id}`);
+
+        // 2. Fallback: Search rows by looking for the ID in Action buttons
+        if (!row) {
+            const panel = document.getElementById("tools-panel");
+            if (panel) {
+                const rows = panel.querySelectorAll("table tbody tr");
+                for (const tr of rows) {
+                    // Check data attribute if present
+                    if (tr.dataset.toolId === data.id) {
+                        row = tr;
+                        break;
+                    }
+
+                    // Check innerHTML for the UUID in action attributes
+                    const html = tr.innerHTML;
+                    if (html.includes(data.id)) {
+                        // Verify it's likely an ID usage (in quotes or url path)
+                        if (
+                            html.includes(`'${data.id}'`) ||
+                            html.includes(`"${data.id}"`) ||
+                            html.includes(`/${data.id}/`)
+                        ) {
+                            row = tr;
+                            // Optimization: Set ID on row for next time
+                            tr.id = `tool-row-${data.id}`;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!row) {
+        console.warn(`Could not find row for ${type} id: ${data.id}`);
+        return;
+    }
+
+    // Dynamically find Status and Action columns
+    const table = row.closest("table");
+    let statusIndex = -1;
+    let actionIndex = -1;
+
+    if (table) {
+        const headers = table.querySelectorAll("thead th");
+        headers.forEach((th, index) => {
+            const text = th.textContent.trim().toLowerCase();
+            if (text === "status") {
+                statusIndex = index;
+            }
+            if (text === "actions") {
+                actionIndex = index;
+            }
+        });
+    }
+
+    // Fallback indices if headers aren't found
+    if (statusIndex === -1) {
+        statusIndex = type === "gateway" ? 4 : 5;
+    }
+    if (actionIndex === -1) {
+        actionIndex = type === "gateway" ? 9 : 6;
+    }
+
+    const statusCell = row.children[statusIndex];
+    const actionCell = row.children[actionIndex];
+
+    // --- 1. Update Status Badge ---
+    if (statusCell) {
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
+        const isReachable =
+            data.reachable !== undefined ? data.reachable : true;
+
+        statusCell.innerHTML = generateStatusBadgeHtml(
+            isEnabled,
+            isReachable,
+            type,
+        );
+
+        // Flash effect
+        statusCell.classList.add(
+            "bg-blue-50",
+            "dark:bg-blue-900",
+            "transition-colors",
+            "duration-500",
+        );
+        setTimeout(() => {
+            statusCell.classList.remove("bg-blue-50", "dark:bg-blue-900");
+        }, 1000);
+    }
+
+    // --- 2. Update Action Buttons ---
+    if (actionCell) {
+        const isEnabled =
+            data.enabled !== undefined ? data.enabled : data.isActive;
+        updateEntityActionButtons(actionCell, type, data.id, isEnabled);
+    }
+}
+
+/**
+ * Generates the HTML for the status badge (Active/Inactive/Offline)
+ */
+function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
+    const label = typeLabel
+        ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
+        : "Item";
+
+    if (!enabled) {
+        // CASE 1: Inactive (Manually disabled) -> RED
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200">
+                Inactive
+                <svg class="ml-1 h-4 w-4 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
+        </div>`;
+    } else if (!reachable) {
+        // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                Offline
+                <svg class="ml-1 h-4 w-4 text-yellow-600 dark:text-yellow-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
+        </div>`;
+    } else {
+        // CASE 3: Active (Enabled and Reachable) -> GREEN
+        return `
+        <div class="relative group inline-block">
+            <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                Active
+                <svg class="ml-1 h-4 w-4 text-green-600 dark:text-green-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"/></svg>
+            </span>
+            <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
+        </div>`;
+    }
+}
+
+/**
+ * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
+ */
+
+function updateEntityActionButtons(cell, type, id, isEnabled) {
+    // We look for the form that toggles activation inside the cell
+    const form = cell.querySelector('form[action*="/toggle"]');
+    if (!form) {
+        return;
+    }
+
+    // The HTML structure for the button
+    // Ensure we are flipping the button state correctly based on isEnabled
+
+    if (isEnabled) {
+        // If Enabled -> Show Deactivate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="false" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:text-yellow-900 hover:bg-yellow-50 dark:text-yellow-400 dark:hover:bg-yellow-900/20 transition-colors" x-tooltip="'💡Temporarily disable this item'">
+                Deactivate
+            </button>
+        `;
+    } else {
+        // If Disabled -> Show Activate Button
+        form.innerHTML = `
+            <input type="hidden" name="activate" value="true" />
+            <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-blue-600 hover:text-blue-900 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/20 transition-colors" x-tooltip="'💡Re-enable this item'">
+                Activate
+            </button>
+        `;
+    }
+}
+
+// CRITICAL DEBUG AND FIX FOR MCP SERVERS SEARCH
+console.log("🔧 LOADING MCP SERVERS SEARCH DEBUG FUNCTIONS...");
+
+// Emergency fix function for MCP Servers search
+window.emergencyFixMCPSearch = function () {
+    console.log("🚨 EMERGENCY FIX: Attempting to fix MCP Servers search...");
+
+    // Find the search input
+    const searchInput = document.getElementById("gateways-search-input");
+    if (!searchInput) {
+        console.error("❌ Cannot find gateways-search-input element");
+        return false;
+    }
+
+    console.log("✅ Found search input:", searchInput);
+
+    // Remove all existing event listeners by cloning
+    const newSearchInput = searchInput.cloneNode(true);
+    searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+
+    // Add fresh event listener
+    const finalSearchInput = document.getElementById("gateways-search-input");
+    finalSearchInput.addEventListener("input", function (e) {
+        console.log("🔍 EMERGENCY SEARCH EVENT:", e.target.value);
+        filterGatewaysTable(e.target.value);
+    });
+
+    console.log(
+        "✅ Emergency fix applied - test by typing in MCP Servers search box",
+    );
+    return true;
+};
+
+// Manual test function
+window.testMCPSearchManually = function (searchTerm = "github") {
+    console.log("🧪 MANUAL TEST: Testing MCP search with:", searchTerm);
+    filterGatewaysTable(searchTerm);
+};
+
+// Debug current state function
+window.debugMCPSearchState = function () {
+    console.log("🔍 DEBUGGING MCP SEARCH STATE:");
+
+    const searchInput = document.getElementById("gateways-search-input");
+    console.log("Search input:", searchInput);
+    console.log(
+        "Search input value:",
+        searchInput ? searchInput.value : "NOT FOUND",
+    );
+
+    const panel = document.getElementById("gateways-panel");
+    console.log("Gateways panel:", panel);
+
+    const table = panel ? panel.querySelector("table") : null;
+    console.log("Table in panel:", table);
+
+    const rows = table ? table.querySelectorAll("tbody tr") : [];
+    console.log("Rows found:", rows.length);
+
+    if (rows.length > 0) {
+        console.log("First row content:", rows[0].textContent);
+    }
+
+    return {
+        searchInput: !!searchInput,
+        panel: !!panel,
+        table: !!table,
+        rowCount: rows.length,
+    };
+};
+
+// Auto-fix on page load
+setTimeout(function () {
+    console.log("🔄 AUTO-FIX: Attempting to fix MCP search after page load...");
+    if (window.emergencyFixMCPSearch) {
+        window.emergencyFixMCPSearch();
+    }
+}, 1000);
+
+console.log("🔧 MCP SERVERS SEARCH DEBUG FUNCTIONS LOADED!");
+console.log("💡 Use: window.emergencyFixMCPSearch() to fix search");
+console.log("💡 Use: window.testMCPSearchManually('github') to test search");
+console.log("💡 Use: window.debugMCPSearchState() to check current state");

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Extended tests to achieve >95% coverage for mcp_client_chat_service module."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock

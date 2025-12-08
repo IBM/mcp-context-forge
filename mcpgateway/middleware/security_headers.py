@@ -273,22 +273,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Content Security Policy
         # This CSP is designed to work with the Admin UI while providing security
         # Dynamically set frame-ancestors based on X_FRAME_OPTIONS setting to stay consistent
-        x_frame = str(settings.x_frame_options)
-        x_frame_upper = x_frame.upper()
-
-        if x_frame_upper == "DENY":
-            frame_ancestors = "'none'"
-        elif x_frame_upper == "SAMEORIGIN":
-            frame_ancestors = "'self'"
-        elif x_frame_upper.startswith("ALLOW-FROM"):
-            allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
-            frame_ancestors = allowed_uri
-        elif not x_frame:  # Empty string means allow all
-            frame_ancestors = "*"
-        else:
-            # Default to none for unknown values (matches DENY default)
-            frame_ancestors = "'none'"
-
         csp_directives = [
             "default-src 'self'",
             "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com",
@@ -296,8 +280,28 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "img-src 'self' data: https:",
             "font-src 'self' data: https://cdnjs.cloudflare.com",
             "connect-src 'self' ws: wss: https:",
-            f"frame-ancestors {frame_ancestors}",
         ]
+
+        # Only add frame-ancestors if x_frame_options is not None
+        # When None (or "null"/"none" string), completely disable iframe restrictions
+        if settings.x_frame_options is not None:
+            x_frame = str(settings.x_frame_options)
+            x_frame_upper = x_frame.upper()
+
+            if x_frame_upper == "DENY":
+                frame_ancestors = "'none'"
+            elif x_frame_upper == "SAMEORIGIN":
+                frame_ancestors = "'self'"
+            elif x_frame_upper.startswith("ALLOW-FROM"):
+                allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
+                frame_ancestors = allowed_uri
+            elif x_frame_upper == "ALLOW-ALL":
+                frame_ancestors = "* file: http: https:"
+            else:
+                # Default to none for unknown values (matches DENY default)
+                frame_ancestors = "'none'"
+
+            csp_directives.append(f"frame-ancestors {frame_ancestors}")
         response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
 
         # HSTS for HTTPS connections (configurable)

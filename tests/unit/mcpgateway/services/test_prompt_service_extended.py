@@ -49,14 +49,14 @@ class TestPromptServiceExtended:
         # Test active prompt conflict
         error = PromptNameConflictError("test_prompt")
         assert error.name == "test_prompt"
-        assert error.is_active is True
+        assert error.enabled is True
         assert error.prompt_id is None
         assert "test_prompt" in str(error)
 
         # Test inactive prompt conflict
         error_inactive = PromptNameConflictError("inactive_prompt", False, 123)
         assert error_inactive.name == "inactive_prompt"
-        assert error_inactive.is_active is False
+        assert error_inactive.enabled is False
         assert error_inactive.prompt_id == 123
         assert "inactive_prompt" in str(error_inactive)
         assert "currently inactive, ID: 123" in str(error_inactive)
@@ -72,15 +72,19 @@ class TestPromptServiceExtended:
 
     @pytest.mark.asyncio
     async def test_shutdown(self):
-        """Test shutdown method (lines 139-140)."""
+        """Test shutdown method - verifies EventService cleanup."""
         service = PromptService()
-        service._event_subscribers = [MagicMock(), MagicMock()]
+
+        # Mock the EventService shutdown method
+        service._event_service.shutdown = AsyncMock()
 
         with patch('mcpgateway.services.prompt_service.logger') as mock_logger:
             await service.shutdown()
 
-            # Verify subscribers were cleared
-            assert len(service._event_subscribers) == 0
+            # Verify EventService.shutdown was called
+            service._event_service.shutdown.assert_called_once()
+
+            # Verify logging
             mock_logger.info.assert_called_with("Prompt service shutdown complete")
 
     @pytest.mark.asyncio
@@ -299,23 +303,41 @@ class TestPromptServiceExtended:
 
     @pytest.mark.asyncio
     async def test_publish_event_multiple_subscribers(self):
-        """Test _publish_event with multiple subscribers (lines 897-907)."""
+        """Test _publish_event with multiple subscribers via EventService."""
         service = PromptService()
 
-        # Create multiple subscriber queues
-        queue1 = asyncio.Queue()
-        queue2 = asyncio.Queue()
-        service._event_subscribers = [queue1, queue2]
+        # Mock the EventService's publish_event method
+        service._event_service.publish_event = AsyncMock()
 
         event = {"type": "test", "data": {"message": "test"}}
         await service._publish_event(event)
 
-        # Both queues should receive the event
-        event1 = await asyncio.wait_for(queue1.get(), timeout=1.0)
-        event2 = await asyncio.wait_for(queue2.get(), timeout=1.0)
+        # Verify EventService.publish_event was called with the event
+        service._event_service.publish_event.assert_called_once_with(event)
 
-        assert event1 == event
-        assert event2 == event
+    @pytest.mark.asyncio
+    async def test_subscribe_events_uses_event_service(self):
+        """Test that subscribe_events delegates to EventService."""
+        service = PromptService()
+
+        # Create a mock async generator for EventService
+        async def mock_event_generator():
+            yield {"type": "test_event", "data": "test_data"}
+
+        # Mock the EventService's subscribe_events method
+        service._event_service.subscribe_events = MagicMock(return_value=mock_event_generator())
+
+        # Subscribe and get one event
+        event_gen = service.subscribe_events()
+        event = await event_gen.__anext__()
+
+        # Verify the event came through
+        assert event["type"] == "test_event"
+        assert event["data"] == "test_data"
+
+        # Verify EventService.subscribe_events was called
+        service._event_service.subscribe_events.assert_called_once()
+
 
     @pytest.mark.asyncio
     async def test_notify_prompt_methods(self):
@@ -326,7 +348,7 @@ class TestPromptServiceExtended:
         mock_prompt = MagicMock()
         mock_prompt.id = "test-id"
         mock_prompt.name = "test-prompt"
-        mock_prompt.is_active = True
+        mock_prompt.enabled = True
 
         # Test _notify_prompt_added
         await service._notify_prompt_added(mock_prompt)

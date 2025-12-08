@@ -94,6 +94,8 @@ def _build_db_prompt(
     p.argument_schema = {"properties": {"name": {"type": "string"}}, "required": ["name"]}
     p.created_at = p.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
     p.is_active = is_active
+    # New model uses `enabled` — keep both attributes for backward compatibility in tests
+    p.enabled = is_active
     p.metrics = metrics or []
     # validate_arguments: accept anything
     p.validate_arguments = Mock()
@@ -366,6 +368,7 @@ class TestPromptService:
         p.team_id = 1
         p.name = "hello"
         p.is_active = True
+        p.enabled = True
         test_db.get = Mock(return_value=p)
         test_db.commit = Mock()
         test_db.refresh = Mock()
@@ -373,9 +376,9 @@ class TestPromptService:
 
         res = await prompt_service.toggle_prompt_status(test_db, 1, activate=False)
 
-        assert p.is_active is False
+        assert p.enabled is False
         prompt_service._notify_prompt_deactivated.assert_called_once()
-        assert res["is_active"] is False
+        assert res["enabled"] is False
 
     @pytest.mark.asyncio
     async def test_toggle_prompt_status_not_found(self, prompt_service, test_db):
@@ -451,13 +454,16 @@ class TestPromptService:
 
     @pytest.mark.asyncio
     async def test_publish_event_puts_in_all_queues(self, prompt_service):
-        q1 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        q2 = asyncio.Queue() # type: ignore[var-annotated]  # TODO: event types for services
-        prompt_service._event_subscribers.extend([q1, q2])
+        """Test that _publish_event uses EventService to publish events."""
+        # Mock the EventService's publish_event method
+        prompt_service._event_service.publish_event = AsyncMock()
+
         event = {"type": "test"}
         await prompt_service._publish_event(event)
-        assert await q1.get() == event
-        assert await q2.get() == event
+
+        # Verify that EventService.publish_event was called with the event
+        prompt_service._event_service.publish_event.assert_called_once_with(event)
+
 
     # ──────────────────────────────────────────────────────────────────
     #   Validation & Exception Handling

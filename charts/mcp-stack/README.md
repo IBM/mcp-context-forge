@@ -102,6 +102,7 @@ Kubernetes: `>=1.21.0`
 | mcpContextForge.config.DB_RETRY_INTERVAL_MS | string | `"2000"` |  |
 | mcpContextForge.config.PROTOCOL_VERSION | string | `"2025-03-26"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_ENABLED | string | `"true"` |  |
+| mcpContextForge.config.MCPGATEWAY_UI_AIRGAPPED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_ADMIN_API_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.ENVIRONMENT | string | `"development"` |  |
 | mcpContextForge.config.APP_DOMAIN | string | `"localhost"` |  |

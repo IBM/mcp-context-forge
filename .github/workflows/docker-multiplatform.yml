@@ -1,0 +1,337 @@
+# ===============================================================
+# Multiplatform Docker Build Workflow
+# ===============================================================
+#
+# This workflow builds container images for multiple architectures:
+#   - linux/amd64 (native on ubuntu-latest)
+#   - linux/arm64 (native on ubuntu-24.04-arm)
+#   - linux/s390x (QEMU emulation on ubuntu-latest)
+#
+# Pipeline:
+#   1. Lint Dockerfile with Hadolint
+#   2. Build platform images in parallel
+#   3. Create multiplatform manifest
+#   4. Security scan (Trivy, Grype, SBOM)
+#   5. Sign with Cosign (keyless OIDC)
+#
+# ===============================================================
+
+name: Multiplatform Docker Build
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-multiplatform.yml'
+  pull_request:
+    branches: ["main"]
+    paths:
+      - 'Containerfile.lite'
+      - 'mcpgateway/**'
+      - 'plugins/**'
+      - 'pyproject.toml'
+      - '.github/workflows/docker-multiplatform.yml'
+  schedule:
+    - cron: "17 18 * * 2"  # Weekly rebuild (Tuesday 18:17 UTC) for CVE patches
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: 'Platforms to build (comma-separated)'
+        required: false
+        default: 'linux/amd64,linux/arm64,linux/s390x'
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+  actions: read
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------
+  # Lint Dockerfile (architecture-independent, run once)
+  # ---------------------------------------------------------------
+  lint:
+    name: Lint Dockerfile
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Hadolint
+        id: hadolint
+        continue-on-error: true
+        run: |
+          curl -sSL https://github.com/hadolint/hadolint/releases/latest/download/hadolint-Linux-x86_64 -o /usr/local/bin/hadolint
+          chmod +x /usr/local/bin/hadolint
+          hadolint -f sarif Containerfile.lite > hadolint-results.sarif || true
+
+      - name: Upload Hadolint SARIF
+        if: always() && hashFiles('hadolint-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: hadolint-results.sarif
+
+  # ---------------------------------------------------------------
+  # Build each platform in parallel
+  # ---------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.suffix }}
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+            suffix: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            suffix: arm64
+          - platform: linux/s390x
+            runner: ubuntu-latest
+            suffix: s390x
+            qemu: true
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set image name lowercase
+        run: |
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ matrix.platform }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          tags: |
+            type=raw,value=${{ matrix.suffix }}-${{ github.sha }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: ${{ matrix.platform }}
+
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=build-${{ matrix.suffix }}
+          cache-to: type=gha,mode=max,scope=build-${{ matrix.suffix }}
+          provenance: false
+
+      - name: Export digest
+        if: github.event_name != 'pull_request'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+          echo "Digest for ${{ matrix.suffix }}: $digest"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.suffix }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------
+  # Create multiplatform manifest
+  # ---------------------------------------------------------------
+  manifest:
+    name: Create Manifest
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Set image name lowercase
+        run: |
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest
+        run: |
+          SHA=${{ github.sha }}
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+
+          echo "Creating multiplatform manifest..."
+          docker buildx imagetools create \
+            --tag "${IMAGE}:${SHA}" \
+            --tag "${IMAGE}:latest" \
+            "${IMAGE}:amd64-${SHA}" \
+            "${IMAGE}:arm64-${SHA}" \
+            "${IMAGE}:s390x-${SHA}"
+
+          echo "Manifest created successfully"
+
+      - name: Inspect manifest
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          echo "Inspecting multiplatform manifest..."
+          docker buildx imagetools inspect "${IMAGE}:latest"
+
+  # ---------------------------------------------------------------
+  # Security scanning (amd64 only - sufficient for CVE detection)
+  # ---------------------------------------------------------------
+  scan:
+    name: Security Scan
+    needs: manifest
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set image name lowercase
+        run: |
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull amd64 image for scanning
+        run: |
+          docker pull --platform linux/amd64 ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          output-file: sbom.spdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.spdx.json
+          retention-days: 30
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: 0
+
+      - name: Upload Trivy SARIF
+        if: always() && hashFiles('trivy-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Install Grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+
+      - name: Grype vulnerability scan
+        continue-on-error: true
+        run: |
+          grype ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest --scope all-layers --only-fixed
+
+      - name: Grype SARIF report
+        continue-on-error: true
+        run: |
+          grype ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}:latest --scope all-layers --output sarif --file grype-results.sarif
+
+      - name: Upload Grype SARIF
+        if: always() && hashFiles('grype-results.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype-results.sarif
+
+  # ---------------------------------------------------------------
+  # Sign images with Cosign (keyless OIDC)
+  # ---------------------------------------------------------------
+  sign:
+    name: Sign Images
+    needs: [manifest, scan]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+
+    steps:
+      - name: Set image name lowercase
+        run: |
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+          echo "IMAGE_NAME_LC=${IMAGE_NAME_LC}" >> $GITHUB_ENV
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign multiplatform image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          IMAGE=${{ env.REGISTRY }}/${{ env.IMAGE_NAME_LC }}
+          SHA=${{ github.sha }}
+
+          echo "Signing ${IMAGE}:latest"
+
+          cosign sign --recursive --yes "${IMAGE}:latest"
+
+          echo "Signing ${IMAGE}:${SHA}"
+          cosign sign --recursive --yes "${IMAGE}:${SHA}"
+
+          echo "Images signed successfully"

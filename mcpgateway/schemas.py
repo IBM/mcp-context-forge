@@ -1277,14 +1277,14 @@ class ToolRead(BaseModelWithConfigDict):
     enabled: bool
     reachable: bool
     gateway_id: Optional[str]
-    execution_count: int
-    metrics: ToolMetrics
+    execution_count: Optional[int] = Field(None)
+    metrics: Optional[ToolMetrics] = Field(None)
     name: str
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     gateway_slug: str
     custom_name: str
     custom_name_slug: str
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the tool")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the tool")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -1501,7 +1501,7 @@ class ResourceCreate(BaseModel):
     name: str = Field(..., description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, alias="mimeType", description="Resource MIME type")
-    template: Optional[str] = Field(None, description="URI template for parameterized resources")
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Union[str, bytes] = Field(..., description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
@@ -1642,7 +1642,7 @@ class ResourceUpdate(BaseModelWithConfigDict):
     name: Optional[str] = Field(None, description="Human-readable resource name")
     description: Optional[str] = Field(None, description="Resource description")
     mime_type: Optional[str] = Field(None, description="Resource MIME type")
-    template: Optional[str] = Field(None, description="URI template for parameterized resources")
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     content: Optional[Union[str, bytes]] = Field(None, description="Resource content (text or binary)")
     tags: Optional[List[str]] = Field(None, description="Tags for categorizing the resource")
 
@@ -1771,17 +1771,18 @@ class ResourceRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the resource invocations.
     """
 
-    id: int
+    id: str = Field(description="Unique ID of the resource")
     uri: str
     name: str
     description: Optional[str]
     mime_type: Optional[str]
+    uri_template: Optional[str] = Field(None, description="URI template for parameterized resources")
     size: Optional[int]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
+    enabled: bool
     metrics: ResourceMetrics
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the resource")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the resource")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -2279,15 +2280,16 @@ class PromptRead(BaseModelWithConfigDict):
     - Metrics: Aggregated metrics for the prompt invocations.
     """
 
-    id: int
+    id: str = Field(description="Unique ID of the prompt")
     name: str
     description: Optional[str]
     template: str
     arguments: List[PromptArgument]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the prompt")
+    # is_active: bool
+    enabled: bool
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the prompt")
     metrics: PromptMetrics
 
     # Comprehensive metadata for audit tracking
@@ -2946,7 +2948,7 @@ class GatewayRead(BaseModelWithConfigDict):
     auth_token: Optional[str] = Field(None, description="token for bearer authentication")
     auth_header_key: Optional[str] = Field(None, description="key for custom headers authentication")
     auth_header_value: Optional[str] = Field(None, description="vallue for custom headers authentication")
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the gateway")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the gateway")
 
     auth_password_unmasked: Optional[str] = Field(default=None, description="Unmasked password for basic authentication")
     auth_token_unmasked: Optional[str] = Field(default=None, description="Unmasked bearer token for authentication")
@@ -3709,13 +3711,14 @@ class ServerRead(BaseModelWithConfigDict):
     icon: Optional[str]
     created_at: datetime
     updated_at: datetime
-    is_active: bool
+    # is_active: bool
+    enabled: bool
     associated_tools: List[str] = []
-    associated_resources: List[int] = []
-    associated_prompts: List[int] = []
+    associated_resources: List[str] = []
+    associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
     metrics: ServerMetrics
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the server")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = Field(None, description="Username who created this entity")
@@ -4488,7 +4491,7 @@ class A2AAgentRead(BaseModelWithConfigDict):
     created_at: datetime
     updated_at: datetime
     last_interaction: Optional[datetime]
-    tags: List[str] = Field(default_factory=list, description="Tags for categorizing the agent")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the agent")
     metrics: A2AAgentMetrics
     passthrough_headers: Optional[List[str]] = Field(default=None, description="List of headers allowed to be passed through from client to target")
     # Authorizations
@@ -4864,6 +4867,7 @@ class EmailUserResponse(BaseModel):
     created_at: datetime = Field(..., description="Account creation timestamp")
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -4884,6 +4888,7 @@ class EmailUserResponse(BaseModel):
             created_at=user.created_at,
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
+            password_change_required=user.password_change_required,
         )
 
 
@@ -6247,7 +6252,7 @@ class GrpcServiceRead(BaseModel):
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
 
     # Tags
-    tags: List[str] = Field(default_factory=list, description="Service tags")
+    tags: List[Dict[str, str]] = Field(default_factory=list, description="Service tags")
 
     # Timestamps
     created_at: datetime = Field(..., description="Creation timestamp")

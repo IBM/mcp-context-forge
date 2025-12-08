@@ -290,7 +290,7 @@ class TestUtilityFunctions:
                 "icon": None,
                 "created_at": "2023-01-01T00:00:00+00:00",
                 "updated_at": "2023-01-01T00:00:00+00:00",
-                "is_active": True,
+                "enabled": True,
                 "associated_tools": [],
                 "associated_resources": [],
                 "associated_prompts": [],
@@ -313,7 +313,7 @@ class TestUtilityFunctions:
             assert response.status_code == 200
 
             # Test activate=false
-            mock_server_data["is_active"] = False
+            mock_server_data["enabled"] = False
             mock_toggle.return_value = ServerRead(**mock_server_data)
             response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
             assert response.status_code == 200

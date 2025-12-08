@@ -548,7 +548,7 @@ class TestServerAPIs:
         assert result["description"] == server_data["server"]["description"]
         assert "id" in result
         # Check for the actual field name used in the response
-        assert result.get("is_active", True) is True  # or whatever field indicates active status
+        assert result.get("enabled", True) is True  # or whatever field indicates active status
 
     async def test_get_server(self, client: AsyncClient, mock_auth):
         """Test GET /servers/{server_id}."""
@@ -600,14 +600,14 @@ class TestServerAPIs:
         assert "id" in result
         assert "name" in result
         # Check if server was deactivated
-        assert result.get("isActive") is False or result.get("is_active") is False
+        assert result.get("enabled") is False or result.get("enabled") is False
 
         # Reactivate the server
         response = await client.post(f"/servers/{server_id}/toggle?activate=true", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
-        assert result.get("isActive") is True or result.get("is_active") is True
+        assert result.get("enabled") is True or result.get("enabled") is True
 
     async def test_delete_server(self, client: AsyncClient, mock_auth):
         """Test DELETE /servers/{server_id}."""
@@ -1005,10 +1005,11 @@ class TestResourceAPIs:
     async def test_read_resource(self, client: AsyncClient, mock_auth):
         """Test GET /resources/{uri:path}."""
         # Create a resource first
-        resource_data = {"resource": {"uri": "test/document", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"}, "team_id": None, "visibility": "private"}
+        resource_data = {"resource": {"uri": "resource://test", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"}, "team_id": None, "visibility": "private"}
 
         response = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         resource = response.json()
+        print ("\n----------HBD------------> Resource \n",resource,"\n----------HBD------------> Resource\n")
         assert resource["name"] == "test_doc"
         resource_id = resource["id"]
 
@@ -1848,7 +1849,7 @@ class TestIntegrationScenarios:
 
     async def test_create_and_use_resource(self, client: AsyncClient, mock_auth):
         """Integration: create a resource and read it back."""
-        resource_data = {"resource": {"uri": "integration/resource", "name": "integration_resource", "content": "test"}, "team_id": None, "visibility": "private"}
+        resource_data = {"resource": {"uri": "resource://test", "name": "integration_resource", "content": "test"}, "team_id": None, "visibility": "private"}
         create_resp = await client.post("/resources", json=resource_data, headers=TEST_AUTH_HEADER)
         assert create_resp.status_code == 200
         resource_id = create_resp.json()["id"]
