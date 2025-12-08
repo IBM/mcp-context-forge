@@ -548,7 +548,7 @@ class TestServerAPIs:
         assert result["description"] == server_data["server"]["description"]
         assert "id" in result
         # Check for the actual field name used in the response
-        assert result.get("is_active", True) is True  # or whatever field indicates active status
+        assert result.get("enabled", True) is True  # or whatever field indicates active status
 
     async def test_get_server(self, client: AsyncClient, mock_auth):
         """Test GET /servers/{server_id}."""
@@ -600,14 +600,14 @@ class TestServerAPIs:
         assert "id" in result
         assert "name" in result
         # Check if server was deactivated
-        assert result.get("isActive") is False or result.get("is_active") is False
+        assert result.get("enabled") is False or result.get("enabled") is False
 
         # Reactivate the server
         response = await client.post(f"/servers/{server_id}/toggle?activate=true", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         result = response.json()
-        assert result.get("isActive") is True or result.get("is_active") is True
+        assert result.get("enabled") is True or result.get("enabled") is True
 
     async def test_delete_server(self, client: AsyncClient, mock_auth):
         """Test DELETE /servers/{server_id}."""

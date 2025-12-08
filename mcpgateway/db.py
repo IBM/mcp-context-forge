@@ -1428,7 +1428,7 @@ server_resource_association = Table(
     "server_resource_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("resource_id", Integer, ForeignKey("resources.id"), primary_key=True),
+    Column("resource_id", String(36), ForeignKey("resources.id"), primary_key=True),
 )
 
 # Association table for servers and prompts
@@ -1436,7 +1436,7 @@ server_prompt_association = Table(
     "server_prompt_association",
     Base.metadata,
     Column("server_id", String(36), ForeignKey("servers.id"), primary_key=True),
-    Column("prompt_id", Integer, ForeignKey("prompts.id"), primary_key=True),
+    Column("prompt_id", String(36), ForeignKey("prompts.id"), primary_key=True),
 )
 
 # Association table for servers and A2A agents
@@ -1496,7 +1496,7 @@ class ResourceMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        resource_id (int): Foreign key linking to the resource.
+        resource_id (str): Foreign key linking to the resource.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -1506,7 +1506,7 @@ class ResourceMetric(Base):
     __tablename__ = "resource_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[int] = mapped_column(Integer, ForeignKey("resources.id"), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -1548,7 +1548,7 @@ class PromptMetric(Base):
 
     Attributes:
         id (int): Primary key.
-        prompt_id (int): Foreign key linking to the prompt.
+        prompt_id (str): Foreign key linking to the prompt.
         timestamp (datetime): The time when the invocation occurred.
         response_time (float): The response time in seconds.
         is_success (bool): True if the invocation succeeded, False otherwise.
@@ -1558,7 +1558,7 @@ class PromptMetric(Base):
     __tablename__ = "prompt_metrics"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    prompt_id: Mapped[int] = mapped_column(Integer, ForeignKey("prompts.id"), nullable=False)
+    prompt_id: Mapped[str] = mapped_column(String(36), ForeignKey("prompts.id"), nullable=False)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     response_time: Mapped[float] = mapped_column(Float, nullable=False)
     is_success: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -2210,7 +2210,7 @@ class Resource(Base):
 
     __tablename__ = "resources"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -2219,7 +2219,8 @@ class Resource(Base):
     uri_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # URI template for parameterized resources
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
@@ -2423,7 +2424,7 @@ class ResourceSubscription(Base):
     __tablename__ = "resource_subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id"))
+    resource_id: Mapped[str] = mapped_column(ForeignKey("resources.id"))
     subscriber_id: Mapped[str] = mapped_column(String(255), nullable=False)  # Client identifier
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     last_notification: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -2469,14 +2470,15 @@ class Prompt(Base):
 
     __tablename__ = "prompts"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     template: Mapped[str] = mapped_column(Text)
     argument_schema: Mapped[Dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
@@ -2667,7 +2669,8 @@ class Server(Base):
     icon: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
-    is_active: Mapped[bool] = mapped_column(default=True)
+    # is_active: Mapped[bool] = mapped_column(default=True)
+    enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking

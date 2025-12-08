@@ -55,10 +55,10 @@ MOCK_SERVER_READ = {
     "icon": "server-icon",
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "associated_tools": ["101"],
-    "associated_resources": [201],
-    "associated_prompts": [301],
+    "associated_resources": ["201"],
+    "associated_prompts": ["301"],
     "metrics": MOCK_METRICS,
 }
 
@@ -117,7 +117,7 @@ MOCK_TOOL_READ_SNAKE = camel_to_snake_tool(MOCK_TOOL_READ)
 
 
 MOCK_RESOURCE_READ = {
-    "id": 1,
+    "id": "39334ce0ed2644d79ede8913a66930c9",
     "uri": "test/resource",
     "name": "Test Resource",
     "description": "A test resource",
@@ -125,19 +125,19 @@ MOCK_RESOURCE_READ = {
     "size": 12,
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "metrics": MOCK_METRICS,
 }
 
 MOCK_PROMPT_READ = {
-    "id": 1,
+    "id": "ca627760127d409080fdefc309147e08",
     "name": "test_prompt",
     "description": "A test prompt",
     "template": "Hello {name}",
     "arguments": [],
     "created_at": "2023-01-01T00:00:00+00:00",
     "updated_at": "2023-01-01T00:00:00+00:00",
-    "is_active": True,
+    "enabled": True,
     "metrics": MOCK_METRICS,
 }
 
@@ -505,7 +505,7 @@ class TestServerEndpoints:
     def test_toggle_server_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling server active/inactive status."""
         updated_server = MOCK_SERVER_READ.copy()
-        updated_server["is_active"] = False
+        updated_server["enabled"] = False
         mock_toggle.return_value = ServerRead(**updated_server)
         response = test_client.post("/servers/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -740,7 +740,7 @@ class TestResourceEndpoints:
     def test_toggle_resource_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling resource active/inactive status."""
         mock_resource = MagicMock()
-        mock_resource.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_resource.model_dump.return_value = {"id": "1", "enabled": False}
         mock_toggle.return_value = mock_resource
         response = test_client.post("/resources/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -820,7 +820,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
@@ -897,7 +897,7 @@ class TestPromptEndpoints:
     def test_toggle_prompt_status(self, mock_toggle, test_client, auth_headers):
         """Test toggling prompt active/inactive status."""
         mock_prompt = MagicMock()
-        mock_prompt.model_dump.return_value = {"id": 1, "is_active": False}
+        mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
         mock_toggle.return_value = mock_prompt
         response = test_client.post("/prompts/1/toggle?activate=false", headers=auth_headers)
         assert response.status_code == 200
