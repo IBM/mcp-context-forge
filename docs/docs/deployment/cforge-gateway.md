@@ -4,133 +4,6 @@
 
 The `cforge gateway` command is a powerful deployment tool for MCP Gateway and its external plugins. It provides a unified, declarative way to build, configure, and deploy the complete MCP stack from a single YAML configuration file.
 
-### Why We Created It
-
-Before `cforge gateway`, deploying MCP Gateway with external plugins required:
-
-- **Manual container builds** for each plugin from different repositories
-- **Complex mTLS certificate generation** and distribution
-- **Hand-crafted Kubernetes manifests** or Docker Compose files
-- **Environment variable management** across multiple services
-- **Coordination** between gateway configuration and plugin deployments
-
-`cforge gateway` solves these challenges by:
-
-✅ **Automating the entire deployment pipeline** from source to running services
-✅ **Managing mTLS certificates** automatically with proper distribution
-✅ **Generating deployment manifests** (Kubernetes or Docker Compose) from a single source
-✅ **Supporting multiple build modes** (Dagger for performance, plain Python for portability)
-✅ **Validating configurations** before deployment
-✅ **Integrating with CI/CD** workflows and secret management
-
----
-
-## Features
-
-### Build System
-
-- **Dual-mode execution**: Dagger (optimal performance) or plain Python (fallback)
-- **Git-based plugin builds**: Clone and build plugins from any Git repository
-- **Pre-built image support**: Use existing Docker images
-- **Multi-stage build support**: Build specific stages from Dockerfiles
-- **Build caching**: Intelligent caching to speed up rebuilds
-
-### Deployment Targets
-
-- **Kubernetes**: Full manifest generation with ConfigMaps, Secrets, Services, Deployments
-- **Docker Compose**: Complete stack with networking and volume management
-- **Local development**: Quick testing with exposed ports
-- **Production-ready**: Resource limits, health checks, and best practices
-
-### Security
-
-- **Automatic mTLS**: Generate and distribute certificates for gateway ↔ plugin communication
-- **Certificate rotation**: Configurable validity periods
-- **Secret management**: Integration with environment files and CI/CD vaults
-- **Network isolation**: Proper service-to-service communication
-
-### Workflow Automation
-
-- **Validation**: Pre-flight checks before deployment
-- **Build**: Build containers from source or pull pre-built images
-- **Certificate generation**: Create mTLS cert hierarchy
-- **Deployment**: Apply manifests to target environment
-- **Verification**: Health check deployed services
-- **Destruction**: Clean teardown
-
----
-
-## Future Directions
-
-The `cforge gateway` tool is actively evolving to support broader MCP ecosystem workflows. Planned enhancements include:
-
-### MCP Server Lifecycle Management
-
-Currently, `cforge gateway` focuses on deploying external plugins. Future versions will support the complete lifecycle of MCP servers:
-
-- **Build & Deploy MCP Servers**: Build MCP servers from Git repositories, similar to current plugin support
-- **Automatic Registration**: Deploy MCP servers and automatically register them with the gateway as peers
-- **Plugin Attachment**: Attach and configure plugins for registered MCP servers, enabling policy enforcement and filtering at the server level
-- **Configuration Generation**: Generate MCP server configurations from templates
-- **Multi-Server Deployments**: Deploy multiple MCP servers as a coordinated fleet
-
-This will enable declarative deployment of complete MCP ecosystems from a single configuration file:
-
-```yaml
-# Future concept
-mcp_servers:
-  - name: GitHubMCPServer
-    repo: https://github.com/org/mcp-server-github.git
-    auto_register: true          # Auto-register as gateway peer
-    expose_tools: ["*"]          # Expose all tools through gateway
-    expose_resources: ["repos"]  # Expose specific resources
-
-    # Attach plugins to this MCP server
-    plugins:
-      - OPAPluginFilter          # Apply OPA policies to this server
-      - PIIFilterPlugin          # Filter PII from responses
-```
-
-### Live MCP Server Discovery
-
-Automatic discovery and registration of running MCP servers:
-
-- **mDNS/Zeroconf Discovery**: Automatically discover MCP servers on the local network
-- **Service Mesh Integration**: Integrate with Kubernetes service discovery
-- **Dynamic Registration**: Register servers at runtime without redeployment
-- **Health-Based Registration**: Automatically register/deregister based on health checks
-
-### Container Security Policies
-
-Attach security policies to built containers for enhanced compliance and governance:
-
-- **OPA Policy Bundles**: Include Open Policy Agent (OPA) policies with container builds
-- **SBOM Generation**: Automatically generate Software Bill of Materials (SBOM) for built images
-- **Vulnerability Scanning**: Integrate Trivy/Grype scans into build pipeline
-- **Policy Enforcement**: Define and enforce security policies (allowed packages, CVE thresholds, etc.)
-- **Signing & Attestation**: Sign built images with Cosign/Sigstore
-- **Runtime Security**: Define AppArmor/SELinux profiles for deployed containers
-
-Example future configuration:
-
-```yaml
-# Future concept
-security:
-  policies:
-    enabled: true
-    opa_bundle: ./policies/container-security.rego
-    sbom: true
-    vulnerability_scan:
-      enabled: true
-      fail_on: critical
-      allowlist: ["CVE-2024-1234"]
-  signing:
-    enabled: true
-    keyless: true  # Sigstore keyless signing
-```
-
-These enhancements will make `cforge gateway` a comprehensive tool for building, securing, deploying, and managing the entire MCP infrastructure stack.
-
 ---
 
 ## Quick Start
@@ -171,6 +44,77 @@ cforge gateway verify examples/deployment-configs/deploy-compose.yaml
 # 6. (Optional) Tear down
 cforge gateway destroy examples/deployment-configs/deploy-compose.yaml
 ```
+
+---
+
+## Simple Configuration Example
+
+The `cforge gateway` tool uses **custom YAML configuration files** to describe your deployment. These are **not** standard Docker Compose or Kubernetes manifests - instead, `cforge` reads these configuration files and generates the actual deployment manifests for your target environment.
+
+Here's a minimal example configuration that demonstrates the key components:
+
+```yaml
+deployment:
+  type: compose                    # Target: 'compose' or 'kubernetes'
+  project_name: mcp-stack-test
+
+gateway:
+  image: mcpgateway/mcpgateway:latest  # Use pre-built image
+  port: 4444
+  host_port: 4444                  # Expose on localhost:4444
+
+  env_vars:
+    LOG_LEVEL: DEBUG
+    MCPGATEWAY_UI_ENABLED: "true"
+    AUTH_REQUIRED: "false"         # Simplified for testing
+
+  mtls_enabled: false              # Disable mTLS for simple setup
+
+plugins:
+  - name: OPAPluginFilter
+    repo: https://github.com/terylt/mcp-context-forge.git
+    ref: feat/use_mtls_plugins     # Git branch/tag/commit
+    context: plugins/external/opa  # Build context path
+    containerfile: Containerfile
+
+    expose_port: true
+    mtls_enabled: false
+
+    plugin_overrides:
+      priority: 10
+      mode: "enforce"
+      description: "OPA policy enforcement"
+
+certificates:
+  auto_generate: true              # Auto-generate certs if needed
+```
+
+**Key sections explained:**
+
+- **deployment**: Specifies the target environment (Docker Compose or Kubernetes) and basic settings
+- **gateway**: Defines the MCP Gateway configuration - can use a pre-built image or build from a Git repository
+- **plugins**: Array of external plugins to deploy. Each plugin can be built from source or use pre-built images
+- **certificates**: mTLS certificate configuration (auto-generated by default)
+
+**How it works:**
+
+When you run `cforge gateway deploy <config-file>`, the tool:
+1. Reads your custom configuration YAML
+2. Builds container images (if building from source)
+3. Generates mTLS certificates (if needed)
+4. **Generates actual deployment files**:
+   - For `type: compose` → `deploy/docker-compose.yaml`
+   - For `type: kubernetes` → `deploy/manifests/*.yaml` (Deployment, Service, ConfigMap, etc.)
+5. Deploys the generated manifests to your target environment
+
+**Additional example configurations** are available in `examples/deployment-configs/`:
+- `deploy-compose.yaml` - Docker Compose without mTLS
+- `deploy-compose.mtls.yaml` - Docker Compose with mTLS
+- `deploy-k8s.yaml` - Kubernetes with pre-built images
+- `deploy-k8s-cert-manager.yaml` - Kubernetes with cert-manager integration
+- More examples for OpenShift, registry integration, and advanced scenarios
+
+See the [Example Configurations](#example-configurations) section below for detailed examples with full explanations.
 
 ---
 
