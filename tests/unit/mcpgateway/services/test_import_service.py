@@ -1494,7 +1494,7 @@ async def test_server_update_conversion(import_service, mock_db):
     assert server_update.name == "update_server"
     assert server_update.description == "Updated server description"
     assert server_update.associated_tools is None  # None because no tools found to resolve
-    assert server_update.tags == ["server", "update"]
+    assert server_update.tags == [{'id':'server','label':'server'}, {'id':'update','label':'update'}]
 
 
 @pytest.mark.asyncio
@@ -1522,7 +1522,7 @@ async def test_prompt_update_conversion_with_schema(import_service):
     assert prompt_update.arguments[0].required == True
     assert prompt_update.arguments[1].name == "value"
     assert prompt_update.arguments[1].required == False
-    assert prompt_update.tags == ["prompt", "update"]
+    assert prompt_update.tags == [{'id':'prompt','label':'prompt'}, {'id':'update','label':'update'}]
 
 
 @pytest.mark.asyncio
@@ -1535,7 +1535,7 @@ async def test_prompt_update_conversion_no_schema(import_service):
     assert prompt_update.template == "Simple template"
     assert prompt_update.description == "Simple prompt"
     assert prompt_update.arguments is None  # No arguments when no schema
-    assert prompt_update.tags == ["simple"]
+    assert prompt_update.tags == [{'id':'simple','label':'simple'}]
 
 
 @pytest.mark.asyncio
@@ -1548,7 +1548,7 @@ async def test_resource_update_conversion(import_service):
     assert resource_update.description == "Updated resource description"
     assert resource_update.mime_type == "application/xml"
     assert resource_update.content == "<xml>updated content</xml>"
-    assert resource_update.tags == ["resource", "xml"]
+    assert resource_update.tags == [{'id':'resource','label':'resource'}, {'id':'xml','label':'xml'}]
 
 
 @pytest.mark.asyncio

@@ -433,20 +433,37 @@ class TestResourceListing:
 # --------------------------------------------------------------------------- #
 # Resource reading tests                                                      #
 # --------------------------------------------------------------------------- #
-
+from unittest.mock import patch
 class TestResourceReading:
     """Test resource reading functionality."""
 
     @pytest.mark.asyncio
-    async def test_read_resource_success(self, mock_db, mock_resource):
-        """Test successful resource reading."""
-        from mcpgateway.services.resource_service import ResourceService
+    @patch("mcpgateway.services.resource_service.ssl.create_default_context")
+    async def test_read_resource_success(self, mock_ssl, mock_db, mock_resource):
+        mock_ctx = MagicMock()
+        mock_ssl.return_value = mock_ctx
+
         mock_scalar = MagicMock()
+        mock_resource.gateway.ca_certificate = "-----BEGIN CERTIFICATE-----\nABC\n-----END CERTIFICATE-----"
         mock_scalar.scalar_one_or_none.return_value = mock_resource
         mock_db.execute.return_value = mock_scalar
-        resource_service_instance = ResourceService()
-        result = await resource_service_instance.read_resource(mock_db, resource_id=mock_resource.id)
+
+        from mcpgateway.services.resource_service import ResourceService
+        service = ResourceService()
+
+        result = await service.read_resource(mock_db, resource_id=mock_resource.id)
         assert result is not None
+
+    # @pytest.mark.asyncio
+    # async def test_read_resource_success(self, mock_db, mock_resource):
+    #     """Test successful resource reading."""
+    #     from mcpgateway.services.resource_service import ResourceService
+    #     mock_scalar = MagicMock()
+    #     mock_scalar.scalar_one_or_none.return_value = mock_resource
+    #     mock_db.execute.return_value = mock_scalar
+    #     resource_service_instance = ResourceService()
+    #     result = await resource_service_instance.read_resource(mock_db, resource_id=mock_resource.id)
+    #     assert result is not None
 
     @pytest.mark.asyncio
     async def test_read_resource_not_found(self, resource_service, mock_db):

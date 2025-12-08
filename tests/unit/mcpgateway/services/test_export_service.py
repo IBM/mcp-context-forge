@@ -90,7 +90,7 @@ def sample_tool():
         ),
         gateway_slug="",
         custom_name_slug="test_tool",
-        tags=["api", "test"],
+        tags=[{"id": "api", "label": "API"}, {"id": "test", "label": "Test"}],
     )
 
 
@@ -116,7 +116,7 @@ def sample_gateway():
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["gateway", "test"],
+        tags=[{"id": "gateway", "label": "Gateway"}, {"id": "test", "label": "Test"}],
         slug="test_gateway",
         passthrough_headers=None,
     )
@@ -590,7 +590,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["production", "api"],
+        tags=[{"id": "production", "label": "Production"}, {"id": "api", "label": "API"}],
         slug="gateway_with_tags",
         passthrough_headers=None,
     )
@@ -614,7 +614,7 @@ async def test_export_gateways_with_tag_filtering(export_service, mock_db):
         auth_token=None,
         auth_header_key=None,
         auth_header_value=None,
-        tags=["test", "dev"],
+        tags=[{"id": "test", "label": "Test"}, {"id": "dev", "label": "Dev"}],
         slug="gateway_no_tags",
         passthrough_headers=None,
     )

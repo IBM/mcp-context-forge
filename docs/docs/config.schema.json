@@ -1021,6 +1021,12 @@
       "title": "Llmchat Enabled",
       "type": "boolean"
     },
+    "toolops_enabled": {
+      "default": false,
+      "description": "Enable ToolOps feature",
+      "title": "ToolOps Enabled",
+      "type": "boolean"
+    },
     "retry_max_attempts": {
       "default": 3,
       "title": "Retry Max Attempts",

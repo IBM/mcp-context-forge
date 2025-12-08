@@ -562,7 +562,7 @@ class CommonAttributes(BaseModel):
         update_at (Optional[datetime]): The time at which the tool was updated.
         enabled (Optional[bool]): If the tool is enabled.
         reachable (Optional[bool]): If the tool is currently reachable.
-        tags (Optional[list[str]]): A list of meta data tags describing the tool.
+        tags (Optional[list[Dict[str,str]]]): A list of meta data tags describing the tool.
         created_by (Optional[str]): The person that created the tool.
         created_from_ip (Optional[str]): The client IP that created the tool.
         created_via (Optional[str]): How the tool was created (e.g., ui).
@@ -587,7 +587,7 @@ class CommonAttributes(BaseModel):
     enabled: Optional[bool] = None
     reachable: Optional[bool] = None
     auth_type: Optional[str] = None
-    tags: Optional[list[str]] = None
+    tags: Optional[list[Dict[str, str]]] = None
     # Comprehensive metadata for audit tracking
     created_by: Optional[str] = None
     created_from_ip: Optional[str] = None

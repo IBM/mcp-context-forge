@@ -102,26 +102,32 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # ----------------------------------------------------------------
-      # Step 4  Pull the image using the commit SHA tag
+      # Step 4  Set up Docker Buildx for multiplatform manifest handling
       # ----------------------------------------------------------------
-      - name: ⬇️  Pull image by commit SHA
-        run: |
-          IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker pull "$IMAGE:${{ steps.meta.outputs.sha }}"
+      - name: 🛠️  Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       # ----------------------------------------------------------------
-      # Step 5  Tag the image with the semantic version tag
+      # Step 5  Create version tag from existing multiplatform manifest
+      # Note: For multiplatform images, we use 'docker buildx imagetools create'
+      # instead of 'docker pull' + 'docker tag' + 'docker push' because:
+      # 1. Multiplatform images are manifest lists, not single images
+      # 2. We create a new manifest that references the existing SHA-tagged image
+      # 3. This preserves all architecture variants (amd64, arm64, s390x)
       # ----------------------------------------------------------------
-      - name: 🏷️  Tag image with version
+      - name: 🏷️  Create version tag for multiplatform manifest
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker tag "$IMAGE:${{ steps.meta.outputs.sha }}" \
-                     "$IMAGE:${{ steps.meta.outputs.tag }}"
+          echo "Creating version tag ${{ steps.meta.outputs.tag }} from ${IMAGE}:${{ steps.meta.outputs.sha }}"
+          docker buildx imagetools create \
+            "${IMAGE}:${{ steps.meta.outputs.sha }}" \
+            --tag "${IMAGE}:${{ steps.meta.outputs.tag }}"
 
       # ----------------------------------------------------------------
-      # Step 6  Push the new tag to GHCR
+      # Step 6  Verify the new version tag
       # ----------------------------------------------------------------
-      - name: 🚀  Push new version tag
+      - name: 🔍  Verify version tag
         run: |
           IMAGE="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
-          docker push "$IMAGE:${{ steps.meta.outputs.tag }}"
+          echo "Inspecting ${IMAGE}:${{ steps.meta.outputs.tag }}"
+          docker buildx imagetools inspect "${IMAGE}:${{ steps.meta.outputs.tag }}"

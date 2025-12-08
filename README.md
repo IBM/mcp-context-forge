@@ -1293,6 +1293,14 @@ You can get started by copying the provided [.env.example](https://github.com/IB
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### ToolOps
+
+ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `TOOLOPS_ENABLED`             | Enable ToolOps functionality          | `false` | bool    |
+
 ### LLM Chat MCP Client
 
 The LLM Chat MCP Client allows you to interact with MCP servers using conversational AI from multiple LLM providers. This feature enables natural language interaction with tools, resources, and prompts exposed by MCP servers.
@@ -1364,10 +1372,15 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 | `OLLAMA_MODEL`                | Ollama model name                      | `llama3.2` | string |
 | `OLLAMA_TEMPERATURE`          | Sampling temperature                   | `0.7`   | float (0.0-2.0) |
 
+> ⚙️ **ToolOps**: To manage the complete tool workflow — enrich tools, generate test cases automatically, and validate them with ease.
 > 🤖 **LLM Chat Integration**: Chat with MCP servers using natural language powered by Azure OpenAI, OpenAI, Anthropic Claude, AWS Bedrock, or Ollama
 > 🔧 **Flexible Providers**: Switch between different LLM providers without changing your MCP integration
 > 🔒 **Security**: API keys and credentials are securely stored and never exposed in responses
 > 🎛️ **Admin UI**: Dedicated LLM Chat tab in the admin interface for interactive conversations
+
+**ToolOps Configuration Effects:**
+- `TOOLOPS_ENABLED=false` (default): Completely disables ToolOps features (API endpoints return 404, admin tab hidden)
+- `TOOLOPS_ENABLED=true`: Enables ToolOps functionality in the UI
 
 **LLM Chat Configuration Effects:**
 - `LLMCHAT_ENABLED=false` (default): Completely disables LLM Chat features (API endpoints return 404, admin tab hidden)
@@ -1585,7 +1598,7 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `SECURE_COOKIES`          | Force secure cookie flags     | `true`                                         | bool       |
 | `COOKIE_SAMESITE`         | Cookie SameSite attribute      | `lax`                                          | `strict`/`lax`/`none` |
 | `SECURITY_HEADERS_ENABLED` | Enable security headers middleware | `true`                                     | bool       |
-| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN` |
+| `X_FRAME_OPTIONS`         | X-Frame-Options header value   | `DENY`                                         | `DENY`/`SAMEORIGIN`/`""`/`null` |
 | `X_CONTENT_TYPE_OPTIONS_ENABLED` | Enable X-Content-Type-Options: nosniff header | `true`                           | bool       |
 | `X_XSS_PROTECTION_ENABLED` | Enable X-XSS-Protection header | `true`                                         | bool       |
 | `X_DOWNLOAD_OPTIONS_ENABLED` | Enable X-Download-Options: noopen header | `true`                              | bool       |
@@ -1604,7 +1617,13 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 >
 > **Security Validation**: Set `REQUIRE_STRONG_SECRETS=true` to enforce minimum lengths for JWT secrets and passwords at startup. This helps prevent weak credentials in production. Default is `false` for backward compatibility.
 >
-> **iframe Embedding**: By default, `X-Frame-Options: DENY` prevents iframe embedding for security. To allow embedding, set `X_FRAME_OPTIONS=SAMEORIGIN` (same domain) or disable with `X_FRAME_OPTIONS=""`. Also update CSP `frame-ancestors` directive if needed.
+> **iframe Embedding**: The gateway controls iframe embedding through both `X-Frame-Options` header and CSP `frame-ancestors` directive (both are automatically synced). Options:
+> - `X_FRAME_OPTIONS=DENY` (default): Blocks all iframe embedding
+> - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only  
+> - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources (sets `frame-ancestors * file: http: https:`)
+> - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions (no headers sent)
+>
+> Modern browsers prioritize CSP `frame-ancestors` over the legacy `X-Frame-Options` header. Both are now kept in sync automatically.
 >
 > **Cookie Security**: Authentication cookies are automatically configured with HttpOnly, Secure (in production), and SameSite attributes for CSRF protection.
 >
@@ -1983,6 +2002,7 @@ ENABLE_METRICS=false
 | `UNHEALTHY_THRESHOLD`   | Fail-count before peer deactivation,      | `3`     | int > 0 |
 |                         | Set to -1 if deactivation is not needed.  |         |         |
 | `GATEWAY_VALIDATION_TIMEOUT` | Gateway URL validation timeout (secs) | `5`     | int > 0 |
+| `MAX_CONCURRENT_HEALTH_CHECKS` | Max Concurrent health checks        | `20`     | int > 0 |
 | `FILELOCK_NAME`         | File lock for leader election             | `gateway_service_leader.lock` | string |
 | `DEFAULT_ROOTS`         | Default root paths for resources          | `[]`    | JSON array |
 

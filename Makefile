@@ -2151,6 +2151,8 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
+# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x) locally
+# help: container-inspect-manifest - Inspect multiplatform manifest in registry
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
@@ -2176,7 +2178,7 @@ endef
         container-run container-run-ssl container-run-ssl-host \
         container-run-ssl-jwt container-push container-info container-stop container-logs container-shell \
         container-health image-list image-clean image-retag container-check-image \
-        container-build-multi use-docker use-podman show-runtime print-runtime \
+        container-build-multi container-inspect-manifest use-docker use-podman show-runtime print-runtime \
         print-image container-validate-env container-check-ports container-wait-healthy
 
 
@@ -2406,28 +2408,54 @@ container-health:
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
 container-build-multi:
-	@echo "🔨 Building multi-architecture image..."
+	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x)..."
+	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
-			echo "📦 Creating buildx builder..."; \
-			docker buildx create --name $(PROJECT_NAME)-builder; \
+			echo "📦 Creating buildx builder with docker-container driver..."; \
+			docker buildx create --name $(PROJECT_NAME)-builder --driver docker-container; \
 		fi; \
 		docker buildx use $(PROJECT_NAME)-builder; \
-		docker buildx build \
-			--platform=linux/amd64,linux/arm64,linux/s390x \
-			-f $(CONTAINER_FILE) \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			--push \
-			.; \
+		if [ -n "$(REGISTRY)" ]; then \
+			docker buildx build \
+				--platform=linux/amd64,linux/arm64,linux/s390x \
+				-f $(CONTAINER_FILE) \
+				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
+				--push \
+				.; \
+			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
+		else \
+			docker buildx build \
+				--platform=linux/amd64,linux/arm64,linux/s390x \
+				-f $(CONTAINER_FILE) \
+				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+				.; \
+			echo "✅ Multiplatform build validated (no push - set REGISTRY= to push)"; \
+		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
 		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
-		echo "💡 To push: podman manifest push $(IMAGE_BASE):$(IMAGE_TAG)"; \
+		echo "✅ Multiplatform manifest built: $(IMAGE_BASE):$(IMAGE_TAG)"; \
 	else \
 		echo "❌ Multi-arch builds require Docker buildx or Podman"; \
+		exit 1; \
+	fi
+
+# Inspect multiplatform manifest in a registry
+container-inspect-manifest:
+	@echo "🔍 Inspecting multiplatform manifest..."
+	@if [ -z "$(REGISTRY)" ]; then \
+		echo "Usage: make container-inspect-manifest REGISTRY=ghcr.io/org/repo:tag"; \
+		echo "Example: make container-inspect-manifest REGISTRY=ghcr.io/ibm/mcp-context-forge:latest"; \
+	elif [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
+		docker buildx imagetools inspect $(REGISTRY); \
+	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
+		$(CONTAINER_RUNTIME) manifest inspect $(REGISTRY); \
+	else \
+		echo "❌ Manifest inspection requires Docker buildx or Podman"; \
 		exit 1; \
 	fi
 

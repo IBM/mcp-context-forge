@@ -35,7 +35,7 @@ from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
 from sqlalchemy import and_, case, delete, desc, Float, func, not_, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import joinedload, Session
+from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
 from mcpgateway.common.models import Gateway as PydanticGateway
@@ -307,30 +307,27 @@ class ToolService:
                 - success_rate: Success rate percentage, or None if no metrics.
                 - last_execution: Timestamp of the last execution, or None if no metrics.
         """
+
+        success_rate = case(
+            (func.count(ToolMetric.id) > 0, func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) * 100 / func.count(ToolMetric.id)), else_=None  # pylint: disable=not-callable
+        )
+
         query = (
-            db.query(
+            select(
                 DbTool.id,
                 DbTool.name,
                 func.count(ToolMetric.id).label("execution_count"),  # pylint: disable=not-callable
-                func.avg(ToolMetric.response_time).label("avg_response_time"),  # pylint: disable=not-callable
-                case(
-                    (
-                        func.count(ToolMetric.id) > 0,  # pylint: disable=not-callable
-                        func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).cast(Float) / func.count(ToolMetric.id) * 100,  # pylint: disable=not-callable
-                    ),
-                    else_=None,
-                ).label("success_rate"),
-                func.max(ToolMetric.timestamp).label("last_execution"),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time).label("avg_response_time"),
+                success_rate.label("success_rate"),
+                func.max(ToolMetric.timestamp).label("last_execution"),
             )
-            .outerjoin(ToolMetric)
+            .outerjoin(ToolMetric, ToolMetric.tool_id == DbTool.id)
             .group_by(DbTool.id, DbTool.name)
             .order_by(desc("execution_count"))
+            .limit(limit or 5)
         )
 
-        if limit is not None:
-            query = query.limit(limit)
-
-        results = query.all()
+        results = db.execute(query).all()
 
         return build_top_performers(results)
 
@@ -363,36 +360,39 @@ class ToolService:
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
-        if include_metrics:
-            tool_dict["metrics"] = tool.metrics_summary
-        else:
-            tool_dict["metrics"] = None
+        tool_dict["metrics"] = tool.metrics_summary if include_metrics else None
 
-        tool_dict["execution_count"] = tool.execution_count
+        tool_dict["execution_count"] = tool.execution_count if include_metrics else None
 
         tool_dict["request_type"] = tool.request_type
         tool_dict["annotations"] = tool.annotations or {}
 
-        decoded_auth_value = decode_auth(tool.auth_value)
-        if tool.auth_type == "basic":
-            decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
-            username, password = decoded_bytes.decode("utf-8").split(":")
-            tool_dict["auth"] = {
-                "auth_type": "basic",
-                "username": username,
-                "password": "********" if password else None,
-            }
-        elif tool.auth_type == "bearer":
-            tool_dict["auth"] = {
-                "auth_type": "bearer",
-                "token": "********" if decoded_auth_value["Authorization"] else None,
-            }
-        elif tool.auth_type == "authheaders":
-            tool_dict["auth"] = {
-                "auth_type": "authheaders",
-                "auth_header_key": next(iter(decoded_auth_value)),
-                "auth_header_value": "********" if decoded_auth_value[next(iter(decoded_auth_value))] else None,
-            }
+        # Only decode auth if auth_type is set
+        if tool.auth_type and tool.auth_value:
+            decoded_auth_value = decode_auth(tool.auth_value)
+            if tool.auth_type == "basic":
+                decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
+                username, password = decoded_bytes.decode("utf-8").split(":")
+                tool_dict["auth"] = {
+                    "auth_type": "basic",
+                    "username": username,
+                    "password": "********" if password else None,
+                }
+            elif tool.auth_type == "bearer":
+                tool_dict["auth"] = {
+                    "auth_type": "bearer",
+                    "token": "********" if decoded_auth_value["Authorization"] else None,
+                }
+            elif tool.auth_type == "authheaders":
+                # Get first key
+                first_key = next(iter(decoded_auth_value))
+                tool_dict["auth"] = {
+                    "auth_type": "authheaders",
+                    "auth_header_key": first_key,
+                    "auth_header_value": "********" if decoded_auth_value[first_key] else None,
+                }
+            else:
+                tool_dict["auth"] = None
         else:
             tool_dict["auth"] = None
 
@@ -406,6 +406,7 @@ class ToolService:
         tool_dict["custom_name_slug"] = getattr(tool, "custom_name_slug", "") or ""
         tool_dict["tags"] = getattr(tool, "tags", []) or []
         tool_dict["team"] = getattr(tool, "team", None)
+
         return ToolRead.model_validate(tool_dict)
 
     async def _record_tool_metric(self, db: Session, tool: DbTool, start_time: float, success: bool, error_message: Optional[str]) -> None:
@@ -791,10 +792,17 @@ class ToolService:
         if has_more:
             tools = tools[:page_size]  # Trim to page_size
 
+        # Batch fetch team names for all tools at once
+        team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+        team_name_map = {}
+        if team_ids:
+            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(team_ids), EmailTeam.is_active.is_(True)).all()
+            team_name_map = {team.id: team.name for team in teams}
+
         # Convert to ToolRead objects
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = team_name_map.get(getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
 
@@ -842,7 +850,19 @@ class ToolService:
             True
         """
 
-        query = select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+        if include_metrics:
+            query = (
+                select(DbTool)
+                .options(joinedload(DbTool.gateway))
+                .options(selectinload(DbTool.metrics))
+                .join(server_tool_association, DbTool.id == server_tool_association.c.tool_id)
+                .where(server_tool_association.c.server_id == server_id)
+            )
+        else:
+            query = (
+                select(DbTool).options(joinedload(DbTool.gateway)).join(server_tool_association, DbTool.id == server_tool_association.c.tool_id).where(server_tool_association.c.server_id == server_id)
+            )
+
         cursor = None  # Placeholder for pagination; ignore for now
         logger.debug(f"Listing server tools for server_id={server_id} with include_inactive={include_inactive}, cursor={cursor}")
 
@@ -944,9 +964,17 @@ class ToolService:
         # query = query.offset(skip).limit(limit)
 
         tools = db.execute(query).scalars().all()
+
+        # Batch fetch team names for all tools at once
+        tool_team_ids = {getattr(t, "team_id", None) for t in tools if getattr(t, "team_id", None)}
+        team_name_map = {}
+        if tool_team_ids:
+            teams = db.query(EmailTeam.id, EmailTeam.name).filter(EmailTeam.id.in_(tool_team_ids), EmailTeam.is_active.is_(True)).all()
+            team_name_map = {team.id: team.name for team in teams}
+
         result = []
         for t in tools:
-            team_name = self._get_team_name(db, getattr(t, "team_id", None))
+            team_name = team_name_map.get(getattr(t, "team_id", None))
             t.team = team_name
             result.append(self._convert_tool_to_read(t))
         return result
@@ -1876,31 +1904,53 @@ class ToolService:
             >>> from unittest.mock import MagicMock
             >>> service = ToolService()
             >>> db = MagicMock()
-            >>> db.execute.return_value.scalar.return_value = 0
+            >>> # Mock the row result object returned by db.execute().one()
+            >>> mock_result_row = MagicMock()
+            >>> mock_result_row.total = 10
+            >>> mock_result_row.successful = 8
+            >>> mock_result_row.failed = 2
+            >>> mock_result_row.min_rt = 50.0
+            >>> mock_result_row.max_rt = 250.0
+            >>> mock_result_row.avg_rt = 150.0
+            >>> mock_result_row.last_time = "2023-01-01T12:00:00"
+            >>> db.execute.return_value.one.return_value = mock_result_row
             >>> import asyncio
             >>> result = asyncio.run(service.aggregate_metrics(db))
             >>> isinstance(result, dict)
             True
+            >>> result['total_executions']
+            10
+            >>> result['failure_rate']
+            0.2
         """
 
-        total = db.execute(select(func.count(ToolMetric.id))).scalar() or 0  # pylint: disable=not-callable
-        successful = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(True))).scalar() or 0  # pylint: disable=not-callable
-        failed = db.execute(select(func.count(ToolMetric.id)).where(ToolMetric.is_success.is_(False))).scalar() or 0  # pylint: disable=not-callable
+        # Query to get all aggregated metrics at once
+        result = db.execute(
+            select(
+                func.count(ToolMetric.id).label("total"),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(True), 1), else_=0)).label("successful"),  # pylint: disable=not-callable
+                func.sum(case((ToolMetric.is_success.is_(False), 1), else_=0)).label("failed"),  # pylint: disable=not-callable
+                func.min(ToolMetric.response_time).label("min_rt"),  # pylint: disable=not-callable
+                func.max(ToolMetric.response_time).label("max_rt"),  # pylint: disable=not-callable
+                func.avg(ToolMetric.response_time).label("avg_rt"),  # pylint: disable=not-callable
+                func.max(ToolMetric.timestamp).label("last_time"),  # pylint: disable=not-callable
+            )
+        ).one()
+
+        total = result.total or 0
+        successful = result.successful or 0
+        failed = result.failed or 0
         failure_rate = failed / total if total > 0 else 0.0
-        min_rt = db.execute(select(func.min(ToolMetric.response_time))).scalar()
-        max_rt = db.execute(select(func.max(ToolMetric.response_time))).scalar()
-        avg_rt = db.execute(select(func.avg(ToolMetric.response_time))).scalar()
-        last_time = db.execute(select(func.max(ToolMetric.timestamp))).scalar()
 
         return {
             "total_executions": total,
             "successful_executions": successful,
             "failed_executions": failed,
             "failure_rate": failure_rate,
-            "min_response_time": min_rt,
-            "max_response_time": max_rt,
-            "avg_response_time": avg_rt,
-            "last_execution_time": last_time,
+            "min_response_time": result.min_rt,
+            "max_response_time": result.max_rt,
+            "avg_response_time": result.avg_rt,
+            "last_execution_time": result.last_time,
         }
 
     async def reset_metrics(self, db: Session, tool_id: Optional[int] = None) -> None:
@@ -1954,7 +2004,6 @@ class ToolService:
             ToolNameConflictError: If a tool with the same name already exists.
         """
         # Check if tool already exists for this agent
-        logger.info(f"testing Creating tool for A2A agent: {vars(agent)}")
         tool_name = f"a2a_{agent.slug}"
         existing_query = select(DbTool).where(DbTool.original_name == tool_name)
         existing_tool = db.execute(existing_query).scalar_one_or_none()
@@ -1964,6 +2013,23 @@ class ToolService:
             return self._convert_tool_to_read(existing_tool)
 
         # Create tool entry for the A2A agent
+        logger.debug(f"agent.tags: {agent.tags} for agent: {agent.name} (ID: {agent.id})")
+
+        # Normalize tags: if agent.tags contains dicts like {'id':..,'label':..},
+        # extract the human-friendly label. If tags are already strings, keep them.
+        normalized_tags: list[str] = []
+        for t in agent.tags or []:
+            if isinstance(t, dict):
+                # Prefer 'label', fall back to 'id' or stringified dict
+                normalized_tags.append(t.get("label") or t.get("id") or str(t))
+            elif hasattr(t, "label"):
+                normalized_tags.append(getattr(t, "label"))
+            else:
+                normalized_tags.append(str(t))
+
+        # Ensure we include identifying A2A tags
+        normalized_tags = normalized_tags + ["a2a", "agent"]
+
         tool_data = ToolCreate(
             name=tool_name,
             displayName=generate_display_name(agent.name),
@@ -1986,7 +2052,7 @@ class ToolService:
             },
             auth_type=agent.auth_type,
             auth_value=agent.auth_value,
-            tags=agent.tags + ["a2a", "agent"],
+            tags=normalized_tags,
         )
 
         return await self.register_tool(

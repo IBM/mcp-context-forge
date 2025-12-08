@@ -213,7 +213,7 @@ By default, iframe embedding is **disabled** for security via `X-Frame-Options: 
 
 1. **Same-domain embedding**: Set `X_FRAME_OPTIONS=SAMEORIGIN`
 2. **Specific domain embedding**: Set `X_FRAME_OPTIONS=ALLOW-FROM https://trusted-domain.com`
-3. **Disable frame protection**: Set `X_FRAME_OPTIONS=""` (not recommended)
+3. **Disable frame protection**: Set `X_FRAME_OPTIONS="ALLOW-ALL"` (not recommended)
 
 **Note**: When changing X-Frame-Options, also consider updating the CSP `frame-ancestors` directive for comprehensive browser support.
 

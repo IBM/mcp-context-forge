@@ -374,7 +374,23 @@ class Settings(BaseSettings):
 
     # Security Headers Configuration
     security_headers_enabled: bool = Field(default=True)
-    x_frame_options: str = Field(default="DENY")
+    x_frame_options: Optional[str] = Field(default="DENY")
+
+    @field_validator("x_frame_options")
+    @classmethod
+    def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
+        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
+
+        Args:
+            v: The x_frame_options value from environment/config
+
+        Returns:
+            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
+        """
+        if isinstance(v, str) and v.lower() in ("null", "none"):
+            return None
+        return v
+
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
     x_download_options_enabled: bool = Field(default=True)
@@ -403,6 +419,7 @@ class Settings(BaseSettings):
     require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
+    toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
     # redis configurations for Maintaining Chat Sessions in multi-worker environment
     llmchat_session_ttl: int = Field(default=300, description="Seconds for active_session key TTL")
@@ -924,6 +941,7 @@ class Settings(BaseSettings):
     health_check_interval: int = 60  # seconds
     health_check_timeout: int = 10  # seconds
     unhealthy_threshold: int = 5  # after this many failures, mark as Offline
+    max_concurrent_health_checks: int = 20  # maximum concurrent health checks per worker
 
     # Validation Gateway URL
     gateway_validation_timeout: int = 5  # seconds
