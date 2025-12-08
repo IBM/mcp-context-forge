@@ -1715,36 +1715,51 @@
           </div>
         </div>
 
-        <!-- Tag Filtering for Virtual Servers -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex items-center space-x-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >Filter by Tags:</label
-            >
-            <input
-              type="text"
-              id="search-servers"
-              data-testid="search-input"
-              placeholder="Search servers via tags..."
-              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterServerTable(this.value)"
-            />
-            <button
-              onclick="clearTagFilter('catalog')"
-              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-            >
-              Clear
-            </button>
-          </div>
-          <div class="mt-2">
-            <span class="text-xs text-gray-500 dark:text-gray-400"
-              >Available tags:</span
-            >
-            <div id="catalog-available-tags" class="mt-1 flex flex-wrap gap-1">
-              <!-- Tag suggestions will be populated here by JavaScript -->
+        <!-- Unified Search & Filter Bar for Virtual Servers -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            
+            <!-- Search and Filter Row -->
+            <div class="flex items-center space-x-2">
+              <!-- Search Input -->
+              <div class="relative">
+                <input
+                  type="text"
+                  id="catalog-search-input"
+                  data-testid="search-input"
+                  placeholder="Search servers via tags..."
+                  class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  oninput="filterServerTable(this.value)"
+                />
+              </div>
+
+              <!-- Clear Button -->
+              <button
+                id="catalog-clear-search"
+                onclick="clearSearch('catalog')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
+
+            <!-- Hidden tag filter (for internal JavaScript usage) -->
+            <input type="hidden" id="catalog-tag-filter" />
+
+            <!-- Filter Status Badge (optional, if you want to show active filter count) -->
+            <div class="mt-2">
+              <span id="catalog-filter-count-badge" class="hidden text-xs text-gray-500 dark:text-gray-400">
+                <!-- This will be populated by JavaScript -->
+              </span>
+            </div>
+
+            <!-- Available Tags (optional) -->
+            <div id="catalog-available-tags" class="mt-2 flex flex-wrap gap-1">
+              <!-- Tag suggestions or results will be populated here by JavaScript -->
+            </div>
+
           </div>
         </div>
+
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
           <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
@@ -2542,33 +2557,29 @@
           </div>
         </div>
 
-        <!-- Tag Filtering for Tools -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex items-center space-x-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >Filter by Tags:</label
-            >
-            <input
-              type="text"
-              id="tools-tag-filter"
-              placeholder="Enter tags (comma-separated)"
-              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterEntitiesByTags('tools', this.value)"
-            />
-            <button
-              onclick="clearTagFilter('tools')"
-              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-            >
-              Clear
-            </button>
-          </div>
-          <div class="mt-2">
-            <span class="text-xs text-gray-500 dark:text-gray-400"
-              >Available tags:</span
-            >
-            <div id="tools-available-tags" class="mt-1 flex flex-wrap gap-1">
-              <!-- Tag suggestions will be populated here by JavaScript -->
+        <!-- Unified Search & Filter Bar for Tools -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            <!-- Search Row -->
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="tools-search-input"
+                  placeholder="Search tools via tags..."
+                  class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="tools-clear-search"
+                onclick="clearSearch('tools')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
+            
+            <!-- Hidden tag filter for functionality -->
+            <input type="hidden" id="tools-tag-filter" />
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -3544,36 +3555,29 @@
           </div>
         </div>
 
-        <!-- Tag Filtering for Resources -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex items-center space-x-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >Filter by Tags:</label
-            >
-            <input
-              type="text"
-              id="resources-tag-filter"
-              placeholder="Enter tags (comma-separated)"
-              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterEntitiesByTags('resources', this.value)"
-            />
-            <button
-              onclick="clearTagFilter('resources')"
-              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-            >
-              Clear
-            </button>
-          </div>
-          <div class="mt-2">
-            <span class="text-xs text-gray-500 dark:text-gray-400"
-              >Available tags:</span
-            >
-            <div
-              id="resources-available-tags"
-              class="mt-1 flex flex-wrap gap-1"
-            >
-              <!-- Tag suggestions will be populated here by JavaScript -->
+        <!-- Unified Search & Filter Bar for Resources -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            <!-- Search Row -->
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="resources-search-input"
+                  placeholder="Search resources via tags..."
+                  class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="resources-clear-search"
+                onclick="clearSearch('resources')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
+            
+            <!-- Hidden tag filter for functionality -->
+            <input type="hidden" id="resources-tag-filter" />
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -3771,33 +3775,29 @@
           </div>
         </div>
 
-        <!-- Tag Filtering for Prompts -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex items-center space-x-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-              >Filter by Tags:</label
-            >
-            <input
-              type="text"
-              id="prompts-tag-filter"
-              placeholder="Enter tags (comma-separated)"
-              class="flex-1 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm px-3 py-1 text-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
-              oninput="filterEntitiesByTags('prompts', this.value)"
-            />
-            <button
-              onclick="clearTagFilter('prompts')"
-              class="px-3 py-1 text-xs bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded hover:bg-gray-300 dark:hover:bg-gray-500"
-            >
-              Clear
-            </button>
-          </div>
-          <div class="mt-2">
-            <span class="text-xs text-gray-500 dark:text-gray-400"
-              >Available tags:</span
-            >
-            <div id="prompts-available-tags" class="mt-1 flex flex-wrap gap-1">
-              <!-- Tag suggestions will be populated here by JavaScript -->
+        <!-- Unified Search & Filter Bar for Prompts -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            <!-- Search Row -->
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="prompts-search-input"
+                  placeholder="Search prompts via tags..."
+                  class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="prompts-clear-search"
+                onclick="clearSearch('prompts')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
+            
+            <!-- Hidden tag filter for functionality -->
+            <input type="hidden" id="prompts-tag-filter" />
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800">
@@ -4026,32 +4026,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <!-- Gateway Filter Section -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex flex-wrap gap-4 items-center">
-            <div class="flex-1 min-w-64">
-              <label
-                for="gateway-tag-filter"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                >Filter by Tags:</label
-              >
-              <input
-                type="text"
-                id="gateway-tag-filter"
-                placeholder="e.g., production,external (comma-separated)"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                oninput="filterEntitiesByTags('gateways', this.value)"
-              />
+        <!-- Unified Search & Filter Bar for MCP Servers -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            <!-- Search Row -->
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="gateways-search-input"
+                  placeholder="Search MCP servers..."
+                  class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="gateways-clear-search"
+                onclick="clearSearch('gateways')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
-            <div id="gateway-available-tags" class="flex flex-wrap gap-2">
-              <!-- Available tags will be populated by JavaScript -->
-            </div>
-            <button
-              onclick="clearTagFilter('gateways')"
-              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
-            >
-              Clear Filter
-            </button>
+            
+            <!-- Hidden tag filter for functionality -->
+            <input type="hidden" id="gateways-tag-filter" />
           </div>
         </div>
 
@@ -5446,32 +5443,29 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
 
-        <!-- A2A Agent Filter Section -->
-        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
-          <div class="flex flex-wrap gap-4 items-center">
-            <div class="flex-1 min-w-64">
-              <label
-                for="a2a-agent-tag-filter"
-                class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
-                >Filter by Tags:</label
-              >
-              <input
-                type="text"
-                id="a2a-agent-tag-filter"
-                placeholder="e.g., ai,assistant (comma-separated)"
-                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-gray-300"
-                oninput="filterEntitiesByTags('a2a-agents', this.value)"
-              />
+        <!-- Unified Search & Filter Bar for A2A Agents -->
+        <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
+          <div class="flex flex-col space-y-4">
+            <!-- Search Row -->
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <input
+                  type="text"
+                  id="a2a-agents-search-input"
+                  placeholder="Search agents via tags..."
+                  class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+              <button
+                id="a2a-agents-clear-search"
+                onclick="clearSearch('a2a-agents')"
+                class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
+                Clear
+              </button>
             </div>
-            <div id="a2a-agent-available-tags" class="flex flex-wrap gap-2">
-              <!-- Available tags will be populated by JavaScript -->
-            </div>
-            <button
-              onclick="clearTagFilter('a2a-agents')"
-              class="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:bg-gray-600 dark:text-gray-300 dark:border-gray-500 dark:hover:bg-gray-500"
-            >
-              Clear Filter
-            </button>
+            
+            <!-- Hidden tag filter for functionality -->
+            <input type="hidden" id="a2a-agents-tag-filter" />
           </div>
         </div>
 
