@@ -1,0 +1,167 @@
+import base64
+import io
+import logging
+from pathlib import Path
+from unittest.mock import patch
+
+import numpy as np
+from PIL import Image
+
+from qr_code_server.tools.decoder import QRDecodingRequest, decode_qr_code
+
+logger = logging.getLogger("qr_code_server")
+
+
+def test_decode_qr_code_with_positions(tmp_path):
+    """Test decoding a QR code with position data returned."""
+    from qr_code_server.tools.generator import QRGenerationRequest, create_qr_code
+    gen_path = tmp_path / "test_qr.png"
+    gen_req = QRGenerationRequest(
+        data="test_position",
+        format="png",
+        save_path=str(gen_path)
+    )
+    gen_result = create_qr_code(gen_req)
+    assert gen_result["success"] is True
+
+    dec_req = QRDecodingRequest(
+        image_data=str(gen_path),
+        multiple_codes=False,
+        return_positions=True,
+        preprocessing=False
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is True
+    assert "positions" in result
+    assert len(result["positions"]) > 0
+
+
+def test_decode_invalid_image_file():
+    """Test decoding with non-existent image file."""
+    dec_req = QRDecodingRequest(
+        image_data="/nonexistent/path/image.png"
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is False
+    assert "error" in result
+
+
+def test_decode_invalid_base64():
+    """Test decoding with invalid base64 data."""
+    dec_req = QRDecodingRequest(
+        image_data="not_valid_base64!!!"
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is False
+    assert result["error"] == "Invalid base64 image data"
+
+
+def test_decode_non_qr_image(tmp_path):
+    """Test decoding an image without a QR code."""
+    from PIL import Image
+    # Create a simple image without QR code
+    img = Image.new('RGB', (100, 100), color='red')
+    img_path = Path(tmp_path / "no_qr.png")
+    img.save(img_path)
+
+    dec_req = QRDecodingRequest(
+        image_data=str(img_path),
+        multiple_codes=False
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is False
+
+
+def test_decode_large_image():
+    """Test that very large images are rejected to prevent DoS."""
+    # Create a real large image (2000x2000 pixels = 4M pixels)
+    large_array = np.zeros((2000, 2000), dtype=np.uint8)
+    large_image = Image.fromarray(large_array)
+    buffered = io.BytesIO()
+    large_image.save(buffered, format="png")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+    # Patch convert_to_bytes to return a tiny max size (smaller than the base64 encoded size)
+    # This forces load_image to reject it as "too large"
+    with patch("qr_code_server.tools.decoder.convert_to_bytes", return_value=1000):
+        dec_req = QRDecodingRequest(image_data=img_base64)
+        result = decode_qr_code(dec_req)
+
+    assert result["success"] is False
+    assert "too large" in result.get("error", "").lower()
+
+
+def test_decode_with_preprocessing(tmp_path):
+    """Test decoding with preprocessing enabled."""
+    from qr_code_server.tools.generator import QRGenerationRequest, create_qr_code
+    gen_path = tmp_path / "test_qr.png"
+    gen_req = QRGenerationRequest(
+        data="preprocess_test",
+        format="png",
+        save_path=str(gen_path)
+    )
+    gen_result = create_qr_code(gen_req)
+    assert gen_result["success"] is True
+
+    dec_req = QRDecodingRequest(
+        image_data=str(gen_path),
+        preprocessing=True
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is True
+
+
+def test_decode_without_preprocessing(tmp_path):
+    """Test decoding with preprocessing disabled."""
+    from qr_code_server.tools.generator import QRGenerationRequest, create_qr_code
+    gen_path = tmp_path / "test_qr.png"
+    gen_req = QRGenerationRequest(
+        data="no_preprocess_test",
+        format="png",
+        save_path=str(gen_path)
+    )
+    gen_result = create_qr_code(gen_req)
+    assert gen_result["success"] is True
+
+    dec_req = QRDecodingRequest(
+        image_data=str(gen_path),
+        preprocessing=False
+    )
+    result = decode_qr_code(dec_req)
+
+    assert result["success"] is True
+
+
+def test_decode_load_image_error():
+    """Test handling of LoadImageError from load_image."""
+    from qr_code_server.utils.image_utils import LoadImageError
+
+    with patch("qr_code_server.tools.decoder.load_image", side_effect=LoadImageError("Test error")):
+        dec_req = QRDecodingRequest(image_data="dummy.png")
+        result = decode_qr_code(dec_req)
+
+        assert result["success"] is False
+        assert "Test error" in result["error"]
+
+
+
+
+# def test_decode_multiple_codes():
+#     pass
+
+
+# def test_decode_multiple_codes_return_positions():
+#     pass
+
+
+# def test_decode_multiple_codes_fail():
+#     pass
+
+
+# def test_decode_multiple_codes_failt_to_return_positions():
+#     pass
