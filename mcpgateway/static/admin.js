@@ -14827,7 +14827,7 @@ function initializeTabState() {
 async function loadServers() {
     const checkbox = safeGetElement("show-inactive-servers");
     const includeInactive = checkbox ? checkbox.checked : false;
-    
+
     // Build URL with include_inactive parameter
     const url = new URL(window.location);
     if (includeInactive) {
@@ -14835,7 +14835,7 @@ async function loadServers() {
     } else {
         url.searchParams.delete("include_inactive");
     }
-    
+
     // Reload the page with the updated parameters
     // Since the catalog panel is server-side rendered, we need a full page reload
     window.location.href = url.toString();
