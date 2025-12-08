@@ -80,7 +80,7 @@ def mock_server(mock_tool, mock_resource, mock_prompt):
     server.modified_by = "test_user"
     server.created_at = "2023-01-01T00:00:00"
     server.updated_at = "2023-01-01T00:00:00"
-    server.is_active = True
+    server.enabled = True
 
     # Ownership fields for RBAC
     server.owner_email = "user@example.com"  # Match default test user
@@ -215,7 +215,7 @@ class TestServerService:
                 icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -260,7 +260,7 @@ class TestServerService:
         mock_db_server.modified_by = "test_user"
         mock_db_server.created_at = "2023-01-01T00:00:00"
         mock_db_server.updated_at = "2023-01-01T00:00:00"
-        mock_db_server.is_active = True
+        mock_db_server.enabled = True
         mock_db_server.metrics = []
 
         # Create mock lists with append methods
@@ -307,8 +307,8 @@ class TestServerService:
         test_db.get = Mock(
             side_effect=lambda cls, _id: {
                 (DbTool, "101"): mock_tool,
-                (DbResource, 201): mock_resource,
-                (DbPrompt, 301): mock_prompt,
+                (DbResource, "201"): mock_resource,
+                (DbPrompt, "301"): mock_prompt,
             }.get((cls, _id))
         )
 
@@ -322,10 +322,10 @@ class TestServerService:
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -359,8 +359,8 @@ class TestServerService:
 
         assert result.name == "test_server"
         assert "101" in result.associated_tools
-        assert 201 in result.associated_resources
-        assert 301 in result.associated_prompts
+        assert "201" in result.associated_resources
+        assert "301" in result.associated_prompts
 
     @pytest.mark.asyncio
     async def test_register_server_name_conflict(self, server_service, mock_server, test_db):
@@ -428,10 +428,10 @@ class TestServerService:
             icon="http://example.com/image.jgp",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -464,10 +464,10 @@ class TestServerService:
             icon="http://example.com/image.jpg",
             created_at="2023-01-01T00:00:00",
             updated_at="2023-01-01T00:00:00",
-            is_active=True,
+            enabled=True,
             associated_tools=["101"],
-            associated_resources=[201],
-            associated_prompts=[301],
+            associated_resources=["201"],
+            associated_prompts=["301"],
             metrics={
                 "total_executions": 0,
                 "successful_executions": 0,
@@ -568,10 +568,10 @@ class TestServerService:
                 icon="http://example.com/image.jpg",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=["102"],
-                associated_resources=[202],
-                associated_prompts=[302],
+                associated_resources=["202"],
+                associated_prompts=["302"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -660,7 +660,7 @@ class TestServerService:
             server_team.visibility = "team"
             server_team.team_id = "teamA"
 
-            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", is_active=True, visibility="team", team_id="teamA")
+            conflict_team_server = types.SimpleNamespace(id="3", name="existing_server", enabled=True, visibility="team", team_id="teamA")
 
             test_db.get = Mock(return_value=server_team)
             mock_scalar = Mock()
@@ -688,7 +688,7 @@ class TestServerService:
             server_public.visibility = "public"
             server_public.team_id = None
 
-            conflict_public_server = types.SimpleNamespace(id="5", name="existing_server", is_active=True, visibility="public", team_id=None)
+            conflict_public_server = types.SimpleNamespace(id="5", name="existing_server", enabled=True, visibility="public", team_id=None)
 
             test_db.get = Mock(return_value=server_public)
             mock_scalar = Mock()
@@ -727,10 +727,10 @@ class TestServerService:
                 icon="server-icon",
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=False,
+                enabled=False,
                 associated_tools=["101"],
-                associated_resources=[201],
-                associated_prompts=[301],
+                associated_resources=["201"],
+                associated_prompts=["301"],
                 metrics={
                     "total_executions": 0,
                     "successful_executions": 0,
@@ -750,7 +750,7 @@ class TestServerService:
         test_db.commit.assert_called_once()
         test_db.refresh.assert_called_once()
         server_service._notify_server_deactivated.assert_called_once()
-        assert result.is_active is False
+        assert result.enabled is False
 
     # --------------------------- delete -------------------------------- #
     @pytest.mark.asyncio
@@ -821,7 +821,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -892,7 +892,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -956,7 +956,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
@@ -1018,7 +1018,7 @@ class TestServerService:
         existing_server = MagicMock(spec=DbServer)
         existing_server.id = "oldserverid"
         existing_server.name = "Old Name"
-        existing_server.is_active = True
+        existing_server.enabled = True
         existing_server.tools = []
         existing_server.resources = []
         existing_server.prompts = []
@@ -1053,7 +1053,7 @@ class TestServerService:
                 icon=None,
                 created_at="2023-01-01T00:00:00",
                 updated_at="2023-01-01T00:00:00",
-                is_active=True,
+                enabled=True,
                 associated_tools=[],
                 associated_resources=[],
                 associated_prompts=[],
