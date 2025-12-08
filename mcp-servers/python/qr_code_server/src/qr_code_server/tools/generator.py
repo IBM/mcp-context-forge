@@ -30,8 +30,8 @@ class QRGenerationRequest(BaseModel):
     @field_validator("data")
     @classmethod
     def validate_data_lenght(cls, v: str) -> str:
-        v = len(v.strip())
-        if v > config.qr_generation.max_data_length:
+        v = v.strip()
+        if len(v) > config.qr_generation.max_data_length:
             raise ValueError("Data length exceeds maximum allowed")
         return v
 
@@ -40,9 +40,9 @@ class BatchQRGenerationRequest(BaseModel):
     data_list: list[str]  # List of data to encode
     format: str = "png"
     size: int = config.qr_generation.default_size
-    naming_pattern: str = config.output.default_naming_pattern
+    naming_pattern: str = "qr_{index}"
     output_directory: str = config.output.default_directory
-    zip_output: bool = config.output.default_zip_output
+    zip_output: bool = True
 
     @field_validator("format")
     @classmethod
@@ -88,6 +88,7 @@ def create_qr_code(request: QRGenerationRequest):
                 buffer = BytesIO()
                 img.save(buffer)
                 img_base64 = base64.b64encode(buffer.getvalue()).decode()
+            logger.info("Base64 QR code created successfully: format=%s", request.format)
             return {
                 "success": True,
                 "output_format": request.format,
@@ -95,7 +96,12 @@ def create_qr_code(request: QRGenerationRequest):
                 "message": "QR code generated as base64 image",
             }
         except Exception as e:
-            logger.error(f"Error encoding qr code to base64: {e}")
+            logger.error(
+                "Failed to encode QR to base64: format=%s ec=%s error=%s",
+                request.format,
+                request.error_correction,
+                e
+            )
             return {"success": False, "error": str(e)}
 
     try:
@@ -116,7 +122,12 @@ def create_qr_code(request: QRGenerationRequest):
             "message": f"QR code image saved at {save_path}",
         }
     except Exception as e:
-        logger.error(f"Error saving qr code image: {e}")
+        logger.error(
+            "Failed to save QR code image: path=%s format=%s error=%s",
+            save_path,
+            request.format,
+            e
+        )
         return {"success": False, "error": str(e)}
 
 
@@ -125,6 +136,7 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
     try:
         os.makedirs(request.output_directory, exist_ok=True)
     except OSError as e:
+        logger.error("Failed to create output directory %s: %s", request.output_directory, e)
         return {"success": False, "error": str(e)}
 
     if request.zip_output:
@@ -136,7 +148,7 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                 size=request.size,
             ):
                 filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
-
+                logger.info("Adding image index=%d filename=%s to zip", index, filename)
                 # yield acii as string and pil as bytes
                 if hasattr(img, "to_string"):
                     img = img.to_string()
@@ -145,7 +157,11 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                 try:
                     zf.writestr(filename, img)
                 except Exception as e:
-                    logger.error(f"Error adding image {filename} to zip: {e}")
+                    logger.error(
+                        "Failed to add image to zip: index=%d filename=%s error=%s",
+                        index,
+                        filename, e
+                    )
                     return {"success": False, "error": str(e)}
         return {
             "success": True,
@@ -160,10 +176,11 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
         ):
             filename = f"{request.naming_pattern.format(index=index)}.{request.format}"
             file_path = os.path.join(request.output_directory, filename)
+            logger.info("Saving image index=%d to %s", index, file_path)
             try:
                 img.save(file_path)
             except Exception as e:
-                logger.error(f"Error saving image {filename}: {e}")
+                logger.error("Failed to save image: index=%d path=%s error=%s", index, file_path, e)
                 return {"success": False, "error": str(e)}
         return {
             "success": True,
