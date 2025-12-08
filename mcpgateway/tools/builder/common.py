@@ -610,7 +610,6 @@ def _auto_detect_env_files(config: MCPStackConfig, output_dir: Path, verbose: bo
         ...     _auto_detect_env_files(config, output, verbose=False)
         ...     # Config object is modified in place
         ...     isinstance(config, MCPStackConfig)
-        ⚠ Auto-detected env file: deploy/env/.env.gateway
         True
 
         >>> # Test function signature
