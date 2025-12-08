@@ -732,12 +732,42 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
         subprocess.CalledProcessError: If tag or push command fails
 
     Examples:
-        >>> from mcpgateway.tools.builder.schema import GatewayConfig
+        >>> from mcpgateway.tools.builder.schema import GatewayConfig, RegistryConfig
         >>> # Test with registry disabled (returns original tag)
         >>> gateway = GatewayConfig(image="test:latest")
         >>> result = handle_registry_operations(gateway, "gateway", "test:latest", "docker")
         >>> result
         'test:latest'
+
+        >>> # Test type checking - wrong type raises TypeError
+        >>> try:
+        ...     handle_registry_operations("not a config", "test", "tag:latest", "docker")
+        ... except TypeError as e:
+        ...     "BuildableConfig" in str(e)
+        True
+
+        >>> # Test validation error - registry enabled but missing config
+        >>> from mcpgateway.tools.builder.schema import GatewayConfig, RegistryConfig
+        >>> gateway_bad = GatewayConfig(
+        ...     image="test:latest",
+        ...     registry=RegistryConfig(enabled=True, url="docker.io")  # missing namespace
+        ... )
+        >>> try:
+        ...     handle_registry_operations(gateway_bad, "gateway", "test:latest", "docker")
+        ... except ValueError as e:
+        ...     "missing" in str(e) and "namespace" in str(e)
+        True
+
+        >>> # Test validation error - missing URL
+        >>> gateway_bad2 = GatewayConfig(
+        ...     image="test:latest",
+        ...     registry=RegistryConfig(enabled=True, namespace="myns")  # missing url
+        ... )
+        >>> try:
+        ...     handle_registry_operations(gateway_bad2, "gateway", "test:latest", "docker")
+        ... except ValueError as e:
+        ...     "missing" in str(e) and "url" in str(e)
+        True
 
         >>> # Test function signature
         >>> import inspect

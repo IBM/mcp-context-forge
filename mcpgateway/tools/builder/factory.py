@@ -34,6 +34,32 @@ class CICDTypes(str, Enum):
     Attributes:
         DAGGER: Dagger-based implementation (optimal performance)
         PYTHON: Plain Python implementation (fallback, no dependencies)
+
+    Examples:
+        >>> # Test enum values
+        >>> CICDTypes.DAGGER.value
+        'dagger'
+        >>> CICDTypes.PYTHON.value
+        'python'
+
+        >>> # Test enum comparison
+        >>> CICDTypes.DAGGER == "dagger"
+        True
+        >>> CICDTypes.PYTHON == "python"
+        True
+
+        >>> # Test enum membership
+        >>> "dagger" in [t.value for t in CICDTypes]
+        True
+        >>> "python" in [t.value for t in CICDTypes]
+        True
+
+        >>> # Test enum iteration
+        >>> types = list(CICDTypes)
+        >>> len(types)
+        2
+        >>> CICDTypes.DAGGER in types
+        True
     """
 
     DAGGER = "dagger"

@@ -44,7 +44,31 @@ console = Console()
 
 
 class MCPStackPython(CICDModule):
-    """Plain Python implementation of MCP Stack deployment."""
+    """Plain Python implementation of MCP Stack deployment.
+
+    This implementation uses standard Python and system commands (docker/podman,
+    kubectl, docker-compose) without requiring additional dependencies like Dagger.
+
+    Examples:
+        >>> # Test class instantiation
+        >>> deployer = MCPStackPython(verbose=False)
+        >>> deployer.verbose
+        False
+
+        >>> # Test with verbose mode
+        >>> deployer_verbose = MCPStackPython(verbose=True)
+        >>> deployer_verbose.verbose
+        True
+
+        >>> # Test that console is available
+        >>> hasattr(deployer, 'console')
+        True
+
+        >>> # Test that it's a CICDModule subclass
+        >>> from mcpgateway.tools.builder.pipeline import CICDModule
+        >>> isinstance(deployer, CICDModule)
+        True
+    """
 
     async def build(self, config_file: str, plugins_only: bool = False, specific_plugins: Optional[List[str]] = None, no_cache: bool = False, copy_env_templates: bool = False) -> None:
         """Build gateway and plugin containers using docker/podman.
@@ -267,6 +291,26 @@ class MCPStackPython(CICDModule):
 
         Raises:
             ValueError: If unsupported deployment type specified
+
+        Examples:
+            >>> import tempfile
+            >>> import yaml
+            >>> from pathlib import Path
+            >>> deployer = MCPStackPython(verbose=False)
+
+            >>> # Test method signature and return type
+            >>> import inspect
+            >>> sig = inspect.signature(deployer.generate_manifests)
+            >>> 'config_file' in sig.parameters
+            True
+            >>> 'output_dir' in sig.parameters
+            True
+            >>> sig.return_annotation
+            <class 'pathlib.Path'>
+
+            >>> # Test that method exists and is callable
+            >>> callable(deployer.generate_manifests)
+            True
         """
         config = load_config(config_file)
         deployment_type = config.deployment.type
@@ -307,6 +351,34 @@ class MCPStackPython(CICDModule):
 
         Raises:
             RuntimeError: If no container engine found
+
+        Examples:
+            >>> from mcpgateway.tools.builder.schema import MCPStackConfig, DeploymentConfig, GatewayConfig
+            >>> deployer = MCPStackPython(verbose=False)
+
+            >>> # Test with docker specified
+            >>> config = MCPStackConfig(
+            ...     deployment=DeploymentConfig(type="compose", container_engine="docker"),
+            ...     gateway=GatewayConfig(image="test:latest"),
+            ...     plugins=[]
+            ... )
+            >>> result = deployer._detect_container_engine(config)
+            >>> result in ["docker", "podman"]  # Returns available engine
+            True
+
+            >>> # Test that method returns a string
+            >>> import shutil
+            >>> if shutil.which("docker") or shutil.which("podman"):
+            ...     config = MCPStackConfig(
+            ...         deployment=DeploymentConfig(type="compose"),
+            ...         gateway=GatewayConfig(image="test:latest"),
+            ...         plugins=[]
+            ...     )
+            ...     engine = deployer._detect_container_engine(config)
+            ...     isinstance(engine, str)
+            ... else:
+            ...     True  # Skip test if no container engine available
+            True
         """
         if config.deployment.container_engine:
             engine = config.deployment.container_engine

@@ -22,6 +22,35 @@ class OpenShiftConfig(BaseModel):
         create_routes: Create OpenShift Route resources for external access (default: False)
         domain: OpenShift apps domain for route hostnames (default: auto-detected from cluster)
         tls_termination: TLS termination mode - edge, passthrough, or reencrypt (default: edge)
+
+    Examples:
+        >>> # Test with default values
+        >>> config = OpenShiftConfig()
+        >>> config.create_routes
+        False
+        >>> config.tls_termination
+        'edge'
+
+        >>> # Test with custom values
+        >>> config = OpenShiftConfig(
+        ...     create_routes=True,
+        ...     domain="apps.example.com",
+        ...     tls_termination="passthrough"
+        ... )
+        >>> config.create_routes
+        True
+        >>> config.domain
+        'apps.example.com'
+        >>> config.tls_termination
+        'passthrough'
+
+        >>> # Test valid TLS termination modes
+        >>> for mode in ["edge", "passthrough", "reencrypt"]:
+        ...     cfg = OpenShiftConfig(tls_termination=mode)
+        ...     cfg.tls_termination == mode
+        True
+        True
+        True
     """
 
     create_routes: bool = Field(False, description="Create OpenShift Route resources")
@@ -30,7 +59,37 @@ class OpenShiftConfig(BaseModel):
 
 
 class DeploymentConfig(BaseModel):
-    """Deployment configuration"""
+    """Deployment configuration
+
+    Examples:
+        >>> # Test compose deployment
+        >>> config = DeploymentConfig(type="compose", project_name="test-project")
+        >>> config.type
+        'compose'
+        >>> config.project_name
+        'test-project'
+
+        >>> # Test kubernetes deployment
+        >>> config = DeploymentConfig(type="kubernetes", namespace="mcp-test")
+        >>> config.type
+        'kubernetes'
+        >>> config.namespace
+        'mcp-test'
+
+        >>> # Test container engine options
+        >>> config = DeploymentConfig(type="compose", container_engine="podman")
+        >>> config.container_engine
+        'podman'
+
+        >>> # Test with OpenShift config
+        >>> config = DeploymentConfig(
+        ...     type="kubernetes",
+        ...     namespace="test",
+        ...     openshift=OpenShiftConfig(create_routes=True)
+        ... )
+        >>> config.openshift.create_routes
+        True
+    """
 
     type: Literal["kubernetes", "compose"] = Field(..., description="Deployment type")
     container_engine: Optional[str] = Field(default=None, description="Container engine: 'podman', 'docker', or full path (e.g., '/opt/podman/bin/podman')")
@@ -58,6 +117,49 @@ class RegistryConfig(BaseModel):
         namespace: Registry namespace/organization/project (e.g., "myorg", "mcp-gateway-test")
         push: Push image after build (default: True)
         image_pull_policy: Kubernetes imagePullPolicy (default: "IfNotPresent")
+
+    Examples:
+        >>> # Test with defaults (registry disabled)
+        >>> config = RegistryConfig()
+        >>> config.enabled
+        False
+        >>> config.push
+        True
+        >>> config.image_pull_policy
+        'IfNotPresent'
+
+        >>> # Test Docker Hub configuration
+        >>> config = RegistryConfig(
+        ...     enabled=True,
+        ...     url="docker.io",
+        ...     namespace="myusername"
+        ... )
+        >>> config.enabled
+        True
+        >>> config.url
+        'docker.io'
+        >>> config.namespace
+        'myusername'
+
+        >>> # Test with custom pull policy
+        >>> config = RegistryConfig(
+        ...     enabled=True,
+        ...     url="quay.io",
+        ...     namespace="myorg",
+        ...     image_pull_policy="Always"
+        ... )
+        >>> config.image_pull_policy
+        'Always'
+
+        >>> # Test tag-only mode (no push)
+        >>> config = RegistryConfig(
+        ...     enabled=True,
+        ...     url="registry.local",
+        ...     namespace="test",
+        ...     push=False
+        ... )
+        >>> config.push
+        False
     """
 
     enabled: bool = Field(False, description="Enable registry push")
@@ -149,6 +251,42 @@ class GatewayConfig(BuildableConfig):
 
     Attributes:
         port: Gateway internal port (default: 4444)
+
+    Examples:
+        >>> # Test with pre-built image
+        >>> config = GatewayConfig(image="mcpgateway:latest")
+        >>> config.image
+        'mcpgateway:latest'
+        >>> config.port
+        4444
+
+        >>> # Test with custom port
+        >>> config = GatewayConfig(image="mcpgateway:latest", port=8080)
+        >>> config.port
+        8080
+
+        >>> # Test with source repository
+        >>> config = GatewayConfig(
+        ...     repo="https://github.com/example/gateway",
+        ...     ref="v1.0.0"
+        ... )
+        >>> config.repo
+        'https://github.com/example/gateway'
+        >>> config.ref
+        'v1.0.0'
+
+        >>> # Test with environment variables
+        >>> config = GatewayConfig(
+        ...     image="mcpgateway:latest",
+        ...     env_vars={"LOG_LEVEL": "DEBUG", "PORT": "4444"}
+        ... )
+        >>> config.env_vars['LOG_LEVEL']
+        'DEBUG'
+
+        >>> # Test with mTLS enabled
+        >>> config = GatewayConfig(image="mcpgateway:latest", mtls_enabled=True)
+        >>> config.mtls_enabled
+        True
     """
 
     port: Optional[int] = Field(4444, description="Gateway port")
