@@ -176,7 +176,8 @@ class CompletionService:
         if not prompt_name:
             raise CompletionError("Missing prompt name")
 
-        prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.is_active)).scalar_one_or_none()
+        # Only consider prompts that are enabled (renamed from `is_active` -> `enabled`)
+        prompt = db.execute(select(DbPrompt).where(DbPrompt.name == prompt_name).where(DbPrompt.enabled)).scalar_one_or_none()
 
         if not prompt:
             raise CompletionError(f"Prompt not found: {prompt_name}")
@@ -265,7 +266,7 @@ class CompletionService:
             raise CompletionError("Missing URI template")
 
         # List matching resources
-        resources = db.execute(select(DbResource).where(DbResource.is_active)).scalars().all()
+        resources = db.execute(select(DbResource).where(DbResource.enabled)).scalars().all()
 
         # Filter by URI pattern
         matches = []

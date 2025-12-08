@@ -201,7 +201,7 @@ MOCK_SERVER = ServerRead(
     icon=None,
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
-    is_active=True,
+    enabled=True,
     associated_tools=[MOCK_TOOL.id],
     associated_resources=[],
     associated_prompts=[],
@@ -210,7 +210,7 @@ MOCK_SERVER = ServerRead(
 )
 
 MOCK_RESOURCE = ResourceRead(
-    id=1,
+    id="39334ce0ed2644d79ede8913a66930c9",
     uri="file:///tmp/hello.txt",
     name="Hello",
     description="demo text",
@@ -218,7 +218,7 @@ MOCK_RESOURCE = ResourceRead(
     size=5,
     created_at=datetime(2025, 1, 1),
     updated_at=datetime(2025, 1, 1),
-    is_active=True,
+    enabled=True,
     metrics=MOCK_METRICS,
     tags=[],
 )

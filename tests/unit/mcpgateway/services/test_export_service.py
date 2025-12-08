@@ -767,7 +767,7 @@ async def test_export_prompts_with_arguments(export_service, mock_db):
     mock_prompt.template = "Process {{user_input}} with {{context}}"
     mock_prompt.description = "Test prompt"
     mock_prompt.arguments = [mock_arg1, mock_arg2]
-    mock_prompt.is_active = True
+    mock_prompt.enabled = True
     mock_prompt.tags = ["nlp", "processing"]
 
     export_service.prompt_service.list_prompts.return_value = ([mock_prompt], None)
@@ -925,7 +925,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
         icon=None,
         associated_tools=[],
         associated_a2a_agents=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_server_metrics(),
@@ -933,12 +933,12 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_prompt_metrics(),
@@ -946,13 +946,13 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
     )
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
         mime_type="text/plain",
         size=None,
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_resource_metrics(),
@@ -1070,7 +1070,7 @@ async def test_export_selected_servers(export_service, mock_db):
         icon=None,
         associated_tools=[],
         associated_a2a_agents=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_server_metrics(),
@@ -1103,12 +1103,12 @@ async def test_export_selected_prompts(export_service, mock_db):
     # First-Party
 
     sample_prompt = PromptRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_prompt",
         template="Test template",
         description="Test prompt",
         arguments=[],
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_prompt_metrics(),
@@ -1141,13 +1141,13 @@ async def test_export_selected_resources(export_service, mock_db):
     # First-Party
 
     sample_resource = ResourceRead(
-        id=1,
+        id="ca627760127d409080fdefc309147e08",
         name="test_resource",
         uri="file:///test.txt",
         description="Test resource",
         mime_type="text/plain",
         size=None,
-        is_active=True,
+        enabled=True,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         metrics=create_default_resource_metrics(),
