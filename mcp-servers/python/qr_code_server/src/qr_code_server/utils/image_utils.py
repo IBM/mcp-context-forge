@@ -122,9 +122,13 @@ def load_image(image_data: str, max_image_size: int) -> np.ndarray:
             raise LoadImageError(f"Failed to open image file: {image_data}") from e
 
     else:
-        try:
-            if int(4 * len(image_data) / 3) > max_image_size:
+        b64_str = image_data.strip()
+        padding = b64_str.count("=")
+        estimated_size = len(b64_str) * 3 // 4 - padding
+        # approximate size validation before decoding base64
+        if estimated_size > max_image_size:
                 raise LoadImageError("Base64 image data too large")
+        try:
             img_bytes = base64.b64decode(image_data.strip())
             img = Image.open(BytesIO(img_bytes))
         except Exception as e:
@@ -133,4 +137,10 @@ def load_image(image_data: str, max_image_size: int) -> np.ndarray:
     if getattr(img, "is_animated", False):
         img.seek(0)
 
-    return np.array(img.convert("L"))
+    result_image = np.array(img.convert("L"))
+
+    # last size validation before exiting
+    if result_image.nbytes > max_image_size:
+        raise LoadImageError(f"Image too large in memory: {result_image.nbytes} bytes")
+
+    return result_image
