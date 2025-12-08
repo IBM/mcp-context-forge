@@ -12258,6 +12258,7 @@ async def get_prompts_section(
 @require_permission("admin")
 async def get_servers_section(
     team_id: Optional[str] = None,
+    include_inactive: bool = False,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -12265,6 +12266,7 @@ async def get_servers_section(
 
     Args:
         team_id: Optional team ID to filter by
+        include_inactive: Whether to include inactive servers
         db: Database session
         user: Current authenticated user context
 
@@ -12274,10 +12276,10 @@ async def get_servers_section(
     try:
         local_server_service = ServerService()
         user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}")
+        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
 
-        # Get all servers and filter by team
-        servers_list = await local_server_service.list_servers(db, include_inactive=True)
+        # Get servers with optional include_inactive parameter
+        servers_list = await local_server_service.list_servers(db, include_inactive=include_inactive)
 
         # Apply team filtering if specified
         if team_id:

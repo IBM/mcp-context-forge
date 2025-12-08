@@ -8718,6 +8718,23 @@ function toggleInactiveItems(type) {
         // ignore (shouldn't happen)
     }
 
+    // For servers (catalog), use loadServers function if available, otherwise reload page
+    if (type === "servers") {
+        if (typeof window.loadServers === "function") {
+            window.loadServers();
+            return;
+        }
+        // Fallback to page reload
+        const fallbackUrl = new URL(window.location);
+        if (checkbox.checked) {
+            fallbackUrl.searchParams.set("include_inactive", "true");
+        } else {
+            fallbackUrl.searchParams.delete("include_inactive");
+        }
+        window.location = fallbackUrl;
+        return;
+    }
+
     // Try to find the HTMX container that loads this entity's partial
     // Prefer an element with hx-get containing the admin partial endpoint
     const selector = `[hx-get*="/admin/${type}/partial"]`;
@@ -14804,7 +14821,28 @@ function initializeTabState() {
 // GLOBAL EXPORTS - Make functions available to HTML onclick handlers
 // ===================================================================
 
+/**
+ * Load servers (Virtual Servers / Catalog) with optional include_inactive parameter
+ */
+async function loadServers() {
+    const checkbox = safeGetElement("show-inactive-servers");
+    const includeInactive = checkbox ? checkbox.checked : false;
+
+    // Build URL with include_inactive parameter
+    const url = new URL(window.location);
+    if (includeInactive) {
+        url.searchParams.set("include_inactive", "true");
+    } else {
+        url.searchParams.delete("include_inactive");
+    }
+
+    // Reload the page with the updated parameters
+    // Since the catalog panel is server-side rendered, we need a full page reload
+    window.location.href = url.toString();
+}
+
 window.toggleInactiveItems = toggleInactiveItems;
+window.loadServers = loadServers;
 window.handleToggleSubmit = handleToggleSubmit;
 window.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 window.viewTool = viewTool;
