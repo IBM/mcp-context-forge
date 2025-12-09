@@ -1021,6 +1021,12 @@
       "title": "Llmchat Enabled",
       "type": "boolean"
     },
+    "toolops_enabled": {
+      "default": false,
+      "description": "Enable ToolOps feature",
+      "title": "ToolOps Enabled",
+      "type": "boolean"
+    },
     "retry_max_attempts": {
       "default": 3,
       "title": "Retry Max Attempts",
@@ -1609,7 +1615,7 @@
       "type": "string"
     },
     "validation_safe_uri_pattern": {
-      "default": "^[a-zA-Z0-9_\\-.:/?=&%]+$",
+      "default": "^[a-zA-Z0-9_\\-.:/?=&%{}]+$",
       "title": "Validation Safe Uri Pattern",
       "type": "string"
     },
