@@ -1330,7 +1330,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             # Validate write access
-            if allowed_team_ids is not None and gateway.team_id not in allowed_team_ids:
+            if allowed_team_ids and gateway.team_id not in allowed_team_ids:
                 logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
                 raise PermissionError(f"User does not have write access to team {gateway.team_id}")
 
@@ -1850,7 +1850,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             # Validate write access
-            if not allowed_team_ids or gateway.team_id not in allowed_team_ids:
+            if allowed_team_ids and gateway.team_id not in allowed_team_ids:
                 logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
                 raise PermissionError(f"User does not have write access to team {gateway.team_id}")
 
@@ -2093,7 +2093,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
             # Validate write access
-            if not allowed_team_ids or gateway.team_id not in allowed_team_ids:
+            if allowed_team_ids and gateway.team_id not in allowed_team_ids:
                 logger.warning(f"Write access denied for team {gateway.team_id}. Allowed: {allowed_team_ids}")
                 raise PermissionError(f"User does not have write access to team {gateway.team_id}")
 
