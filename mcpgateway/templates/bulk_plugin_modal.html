@@ -8,6 +8,7 @@
        pluginStatus: null,
        loadingStatus: false,
        selectedForRemoval: [],
+       nextPriority: 10,
        async loadPluginStatus() {
          this.loadingStatus = true;
          try {
@@ -23,6 +24,8 @@
              console.log('Plugin status loaded:', data);
              console.log('Plugin status details:', JSON.stringify(data.plugin_status, null, 2));
              this.pluginStatus = data;
+             // Update next priority after loading status
+             this.nextPriority = this.getNextPriority();
            } else {
              console.error('Failed to load plugin status:', response.status, response.statusText);
            }
@@ -100,6 +103,24 @@
            console.error('Failed to update plugin priority:', e);
            alert('Failed to update priority: ' + e.message);
          }
+       },
+       getNextPriority() {
+         // Calculate next priority: max(existing) + 10, or 10 if none
+         if (!this.pluginStatus || !this.pluginStatus.plugin_status) return 10;
+
+         let maxPriority = 0;
+         // plugin_status is { pluginName: pluginData }, not { toolId: [plugins] }
+         for (const plugin of Object.values(this.pluginStatus.plugin_status)) {
+           if (plugin.priority) {
+             const priority = Number(plugin.priority);
+             if (priority > maxPriority) {
+               maxPriority = priority;
+             }
+           }
+         }
+
+         console.log('Calculated next priority:', maxPriority > 0 ? maxPriority + 10 : 10, 'from max:', maxPriority);
+         return maxPriority > 0 ? maxPriority + 10 : 10;
        }
      }"
      @plugin-modal-opened.window="loadPluginStatus()"
@@ -271,7 +292,18 @@
           <div>
             <form hx-post="{{ root_path }}/admin/tools/bulk/plugins"
                   hx-swap="none"
-                  hx-on::after-request="if(event.detail.successful) { window.dispatchEvent(new Event('plugin-added')); htmx.trigger('#tools-table', 'refresh'); $refs.pluginSelect.value = ''; }"
+                  hx-on::after-request="if(event.detail.successful) {
+                    const form = event.target;
+                    window.dispatchEvent(new Event('plugin-added'));
+                    htmx.trigger('#tools-table', 'refresh');
+                    form.querySelector('[name=plugin_name]').value = '';
+                    form.querySelector('[name=config]').value = '';
+                    form.querySelector('[name=override]').checked = false;
+                    form.querySelector('[name=mode]').value = '';
+                    form.querySelector('[name=reverse_order_on_post]').checked = false;
+                    const hooksSelect = form.querySelector('[name=hooks]');
+                    if (hooksSelect) Array.from(hooksSelect.options).forEach(opt => opt.selected = false);
+                  }"
                   class="space-y-4"
                   x-ref="addForm">
 
@@ -301,7 +333,7 @@
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                     Priority
                   </label>
-                  <input type="number" name="priority" value="1" min="1" max="1000"
+                  <input type="number" name="priority" x-model="nextPriority" min="1" max="1000"
                          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
                 </div>
 
@@ -314,6 +346,51 @@
                     <option value="tool_pre_invoke">Pre-invoke</option>
                     <option value="tool_post_invoke">Post-invoke</option>
                   </select>
+                </div>
+              </div>
+
+              <!-- Advanced Configuration Section -->
+              <div class="border-t border-gray-200 dark:border-gray-700 pt-4 mt-4">
+                <h5 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Advanced Configuration</h5>
+
+                <!-- Config JSON -->
+                <div class="mb-4">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Config (JSON)
+                    <span class="text-xs text-gray-500 font-normal">Optional plugin-specific configuration</span>
+                  </label>
+                  <textarea name="config" rows="3" placeholder='{"key": "value"}'
+                            class="w-full px-3 py-2 text-sm font-mono border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500"></textarea>
+                  <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Enter valid JSON for plugin configuration</p>
+                </div>
+
+                <!-- Grid for smaller fields -->
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                  <!-- Override -->
+                  <div class="flex items-center space-x-2">
+                    <input type="checkbox" name="override" id="bulk_override" value="true"
+                           class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 dark:border-gray-600 dark:bg-gray-700">
+                    <label for="bulk_override" class="text-sm text-gray-700 dark:text-gray-300">
+                      Override
+                      <span class="text-xs text-gray-500 block">Replace existing config</span>
+                    </label>
+                  </div>
+
+                  <!-- Mode -->
+                  <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Mode
+                    </label>
+                    <select name="mode"
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-indigo-500">
+                      <option value="">Default</option>
+                      <option value="enforce">Enforce (block on error)</option>
+                      <option value="enforce_ignore_error">Enforce (continue on error)</option>
+                      <option value="permissive">Permissive (audit only)</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Controls how the plugin enforces its rules</p>
+                  </div>
                 </div>
               </div>
 

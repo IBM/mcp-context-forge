@@ -11411,8 +11411,8 @@ async def get_routing_rules(
     """
     try:
         # First-Party
-        from mcpgateway.services.plugin_route_service import get_plugin_route_service
         from mcpgateway.plugins.framework import get_plugin_manager
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
 
         # Reload config to ensure we have fresh data from disk
         plugin_manager = get_plugin_manager()
@@ -11509,7 +11509,7 @@ async def get_entities_by_type(
     """
     try:
         # First-Party
-        from mcpgateway.db import Tool, Prompt, Resource, A2AAgent, Server, Gateway
+        from mcpgateway.db import A2AAgent, Gateway, Prompt, Resource, Server, Tool
 
         result = {}
         types = [t.strip() for t in entity_types.split(",") if t.strip()]
@@ -11562,7 +11562,7 @@ async def get_all_entity_tags(
     """
     try:
         # First-Party
-        from mcpgateway.db import Tool, Prompt, Resource, A2AAgent, Server, Gateway
+        from mcpgateway.db import A2AAgent, Gateway, Prompt, Resource, Server, Tool
 
         all_tags = set()
 
@@ -11619,8 +11619,8 @@ async def get_routing_rule(
     """
     try:
         # First-Party
-        from mcpgateway.services.plugin_route_service import get_plugin_route_service
         from mcpgateway.plugins.framework import get_plugin_manager
+        from mcpgateway.services.plugin_route_service import get_plugin_route_service
 
         # Reload config to ensure we have fresh data from disk
         plugin_manager = get_plugin_manager()
@@ -11773,7 +11773,8 @@ async def create_or_update_routing_rule(
 
         # Parse entities
         entities = form_data.getlist("entities")
-        entity_types = [EntityType(e) for e in entities] if entities else None
+        entity_types = [EntityType(e) for e in entities] if entities else []
+        entity_types = entity_types or None  # Convert empty list to None
 
         # Parse name filter (can be comma-separated)
         name_filter = form_data.get("name_filter", "").strip()
@@ -11782,13 +11783,13 @@ async def create_or_update_routing_rule(
             names = [n.strip() for n in name_filter.split(",") if n.strip()]
             name_list = names[0] if len(names) == 1 else names if names else None
 
-        # Parse tags
+        # Parse tags - filter empty strings and convert empty list to None
         tags = form_data.getlist("tags")
-        tags = [t for t in tags if t.strip()] if tags else None
+        tags = [t.strip() for t in tags if t.strip()] or None
 
-        # Parse hooks
+        # Parse hooks - filter empty strings and convert empty list to None
         hooks = form_data.getlist("hooks")
-        hooks = [h for h in hooks if h.strip()] if hooks else None
+        hooks = [h.strip() for h in hooks if h.strip()] or None
 
         # Parse when expression
         when_expression = form_data.get("when_expression", "").strip()
@@ -11796,6 +11797,28 @@ async def create_or_update_routing_rule(
 
         # Parse reverse order flag
         reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # Debug logging to see what we received
+        LOGGER.info(
+            f"Parsed routing rule data: entities={entity_types}, name_list={name_list}, "
+            f"tags={tags}, hooks={hooks}, when={when_expression}"
+        )
+
+        # Validate that at least one matching criterion is provided
+        has_criteria = (
+            (entity_types is not None and len(entity_types) > 0)
+            or name_list is not None
+            or (tags is not None and len(tags) > 0)
+            or (hooks is not None and len(hooks) > 0)
+            or (when_expression is not None and len(when_expression) > 0)
+        )
+        if not has_criteria:
+            error_msg = (
+                "Routing rule must have at least one matching criterion. "
+                "Please specify: entity types, entity names, tags, hooks, or a condition expression."
+            )
+            LOGGER.error(f"Validation failed: {error_msg}")
+            return HTMLResponse(content=error_msg, status_code=400)
 
         # Parse plugins JSON
         # Standard
@@ -11807,8 +11830,43 @@ async def create_or_update_routing_rule(
         if not plugins_data:
             return HTMLResponse(content="At least one plugin is required", status_code=400)
 
-        # Create PluginAttachment objects
-        plugin_attachments = [PluginAttachment(name=p["name"], priority=int(p.get("priority", 10))) for p in plugins_data if p.get("name")]
+        # Create PluginAttachment objects with advanced configuration
+        plugin_attachments = []
+        for p in plugins_data:
+            if not p.get("name"):
+                continue
+
+            # Parse config JSON if present
+            config = {}
+            config_str = p.get("config", "").strip()
+            if config_str:
+                try:
+                    config = json.loads(config_str)
+                except json.JSONDecodeError as e:
+                    LOGGER.warning(f"Invalid JSON in plugin config for {p['name']}: {e}")
+                    # Continue with empty dict rather than failing
+
+            # Parse when expression
+            when = p.get("when", "").strip() or None
+
+            # Parse override flag
+            override = p.get("override", False)
+            if isinstance(override, str):
+                override = override.lower() in ("true", "1", "yes")
+
+            # Parse mode (convert empty string to None)
+            mode = p.get("mode", "").strip() or None
+
+            plugin_attachments.append(
+                PluginAttachment(
+                    name=p["name"],
+                    priority=int(p.get("priority", 10)),
+                    config=config,
+                    when=when,
+                    override=override,
+                    mode=mode,
+                )
+            )
 
         # Check if rule_index is also in form data (for update)
         form_rule_index = form_data.get("rule_index")
@@ -12067,8 +12125,8 @@ async def get_bulk_plugin_status(
             )
 
         # First-Party
-        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
         from mcpgateway.plugins.framework import get_plugin_manager
+        from mcpgateway.plugins.framework.hooks.registry import get_hook_registry
 
         route_service = get_plugin_route_service()
         hook_registry = get_hook_registry()
@@ -12224,9 +12282,26 @@ async def add_bulk_plugins(
         tool_ids = form_data.getlist("tool_ids")
         # Accept both plugin_name (singular) and plugin_names (plural) for flexibility
         plugin_name = form_data.get("plugin_name") or form_data.get("plugin_names")
-        priority = int(form_data.get("priority", 10))
+        priority_str = form_data.get("priority", "10")
+        priority = int(priority_str) if priority_str and priority_str.strip() else 10
         hooks = form_data.getlist("hooks") if "hooks" in form_data else None
         reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
+
+        # Parse new advanced fields
+        config_str = form_data.get("config", "").strip()
+        config = None
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except json.JSONDecodeError as e:
+                return JSONResponse(
+                    status_code=400,
+                    content={"success": False, "message": f"Invalid JSON in config: {e}"},
+                )
+
+        override = form_data.get("override") == "true"
+        scope = form_data.get("scope", "local")
+        mode = form_data.get("mode") or None  # Convert empty string to None
 
         LOGGER.info("=== BULK ADD PLUGIN REQUEST ===")
         LOGGER.info(f"Tool IDs: {tool_ids}")
@@ -12234,6 +12309,10 @@ async def add_bulk_plugins(
         LOGGER.info(f"Priority: {priority}")
         LOGGER.info(f"Hooks: {hooks}")
         LOGGER.info(f"Reverse order on post: {reverse_order_on_post}")
+        LOGGER.info(f"Config: {config}")
+        LOGGER.info(f"Override: {override}")
+        LOGGER.info(f"Scope: {scope}")
+        LOGGER.info(f"Mode: {mode}")
 
         if not tool_ids:
             return JSONResponse(
@@ -12268,6 +12347,9 @@ async def add_bulk_plugins(
                     priority=priority,
                     hooks=hooks if hooks else None,
                     reverse_order_on_post=reverse_order_on_post,
+                    config=config,
+                    override=override,
+                    mode=mode,
                 )
                 success_count += 1
 
@@ -12589,6 +12671,18 @@ async def add_tool_plugin(
         hooks = form_data.getlist("hooks") if "hooks" in form_data else None
         reverse_order_on_post = form_data.get("reverse_order_on_post") == "true"
 
+        # Parse advanced fields
+        config_str = form_data.get("config", "").strip()
+        config = None
+        if config_str:
+            try:
+                config = json.loads(config_str)
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON in config: {e}")
+
+        override = form_data.get("override") == "true"
+        mode = form_data.get("mode") or None  # Convert empty string to None
+
         if not plugin_name:
             raise HTTPException(status_code=400, detail="Plugin name is required")
 
@@ -12606,6 +12700,9 @@ async def add_tool_plugin(
             priority=priority,
             hooks=hooks if hooks else None,
             reverse_order_on_post=reverse_order_on_post,
+            config=config,
+            override=override,
+            mode=mode,
         )
 
         # Save configuration
@@ -12699,14 +12796,11 @@ async def toggle_reverse_post_hooks(
         # Get plugin route service
         route_service = get_plugin_route_service()
 
-        # Toggle reverse_order_on_post for all rules of this tool
+        # Toggle reverse_order_on_post for all rules of this tool (save is handled internally by the service)
         new_state = await route_service.toggle_reverse_post_hooks(
             entity_type="tool",
             entity_name=tool.name,
         )
-
-        # Save configuration
-        await route_service.save_config()
 
         LOGGER.info(f"Toggled reverse_order_on_post to {new_state} for tool {tool.name}")
 
@@ -12744,7 +12838,7 @@ async def change_tool_plugin_priority(
         # Get plugin route service
         route_service = get_plugin_route_service()
 
-        # Change priority
+        # Change priority (save is handled internally by the service)
         success = await route_service.change_plugin_priority(
             entity_type="tool",
             entity_name=tool.name,
@@ -12758,9 +12852,6 @@ async def change_tool_plugin_priority(
                 status_code=404,
                 detail=f"Plugin {plugin_name} not found or cannot be moved {direction}",
             )
-
-        # Save configuration
-        await route_service.save_config()
 
         LOGGER.info(f"Changed priority of plugin {plugin_name} ({direction}) for tool {tool.name}")
 
@@ -12801,7 +12892,7 @@ async def set_tool_plugin_priority(
         # Get plugin route service
         route_service = get_plugin_route_service()
 
-        # Update priority
+        # Update priority (save is handled internally by the service)
         success = await route_service.update_plugin_priority(
             entity_type="tool",
             entity_name=tool.name,
@@ -12814,9 +12905,6 @@ async def set_tool_plugin_priority(
                 status_code=404,
                 detail=f"Plugin {plugin_name} not found for tool {tool.name}",
             )
-
-        # Save configuration
-        await route_service.save_config()
 
         LOGGER.info(f"Set priority of plugin {plugin_name} to {new_priority} for tool {tool.name}")
 
@@ -12845,6 +12933,7 @@ async def get_tool_plugins_ui(
     """
     try:
         # First-Party
+        from mcpgateway.plugins.framework import get_plugin_manager
         from mcpgateway.plugins.framework.hooks.registry import get_hook_registry, HookPhase
         from mcpgateway.services.plugin_route_service import get_plugin_route_service
 
@@ -12854,6 +12943,11 @@ async def get_tool_plugins_ui(
         # Get services
         route_service = get_plugin_route_service()
         hook_registry = get_hook_registry()
+
+        # Reload config from disk to see changes from other workers
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            plugin_manager.reload_config()
 
         # Get pre and post hook types for tools using the registry
         pre_hook_types = hook_registry.get_hooks_for_entity_type("tool", HookPhase.PRE)
@@ -12892,8 +12986,7 @@ async def get_tool_plugins_ui(
                 hook_type=post_hook_types[0],
             )
 
-        # Get available plugins from plugin manager
-        plugin_manager = get_plugin_manager()
+        # Get available plugins from plugin manager (already retrieved and reloaded above)
         available_plugins = []
         if plugin_manager:
             available_plugins = [{"name": name} for name in plugin_manager.get_plugin_names()]
@@ -12904,10 +12997,10 @@ async def get_tool_plugins_ui(
             entity_name=tool.name,
         )
 
-        # Calculate next suggested priority (max existing + 1)
+        # Calculate next suggested priority (max existing + 10, or 10 if none)
         all_plugins = pre_hooks + post_hooks
         max_priority = max((p.get("priority", 0) or 0 for p in all_plugins), default=0)
-        next_priority = max_priority + 1
+        next_priority = max_priority + 10 if max_priority > 0 else 10
 
         # Get root_path for URL generation
         root_path = request.scope.get("root_path", "")

@@ -284,6 +284,10 @@ class PluginRouteService:
         priority: int = 10,
         hooks: Optional[list[str]] = None,
         reverse_order_on_post: bool = False,
+        config: Optional[dict] = None,
+        when: Optional[str] = None,
+        override: bool = False,
+        mode: Optional[str] = None,
     ) -> None:
         """Quick-add: Create or update a simple name-based rule.
 
@@ -310,6 +314,10 @@ class PluginRouteService:
             hooks: Optional list of specific hooks to target. If None, defaults to
                    both pre and post hooks for the entity type.
             reverse_order_on_post: If True, reverse plugin order for post-hooks (wrapping behavior)
+            config: Optional plugin-specific configuration (JSON dict)
+            when: Optional runtime condition expression
+            override: If True, replace inherited config instead of merging
+            mode: Optional execution mode override (normal, passthrough, observe)
         """
         with self._config_write_lock():
             if not self.config:
@@ -347,31 +355,55 @@ class PluginRouteService:
                         break
 
                 if plugin_in_rule:
-                    # Plugin already exists in this rule - update priority
+                    # Plugin already exists in this rule - update all configuration
                     plugin_in_rule.priority = priority
-                    logger.info(f"Updated plugin priority in existing rule: {plugin_name} -> {entity_type}:{entity_name} priority={priority}")
+                    if config is not None:
+                        plugin_in_rule.config = config
+                    if when is not None:
+                        plugin_in_rule.when = when
+                    plugin_in_rule.override = override
+                    if mode is not None:
+                        plugin_in_rule.mode = mode
+                    logger.info(f"Updated plugin configuration in existing rule: {plugin_name} -> {entity_type}:{entity_name}")
                 else:
                     # Plugin doesn't exist - add it to the rule
-                    existing_simple_rule.plugins.append(PluginAttachment(name=plugin_name, priority=priority))
+                    plugin_attachment = PluginAttachment(
+                        name=plugin_name,
+                        priority=priority,
+                        config=config if config is not None else {},
+                        when=when,
+                        override=override,
+                        mode=mode,
+                    )
+                    existing_simple_rule.plugins.append(plugin_attachment)
                     logger.info(f"Added plugin to existing rule: {plugin_name} -> {entity_type}:{entity_name} (now {len(existing_simple_rule.plugins)} plugins)")
 
                 # Merge hooks if needed
-                existing_hooks = set(existing_simple_rule.hooks) if existing_simple_rule.hooks else set()
-                new_hooks = set(hooks)
-                merged_hooks = existing_hooks | new_hooks
-                existing_simple_rule.hooks = list(merged_hooks)
+                if hooks:
+                    existing_hooks = set(existing_simple_rule.hooks) if existing_simple_rule.hooks else set()
+                    new_hooks = set(hooks)
+                    merged_hooks = existing_hooks | new_hooks
+                    existing_simple_rule.hooks = list(merged_hooks)
 
                 # Update reverse_order_on_post if specified
                 if reverse_order_on_post:
                     existing_simple_rule.reverse_order_on_post = reverse_order_on_post
             else:
                 # No existing simple rule for this entity - create new one
+                plugin_attachment = PluginAttachment(
+                    name=plugin_name,
+                    priority=priority,
+                    config=config if config is not None else {},
+                    when=when,
+                    override=override,
+                    mode=mode,
+                )
                 new_rule = PluginHookRule(
                     entities=[entity_type_enum],
                     name=entity_name,
                     hooks=hooks,
                     reverse_order_on_post=reverse_order_on_post,
-                    plugins=[PluginAttachment(name=plugin_name, priority=priority)],
+                    plugins=[plugin_attachment],
                 )
 
                 self.config.routes.append(new_rule)
@@ -523,6 +555,8 @@ class PluginRouteService:
 
         Works across multiple rules for the same entity - each plugin may be in its own rule.
 
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
+
         Args:
             entity_type: Type of entity (e.g., "tool")
             entity_name: Name of entity
@@ -533,100 +567,104 @@ class PluginRouteService:
         Returns:
             True if priority was changed, False if plugin not found or can't be moved.
         """
-        if not self.config or not self.config.routes:
-            logger.warning("No config or routes available")
-            return False
+        with self._config_write_lock():
+            if not self.config or not self.config.routes:
+                logger.warning("No config or routes available")
+                return False
 
-        entity_type_enum = EntityType(entity_type)
+            entity_type_enum = EntityType(entity_type)
 
-        # Collect all plugins for this entity across all matching rules
-        # Each entry: (rule_index, plugin_index, plugin_attachment, priority)
-        entity_plugins: list[tuple[int, int, PluginAttachment]] = []
+            # Collect all plugins for this entity across all matching rules
+            # Each entry: (rule_index, plugin_index, plugin_attachment, priority)
+            entity_plugins: list[tuple[int, int, PluginAttachment]] = []
 
-        for rule_idx, rule in enumerate(self.config.routes):
-            # Only check simple name-based rules
-            if not rule.entities or entity_type_enum not in rule.entities:
-                continue
+            for rule_idx, rule in enumerate(self.config.routes):
+                # Only check simple name-based rules
+                if not rule.entities or entity_type_enum not in rule.entities:
+                    continue
 
-            # Must have exact name match
-            if rule.name != entity_name:
-                continue
+                # Must have exact name match
+                if rule.name != entity_name:
+                    continue
 
-            # Must not have tags or when (simple rule only)
-            if rule.tags or rule.when:
-                continue
+                # Must not have tags or when (simple rule only)
+                if rule.tags or rule.when:
+                    continue
 
-            # Check hook filter - rule must apply to this hook
-            if rule.hooks and hook not in rule.hooks:
-                continue
+                # Check hook filter - rule must apply to this hook
+                if rule.hooks and hook not in rule.hooks:
+                    continue
 
-            # Collect all plugins from this rule
-            for plugin_idx, plugin in enumerate(rule.plugins):
-                # Ensure priority is set
-                if plugin.priority is None:
-                    plugin.priority = 10
-                entity_plugins.append((rule_idx, plugin_idx, plugin))
+                # Collect all plugins from this rule
+                for plugin_idx, plugin in enumerate(rule.plugins):
+                    # Ensure priority is set
+                    if plugin.priority is None:
+                        plugin.priority = 10
+                    entity_plugins.append((rule_idx, plugin_idx, plugin))
 
-        logger.info(f"Found {len(entity_plugins)} plugins for {entity_type}:{entity_name} hook={hook}")
+            logger.info(f"Found {len(entity_plugins)} plugins for {entity_type}:{entity_name} hook={hook}")
 
-        if not entity_plugins:
-            logger.warning(f"No plugins found for {entity_type}:{entity_name}")
-            return False
+            if not entity_plugins:
+                logger.warning(f"No plugins found for {entity_type}:{entity_name}")
+                return False
 
-        # Sort by priority
-        entity_plugins.sort(key=lambda x: x[2].priority or 0)
+            # Sort by priority
+            entity_plugins.sort(key=lambda x: x[2].priority or 0)
 
-        # Find the target plugin
-        target_idx = None
-        for i, (rule_idx, plugin_idx, plugin) in enumerate(entity_plugins):
-            if plugin.name == plugin_name:
-                target_idx = i
-                break
+            # Find the target plugin
+            target_idx = None
+            for i, (rule_idx, plugin_idx, plugin) in enumerate(entity_plugins):
+                if plugin.name == plugin_name:
+                    target_idx = i
+                    break
 
-        if target_idx is None:
-            logger.warning(f"Plugin {plugin_name} not found in entity plugins list")
-            return False
+            if target_idx is None:
+                logger.warning(f"Plugin {plugin_name} not found in entity plugins list")
+                return False
 
-        # Only one plugin - can't move
-        if len(entity_plugins) == 1:
-            logger.info(f"Only one plugin for {entity_type}:{entity_name}, cannot move")
-            return False
+            # Only one plugin - can't move
+            if len(entity_plugins) == 1:
+                logger.info(f"Only one plugin for {entity_type}:{entity_name}, cannot move")
+                return False
 
-        if direction == "up":
-            if target_idx == 0:
-                logger.info(f"Plugin {plugin_name} is already first")
-                return False  # Already first
-            # Swap with previous plugin
-            swap_idx = target_idx - 1
-        elif direction == "down":
-            if target_idx == len(entity_plugins) - 1:
-                logger.info(f"Plugin {plugin_name} is already last")
-                return False  # Already last
-            # Swap with next plugin
-            swap_idx = target_idx + 1
-        else:
-            return False  # Invalid direction
-
-        # Get the two plugins to swap
-        target_rule_idx, target_plugin_idx, target_plugin = entity_plugins[target_idx]
-        swap_rule_idx, swap_plugin_idx, swap_plugin = entity_plugins[swap_idx]
-
-        # Swap their priorities
-        target_priority = target_plugin.priority
-        swap_priority = swap_plugin.priority
-
-        # If priorities are equal, adjust them to make the swap work
-        if target_priority == swap_priority:
             if direction == "up":
-                target_plugin.priority = swap_priority - 1
+                if target_idx == 0:
+                    logger.info(f"Plugin {plugin_name} is already first")
+                    return False  # Already first
+                # Swap with previous plugin
+                swap_idx = target_idx - 1
+            elif direction == "down":
+                if target_idx == len(entity_plugins) - 1:
+                    logger.info(f"Plugin {plugin_name} is already last")
+                    return False  # Already last
+                # Swap with next plugin
+                swap_idx = target_idx + 1
             else:
-                target_plugin.priority = swap_priority + 1
-        else:
-            target_plugin.priority = swap_priority
-            swap_plugin.priority = target_priority
+                return False  # Invalid direction
 
-        logger.info(f"Swapped priority of {plugin_name} ({target_priority} -> {target_plugin.priority}) " f"with {swap_plugin.name} ({swap_priority} -> {swap_plugin.priority})")
-        return True
+            # Get the two plugins to swap
+            target_rule_idx, target_plugin_idx, target_plugin = entity_plugins[target_idx]
+            swap_rule_idx, swap_plugin_idx, swap_plugin = entity_plugins[swap_idx]
+
+            # Swap their priorities
+            target_priority = target_plugin.priority
+            swap_priority = swap_plugin.priority
+
+            # If priorities are equal, adjust them to make the swap work
+            if target_priority == swap_priority:
+                if direction == "up":
+                    target_plugin.priority = swap_priority - 1
+                else:
+                    target_plugin.priority = swap_priority + 1
+            else:
+                target_plugin.priority = swap_priority
+                swap_plugin.priority = target_priority
+
+            logger.info(f"Swapped priority of {plugin_name} ({target_priority} -> {target_plugin.priority}) " f"with {swap_plugin.name} ({swap_priority} -> {swap_plugin.priority})")
+
+            # Save changes within the lock
+            await self.save_config()
+            return True
 
     async def update_plugin_priority(
         self,
@@ -639,6 +677,8 @@ class PluginRouteService:
 
         Works across multiple rules for the same entity - updates all instances of the plugin.
 
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
+
         Args:
             entity_type: Type of entity (e.g., "tool")
             entity_name: Name of entity
@@ -648,39 +688,43 @@ class PluginRouteService:
         Returns:
             True if priority was updated, False if plugin not found.
         """
-        if not self.config or not self.config.routes:
-            logger.warning("No config or routes available")
-            return False
+        with self._config_write_lock():
+            if not self.config or not self.config.routes:
+                logger.warning("No config or routes available")
+                return False
 
-        entity_type_enum = EntityType(entity_type)
-        updated = False
+            entity_type_enum = EntityType(entity_type)
+            updated = False
 
-        # Find all rules matching this entity
-        for rule in self.config.routes:
-            # Only check simple name-based rules
-            if not rule.entities or entity_type_enum not in rule.entities:
-                continue
+            # Find all rules matching this entity
+            for rule in self.config.routes:
+                # Only check simple name-based rules
+                if not rule.entities or entity_type_enum not in rule.entities:
+                    continue
 
-            # Must have exact name match
-            if rule.name != entity_name:
-                continue
+                # Must have exact name match
+                if rule.name != entity_name:
+                    continue
 
-            # Must not have tags or when (simple rule only)
-            if rule.tags or rule.when:
-                continue
+                # Must not have tags or when (simple rule only)
+                if rule.tags or rule.when:
+                    continue
 
-            # Update the plugin priority in this rule
-            for plugin in rule.plugins:
-                if plugin.name == plugin_name:
-                    old_priority = plugin.priority
-                    plugin.priority = new_priority
-                    logger.info(f"Updated priority for {plugin_name} on {entity_type}:{entity_name}: {old_priority} -> {new_priority}")
-                    updated = True
+                # Update the plugin priority in this rule
+                for plugin in rule.plugins:
+                    if plugin.name == plugin_name:
+                        old_priority = plugin.priority
+                        plugin.priority = new_priority
+                        logger.info(f"Updated priority for {plugin_name} on {entity_type}:{entity_name}: {old_priority} -> {new_priority}")
+                        updated = True
 
-        if not updated:
-            logger.warning(f"Plugin {plugin_name} not found for {entity_type}:{entity_name}")
+            if not updated:
+                logger.warning(f"Plugin {plugin_name} not found for {entity_type}:{entity_name}")
+                return False
 
-        return updated
+            # Save changes within the lock
+            await self.save_config()
+            return True
 
     async def toggle_reverse_post_hooks(
         self,
@@ -689,6 +733,8 @@ class PluginRouteService:
     ) -> bool:
         """Toggle reverse_order_on_post for all rules of an entity.
 
+        Thread-safe: Uses file locking to prevent concurrent write conflicts.
+
         Args:
             entity_type: Type of entity (e.g., "tool")
             entity_name: Name of entity
@@ -696,36 +742,40 @@ class PluginRouteService:
         Returns:
             The new state (True if now reversed, False if normal order).
         """
-        if not self.config or not self.config.routes:
-            return False
+        with self._config_write_lock():
+            if not self.config or not self.config.routes:
+                return False
 
-        # Note: use_enum_values=True causes rule.entities to contain strings, not enums
-        # Find all rules for this entity and check current state
-        matching_rules = []
-        current_state = False
+            # Note: use_enum_values=True causes rule.entities to contain strings, not enums
+            # Find all rules for this entity and check current state
+            matching_rules = []
+            current_state = False
 
-        for rule in self.config.routes:
-            if not rule.entities or entity_type not in rule.entities:
-                continue
-            if rule.name != entity_name:
-                continue
-            if rule.tags or rule.when:
-                continue
+            for rule in self.config.routes:
+                if not rule.entities or entity_type not in rule.entities:
+                    continue
+                if rule.name != entity_name:
+                    continue
+                if rule.tags or rule.when:
+                    continue
 
-            matching_rules.append(rule)
-            # Use first rule's state as the current state
-            if not matching_rules[1:]:  # First rule
-                current_state = rule.reverse_order_on_post or False
+                matching_rules.append(rule)
+                # Use first rule's state as the current state
+                if not matching_rules[1:]:  # First rule
+                    current_state = rule.reverse_order_on_post or False
 
-        # Toggle to opposite state
-        new_state = not current_state
+            # Toggle to opposite state
+            new_state = not current_state
 
-        # Update all matching rules
-        for rule in matching_rules:
-            rule.reverse_order_on_post = new_state
+            # Update all matching rules
+            for rule in matching_rules:
+                rule.reverse_order_on_post = new_state
 
-        logger.info(f"Toggled reverse_order_on_post to {new_state} for {entity_type}:{entity_name} ({len(matching_rules)} rules)")
-        return new_state
+            logger.info(f"Toggled reverse_order_on_post to {new_state} for {entity_type}:{entity_name} ({len(matching_rules)} rules)")
+
+            # Save changes within the lock
+            await self.save_config()
+            return new_state
 
     def get_reverse_post_hooks_state(
         self,
