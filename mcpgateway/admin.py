@@ -2984,7 +2984,18 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = request.scope.get("root_path", "")
 
-    return request.app.state.templates.TemplateResponse("change-password-required.html", {"request": request, "root_path": root_path})
+    # Pass password policy flags so the template can conditionally render requirements
+    return request.app.state.templates.TemplateResponse(
+        "change-password-required.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "password_require_uppercase": settings.password_require_uppercase,
+            "password_require_lowercase": settings.password_require_lowercase,
+            "password_require_special": settings.password_require_special,
+            "password_min_length": settings.password_min_length,
+        },
+    )
 
 
 @admin_router.post("/change-password-required")
