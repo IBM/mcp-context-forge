@@ -5198,9 +5198,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </label>
                   <input
                     type="password"
+                    id="new_user_password"
                     name="password"
                     required
                     minlength="8"
+                    oninput="validateNewUserPassword()"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
                     placeholder="Strong password"
                   />
@@ -5213,24 +5215,99 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div class="ml-3 text-sm text-blue-800 dark:text-blue-100">
                         <div class="font-semibold">Password Requirements</div>
                         <ul class="mt-2 space-y-1">
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>At least {{ password_min_length or 8 }} characters long</li>
+                          <li id="req-length" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            At least {{ password_min_length or 8 }} characters long
+                          </li>
                           {% if password_require_uppercase %}
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains uppercase letters (A-Z)</li>
+                          <li id="req-uppercase" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains uppercase letters (A-Z)
+                          </li>
                           {% endif %}
                           {% if password_require_lowercase %}
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains lowercase letters (a-z)</li>
+                          <li id="req-lowercase" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains lowercase letters (a-z)
+                          </li>
                           {% endif %}
                           {% if password_require_numbers %}
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains numbers (0-9)</li>
+                          <li id="req-numbers" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains numbers (0-9)
+                          </li>
                           {% endif %}
                           {% if password_require_special %}
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)</li>
+                          <li id="req-special" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)
+                          </li>
                           {% endif %}
                         </ul>
                       </div>
                     </div>
                   </div>
                 </div>
+                <script>
+                  // Validate the Create User password box and update requirement icons
+                  (function(){
+                    const minLen = {{ password_min_length | tojson }} || 8;
+                    const REQ_UPPER = {{ password_require_uppercase | tojson }};
+                    const REQ_LOWER = {{ password_require_lowercase | tojson }};
+                    const REQ_NUMS = {{ password_require_numbers | tojson }};
+                    const REQ_SPEC = {{ password_require_special | tojson }};
+
+                    // Helper to update icons if element exists
+                    function updateRequirement(id, met) {
+                      const element = document.getElementById(id);
+                      if (!element) return;
+                      const icon = element.querySelector('i');
+                      if (!icon) return;
+                      if (met) {
+                        icon.className = 'fas fa-check-circle text-green-500 mr-2';
+                        element.classList.remove('text-blue-600');
+                        element.classList.add('text-green-600');
+                      } else {
+                        icon.className = 'fas fa-circle text-gray-400 mr-2';
+                        element.classList.remove('text-green-600');
+                        element.classList.add('text-blue-600');
+                      }
+                    }
+                    window.validateNewUserPassword = function() {
+                      const password = document.getElementById('new_user_password')?.value || '';
+                      // length
+                      const lengthMet = password.length >= minLen;
+                      const uppercaseMet = /[A-Z]/.test(password);
+                      const lowercaseMet = /[a-z]/.test(password);
+                      const numbersMet = /[0-9]/.test(password);
+                      const specialMet = /[!@#$%^&*()_+\-\[\]{};':"\\|,.<>\/?]/.test(password);
+
+                      // Update indicators only if elements exist (they may be conditionally rendered)
+                      updateRequirement('req-length', lengthMet);
+                      if (REQ_UPPER) updateRequirement('req-uppercase', uppercaseMet);
+                      if (REQ_LOWER) updateRequirement('req-lowercase', lowercaseMet);
+                      if (REQ_NUMS) updateRequirement('req-numbers', numbersMet);
+                      if (REQ_SPEC) updateRequirement('req-special', specialMet);
+
+                      // Determine whether submission is allowed
+                      const allRequirementsMet = lengthMet && (!REQ_UPPER || uppercaseMet) && (!REQ_LOWER || lowercaseMet) && (!REQ_NUMS || numbersMet) && (!REQ_SPEC || specialMet);
+                      const submitBtn = document.getElementById('create_user_submit');
+                      if (submitBtn) {
+                        submitBtn.disabled = !allRequirementsMet;
+                        if (submitBtn.disabled) {
+                          submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                        } else {
+                          submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                        }
+                      }
+                    };
+
+                    document.addEventListener('DOMContentLoaded', function(){
+                      // initialize state
+                      window.validateNewUserPassword();
+                    });
+                  })();
+                </script>
                 <div class="flex items-center">
                   <input
                     type="checkbox"
@@ -5249,6 +5326,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div class="flex justify-end">
                 <button
                   type="submit"
+                  id="create_user_submit"
                   class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   Create User
