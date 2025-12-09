@@ -5213,10 +5213,19 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <div class="ml-3 text-sm text-blue-800 dark:text-blue-100">
                         <div class="font-semibold">Password Requirements</div>
                         <ul class="mt-2 space-y-1">
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>At least 8 characters long</li>
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains uppercase letters (A-Z)</li>
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains lowercase letters (a-z)</li>
-                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)</li>
+                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>At least {{ password_min_length or 8 }} characters long</li>
+                          {% if password_require_uppercase %}
+                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains uppercase letters (A-Z)</li>
+                          {% endif %}
+                          {% if password_require_lowercase %}
+                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains lowercase letters (a-z)</li>
+                          {% endif %}
+                          {% if password_require_numbers %}
+                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains numbers (0-9)</li>
+                          {% endif %}
+                          {% if password_require_special %}
+                          <li class="flex items-start"><svg class="h-4 w-4 text-green-600 mt-0.5 mr-2" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 00-1.414-1.414L7 12.172l-2.293-2.293A1 1 0 003.293 11.293l3 3a1 1 0 001.414 0l9-9z" clip-rule="evenodd"/></svg>Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)</li>
+                          {% endif %}
                         </ul>
                       </div>
                     </div>
