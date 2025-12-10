@@ -79,16 +79,23 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If validation fails in strict mode
         """
+        # Phase 0: Feature disabled - skip entirely
         if not self.enabled:
-            return await call_next(request)
+            response = await call_next(request)
+            return response
+
+        # Phase 1: Log-only mode in dev/staging
+        warn_only = settings.environment in ("development", "staging") and not self.strict
 
         # Validate input
         try:
             await self._validate_request(request)
         except HTTPException as e:
-            if self.strict:
+            if warn_only:
+                logger.warning("[VALIDATION] Input validation failed (log-only mode): %s", e.detail)
+            else:
+                logger.error("[VALIDATION] Input validation failed: %s", e.detail)
                 raise
-            logger.warning("Validation failed but continuing in non-strict mode: %s", e.detail)
 
         response = await call_next(request)
 
@@ -168,7 +175,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             for item in data:
                 self._validate_json_data(item)
 
-    def _validate_resource_path(self, path: str) -> str:
+    def validate_resource_path(self, path: str) -> str:
         """Validate and normalize resource paths to prevent traversal attacks.
 
         Args:
@@ -180,10 +187,13 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If path is invalid or contains traversal patterns
         """
-
         # Check explicit path traversal detection
-        if ".." in path or path.startswith(("/", "\\")) or "//" in path:
+        if ".." in path or "//" in path:
             raise HTTPException(status_code=400, detail="invalid_path: Path traversal detected")
+
+        # Skip validation for URI schemes (http://, plugin://, etc.)
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://", path):
+            return path
 
         try:
             resolved_path = Path(path).resolve()

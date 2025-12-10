@@ -1191,6 +1191,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["Content-Length", "X-Request-ID"],
+    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 # Add response compression middleware (Brotli, Zstd, GZip)
@@ -1218,7 +1219,7 @@ else:
 app.add_middleware(SecurityHeadersMiddleware)
 
 # Add validation middleware if explicitly enabled
-if getattr(settings, "validation_middleware_enabled", False):
+if settings.validation_middleware_enabled:
     app.add_middleware(ValidationMiddleware)
     logger.info("🔒 Input validation and output sanitization middleware enabled")
 else:
