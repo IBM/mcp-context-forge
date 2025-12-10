@@ -1,5 +1,7 @@
 import base64
 import types
+import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -242,3 +244,26 @@ def test_create_batch_qr_codes_fail_add_to_zip(tmp_path):
             result = create_batch_qr_codes(req)
     assert result["error"] == "zip error"
     assert result["success"] is False
+
+
+def test_batch_generator_unziped_valid_png_images(tmp_path):
+    """Test that batch generator zipped folder contains valid png images"""
+    import puremagic
+    output_dir = tmp_path
+    unziped_path = Path(tmp_path / "extracted")
+
+    req = BatchQRGenerationRequest(
+        data_list=["test1", "test2"],
+        output_directory=str(output_dir),
+        format="png"
+    )
+    _ = create_batch_qr_codes(req)
+    with zipfile.ZipFile(Path(tmp_path / "qr.zip"), "r") as zip:
+        zip.extractall(unziped_path)
+    for index in range(2):
+        file_path = unziped_path / f"qr_{index}.png"
+        assert file_path.exists()
+        assert file_path.is_file()
+        # check if file is png image
+        assert puremagic.from_file(file_path) == ".png"
+
