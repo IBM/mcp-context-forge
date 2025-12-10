@@ -239,6 +239,25 @@ def upgrade() -> None:
     op.rename_table("prompts_tmp", "prompts")
     op.rename_table("prompt_metrics_tmp", "prompt_metrics")
     op.rename_table("server_prompt_association_tmp", "server_prompt_association")
+    # Drop dependent foreign keys first to allow primary key rename/recreation
+    op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
+    op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
+
+    # Restore original constraint names for prompts and dependent tables
+    op.drop_constraint("pk_prompts_tmp", "prompts", type_="primary")
+    op.create_primary_key("pk_prompts", "prompts", ["id"])
+    op.drop_constraint("uq_team_owner_name_prompt_tmp", "prompts", type_="unique")
+    op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
+
+    op.drop_constraint("pk_prompt_metrics_tmp", "prompt_metrics", type_="primary")
+    op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
+
+    op.drop_constraint("pk_server_prompt_assoc_tmp", "server_prompt_association", type_="primary")
+    op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
+
+    # Recreate foreign keys referencing the new primary key name
+    op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
+    op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
 
     # -----------------------------
     # Resources -> change id to VARCHAR(32) and remap FKs
@@ -494,6 +513,27 @@ def upgrade() -> None:
     op.rename_table("resource_metrics_tmp", "resource_metrics")
     op.rename_table("server_resource_association_tmp", "server_resource_association")
     op.rename_table("resource_subscriptions_tmp", "resource_subscriptions")
+    # Drop dependent foreign keys first to allow primary key rename/recreation
+    op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
+    op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
+    op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
+
+    # Restore original constraint names for resources and dependent tables
+    op.drop_constraint("pk_resources_tmp", "resources", type_="primary")
+    op.create_primary_key("pk_resources", "resources", ["id"])
+    op.drop_constraint("uq_team_owner_uri_resource_tmp", "resources", type_="unique")
+    op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
+
+    op.drop_constraint("pk_resource_metrics_tmp", "resource_metrics", type_="primary")
+    op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
+
+    op.drop_constraint("pk_server_resource_assoc_tmp", "server_resource_association", type_="primary")
+    op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
+
+    # Recreate foreign keys referencing restored primary key
+    op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
+    op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
+    op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
 
     with op.batch_alter_table("servers") as batch_op:
         batch_op.alter_column(
@@ -634,6 +674,26 @@ def downgrade() -> None:
     op.rename_table("prompts_old", "prompts")
     op.rename_table("prompt_metrics_old", "prompt_metrics")
     op.rename_table("server_prompt_association_old", "server_prompt_association")
+
+    # Drop dependent foreign keys first to allow primary key rename/recreation
+    op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
+    op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
+
+    # Restore original constraint names after renaming old tables back
+    op.drop_constraint("pk_prompts_old", "prompts", type_="primary")
+    op.create_primary_key("pk_prompts", "prompts", ["id"])
+    op.drop_constraint("uq_team_owner_name_prompt_old", "prompts", type_="unique")
+    op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
+
+    op.drop_constraint("pk_prompt_metric_old", "prompt_metrics", type_="primary")
+    op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
+
+    op.drop_constraint("pk_server_prompt_assoc_old", "server_prompt_association", type_="primary")
+    op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
+
+    # Recreate foreign keys referencing the new primary key name
+    op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
+    op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
 
     # =============================
     # Resources downgrade: rebuild integer ids and remap FKs
@@ -786,6 +846,27 @@ def downgrade() -> None:
     op.rename_table("resource_metrics_old", "resource_metrics")
     op.rename_table("server_resource_association_old", "server_resource_association")
     op.rename_table("resource_subscriptions_old", "resource_subscriptions")
+    # Drop dependent foreign keys first to allow primary key rename/recreation
+    op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
+    op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
+    op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
+
+    # Restore original constraint names for resources after downgrade
+    op.drop_constraint("pk_resources_old", "resources", type_="primary")
+    op.create_primary_key("pk_resources", "resources", ["id"])
+    op.drop_constraint("uq_team_owner_uri_resource_old", "resources", type_="unique")
+    op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
+
+    op.drop_constraint("pk_resource_metrics_old", "resource_metrics", type_="primary")
+    op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
+
+    op.drop_constraint("pk_server_resource_assoc_old", "server_resource_association", type_="primary")
+    op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
+
+    # Recreate foreign keys to point to restored primary key
+    op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
+    op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
+    op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
     with op.batch_alter_table("servers") as batch_op:
         batch_op.alter_column(
             "enabled",
