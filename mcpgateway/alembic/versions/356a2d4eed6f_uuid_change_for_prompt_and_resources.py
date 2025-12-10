@@ -224,17 +224,9 @@ def upgrade() -> None:
     # PostgreSQL requires explicit cast when comparing varchar to int; other DBs (SQLite/MySQL) are permissive.
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
     if dialect == "postgresql":
-        conn.execute(
-            text(
-                "UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id::text"
-            )
-        )
+        conn.execute(text("UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id::text"))
     else:
-        conn.execute(
-            text(
-                "UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id"
-            )
-        )
+        conn.execute(text("UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id"))
 
     # 7) Drop old tables and rename tmp tables into place
     op.drop_table("prompt_metrics")
@@ -486,16 +478,10 @@ def upgrade() -> None:
     dialect = conn.dialect.name if hasattr(conn, "dialect") else None
     if dialect == "postgresql":
         conn.execute(
-            text(
-                "UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id::text"
-            )
+            text("UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id::text")
         )
     else:
-        conn.execute(
-            text(
-                "UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"
-            )
-        )
+        conn.execute(text("UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"))
 
     # resource_subscriptions_tmp
     op.create_table(
