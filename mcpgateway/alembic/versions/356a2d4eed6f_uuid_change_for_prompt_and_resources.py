@@ -61,8 +61,8 @@ def upgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompts"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt_tmp"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompts_tmp"),
     )
 
     # 3) Copy data from prompts into prompts_tmp using id_new as id
@@ -193,7 +193,7 @@ def upgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_prompt_metrics_prompt_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompt_metrics"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompt_metrics_tmp"),
     )
 
     # 5) Copy prompt_metrics mapping old integer prompt_id -> new uuid via join
@@ -208,7 +208,7 @@ def upgrade() -> None:
         "server_prompt_association_tmp",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("prompt_id", sa.String(36), nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc"),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc_tmp"),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_server_prompt_prompt_id"),
     )
@@ -216,7 +216,20 @@ def upgrade() -> None:
     conn.execute(text("INSERT INTO server_prompt_association_tmp (server_id, prompt_id) SELECT spa.server_id, p.id_new FROM server_prompt_association spa JOIN prompts p ON spa.prompt_id = p.id"))
 
     # Update observability spans that reference prompts: remap integer prompt IDs -> new uuid
-    conn.execute(text("UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id"))
+    # PostgreSQL requires explicit cast when comparing varchar to int; other DBs (SQLite/MySQL) are permissive.
+    dialect = conn.dialect.name if hasattr(conn, "dialect") else None
+    if dialect == "postgresql":
+        conn.execute(
+            text(
+                "UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id::text"
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                "UPDATE observability_spans SET resource_id = p.id_new FROM prompts p WHERE observability_spans.resource_type = 'prompts' AND observability_spans.resource_id = p.id"
+            )
+        )
 
     # 7) Drop old tables and rename tmp tables into place
     op.drop_table("prompt_metrics")
@@ -269,8 +282,8 @@ def upgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
-        sa.PrimaryKeyConstraint("id", name="pk_resources"),
+        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource_tmp"),
+        sa.PrimaryKeyConstraint("id", name="pk_resources_tmp"),
     )
 
     # Copy data into resources_tmp using id_new via SQLAlchemy Core
@@ -414,7 +427,7 @@ def upgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_resource_metrics_resource_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_resource_metrics"),
+        sa.PrimaryKeyConstraint("id", name="pk_resource_metrics_tmp"),
     )
 
     # copy resource_metrics mapping old int->new uuid
@@ -429,7 +442,7 @@ def upgrade() -> None:
         "server_resource_association_tmp",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("resource_id", sa.String(36), nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc"),
+        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc_tmp"),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_server_resource_resource_id"),
     )
@@ -439,7 +452,20 @@ def upgrade() -> None:
     )
 
     # Update observability spans that reference resources: remap integer resource IDs -> new uuid
-    conn.execute(text("UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"))
+    # Cast for PostgreSQL to avoid varchar = integer operator error
+    dialect = conn.dialect.name if hasattr(conn, "dialect") else None
+    if dialect == "postgresql":
+        conn.execute(
+            text(
+                "UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id::text"
+            )
+        )
+    else:
+        conn.execute(
+            text(
+                "UPDATE observability_spans SET resource_id = r.id_new FROM resources r WHERE observability_spans.resource_type = 'resources' AND observability_spans.resource_id = r.id"
+            )
+        )
 
     # resource_subscriptions_tmp
     op.create_table(
@@ -511,8 +537,8 @@ def downgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompts"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt_old"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompts_old"),
     )
 
     # 2) Insert rows from current prompts into prompts_old letting id autoincrement.
@@ -558,7 +584,7 @@ def downgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_prompt_metrics_prompt_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompt_metric"),
+        sa.PrimaryKeyConstraint("id", name="pk_prompt_metric_old"),
     )
 
     # Copy metrics mapping prompt_id via Python mapping
@@ -579,7 +605,7 @@ def downgrade() -> None:
         "server_prompt_association_old",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("prompt_id", sa.Integer, nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc"),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc_old"),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_server_prompt_prompt_id"),
     )
@@ -643,8 +669,8 @@ def downgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
-        sa.PrimaryKeyConstraint("id", name="pk_resources"),
+        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource_old"),
+        sa.PrimaryKeyConstraint("id", name="pk_resources_old"),
     )
 
     # 2) Insert rows from current resources into resources_old letting id autoincrement.
@@ -709,7 +735,7 @@ def downgrade() -> None:
         "server_resource_association_old",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("resource_id", sa.Integer, nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc"),
+        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc_old"),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_old.id"], name="fk_server_resource_resource_id"),
     )
