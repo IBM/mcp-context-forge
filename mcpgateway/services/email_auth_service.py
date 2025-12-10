@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailUser, Role
+from mcpgateway.db import EmailAuthEvent, EmailUser, Role, EmailTeam
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.role_service import RoleService
@@ -332,10 +332,18 @@ class EmailAuthService:
             platform_owner_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_admin, "global")
             platform_member_role: Optional[Role] = await role_service.get_role_by_name(settings.default_global_role_member, "global")
 
-            if user.is_admin:
-                await role_service.assign_role_to_user(user_email=user.email, role_id=platform_owner_role.id, scope="global", scope_id=None, granted_by=user.email, expires_at=None)
+            team_service = TeamManagementService(self.db)
+            global_team: EmailTeam = await team_service.get_team_by_slug("global")
+
+            if global_team:
+                global_team_id = global_team.id
             else:
-                await role_service.assign_role_to_user(user_email=user.email, role_id=platform_member_role.id, scope="global", scope_id=None, granted_by=user.email, expires_at=None)
+                global_team_id = None
+
+            if user.is_admin:
+                await role_service.assign_role_to_user(user_email=user.email, role_id=platform_owner_role.id, scope="global", scope_id=global_team_id, granted_by=user.email, expires_at=None)
+            else:
+                await role_service.assign_role_to_user(user_email=user.email, role_id=platform_member_role.id, scope="global", scope_id=global_team_id, granted_by=user.email, expires_at=None)
 
             logger.info(f"Created new user: {email}")
 
