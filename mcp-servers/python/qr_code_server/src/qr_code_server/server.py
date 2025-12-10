@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastmcp import FastMCP
 
 from qr_code_server.config import config
+from qr_code_server.tools.decoder import QRDecodingRequest
 from qr_code_server.tools.generator import (
     BatchQRGenerationRequest,
     QRGenerationRequest,
@@ -115,7 +116,21 @@ async def decode_qr_code(
     return_positions: bool = False,
     preprocessing: bool = True,
 ):
-    pass
+    try:
+        async with _acquire_request_slot("generate_batch_qr_codes"):
+            request = QRDecodingRequest(
+                image_data=image_data,
+                image_format=image_format,
+                multiple_codes=multiple_codes,
+                return_positions=return_positions,
+                preprocessing=preprocessing,
+            )
+            return decode_qr_code(request)
+    except RuntimeError as e:
+        return {"success": False, "error": str(e)}
+    except Exception as e:
+        logger.error(f"Decode QR code data error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 @mcp.tool(description="Validate and analyze QR code data before generation")
@@ -141,6 +156,12 @@ async def validate_qr_data(
     except Exception as e:
         logger.error(f"Validate QR code data error: {e}")
         return {"success": False, "error": str(e)}
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "version": "1.0.0"}
 
 
 def main():
