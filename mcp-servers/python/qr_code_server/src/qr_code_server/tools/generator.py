@@ -153,7 +153,9 @@ def create_batch_qr_codes(request: BatchQRGenerationRequest):
                 if hasattr(img, "to_string"):
                     img = img.to_string()
                 elif isinstance(img, PilImage):
-                    img = img.tobytes()
+                    buffer = BytesIO()
+                    img.save(buffer, format=request.format)
+                    img = buffer.getvalue()
                 try:
                     zf.writestr(filename, img)
                 except Exception as e:
