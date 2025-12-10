@@ -35,7 +35,7 @@ from importlib.resources import files
 import os
 import tempfile
 import time
-from typing import Any, cast
+from typing import Any, cast, Optional
 
 # Third-Party
 from alembic import command
@@ -45,7 +45,7 @@ from sqlalchemy import create_engine, inspect
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool
+from mcpgateway.db import A2AAgent, Base, EmailTeam, EmailUser, Gateway, Prompt, Resource, Server, SessionLocal, Tool, Role
 from mcpgateway.services.logging_service import LoggingService
 
 # Migration lock to prevent concurrent migrations from multiple workers
@@ -90,6 +90,27 @@ async def bootstrap_admin_user() -> None:
                 full_name=settings.platform_owner_full_name,
                 is_admin=True,
             )
+
+            from mcpgateway.services.team_management_service import TeamManagementService
+
+            team_service = TeamManagementService(db)
+
+            public_team: Optional[EmailTeam] = await team_service.create_team(name="public", description="Defualt public team",
+                                           created_by=settings.platform_owner_email, visibility="public",
+                                           max_members=None)
+            
+            if public_team:
+                from mcpgateway.services.role_service import RoleService
+
+                role_service = RoleService(db)
+
+                platform_owner_role: Optional[Role] = await role_service.get_role_by_name("platform_owner", "global")
+
+                if platform_owner_role:
+
+                    await role_service.assign_role_to_user(settings.platform_owner_email,
+                                                       platform_owner_role.id, "global",
+                                                       public_team.id, settings.platform_owner_email)
 
             # Mark admin user as email verified and require password change on first login
             # First-Party

@@ -288,7 +288,7 @@ async def get_allowed_team_ids(request: Request) -> List[str]:
         return []
 
     for scope in granted_scopes:
-        if scope.get("scope") == "team":
+        if scope.get("scope") in ["global", "team"]:
             team_id = scope.get("scope_id")
             if team_id:
                 allowed_teams.append(team_id)
