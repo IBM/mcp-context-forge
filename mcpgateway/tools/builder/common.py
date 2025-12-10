@@ -727,6 +727,7 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
         Final image tag (registry path if registry enabled, otherwise original tag)
 
     Raises:
+        TypeError: If component is not a BuildableConfig instance
         ValueError: If registry enabled but missing required configuration
         subprocess.CalledProcessError: If tag or push command fails
 

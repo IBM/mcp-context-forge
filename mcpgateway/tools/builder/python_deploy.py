@@ -346,6 +346,9 @@ class MCPStackPython(CICDModule):
 
         Supports both engine names ("docker", "podman") and full paths ("/opt/podman/bin/podman").
 
+        Args:
+            config: MCP Stack configuration containing deployment settings
+
         Returns:
             Name or full path to available engine
 
