@@ -8,13 +8,13 @@
 
 | Release | Due Date    | Completion | Status       | Description |
 | ------- | ----------- | ---------- | ------------ | ----------- |
-| 1.6.0   | 02 Jun 2026 |  0 %       | Open         | New MCP Servers and Agents |
-| 1.5.0   | 05 May 2026 |  0 %       | Open         | Documentation, Technical Debt, Bugfixes |
-| 1.4.0   | 07 Apr 2026 |  0 %       | Open         | Technical Debt and Quality |
-| 1.3.0   | 03 Mar 2026 |  0 %       | Open         | Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt |
-| 1.2.0   | 03 Feb 2026 |  0 %       | Open         | Release 1.2.0 - Catalog Enhancements, Ratings, experience and UI |
-| 1.1.0   | 06 Jan 2026 |  0 %       | Open         | Post-GA Testing, Bugfixing, Documentation, Performance and Scale |
-| 1.0.0   | 02 Dec 2025 |  4 %       | Open         | Release 1.0 General Availability & Release Candidate Hardening - stable & audited |
+| 1.3.0   | 26 May 2026 |  0 %       | Open         | New MCP Servers and Agents |
+| 1.2.0   | 28 Apr 2026 |  0 %       | Open         | Documentation, Technical Debt, Bugfixes |
+| 1.1.0   | 31 Mar 2026 |  0 %       | Open         | Technical Debt and Quality |
+| 1.0.0-GA | 24 Feb 2026 |  0 %       | Open         | Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt |
+| 1.0.0-RC1 | 03 Feb 2026 |  0 %       | Open         | Release Candidate 1 - Catalog Enhancements, Ratings, experience and UI |
+| 1.0.0-BETA-2 | 20 Jan 2026 |  1 %       | Open         | Testing, Bugfixing, Documentation, Performance and Scale |
+| 1.0.0-BETA-1 | 16 Dec 2025 |  12 %       | Open         | Release 1.0.0-BETA-1 |
 | 0.9.0   | 04 Nov 2025 | 36 %       | Open         | Interoperability, marketplaces & advanced connectivity |
 | 0.8.0   | 07 Oct 2025 | 100 %      | **Closed**   | Enterprise Security & Policy Guardrails |
 | 0.7.0   | 16 Sep 2025 | 100 %      | **Closed**   | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
@@ -27,10 +27,10 @@
 
 ---
 
-## Release 1.6.0
+## Release 1.3.0
 
-!!! warning "Release 1.6.0 - In Progress (0%)"
-    **Due:** 02 Jun 2026 | **Status:** Open
+!!! warning "Release 1.3.0 - In Progress (0%)"
+    **Due:** 26 May 2026 | **Status:** Open
     New MCP Servers and Agents
 
 ???+ info "✨ Features - Remaining (1)"
@@ -40,28 +40,28 @@
 ---
 
 
-## Release 1.5.0
+## Release 1.2.0
 
-!!! warning "Release 1.5.0 - In Progress (0%)"
-    **Due:** 05 May 2026 | **Status:** Open
+!!! warning "Release 1.2.0 - In Progress (0%)"
+    **Due:** 28 Apr 2026 | **Status:** Open
     Documentation, Technical Debt, Bugfixes
 
 ---
 
 
-## Release 1.4.0
+## Release 1.1.0
 
-!!! warning "Release 1.4.0 - In Progress (0%)"
-    **Due:** 07 Apr 2026 | **Status:** Open
+!!! warning "Release 1.1.0 - In Progress (0%)"
+    **Due:** 31 Mar 2026 | **Status:** Open
     Technical Debt and Quality
 
 ---
 
 
-## Release 1.3.0
+## Release 1.0.0-GA
 
-!!! warning "Release 1.3.0 - In Progress (0%)"
-    **Due:** 03 Mar 2026 | **Status:** Open
+!!! warning "Release 1.0.0-GA - In Progress (0%)"
+    **Due:** 24 Feb 2026 | **Status:** Open
     Catalog Improvements, A2A Improvements, MCP Standard Review and Sync, Technical Debt
 
 ???+ info "✨ Features - Remaining (1)"
@@ -71,11 +71,11 @@
 ---
 
 
-## Release 1.2.0
+## Release 1.0.0-RC1
 
-!!! warning "Release 1.2.0 - In Progress (0%)"
+!!! warning "Release 1.0.0-RC1 - In Progress (0%)"
     **Due:** 03 Feb 2026 | **Status:** Open
-    Release 1.2.0 - Catalog Enhancements, Ratings, experience and UI
+    Release Candidate 1 - Catalog Enhancements, Ratings, experience and UI
 
 ???+ info "✨ Features - Remaining (3)"
 
@@ -86,11 +86,11 @@
 ---
 
 
-## Release 1.1.0
+## Release 1.0.0-BETA-2
 
-!!! warning "Release 1.1.0 - In Progress (0%)"
-    **Due:** 06 Jan 2026 | **Status:** Open
-    Post-GA Testing, Bugfixing, Documentation, Performance and Scale
+!!! warning "Release 1.0.0-BETA-2 - In Progress (1%)"
+    **Due:** 20 Jan 2026 | **Status:** Open
+    Testing, Bugfixing, Documentation, Performance and Scale
 
 ???+ info "✨ Features - Remaining (38)"
 
@@ -144,11 +144,11 @@
 ---
 
 
-## Release 1.0.0
+## Release 1.0.0-BETA-1
 
-!!! warning "Release 1.0.0 - In Progress (4%)"
-    **Due:** 02 Dec 2025 | **Status:** Open
-    Release 1.0 General Availability & Release Candidate Hardening - stable & audited
+!!! warning "Release 1.0.0-BETA-1 - In Progress (12%)"
+    **Due:** 16 Dec 2025 | **Status:** Open
+    Release 1.0.0-BETA-1
 
 ???+ info "📋 Epics - Remaining (12)"
 
