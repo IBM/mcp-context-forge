@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from fastmcp import FastMCP
 
 from qr_code_server.config import config
-from qr_code_server.tools.decoder import QRDecodingRequest
+from qr_code_server.tools.decoder import QRDecodingRequest, qr_decode
 from qr_code_server.tools.generator import (
     BatchQRGenerationRequest,
     QRGenerationRequest,
@@ -127,7 +127,7 @@ async def decode_qr_code(
                 return_positions=return_positions,
                 preprocessing=preprocessing,
             )
-            return decode_qr_code(request)
+            return qr_decode(request)
     except RuntimeError as e:
         return {"success": False, "error": str(e)}
     except Exception as e:
