@@ -31,7 +31,7 @@ class QRDecodingRequest(BaseModel):
         return v
 
 
-def decode_qr_code(request: QRDecodingRequest) -> dict[str, Any]:
+def qr_decode(request: QRDecodingRequest) -> dict[str, Any]:
     """
     Decode QR codes from an image. Handles single/multi code detection, image preprocessing,
     and robust OpenCV signature differences.

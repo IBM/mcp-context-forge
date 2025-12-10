@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-from qr_code_server.tools.decoder import QRDecodingRequest, decode_qr_code
+from qr_code_server.tools.decoder import QRDecodingRequest, qr_decode
 
 logger = logging.getLogger("qr_code_server")
 
@@ -30,7 +30,7 @@ def test_decode_qr_code_with_positions(tmp_path):
         return_positions=True,
         preprocessing=False
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is True
     assert "positions" in result
@@ -42,7 +42,7 @@ def test_decode_invalid_image_file():
     dec_req = QRDecodingRequest(
         image_data="/nonexistent/path/image.png"
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is False
     assert "error" in result
@@ -53,7 +53,7 @@ def test_decode_invalid_base64():
     dec_req = QRDecodingRequest(
         image_data="not_valid_base64!!!"
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is False
     assert result["error"] == "Invalid base64 image data"
@@ -71,7 +71,7 @@ def test_decode_non_qr_image(tmp_path):
         image_data=str(img_path),
         multiple_codes=False
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is False
 
@@ -89,7 +89,7 @@ def test_decode_large_image():
     # This forces load_image to reject it as "too large"
     with patch("qr_code_server.tools.decoder.convert_to_bytes", return_value=1000):
         dec_req = QRDecodingRequest(image_data=img_base64)
-        result = decode_qr_code(dec_req)
+        result = qr_decode(dec_req)
 
     assert result["success"] is False
     assert "too large" in result.get("error", "").lower()
@@ -111,7 +111,7 @@ def test_decode_with_preprocessing(tmp_path):
         image_data=str(gen_path),
         preprocessing=True
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is True
 
@@ -132,7 +132,7 @@ def test_decode_without_preprocessing(tmp_path):
         image_data=str(gen_path),
         preprocessing=False
     )
-    result = decode_qr_code(dec_req)
+    result = qr_decode(dec_req)
 
     assert result["success"] is True
 
@@ -143,7 +143,7 @@ def test_decode_load_image_error():
 
     with patch("qr_code_server.tools.decoder.load_image", side_effect=LoadImageError("Test error")):
         dec_req = QRDecodingRequest(image_data="dummy.png")
-        result = decode_qr_code(dec_req)
+        result = qr_decode(dec_req)
 
         assert result["success"] is False
         assert "Test error" in result["error"]
