@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import stat
 import types
 
 import pytest
@@ -8,6 +9,7 @@ from fastmcp.client import Client
 from qr_code_server.server import _acquire_request_slot, mcp
 from qr_code_server.tools.decoder import QRDecodingRequest
 from qr_code_server.tools.generator import BatchQRGenerationRequest, QRGenerationRequest
+from qr_code_server.tools.validator import QRValidationRequest
 
 logger = logging.getLogger("qr_code_server")
 
@@ -133,6 +135,24 @@ async def test_generate_qr_code(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_generate_qr_code_fails(tmp_path):
+    """Test generate_qr_code fails"""
+    tmp_path.chmod(stat.S_IRUSR)
+    request = QRGenerationRequest(
+        data="test",
+        save_path=str(tmp_path)
+    ).model_dump()
+
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="generate_qr_code",
+            arguments=request
+        )
+        # OS Permission Error
+        assert "[Errno 13]" in str(response.content)
+
+
+@pytest.mark.asyncio
 async def test_generate_batch_qr_code(tmp_path):
     """Test generate batch qr codes"""
     request = BatchQRGenerationRequest(
@@ -146,6 +166,25 @@ async def test_generate_batch_qr_code(tmp_path):
             arguments=request
         )
         assert "QR code images saved in zip" in str(response.content)
+
+
+@pytest.mark.asyncio
+async def test_generate_batch_qr_code_fails(tmp_path):
+    """TTest generate batch qr codes fails"""
+    tmp_path.chmod(stat.S_IRUSR)
+    request = BatchQRGenerationRequest(
+        data_list=["test", "test1"],
+        format="png",
+        output_directory=str(tmp_path),
+    ).model_dump()
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="generate_batch_qr_codes",
+            arguments=request
+        )
+        # OS Permission Error
+        assert "[Errno 13]" in str(response.content)
+
 
 @pytest.mark.asyncio
 async def test_decode_qr_code():
@@ -171,9 +210,53 @@ async def test_decode_qr_code():
         assert encoded_string in str(response.content)
 
 
+@pytest.mark.asyncio
+async def test_decode_qr_code_fails():
+    """Test generate decode qr codes image base64 fail"""
+    image = (
+        'No image here'
+    )
+    request = QRDecodingRequest(
+        image_data=image,
+    ).model_dump()
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="decode_qr_code",
+            arguments=request
+        )
+        assert "error" in str(response.content)
+
 
 @pytest.mark.asyncio
-async def test_generate_batch_qr_codes():
-    """Test that generate_batch_qr_codes respects semaphore (tested via concurrency tests)."""
-    # Semaphore behavior is validated via test_semaphore_limits_concurrent_requests
-    pass
+async def test_validate_qr_data():
+    """Test validate qr data"""
+    request = QRValidationRequest(
+        data="small test data",
+        version=10,
+    ).model_dump()
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="validate_qr_data",
+            arguments=request
+        )
+        assert "suggested_version" in str(response.content)
+
+
+@pytest.mark.asyncio
+async def test_validate_qr_data_fails():
+    """Test validate qr data fails"""
+    request = QRValidationRequest(
+        data="test" * 100,
+        target_version=1,
+        error_correction="H",
+        check_capacity=True,
+        suggest_optimization=False
+    ).model_dump()
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="validate_qr_data",
+            arguments=request
+        )
+        assert "Data does not fit" in str(response.content)
+
+
