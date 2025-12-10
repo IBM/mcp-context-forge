@@ -199,6 +199,13 @@ class EmailAuthService:
             PasswordValidationError: If password doesn't meet requirements
 
         Examples:
+            # Ensure examples run with the default (lenient) password policy
+            >>> from mcpgateway.services import email_auth_service as _eas
+            >>> _eas.settings.password_require_uppercase = False
+            >>> _eas.settings.password_require_lowercase = False
+            >>> _eas.settings.password_require_numbers = False
+            >>> _eas.settings.password_require_special = False
+
             >>> service = EmailAuthService(None)
             >>> service.validate_password("password123")
             True

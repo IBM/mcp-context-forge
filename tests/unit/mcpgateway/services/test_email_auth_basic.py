@@ -40,7 +40,21 @@ class TestEmailAuthBasic:
 
     @pytest.fixture
     def service(self, mock_db):
-        """Create email auth service instance."""
+        """Create email auth service instance.
+
+        Reset password policy flags on the imported settings object so that
+        local environment variables (e.g. PASSWORD_REQUIRE_* exported in
+        the developer shell) do not affect the expectation of default
+        behavior in unit tests.
+        """
+        # Ensure default password policy flags for tests
+        from mcpgateway.services import email_auth_service as _eas
+
+        _eas.settings.password_require_uppercase = False
+        _eas.settings.password_require_lowercase = False
+        _eas.settings.password_require_numbers = False
+        _eas.settings.password_require_special = False
+
         return EmailAuthService(mock_db)
 
     # =========================================================================
@@ -361,7 +375,18 @@ class TestEmailAuthServiceUserManagement:
 
     @pytest.fixture
     def service(self, mock_db):
-        """Create email auth service instance."""
+        """Create email auth service instance with deterministic password policy flags.
+
+        Reset password policy flags on the imported settings object so local environment
+        variables do not influence test expectations.
+        """
+        from mcpgateway.services import email_auth_service as _eas
+
+        _eas.settings.password_require_uppercase = False
+        _eas.settings.password_require_lowercase = False
+        _eas.settings.password_require_numbers = False
+        _eas.settings.password_require_special = False
+
         return EmailAuthService(mock_db)
 
     @pytest.fixture
