@@ -2993,6 +2993,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_require_uppercase": settings.password_require_uppercase,
             "password_require_lowercase": settings.password_require_lowercase,
             "password_require_numbers": settings.password_require_numbers,
+            "password_require_min_length": settings.password_require_min_length,
             "password_require_special": settings.password_require_special,
             "password_min_length": settings.password_min_length,
         },

@@ -301,6 +301,7 @@ class Settings(BaseSettings):
 
     # Password Policy Configuration
     password_min_length: int = Field(default=8, description="Minimum password length")
+    password_require_min_length: bool = Field(default=True, description="Require minimum length in passwords")
     password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
     password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
