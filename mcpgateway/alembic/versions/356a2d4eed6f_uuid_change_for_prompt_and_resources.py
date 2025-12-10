@@ -25,6 +25,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     conn = op.get_bind()
+    dialect = conn.dialect.name if hasattr(conn, "dialect") else None
 
     # 1) Add temporary id_new column to prompts and populate with uuid.hex
     op.add_column("prompts", sa.Column("id_new", sa.String(36), nullable=True))
@@ -35,6 +36,8 @@ def upgrade() -> None:
         conn.execute(text("UPDATE prompts SET id_new = :new WHERE id = :old"), {"new": new_id, "old": old_id})
 
     # 2) Create new prompts table (temporary) with varchar(36) id
+    prompts_pk_name = "pk_prompts" if dialect == "sqlite" else "pk_prompts_tmp"
+    prompts_uq_name = "uq_team_owner_name_prompt" if dialect == "sqlite" else "uq_team_owner_name_prompt_tmp"
     op.create_table(
         "prompts_tmp",
         sa.Column("id", sa.String(36), primary_key=True, nullable=False),
@@ -61,8 +64,8 @@ def upgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt_tmp"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompts_tmp"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name=prompts_uq_name),
+        sa.PrimaryKeyConstraint("id", name=prompts_pk_name),
     )
 
     # 3) Copy data from prompts into prompts_tmp using id_new as id
@@ -184,6 +187,7 @@ def upgrade() -> None:
     conn.execute(ins)
 
     # 4) Create new prompt_metrics table with prompt_id varchar(36)
+    prompt_metrics_pk_name = "pk_prompt_metrics" if dialect == "sqlite" else "pk_prompt_metrics_tmp"
     op.create_table(
         "prompt_metrics_tmp",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
@@ -193,7 +197,7 @@ def upgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_prompt_metrics_prompt_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompt_metrics_tmp"),
+        sa.PrimaryKeyConstraint("id", name=prompt_metrics_pk_name),
     )
 
     # 5) Copy prompt_metrics mapping old integer prompt_id -> new uuid via join
@@ -204,11 +208,12 @@ def upgrade() -> None:
     )
 
     # 6) Create new server_prompt_association table with prompt_id varchar(36)
+    server_prompt_assoc_pk = "pk_server_prompt_assoc" if dialect == "sqlite" else "pk_server_prompt_assoc_tmp"
     op.create_table(
         "server_prompt_association_tmp",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("prompt_id", sa.String(36), nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc_tmp"),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name=server_prompt_assoc_pk),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_tmp.id"], name="fk_server_prompt_prompt_id"),
     )
@@ -239,25 +244,27 @@ def upgrade() -> None:
     op.rename_table("prompts_tmp", "prompts")
     op.rename_table("prompt_metrics_tmp", "prompt_metrics")
     op.rename_table("server_prompt_association_tmp", "server_prompt_association")
-    # Drop dependent foreign keys first to allow primary key rename/recreation
-    op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
-    op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
+    # For SQLite we cannot ALTER constraints directly; skip constraint renames there.
+    if dialect != "sqlite":
+        # Drop dependent foreign keys first to allow primary key rename/recreation
+        op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
+        op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
 
-    # Restore original constraint names for prompts and dependent tables
-    op.drop_constraint("pk_prompts_tmp", "prompts", type_="primary")
-    op.create_primary_key("pk_prompts", "prompts", ["id"])
-    op.drop_constraint("uq_team_owner_name_prompt_tmp", "prompts", type_="unique")
-    op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
+        # Restore original constraint names for prompts and dependent tables
+        op.drop_constraint("pk_prompts_tmp", "prompts", type_="primary")
+        op.create_primary_key("pk_prompts", "prompts", ["id"])
+        op.drop_constraint("uq_team_owner_name_prompt_tmp", "prompts", type_="unique")
+        op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
 
-    op.drop_constraint("pk_prompt_metrics_tmp", "prompt_metrics", type_="primary")
-    op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
+        op.drop_constraint("pk_prompt_metrics_tmp", "prompt_metrics", type_="primary")
+        op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
 
-    op.drop_constraint("pk_server_prompt_assoc_tmp", "server_prompt_association", type_="primary")
-    op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
+        op.drop_constraint("pk_server_prompt_assoc_tmp", "server_prompt_association", type_="primary")
+        op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
 
-    # Recreate foreign keys referencing the new primary key name
-    op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
-    op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
+        # Recreate foreign keys referencing the new primary key name
+        op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
+        op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
 
     # -----------------------------
     # Resources -> change id to VARCHAR(32) and remap FKs
@@ -271,6 +278,8 @@ def upgrade() -> None:
         conn.execute(text("UPDATE resources SET id_new = :new WHERE id = :old"), {"new": new_id, "old": old_id})
 
     # Create resources_tmp with varchar(32) id
+    resources_pk_name = "pk_resources" if dialect == "sqlite" else "pk_resources_tmp"
+    resources_uq_name = "uq_team_owner_uri_resource" if dialect == "sqlite" else "uq_team_owner_uri_resource_tmp"
     op.create_table(
         "resources_tmp",
         sa.Column("id", sa.String(36), primary_key=True, nullable=False),
@@ -301,8 +310,8 @@ def upgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource_tmp"),
-        sa.PrimaryKeyConstraint("id", name="pk_resources_tmp"),
+        sa.UniqueConstraint("team_id", "owner_email", "uri", name=resources_uq_name),
+        sa.PrimaryKeyConstraint("id", name=resources_pk_name),
     )
 
     # Copy data into resources_tmp using id_new via SQLAlchemy Core
@@ -437,6 +446,7 @@ def upgrade() -> None:
     conn.execute(ins_res)
 
     # resource_metrics_tmp with resource_id varchar(32)
+    resource_metrics_pk = "pk_resource_metrics" if dialect == "sqlite" else "pk_resource_metrics_tmp"
     op.create_table(
         "resource_metrics_tmp",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
@@ -446,7 +456,7 @@ def upgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_resource_metrics_resource_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_resource_metrics_tmp"),
+        sa.PrimaryKeyConstraint("id", name=resource_metrics_pk),
     )
 
     # copy resource_metrics mapping old int->new uuid
@@ -457,11 +467,12 @@ def upgrade() -> None:
     )
 
     # server_resource_association_tmp
+    server_resource_assoc_pk = "pk_server_resource_assoc" if dialect == "sqlite" else "pk_server_resource_assoc_tmp"
     op.create_table(
         "server_resource_association_tmp",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("resource_id", sa.String(36), nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "resource_id", name="pk_server_resource_assoc_tmp"),
+        sa.PrimaryKeyConstraint("server_id", "resource_id", name=server_resource_assoc_pk),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_resource_server_id"),
         sa.ForeignKeyConstraint(["resource_id"], ["resources_tmp.id"], name="fk_server_resource_resource_id"),
     )
@@ -513,27 +524,29 @@ def upgrade() -> None:
     op.rename_table("resource_metrics_tmp", "resource_metrics")
     op.rename_table("server_resource_association_tmp", "server_resource_association")
     op.rename_table("resource_subscriptions_tmp", "resource_subscriptions")
-    # Drop dependent foreign keys first to allow primary key rename/recreation
-    op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
-    op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
-    op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
+    # For SQLite we cannot ALTER constraints directly; skip constraint renames there.
+    if dialect != "sqlite":
+        # Drop dependent foreign keys first to allow primary key rename/recreation
+        op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
+        op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
+        op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
 
-    # Restore original constraint names for resources and dependent tables
-    op.drop_constraint("pk_resources_tmp", "resources", type_="primary")
-    op.create_primary_key("pk_resources", "resources", ["id"])
-    op.drop_constraint("uq_team_owner_uri_resource_tmp", "resources", type_="unique")
-    op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
+        # Restore original constraint names for resources and dependent tables
+        op.drop_constraint("pk_resources_tmp", "resources", type_="primary")
+        op.create_primary_key("pk_resources", "resources", ["id"])
+        op.drop_constraint("uq_team_owner_uri_resource_tmp", "resources", type_="unique")
+        op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
 
-    op.drop_constraint("pk_resource_metrics_tmp", "resource_metrics", type_="primary")
-    op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
+        op.drop_constraint("pk_resource_metrics_tmp", "resource_metrics", type_="primary")
+        op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
 
-    op.drop_constraint("pk_server_resource_assoc_tmp", "server_resource_association", type_="primary")
-    op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
+        op.drop_constraint("pk_server_resource_assoc_tmp", "server_resource_association", type_="primary")
+        op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
 
-    # Recreate foreign keys referencing restored primary key
-    op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
-    op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
-    op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
+        # Recreate foreign keys referencing restored primary key
+        op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
+        op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
+        op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
 
     with op.batch_alter_table("servers") as batch_op:
         batch_op.alter_column(
@@ -548,9 +561,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     conn = op.get_bind()
+    dialect = conn.dialect.name if hasattr(conn, "dialect") else None
 
     # Best-effort: rebuild integer prompt ids and remap dependent FK columns.
     # 1) Create old-style prompts table with integer id (autoincrement)
+    # If a previous partial downgrade left these tables behind, drop them first
+    conn.execute(text("DROP TABLE IF EXISTS prompts_old"))
+    prompts_old_pk = "pk_prompts" if dialect == "sqlite" else "pk_prompts_old"
+    prompts_old_uq = "uq_team_owner_name_prompt" if dialect == "sqlite" else "uq_team_owner_name_prompt_old"
     op.create_table(
         "prompts_old",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True, nullable=False),
@@ -577,8 +595,8 @@ def downgrade() -> None:
         sa.Column("team_id", sa.String(36), nullable=True),
         sa.Column("owner_email", sa.String(255), nullable=True),
         sa.Column("visibility", sa.String(20), nullable=False, server_default="public"),
-        sa.UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt_old"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompts_old"),
+        sa.UniqueConstraint("team_id", "owner_email", "name", name=prompts_old_uq),
+        sa.PrimaryKeyConstraint("id", name=prompts_old_pk),
     )
 
     # 2) Insert rows from current prompts into prompts_old letting id autoincrement.
@@ -615,6 +633,8 @@ def downgrade() -> None:
         mapping[row[0]] = row[4]
 
     # 4) Recreate prompt_metrics_old and remap prompt_id
+    conn.execute(text("DROP TABLE IF EXISTS prompt_metrics_old"))
+    prompt_metrics_old_pk = "pk_prompt_metrics" if dialect == "sqlite" else "pk_prompt_metric_old"
     op.create_table(
         "prompt_metrics_old",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
@@ -624,7 +644,7 @@ def downgrade() -> None:
         sa.Column("is_success", sa.Boolean, nullable=False),
         sa.Column("error_message", sa.Text, nullable=True),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_prompt_metrics_prompt_id"),
-        sa.PrimaryKeyConstraint("id", name="pk_prompt_metric_old"),
+        sa.PrimaryKeyConstraint("id", name=prompt_metrics_old_pk),
     )
 
     # Copy metrics mapping prompt_id via Python mapping
@@ -641,11 +661,13 @@ def downgrade() -> None:
         )
 
     # 5) Recreate server_prompt_association_old and remap prompt_id
+    conn.execute(text("DROP TABLE IF EXISTS server_prompt_association_old"))
+    server_prompt_assoc_old_pk = "pk_server_prompt_assoc" if dialect == "sqlite" else "pk_server_prompt_assoc_old"
     op.create_table(
         "server_prompt_association_old",
         sa.Column("server_id", sa.String(36), nullable=False),
         sa.Column("prompt_id", sa.Integer, nullable=False),
-        sa.PrimaryKeyConstraint("server_id", "prompt_id", name="pk_server_prompt_assoc_old"),
+        sa.PrimaryKeyConstraint("server_id", "prompt_id", name=server_prompt_assoc_old_pk),
         sa.ForeignKeyConstraint(["server_id"], ["servers.id"], name="fk_server_prompt_server_id"),
         sa.ForeignKeyConstraint(["prompt_id"], ["prompts_old.id"], name="fk_server_prompt_prompt_id"),
     )
@@ -675,30 +697,33 @@ def downgrade() -> None:
     op.rename_table("prompt_metrics_old", "prompt_metrics")
     op.rename_table("server_prompt_association_old", "server_prompt_association")
 
-    # Drop dependent foreign keys first to allow primary key rename/recreation
-    op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
-    op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
+    # For SQLite we cannot ALTER constraints directly; skip those steps there.
+    if dialect != "sqlite":
+        # Drop dependent foreign keys first to allow primary key rename/recreation
+        op.drop_constraint("fk_prompt_metrics_prompt_id", "prompt_metrics", type_="foreignkey")
+        op.drop_constraint("fk_server_prompt_prompt_id", "server_prompt_association", type_="foreignkey")
 
-    # Restore original constraint names after renaming old tables back
-    op.drop_constraint("pk_prompts_old", "prompts", type_="primary")
-    op.create_primary_key("pk_prompts", "prompts", ["id"])
-    op.drop_constraint("uq_team_owner_name_prompt_old", "prompts", type_="unique")
-    op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
+        # Restore original constraint names after renaming old tables back
+        op.drop_constraint("pk_prompts_old", "prompts", type_="primary")
+        op.create_primary_key("pk_prompts", "prompts", ["id"])
+        op.drop_constraint("uq_team_owner_name_prompt_old", "prompts", type_="unique")
+        op.create_unique_constraint("uq_team_owner_name_prompt", "prompts", ["team_id", "owner_email", "name"])
 
-    op.drop_constraint("pk_prompt_metric_old", "prompt_metrics", type_="primary")
-    op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
+        op.drop_constraint("pk_prompt_metric_old", "prompt_metrics", type_="primary")
+        op.create_primary_key("pk_prompt_metrics", "prompt_metrics", ["id"])
 
-    op.drop_constraint("pk_server_prompt_assoc_old", "server_prompt_association", type_="primary")
-    op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
+        op.drop_constraint("pk_server_prompt_assoc_old", "server_prompt_association", type_="primary")
+        op.create_primary_key("pk_server_prompt_assoc", "server_prompt_association", ["server_id", "prompt_id"])
 
-    # Recreate foreign keys referencing the new primary key name
-    op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
-    op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
+        # Recreate foreign keys referencing the new primary key name
+        op.create_foreign_key("fk_prompt_metrics_prompt_id", "prompt_metrics", "prompts", ["prompt_id"], ["id"])
+        op.create_foreign_key("fk_server_prompt_prompt_id", "server_prompt_association", "prompts", ["prompt_id"], ["id"])
 
     # =============================
     # Resources downgrade: rebuild integer ids and remap FKs
     # =============================
     # 1) Create old-style resources table with integer id (autoincrement)
+    conn.execute(text("DROP TABLE IF EXISTS resources_old"))
     op.create_table(
         "resources_old",
         sa.Column("id", sa.Integer, primary_key=True, autoincrement=True, nullable=False),
@@ -766,6 +791,7 @@ def downgrade() -> None:
         mapping_res[row[0]] = row[4]
 
     # 4) Recreate resource_metrics_old and remap resource_id
+    conn.execute(text("DROP TABLE IF EXISTS resource_metrics_old"))
     op.create_table(
         "resource_metrics_old",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
@@ -791,6 +817,7 @@ def downgrade() -> None:
         )
 
     # 5) Recreate server_resource_association_old and remap resource_id
+    conn.execute(text("DROP TABLE IF EXISTS server_resource_association_old"))
     op.create_table(
         "server_resource_association_old",
         sa.Column("server_id", sa.String(36), nullable=False),
@@ -808,6 +835,7 @@ def downgrade() -> None:
         conn.execute(text("INSERT INTO server_resource_association_old (server_id, resource_id) VALUES (:sid, :rid)"), {"sid": server_id, "rid": int_id})
 
     # 6) Recreate resource_subscriptions_old and remap resource_id
+    conn.execute(text("DROP TABLE IF EXISTS resource_subscriptions_old"))
     op.create_table(
         "resource_subscriptions_old",
         sa.Column("id", sa.Integer, primary_key=True, nullable=False),
@@ -846,27 +874,29 @@ def downgrade() -> None:
     op.rename_table("resource_metrics_old", "resource_metrics")
     op.rename_table("server_resource_association_old", "server_resource_association")
     op.rename_table("resource_subscriptions_old", "resource_subscriptions")
-    # Drop dependent foreign keys first to allow primary key rename/recreation
-    op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
-    op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
-    op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
+    # For SQLite we cannot ALTER constraints directly; skip those steps there.
+    if dialect != "sqlite":
+        # Drop dependent foreign keys first to allow primary key rename/recreation
+        op.drop_constraint("fk_resource_metrics_resource_id", "resource_metrics", type_="foreignkey")
+        op.drop_constraint("fk_server_resource_resource_id", "server_resource_association", type_="foreignkey")
+        op.drop_constraint("fk_resource_subscriptions_resource_id", "resource_subscriptions", type_="foreignkey")
 
-    # Restore original constraint names for resources after downgrade
-    op.drop_constraint("pk_resources_old", "resources", type_="primary")
-    op.create_primary_key("pk_resources", "resources", ["id"])
-    op.drop_constraint("uq_team_owner_uri_resource_old", "resources", type_="unique")
-    op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
+        # Restore original constraint names for resources after downgrade
+        op.drop_constraint("pk_resources_old", "resources", type_="primary")
+        op.create_primary_key("pk_resources", "resources", ["id"])
+        op.drop_constraint("uq_team_owner_uri_resource_old", "resources", type_="unique")
+        op.create_unique_constraint("uq_team_owner_uri_resource", "resources", ["team_id", "owner_email", "uri"])
 
-    op.drop_constraint("pk_resource_metrics_old", "resource_metrics", type_="primary")
-    op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
+        op.drop_constraint("pk_resource_metrics_old", "resource_metrics", type_="primary")
+        op.create_primary_key("pk_resource_metrics", "resource_metrics", ["id"])
 
-    op.drop_constraint("pk_server_resource_assoc_old", "server_resource_association", type_="primary")
-    op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
+        op.drop_constraint("pk_server_resource_assoc_old", "server_resource_association", type_="primary")
+        op.create_primary_key("pk_server_resource_assoc", "server_resource_association", ["server_id", "resource_id"])
 
-    # Recreate foreign keys to point to restored primary key
-    op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
-    op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
-    op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
+        # Recreate foreign keys to point to restored primary key
+        op.create_foreign_key("fk_resource_metrics_resource_id", "resource_metrics", "resources", ["resource_id"], ["id"])
+        op.create_foreign_key("fk_server_resource_resource_id", "server_resource_association", "resources", ["resource_id"], ["id"])
+        op.create_foreign_key("fk_resource_subscriptions_resource_id", "resource_subscriptions", "resources", ["resource_id"], ["id"])
     with op.batch_alter_table("servers") as batch_op:
         batch_op.alter_column(
             "enabled",
