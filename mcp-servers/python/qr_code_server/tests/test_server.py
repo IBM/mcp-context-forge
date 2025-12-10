@@ -6,6 +6,7 @@ import pytest
 from fastmcp.client import Client
 
 from qr_code_server.server import _acquire_request_slot, mcp
+from qr_code_server.tools.decoder import QRDecodingRequest
 from qr_code_server.tools.generator import BatchQRGenerationRequest, QRGenerationRequest
 
 logger = logging.getLogger("qr_code_server")
@@ -139,13 +140,36 @@ async def test_generate_batch_qr_code(tmp_path):
         format="png",
         output_directory=str(tmp_path),
     ).model_dump()
-
     async with Client(mcp) as client:
         response = await client.call_tool_mcp(
             name="generate_batch_qr_codes",
             arguments=request
         )
         assert "QR code images saved in zip" in str(response.content)
+
+@pytest.mark.asyncio
+async def test_decode_qr_code():
+    """Test generate decode qr codes image base64"""
+    image = (
+        'iVBORw0KGgoAAAANSUhEUgAAASIAAAEiAQAAAAB1xeIbAAABm0lEQVR4nO2ZwW2lQBBEX++M5CMjOQCHAhk41s2ACWU'
+        'DsMQcLYFqDwOs/7es9YUPhubAofUkSqim6S5M/P/Kv74BgVNOOeWUU0enbL4iUCJQlkq3q65LUK0kaQDyy7tZR5Ak6Z'
+        'Z6vK5LUGX1eHmqb3w+BjvrOjMV7wutQJTtnujUl1S2iHWPfOJlqcX3jYACBrPvPy5dR1V/CiqbmVkC2gGsY6pjzt66Tk'
+        '1V3//z+GL526jhqOrPQFnHZLXVW5qMnCb7TD1e1xUo9SUCzViL1hFkHZPvVltS1BWqHcLNTSPqCapLV39U9T+bmuecnAL'
+        'KL+9GTgEoz4Lmzb+1W1KL7zUiDSANQeobqbYg9/121DrnBEEjDALWDlNUft1R1xUoPkZmhDlQA5jPgvt+M2rtOZI0BC21'
+        'sd685zyAWnJM9Y1kloLIKUj9zrrOTN3nmAZxpP0dR6OZIm2/j64rUrXT5DQZ7Z8n/3eyJXWfY0JJKL8OAOMS6xxV/c+m7'
+        'ucc2rrmsoz7/q3djPqcY7LmmM1aPqp6p5xyyimnvkv9BVqy01GUeGtxAAAAAElFTkSuQmCC'
+    )
+    encoded_string = "test_passed :)"
+    request = QRDecodingRequest(
+        image_data=image,
+    ).model_dump()
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="decode_qr_code",
+            arguments=request
+        )
+        assert encoded_string in str(response.content)
+
 
 
 @pytest.mark.asyncio
