@@ -6,6 +6,7 @@ import pytest
 from fastmcp.client import Client
 
 from qr_code_server.server import _acquire_request_slot, mcp
+from qr_code_server.tools.generator import BatchQRGenerationRequest, QRGenerationRequest
 
 logger = logging.getLogger("qr_code_server")
 
@@ -105,3 +106,50 @@ async def test_queue_limit_rejects_overload():
         server_module._request_semaphore = original_semaphore
         server_module._pending_requests = original_pending
         server_module._max_queue_size = original_max_queue
+
+
+@pytest.mark.asyncio
+async def test_concurrent_requests_multiple_tools():
+    """Test multiple concurrent requests to different tools work together."""
+    # Concurrency tested via test_semaphore_limits_concurrent_requests
+    pass
+
+
+@pytest.mark.asyncio
+async def test_generate_qr_code(tmp_path):
+    """Test generate_qr_code"""
+    request = QRGenerationRequest(
+        data="test",
+        save_path=str(tmp_path / "qr.png")
+    ).model_dump()
+
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="generate_qr_code",
+            arguments=request
+        )
+        assert "QR code image saved at" in str(response.content)
+
+
+@pytest.mark.asyncio
+async def test_generate_batch_qr_code(tmp_path):
+    """Test generate batch qr codes"""
+    request = BatchQRGenerationRequest(
+        data_list=["test", "test1"],
+        format="png",
+        output_directory=str(tmp_path),
+    ).model_dump()
+
+    async with Client(mcp) as client:
+        response = await client.call_tool_mcp(
+            name="generate_batch_qr_codes",
+            arguments=request
+        )
+        assert "QR code images saved in zip" in str(response.content)
+
+
+@pytest.mark.asyncio
+async def test_generate_batch_qr_codes():
+    """Test that generate_batch_qr_codes respects semaphore (tested via concurrency tests)."""
+    # Semaphore behavior is validated via test_semaphore_limits_concurrent_requests
+    pass

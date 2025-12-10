@@ -86,6 +86,7 @@ async def generate_qr_code(
 @mcp.tool(description="Generate multiple QR codes")
 async def generate_batch_qr_codes(
     data_list: list[str],
+    format: str = "png",
     size: int = 10,
     naming_pattern: str = "qr_{index}",
     output_directory: str = "./qr_codes/",
@@ -95,6 +96,7 @@ async def generate_batch_qr_codes(
         async with _acquire_request_slot("generate_batch_qr_codes"):
             request = BatchQRGenerationRequest(
                 data_list=data_list,
+                format=format,
                 size=size,
                 naming_pattern=naming_pattern,
                 output_directory=output_directory,
