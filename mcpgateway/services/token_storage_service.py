@@ -283,7 +283,7 @@ class TokenStorageService:
             True
         """
         if not token_record.expires_at:
-            return True
+            return False
         expires_at = token_record.expires_at
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
