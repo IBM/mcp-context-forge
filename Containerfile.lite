@@ -126,8 +126,8 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
+# hadolint ignore=SC1091
 RUN set -euo pipefail \
-    # hadolint ignore=SC1091
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
