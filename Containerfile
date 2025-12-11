@@ -72,7 +72,7 @@ WORKDIR /app
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
 # ----------------------------------------------------------------------------
-RUN if [ $(uname -m) = "s390x" ]; then \
+RUN if [ "$(uname -m)" = "s390x" ]; then \
     echo "Building for s390x."; \
     echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
