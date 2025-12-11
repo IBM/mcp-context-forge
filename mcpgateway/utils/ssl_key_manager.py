@@ -2,6 +2,7 @@
 """Location: ./mcpgateway/utils/ssl_key_manager.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
+Authors: Keval Mahajan
 
 SSL key management utilities for handling passphrase-protected keys.
 
