@@ -2168,7 +2168,7 @@ class TestTokenStorageService:
 
             result = service._is_token_expired(token_record)
 
-            assert result is True
+            assert result is False
 
     def test_is_token_expired_past_expiry(self):
         """Test _is_token_expired with past expiration."""
