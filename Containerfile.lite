@@ -97,7 +97,7 @@ WORKDIR /app
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
 # ----------------------------------------------------------------------------
-RUN if [ `uname -m` = "s390x" ]; then \
+RUN if [ $(uname -m) = "s390x" ]; then \
         echo "Building for s390x."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
@@ -225,12 +225,8 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
 # ----------------------------------------------------------------------------
 # Create python3 symlink
 # ----------------------------------------------------------------------------
-RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
-
-# ----------------------------------------------------------------------------
-# Create non-root user
-# ----------------------------------------------------------------------------
-RUN echo 'app:x:1001:0:app:/app:/sbin/nologin' >> /etc/passwd
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3 \
+    && echo 'app:x:1001:0:app:/app:/sbin/nologin' >> /etc/passwd
 
 # ----------------------------------------------------------------------------
 # Copy the application from the builder stage

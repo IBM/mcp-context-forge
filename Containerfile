@@ -13,14 +13,14 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
-        echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/plugins_rust/target/wheels; \
-        exit 0; \
+    echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
+    mkdir -p /build/plugins_rust/target/wheels; \
+    exit 0; \
     fi
 
 # Install Rust toolchain (only if ENABLE_RUST=true)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable; \
     fi
 ENV PATH="/root/.cargo/bin:$PATH"
 
@@ -35,12 +35,12 @@ WORKDIR /build/plugins_rust
 # Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
 # The manylinux2014 image has Python 3.12 at /opt/python/cp312-cp312/bin/python
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        rm -rf target/wheels && \
-        /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
-        echo "✅ Rust plugins built successfully"; \
+    rm -rf target/wheels && \
+    /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
+    /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
+    echo "✅ Rust plugins built successfully"; \
     else \
-        echo "⏭️  Skipping Rust plugin build"; \
+    echo "⏭️  Skipping Rust plugin build"; \
     fi
 
 FROM rust-builder-base AS rust-builder
@@ -50,9 +50,9 @@ FROM rust-builder-base AS rust-builder
 ###############################################################################
 FROM registry.access.redhat.com/ubi10-minimal:10.0-1758699349
 LABEL maintainer="Mihai Criveti" \
-      name="mcp/mcpgateway" \
-      version="0.9.0" \
-      description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
+    name="mcp/mcpgateway" \
+    version="0.9.0" \
+    description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
@@ -72,11 +72,11 @@ WORKDIR /app
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
 # ----------------------------------------------------------------------------
-RUN if [ `uname -m` = "s390x" ]; then \
-        echo "Building for s390x."; \
-        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
+RUN if [ $(uname -m) = "s390x" ]; then \
+    echo "Building for s390x."; \
+    echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
-        echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
+    echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
     fi
 RUN chmod 644 /etc/profile.d/use-openssl.sh
 
@@ -94,11 +94,11 @@ RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
     /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]" && \
     if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
-        echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
-        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+    echo "🦀 Installing Rust plugins..."; \
+    /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
+    /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
     else \
-        echo "⏭️  Rust plugins not available - using Python implementations"; \
+    echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi && \
     rm -rf /tmp/rust-wheels
 
