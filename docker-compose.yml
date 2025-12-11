@@ -96,7 +96,7 @@ services:
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
       ## Uncomment to enable HTTPS
-      # - SSL=true 
+      # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
@@ -132,10 +132,8 @@ services:
     healthcheck:
       ## Uncomment for HTTP healthcheck
       test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
-      
       ## Uncomment for HTTPS healthcheck
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
-      
       ## Uncomment to skip SSL validation (self-signed certs)
       # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
       interval: 30s
@@ -156,7 +154,7 @@ services:
     #    - Without passphrase: make certs
     #    - With passphrase: make certs-passphrase
     # 2. Uncomment the volumes mount above
-    # 3. Set SSL environment variables 
+    # 3. Set SSL environment variables
     # 4. If using passphrase-protected key, set KEY_FILE_PASSWORD in .env file
     #
     # For JWT asymmetric keys:
@@ -602,4 +600,3 @@ services:
   #     timeout: 10s
   #     retries: 5
   #     start_period: 20s
-
