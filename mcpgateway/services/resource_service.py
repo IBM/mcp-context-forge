@@ -814,7 +814,6 @@ class ResourceService:
         'using template: /template'
 
         """
-
         uri = None
         if resource_uri and resource_template_uri:
             uri = resource_template_uri

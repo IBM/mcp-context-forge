@@ -3888,6 +3888,8 @@ async function viewResource(resourceId) {
 
         const data = await response.json();
         const resource = data.resource;
+
+        // console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
         // const content = data.content;
 
         const resourceDetailsDiv = safeGetElement("resource-details");
@@ -3943,13 +3945,15 @@ async function viewResource(resourceId) {
             statusStrong.textContent = "Status: ";
             statusP.appendChild(statusStrong);
 
+            const isActive = resource.enabled === true;
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                resource.isActive
+                isActive
                     ? "bg-green-100 text-green-800"
                     : "bg-red-100 text-red-800"
             }`;
-            statusSpan.textContent = resource.isActive ? "Active" : "Inactive";
+            statusSpan.textContent = isActive ? "Active" : "Inactive";
+
             statusP.appendChild(statusSpan);
             container.appendChild(statusP);
 

@@ -3354,26 +3354,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     except Exception as e:
                         logger.warning(f"Failed to fetch resources: {e}")
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                    # resource template URI
+                    try:
+                        response_templates = await session.list_resource_templates()
+                        raw_resources_templates = response_templates.resourceTemplates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
-                        except Exception as ei:
-                            logger.warning(f"Failed to fetch resource templates: {ei}")
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
+                    except Exception as ei:
+                        logger.warning(f"Failed to fetch resource templates: {ei}")
 
                 # Fetch prompts if supported
                 prompts = []

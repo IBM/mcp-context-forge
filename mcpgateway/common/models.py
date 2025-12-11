@@ -33,8 +33,9 @@ Examples:
 """
 
 # Standard
-from datetime import datetime
 from enum import Enum
+from uuid import UUID
+from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional, Union
 
 # Third-Party
@@ -717,7 +718,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
 
     # ✅ DB field name: uri_template
     # ✅ API (JSON) alias:
-    id: Optional[int] = None
+    id: Optional[str] = None
     uri_template: str = Field(..., alias="uriTemplate")
     name: str
     description: Optional[str] = None
