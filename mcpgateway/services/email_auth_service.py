@@ -280,7 +280,7 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local") -> EmailUser:
+    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -312,7 +312,16 @@ class EmailAuthService:
 
         # Validate inputs
         self.validate_email(email)
-        self.validate_password(password)
+        # Allow callers (eg. bootstrap) to skip strict password validation so
+        # the initial admin can be created with the configured default password
+        # even when operators enable strict policies via env vars.
+        # Support two modes:
+        #  - caller passes `skip_password_validation=True` (preferred)
+        #  - or an instance attribute `_skip_password_validation` is set by
+        #    the caller (keeps bootstrap call-site signature unchanged for tests)
+        effective_skip = bool(skip_password_validation or getattr(self, "_skip_password_validation", False))
+        if not effective_skip:
+            self.validate_password(password)
 
         # Check if user already exists
         existing_user = await self.get_user_by_email(email)

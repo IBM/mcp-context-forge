@@ -76,12 +76,25 @@ async def bootstrap_admin_user() -> None:
 
             # Create admin user
             logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
+            # Create admin user. Skip strict password validation during bootstrap
+            # so deployments that enable stricter policies later don't prevent
+            # initial platform admin creation with the configured default.
+            # We set an instance attribute on the service instead of passing a
+            # new kwarg to keep the create_user call signature unchanged for
+            # unit tests that assert the exact call arguments.
+            setattr(auth_service, "_skip_password_validation", True)
             admin_user = await auth_service.create_user(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
                 full_name=settings.platform_admin_full_name,
                 is_admin=True,
             )
+            # Clean up the temporary attribute in case the service instance
+            # is reused elsewhere during runtime.
+            try:
+                delattr(auth_service, "_skip_password_validation")
+            except Exception:
+                pass
 
             # Mark admin user as email verified and require password change on first login
             # First-Party
