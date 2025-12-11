@@ -93,8 +93,10 @@ async def bootstrap_admin_user() -> None:
             # is reused elsewhere during runtime.
             try:
                 delattr(auth_service, "_skip_password_validation")
-            except Exception:
-                pass
+            except AttributeError:
+                logger.debug("Temporary attribute '_skip_password_validation' not present on auth_service; nothing to remove")
+            except Exception as e:
+                logger.warning(f"Unexpected error removing temporary attribute on auth_service: {e}")
 
             # Mark admin user as email verified and require password change on first login
             # First-Party

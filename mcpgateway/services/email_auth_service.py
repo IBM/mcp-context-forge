@@ -289,6 +289,9 @@ class EmailAuthService:
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
             auth_provider: Authentication provider ('local', 'github', etc.)
+            skip_password_validation: If True, skip strict password policy validation
+                for this create operation (useful for bootstrap or tests). Defaults
+                to False.
 
         Returns:
             EmailUser: The created user object
