@@ -33,9 +33,8 @@ Examples:
 """
 
 # Standard
-from enum import Enum
-from uuid import UUID
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
 # Third-Party
@@ -706,6 +705,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
     """A template for constructing resource URIs (MCP spec-compliant).
 
     Attributes:
+        id (Optional[str]): Unique identifier for resource
         uri_template (str): The URI template string.
         name (str): The unique name of the template.
         description (Optional[str]): A description of the template.

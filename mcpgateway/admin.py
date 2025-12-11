@@ -8186,14 +8186,14 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         >>>
         >>> mock_db = MagicMock()
         >>> mock_user = {"email": "test_user"}
-        >>> resource_id = 1
+        >>> resource_id = "1"
         >>> resource_uri = "test://resource/get"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
         ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), is_active=True,
+        ...     updated_at=datetime.now(timezone.utc), is_active=True,enabled=True,
         ...     metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
         ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
