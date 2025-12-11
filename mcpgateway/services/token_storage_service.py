@@ -280,7 +280,7 @@ class TokenStorageService:
             >>> svc._is_token_expired(rec_past, threshold_seconds=0)
             True
             >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
-            True
+            False
         """
         if not token_record.expires_at:
             return False
