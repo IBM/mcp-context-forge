@@ -225,7 +225,7 @@ class TestPromptService:
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        pr: PromptResult = await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+        pr: PromptResult = await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
 
         assert isinstance(pr, PromptResult)
         assert len(pr.messages) == 1
@@ -239,7 +239,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt(test_db, 999)
+            await prompt_service.get_prompt(test_db, "999")
 
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
@@ -251,7 +251,7 @@ class TestPromptService:
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1)
+            await prompt_service.get_prompt(test_db, "1")
         assert "inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -260,7 +260,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         db_prompt.validate_arguments.side_effect = Exception("bad args")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+            await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
         assert "Failed to process prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio
