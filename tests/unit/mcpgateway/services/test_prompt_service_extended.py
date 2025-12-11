@@ -49,14 +49,14 @@ class TestPromptServiceExtended:
         # Test active prompt conflict
         error = PromptNameConflictError("test_prompt")
         assert error.name == "test_prompt"
-        assert error.is_active is True
+        assert error.enabled is True
         assert error.prompt_id is None
         assert "test_prompt" in str(error)
 
         # Test inactive prompt conflict
         error_inactive = PromptNameConflictError("inactive_prompt", False, 123)
         assert error_inactive.name == "inactive_prompt"
-        assert error_inactive.is_active is False
+        assert error_inactive.enabled is False
         assert error_inactive.prompt_id == 123
         assert "inactive_prompt" in str(error_inactive)
         assert "currently inactive, ID: 123" in str(error_inactive)
@@ -348,7 +348,7 @@ class TestPromptServiceExtended:
         mock_prompt = MagicMock()
         mock_prompt.id = "test-id"
         mock_prompt.name = "test-prompt"
-        mock_prompt.is_active = True
+        mock_prompt.enabled = True
 
         # Test _notify_prompt_added
         await service._notify_prompt_added(mock_prompt)
