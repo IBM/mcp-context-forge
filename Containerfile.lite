@@ -127,6 +127,7 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
 RUN set -euo pipefail \
+    # hadolint ignore=SC1091
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel pdm uv \
@@ -181,7 +182,7 @@ RUN chmod +x /app/run-gunicorn.sh /app/run.sh
 #  - Remove __pycache__ directories after compilation
 # ----------------------------------------------------------------------------
 RUN python3 -OO -m compileall -q /app/.venv /app/mcpgateway /app/plugins \
-    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    && (find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true)
 
 # ----------------------------------------------------------------------------
 # Set ownership for non-root user (1001)

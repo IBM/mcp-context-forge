@@ -90,6 +90,7 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 # Including observability packages for OpenTelemetry support and Rust plugins (if built)
 ARG ENABLE_RUST=false
 RUN python3 -m venv /app/.venv && \
+    # hadolint ignore=SC1091
     . /etc/profile.d/use-openssl.sh && \
     /app/.venv/bin/python3 -m pip install --upgrade pip setuptools pdm uv && \
     /app/.venv/bin/python3 -m uv pip install ".[redis,postgres,mysql,alembic,observability]" && \
