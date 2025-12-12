@@ -1,0 +1,62 @@
+# Location: ./mcpgateway/tools/builder/templates/kubernetes/cert-manager-certificates.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# cert-manager Certificate Resources
+# Gateway Certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-{{ gateway_name }}-cert
+  namespace: {{ namespace }}
+spec:
+  secretName: mcp-{{ gateway_name }}-server-cert
+  duration: {{ duration }}h
+  renewBefore: {{ renew_before }}h
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  dnsNames:
+    - {{ gateway_name }}
+    - {{ gateway_name }}.{{ namespace }}
+    - {{ gateway_name }}.{{ namespace }}.svc
+    - {{ gateway_name }}.{{ namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ issuer_name }}
+    kind: {{ issuer_kind }}
+{% for plugin in plugins %}
+---
+# Plugin {{ plugin.name }} Certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: mcp-{{ plugin.name }}-cert
+  namespace: {{ namespace }}
+spec:
+  secretName: mcp-{{ plugin.name }}-server-cert
+  duration: {{ duration }}h
+  renewBefore: {{ renew_before }}h
+  isCA: false
+  privateKey:
+    algorithm: RSA
+    size: 2048
+  usages:
+    - digital signature
+    - key encipherment
+    - server auth
+    - client auth
+  dnsNames:
+    - {{ plugin.name }}
+    - {{ plugin.name }}.{{ namespace }}
+    - {{ plugin.name }}.{{ namespace }}.svc
+    - {{ plugin.name }}.{{ namespace }}.svc.cluster.local
+  issuerRef:
+    name: {{ issuer_name }}
+    kind: {{ issuer_kind }}
+{% endfor %}

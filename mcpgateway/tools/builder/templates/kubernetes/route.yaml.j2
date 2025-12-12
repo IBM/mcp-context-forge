@@ -1,0 +1,25 @@
+# Location: ./mcpgateway/tools/builder/templates/kubernetes/route.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# OpenShift Route for external access to MCP Gateway
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mcpgateway-admin
+  namespace: {{ namespace }}
+  labels:
+    app: mcpgateway
+    component: gateway
+spec:
+  host: mcpgateway-admin-{{ namespace }}.{{ openshift_domain }}
+  path: /
+  to:
+    kind: Service
+    name: mcpgateway
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: {{ tls_termination }}
+  wildcardPolicy: None

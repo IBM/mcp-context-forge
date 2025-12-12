@@ -1,0 +1,131 @@
+# MCP Stack - OpenShift Local Configuration with cert-manager
+# Build from source for local development
+#
+# Prerequisites:
+# 1. Install cert-manager in your cluster
+# 2. Apply cert-manager-issuer-example.yaml to create the CA Issuer
+# 3. (Optional) Authenticate to OpenShift internal registry:
+#    podman login $(oc registry info) -u $(oc whoami) -p $(oc whoami -t)
+# 4. Deploy this config
+
+deployment:
+  type: kubernetes
+  namespace: mcp-gateway-test
+
+# MCP Gateway configuration
+gateway:
+  # Build gateway from current repository
+  repo: https://github.com/terylt/mcp-context-forge.git
+  ref: feat/configurable_plugin_deployment
+  context: .
+  containerfile: Containerfile
+  image: mcpgateway-gateway:latest
+
+  port: 4444
+
+  # Service configuration
+  service_type: ClusterIP
+  service_port: 4444
+
+  # Resource limits
+  replicas: 1
+  memory_request: 256Mi
+  memory_limit: 512Mi
+  cpu_request: 100m
+  cpu_limit: 500m
+
+  # Environment configuration
+  env_vars:
+    LOG_LEVEL: DEBUG
+    HOST: 0.0.0.0
+    PORT: 4444
+    MCPGATEWAY_UI_ENABLED: "true"
+    MCPGATEWAY_ADMIN_API_ENABLED: "true"
+    MCPGATEWAY_A2A_ENABLED: "true"
+    AUTH_REQUIRED: "false"
+    MCPGATEWAY_ENABLE_FEDERATION: "false"
+
+  # mTLS client configuration (gateway connects to plugins)
+  mtls_enabled: true
+  mtls_verify: true
+  mtls_check_hostname: false
+
+  # Container registry configuration (optional)
+  # Uncomment to push images to OpenShift internal registry
+  # registry:
+  #   enabled: true
+  #   url: default-route-openshift-image-registry.apps-crc.testing
+  #   namespace: mcp-gateway-test
+  #   push: true
+  #   image_pull_policy: Always
+
+# External plugins
+plugins:
+  # OPA Plugin Filter - build from source
+  - name: OPAPluginFilter
+
+    # Build from repository
+    repo: https://github.com/terylt/mcp-context-forge.git
+    ref: feat/configurable_plugin_deployment
+    context: plugins/external/opa
+    containerfile: Containerfile
+    image: mcpgateway-opapluginfilter:latest
+
+    port: 8000
+
+    # Service configuration
+    service_type: ClusterIP
+    service_port: 8000
+
+    # Resource limits
+    replicas: 1
+    memory_request: 128Mi
+    memory_limit: 256Mi
+    cpu_request: 50m
+    cpu_limit: 200m
+
+    env_vars:
+      LOG_LEVEL: DEBUG
+      OPA_POLICY_PATH: /app/policies
+
+    mtls_enabled: true
+
+    # Container registry configuration (optional)
+    # Uncomment to push images to OpenShift internal registry
+    # registry:
+    #   enabled: true
+    #   url: default-route-openshift-image-registry.apps-crc.testing
+    #   namespace: mcp-gateway-test
+    #   push: true
+    #   image_pull_policy: Always
+
+    # Plugin manager overrides
+    plugin_overrides:
+      priority: 10
+      mode: "enforce"
+      description: "OPA policy enforcement"
+      tags: ["security", "policy", "opa"]
+
+# Infrastructure services
+infrastructure:
+  postgres:
+    enabled: true
+    image: quay.io/sclorg/postgresql-15-c9s:latest
+    user: mcpuser  # Use non-'postgres' username for Red Hat images
+    database: mcp
+    password: mysecretpassword
+
+# cert-manager Certificate configuration
+certificates:
+  # Use cert-manager for automatic certificate management
+  use_cert_manager: true
+
+  # cert-manager issuer reference (must exist in namespace)
+  cert_manager_issuer: mcp-ca-issuer
+  cert_manager_kind: Issuer  # or ClusterIssuer
+
+  # Certificate validity (cert-manager will auto-renew at 2/3 of lifetime)
+  validity_days: 825  # ≈ 2.25 years
+
+  # Local paths not used when use_cert_manager=true
+  auto_generate: false

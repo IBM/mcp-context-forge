@@ -1,0 +1,13 @@
+# Location: ./mcpgateway/tools/builder/templates/kubernetes/plugins-configmap.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# ConfigMap for plugins configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plugins-config
+  namespace: {{ namespace }}
+data:
+  plugins.yaml: |
+{{ plugins_config | safe | indent(4, first=True) }}
