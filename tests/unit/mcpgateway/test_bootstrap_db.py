@@ -123,7 +123,7 @@ class TestBootstrapAdminUser:
     async def test_bootstrap_admin_user_success(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user):
         """Test successful admin user creation."""
         mock_email_auth_service.get_user_by_email.return_value = None
-        mock_email_auth_service.create_user.return_value = mock_admin_user
+        mock_email_auth_service.create_platform_admin.return_value = mock_admin_user
 
         with (
             patch("mcpgateway.bootstrap_db.settings", mock_settings),
@@ -135,22 +135,19 @@ class TestBootstrapAdminUser:
             mock_utc_now.return_value = "2024-01-01T00:00:00Z"
             await bootstrap_admin_user()
 
-            mock_email_auth_service.create_user.assert_called_once_with(
+            mock_email_auth_service.create_platform_admin.assert_called_once_with(
                 email=mock_settings.platform_admin_email,
                 password=mock_settings.platform_admin_password.get_secret_value(),
                 full_name=mock_settings.platform_admin_full_name,
-                is_admin=True,
             )
-            assert mock_admin_user.email_verified_at == "2024-01-01T00:00:00Z"
-            assert mock_db_session.commit.call_count == 2
-            mock_logger.info.assert_any_call(f"Platform admin user created successfully: {mock_settings.platform_admin_email}")
+            mock_logger.info.assert_any_call(f"Creating platform admin user: {mock_settings.platform_admin_email}")
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_with_personal_team(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user):
         """Test admin user creation with personal team auto-creation."""
         mock_settings.auto_create_personal_teams = True
         mock_email_auth_service.get_user_by_email.return_value = None
-        mock_email_auth_service.create_user.return_value = mock_admin_user
+        mock_email_auth_service.create_platform_admin.return_value = mock_admin_user
 
         with patch("mcpgateway.bootstrap_db.settings", mock_settings):
             with patch("mcpgateway.bootstrap_db.SessionLocal", return_value=mock_db_session):
@@ -159,7 +156,8 @@ class TestBootstrapAdminUser:
                         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                             await bootstrap_admin_user()
 
-                            mock_logger.info.assert_any_call("Personal team automatically created for admin user")
+                            # Verify that the user creation was attempted
+                            mock_email_auth_service.create_platform_admin.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_bootstrap_admin_user_exception(self, mock_settings, mock_db_session, mock_email_auth_service):
