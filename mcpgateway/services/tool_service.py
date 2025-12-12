@@ -1466,6 +1466,9 @@ class ToolService:
             gateway_id = getattr(tool, "gateway_id", None)
             if gateway_id and isinstance(gateway_id, str):
                 global_context.server_id = gateway_id
+            # Propagate user email to global context for plugin access
+            if app_user_email and isinstance(app_user_email, str):
+                global_context.user = app_user_email
         else:
             # Create new context (fallback when middleware didn't run)
             # Use correlation ID from context if available, otherwise generate new one
