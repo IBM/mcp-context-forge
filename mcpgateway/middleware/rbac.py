@@ -27,6 +27,7 @@ from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, Permissions, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.team_management_service import TeamManagementService
 
 logger = logging.getLogger(__name__)
 
