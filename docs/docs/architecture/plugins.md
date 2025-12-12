@@ -103,7 +103,7 @@ flowchart TB
 
     subgraph "External Services"
         AI["AI Safety Services<br>(LlamaGuard, OpenAI)"]
-        Security["Security Services<br>(Vault, OPA)"]
+        Security["Security Services<br>(Vault, OPA, Cedar)"]
     end
 
     Client --request--> GW
@@ -141,7 +141,7 @@ The framework supports two distinct plugin deployment patterns:
 - Standalone MCP servers implementing plugin logic
 - Can be written in any language (Python, TypeScript, Go, Rust, etc.)
 - Communicate via MCP protocol (Streamable HTTP, STDIO, SSE)
-- Examples: OPA filter, LlamaGuard, OpenAI Moderation, custom AI services
+- Examples: OPA filter, Cedar Policy Plugin (RBAC), LlamaGuard, OpenAI Moderation, custom AI services
 
 ### Plugin Configuration Schema
 
@@ -1721,6 +1721,7 @@ FEDERATION_POST_SYNC = "federation_post_sync"  # Post-federation processing
 #### Current Integrations
 
 - ✅ **Open Policy Agent (OPA):** Policy-as-code enforcement engine
+- ✅ **Cedar Policy Plugin:** Policy-as-code enforcement engine, RBAC
 - ✅ **LlamaGuard:** Content safety classification and filtering
 - ✅ **OpenAI Moderation API:** Commercial content moderation
 - ✅ **Custom MCP Servers:** Any language, any protocol
