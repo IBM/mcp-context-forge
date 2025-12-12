@@ -14,6 +14,8 @@ mkdir -p "${STATIC_DIR}/codemirror/mode/javascript"
 mkdir -p "${STATIC_DIR}/codemirror/theme"
 mkdir -p "${STATIC_DIR}/alpinejs"
 mkdir -p "${STATIC_DIR}/chartjs"
+mkdir -p "${STATIC_DIR}/fontawesome/css"
+mkdir -p "${STATIC_DIR}/fontawesome/webfonts"
 
 echo "📦 Downloading CDN assets for airgapped deployment..."
 
@@ -50,6 +52,21 @@ curl -fsSL "https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" \
 echo "  ⬇️  Chart.js 4.4.1..."
 curl -fsSL "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" \
   -o "${STATIC_DIR}/chartjs/chart.umd.min.js"
+
+# Download Font Awesome (pinned to 6.4.0 for reproducibility)
+echo "  ⬇️  Font Awesome 6.4.0..."
+curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" \
+  -o "${STATIC_DIR}/fontawesome/css/all.min.css"
+
+# Download Font Awesome webfonts (required for the CSS to work)
+echo "  ⬇️  Font Awesome webfonts..."
+for font in fa-solid-900.woff2 fa-regular-400.woff2 fa-brands-400.woff2; do
+  curl -fsSL "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/${font}" \
+    -o "${STATIC_DIR}/fontawesome/webfonts/${font}"
+done
+
+# Fix Font Awesome CSS paths for local serving (change ../webfonts to ./webfonts)
+sed -i 's|../webfonts|./webfonts|g' "${STATIC_DIR}/fontawesome/css/all.min.css"
 
 echo "✅ All CDN assets downloaded successfully to ${STATIC_DIR}"
 echo ""

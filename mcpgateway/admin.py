@@ -2677,6 +2677,12 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            # Password policy flags for frontend templates
+            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
+            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
+            "password_require_numbers": getattr(settings, "password_require_numbers", False),
+            "password_require_special": getattr(settings, "password_require_special", False),
         },
     )
 
@@ -2986,7 +2992,19 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = request.scope.get("root_path", "")
 
-    return request.app.state.templates.TemplateResponse("change-password-required.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(
+        "change-password-required.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
+            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
+            "password_require_numbers": getattr(settings, "password_require_numbers", False),
+            "password_require_special": getattr(settings, "password_require_special", False),
+        },
+    )
 
 
 @admin_router.post("/change-password-required")
