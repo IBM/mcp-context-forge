@@ -76,11 +76,10 @@ async def bootstrap_admin_user() -> None:
 
             # Create admin user
             logger.info(f"Creating platform admin user: {settings.platform_admin_email}")
-            admin_user = await auth_service.create_user(
+            admin_user = await auth_service.create_platform_admin(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
                 full_name=settings.platform_admin_full_name,
-                is_admin=True,
             )
 
             # Mark admin user as email verified and require password change on first login
@@ -264,7 +263,6 @@ async def main() -> None:
 
         if "gateways" not in insp.get_table_names():
             logger.info("Empty DB detected - creating baseline schema")
-
             # Apply MariaDB compatibility fixes if needed
             if settings.database_url.startswith(("mariadb", "mysql")):
                 # pylint: disable=import-outside-toplevel

@@ -301,10 +301,10 @@ class Settings(BaseSettings):
 
     # Password Policy Configuration
     password_min_length: int = Field(default=8, description="Minimum password length")
-    password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
-    password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
+    password_require_uppercase: bool = Field(default=True, description="Require uppercase letters in passwords")
+    password_require_lowercase: bool = Field(default=True, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
-    password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+    password_require_special: bool = Field(default=True, description="Require special characters in passwords")
 
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
