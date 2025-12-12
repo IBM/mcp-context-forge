@@ -165,9 +165,11 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+# Escape '%' characters in URL to avoid configparser interpolation errors
+# (e.g., URL-encoded passwords like %40 for '@')
 config.set_main_option(
     "sqlalchemy.url",
-    settings.database_url,
+    settings.database_url.replace("%", "%%"),
 )
 
 
