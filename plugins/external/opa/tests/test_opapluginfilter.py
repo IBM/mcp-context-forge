@@ -12,16 +12,14 @@ and started once, and further used by all test cases for policy evaluations.
 # Standard
 
 # Third-Party
-from opapluginfilter.plugin import OPAPluginFilter
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Message, ResourceContent, Role, TextContent
+from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
 from mcpgateway.plugins.framework import (
     GlobalContext,
     PluginConfig,
     PluginContext,
-    PluginResult,
     PromptPosthookPayload,
     PromptPrehookPayload,
     ResourcePostFetchPayload,
@@ -29,7 +27,9 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPreInvokePayload,
 )
+
 from mcpgateway.services.logging_service import LoggingService
+from opapluginfilter.plugin import OPAPluginFilter
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
@@ -125,13 +125,13 @@ async def test_pre_prompt_fetch_opapluginfilter():
     plugin = OPAPluginFilter(config)
 
     # Benign payload (allowed by OPA (rego) policy)
-    payload = PromptPrehookPayload(name="test_prompt", args={"text": "You are curseword"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "You are curseword"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(payload, context)
     assert result.continue_processing
 
     # Malign payload (denied by OPA (rego) policy)
-    payload = PromptPrehookPayload(name="test_prompt", args={"text": "You are curseword1"})
+    payload = PromptPrehookPayload(prompt_id="test_prompt", args={"text": "You are curseword1"})
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_pre_fetch(payload, context)
     assert not result.continue_processing
@@ -160,16 +160,16 @@ async def test_post_prompt_fetch_opapluginfilter():
 
     # Benign payload (allowed by OPA (rego) policy)
     message = Message(content=TextContent(type="text", text="abc"), role=Role.USER)
-    prompt_result = PluginResult(messages=[message])
-    payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    prompt_result = PromptResult(messages=[message])
+    payload = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_post_fetch(payload, context)
     assert result.continue_processing
 
     # Malign payload (denied by OPA (rego) policy)
     message = Message(content=TextContent(type="text", text="abc@example.com"), role=Role.USER)
-    prompt_result = PluginResult(messages=[message])
-    payload = PromptPosthookPayload(name="test_prompt", result=prompt_result)
+    prompt_result = PromptResult(messages=[message])
+    payload = PromptPosthookPayload(prompt_id="test_prompt", result=prompt_result)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
     result = await plugin.prompt_post_fetch(payload, context)
     assert not result.continue_processing
@@ -235,6 +235,7 @@ async def test_post_resource_fetch_opapluginfilter():
         type="resource",
         uri="test://abc",
         text="abc",
+        id="1"
     )
     payload = ResourcePostFetchPayload(uri="https://example.com/docs", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
@@ -246,6 +247,7 @@ async def test_post_resource_fetch_opapluginfilter():
         type="resource",
         uri="test://large",
         text="test://abc@example.com",
+        id="1"
     )
     payload = ResourcePostFetchPayload(uri="https://example.com", content=content)
     context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2"))
