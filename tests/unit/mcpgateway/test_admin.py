@@ -805,7 +805,7 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "read_resource")
     async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
         """Test: read_resource should not be called at all."""
-        
+
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"id": 1, "uri": "/test/resource"}
         mock_get_resource.return_value = mock_resource

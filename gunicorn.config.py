@@ -65,37 +65,37 @@ _prepared_key_file = None
 
 def on_starting(server):
     """Called just before the master process is initialized.
-    
+
     This is where we handle passphrase-protected SSL keys by decrypting
     them to a temporary file before Gunicorn workers start.
     """
     global _prepared_key_file
-    
+
     # Check if SSL is enabled via environment variable (set by run-gunicorn.sh)
     # and a passphrase is provided
     ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
     ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
-    
+
     if ssl_enabled and ssl_key_password:
         try:
             from mcpgateway.utils.ssl_key_manager import prepare_ssl_key
-            
+
             # Get the key file path from environment (set by run-gunicorn.sh)
             key_file = os.environ.get("KEY_FILE", "certs/key.pem")
-            
+
             server.log.info(f"Preparing passphrase-protected SSL key: {key_file}")
-            
+
             # Decrypt the key and get the temporary file path
             _prepared_key_file = prepare_ssl_key(key_file, ssl_key_password)
-            
+
             server.log.info(f"SSL key prepared successfully: {_prepared_key_file}")
-            
+
             # Update the keyfile setting to use the decrypted temporary file
             # This is a bit of a hack, but Gunicorn doesn't provide a better way
             # to modify the keyfile after it's been set via command line
             if hasattr(server, 'cfg'):
                 server.cfg.set('keyfile', _prepared_key_file)
-            
+
         except Exception as e:
             server.log.error(f"Failed to prepare SSL key: {e}")
             raise
@@ -127,4 +127,3 @@ def worker_exit(server, worker):
 
 def child_exit(server, worker):
     server.log.info("Worker child exit (pid: %s)", worker.pid)
-

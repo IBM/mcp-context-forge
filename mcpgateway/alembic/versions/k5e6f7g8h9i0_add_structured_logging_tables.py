@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Add structured logging tables
 
 Revision ID: k5e6f7g8h9i0

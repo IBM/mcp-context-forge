@@ -3655,7 +3655,7 @@ function openResourceTestModal(resource) {
         // 2️⃣ If no template → show a simple message
         fieldsContainer.innerHTML = `
             <div class="text-gray-500 dark:text-gray-400 italic">
-                This resource has no URI template. 
+                This resource has no URI template.
                 Click "Invoke Resource" to test directly.
             </div>
         `;
@@ -9591,7 +9591,7 @@ async function loadTools() {
     console.log("Loading tools...");
     try {
         if (toolBody !== null) {
-            toolBody.innerHTML = ` 
+            toolBody.innerHTML = `
                 <tr>
                     <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
                 </tr>
@@ -24209,7 +24209,7 @@ function displayLogResults(data) {
             const userDisplay = log.user_email || log.user_id || "-";
 
             return `
-            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer" 
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
                 onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
@@ -24236,7 +24236,7 @@ function displayLogResults(data) {
                     ${
                         correlationId !== "-"
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')" 
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(correlationId, 12))}
                         </button>
@@ -24734,7 +24734,7 @@ function displayCorrelationTrace(trace) {
                         ${escapeHtml(audit.resource_type || "-")}
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
-                        <strong>${audit.action}:</strong> ${audit.resource_type} 
+                        <strong>${audit.action}:</strong> ${audit.resource_type}
                         <code class="text-xs bg-gray-200 px-1 rounded">${escapeHtml(audit.resource_id || "-")}</code>
                     </td>
                     <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
@@ -24878,7 +24878,7 @@ function displaySecurityEvents(events) {
                     ${
                         event.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')" 
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(event.correlation_id, 12))}
                         </button>
@@ -25044,7 +25044,7 @@ function displayAuditTrail(trails) {
                     ${
                         trail.correlation_id
                             ? `
-                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')" 
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
                                 class="text-blue-600 dark:text-blue-400 hover:underline">
                             ${escapeHtml(truncateText(trail.correlation_id, 12))}
                         </button>

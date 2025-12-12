@@ -177,7 +177,7 @@ class TestResourceServicePluginIntegration:
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
-        
+
         # Mock DB row returned by scalar_one_or_none
         mock_db_row = MagicMock()
         mock_db_row.content = fake_resource_content
@@ -288,7 +288,7 @@ class TestResourceServicePluginIntegration:
         mock_db_row.content = fake_resource_content
         mock_db_row.uri = fake_resource_content.uri
         mock_db_row.uri_template = None
-        
+
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
 
@@ -616,7 +616,7 @@ class TestResourceServicePluginIntegration:
 
         mock_ctx = MagicMock()
         mock_ssl.return_value = mock_ctx
-        
+
         # Setup mock resource
         mock_resource = MagicMock()
         mock_resource.content = ResourceContent(type="resource", id="test://resource", uri="test://resource", text="Test")

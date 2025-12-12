@@ -1886,7 +1886,7 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
-        
+
         # Verify optimization
         assert mock_db.execute.call_count == 1
 
@@ -1998,7 +1998,7 @@ class TestToolService:
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
-            
+
             # Run the method
             result = await tool_service.get_top_tools(test_db, limit=5)
 
@@ -2007,7 +2007,7 @@ class TestToolService:
 
             # Assert build_top_performers was called with the mock results
             mock_build.assert_called_once_with(mock_results)
-            
+
             # Verify that the execute method was called once
             test_db.execute.assert_called_once()
 
