@@ -466,7 +466,9 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
         if not openshift_domain:
             try:
                 # Try to get domain from OpenShift cluster info
-                result = subprocess.run(["kubectl", "get", "ingresses.config.openshift.io", "cluster", "-o", "jsonpath={.spec.domain}"], capture_output=True, text=True, check=False)  # nosec B603, B607
+                result = subprocess.run(
+                    ["kubectl", "get", "ingresses.config.openshift.io", "cluster", "-o", "jsonpath={.spec.domain}"], capture_output=True, text=True, check=False
+                )  # nosec B603, B607
                 if result.returncode == 0 and result.stdout.strip():
                     openshift_domain = result.stdout.strip()
                     if verbose:

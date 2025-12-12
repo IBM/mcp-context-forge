@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/cli.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0

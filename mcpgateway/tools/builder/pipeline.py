@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/builder/pipeline.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -226,7 +227,6 @@ class CICDModule(ABC):
             # ✓ Built OPAPluginFilter
             # ✓ Built LLMGuardPlugin
         """
-        pass
 
     @abstractmethod
     async def generate_certificates(self, config_file: str) -> None:
@@ -250,7 +250,6 @@ class CICDModule(ABC):
             # await deployer.generate_certificates("mcp-stack.yaml")
             # ✓ Certificates generated
         """
-        pass
 
     @abstractmethod
     async def deploy(self, config_file: str, dry_run: bool = False, skip_build: bool = False, skip_certs: bool = False) -> None:
@@ -283,7 +282,6 @@ class CICDModule(ABC):
             # await deployer.deploy("mcp-stack.yaml", dry_run=True)
             # ✓ Dry-run complete (no changes made)
         """
-        pass
 
     @abstractmethod
     async def verify(self, config_file: str, wait: bool = False, timeout: int = 300) -> None:
@@ -313,7 +311,6 @@ class CICDModule(ABC):
             # await deployer.verify("mcp-stack.yaml", wait=True, timeout=600)
             # ✓ Deployment healthy
         """
-        pass
 
     @abstractmethod
     async def destroy(self, config_file: str) -> None:
@@ -335,7 +332,6 @@ class CICDModule(ABC):
             # await deployer.destroy("mcp-stack.yaml")
             # ✓ Deployment destroyed
         """
-        pass
 
     @abstractmethod
     def generate_manifests(self, config_file: str, output_dir: Optional[str] = None) -> Path:
@@ -369,4 +365,3 @@ class CICDModule(ABC):
             # deployer.generate_manifests("mcp-stack.yaml", output_dir="./my-manifests")
             # ✓ Manifests generated: ./my-manifests
         """
-        pass

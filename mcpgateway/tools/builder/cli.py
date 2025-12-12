@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Location: ./mcpgateway/tools/builder/cli.py
 Copyright 2025
