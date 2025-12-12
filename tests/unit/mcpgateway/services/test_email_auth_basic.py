@@ -89,9 +89,9 @@ class TestEmailAuthBasic:
     def test_validate_password_basic_success(self, service):
         """Test basic password validation success."""
         # Should not raise any exception with default settings
-        service.validate_password("password123")
-        service.validate_password("simple123")  # 8+ chars
-        service.validate_password("verylongpasswordstring")
+        service.validate_password("Password123!")
+        service.validate_password("Simple123!")  # 8+ chars with requirements
+        service.validate_password("VerylongPasswordString!")
 
     def test_validate_password_empty(self, service):
         """Test password validation with empty password."""
@@ -476,7 +476,7 @@ class TestEmailAuthServiceUserManagement:
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(UserExistsError, match="already exists"):
-            await service.create_user(email="test@example.com", password="Password123")
+            await service.create_user(email="test@example.com", password="Password123!")
 
     @pytest.mark.asyncio
     async def test_create_user_database_integrity_error(self, service, mock_db, mock_password_service):
@@ -668,7 +668,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.verify_password.return_value = True
 
         with pytest.raises(PasswordValidationError, match="must be different"):
-            await service.change_password(email="test@example.com", old_password="password123", new_password="password123")
+            await service.change_password(email="test@example.com", old_password="Password123!", new_password="Password123!")
 
     @pytest.mark.skip(reason="Complex mock interaction with finally block - core functionality covered by other tests")
     @pytest.mark.asyncio

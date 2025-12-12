@@ -3757,7 +3757,7 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        edit_form = f"""
+        edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#team-edit-modal-content" class="space-y-4">
@@ -4868,6 +4868,63 @@ async def admin_get_user_edit(
         if not user_obj:
             return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
 
+        # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
+        if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
+            pr_lines = []
+            pr_lines.append(
+                f"""                <!-- Password Requirements -->
+                <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
+                    <div class="flex items-start">
+                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                        </svg>
+                        <div class="ml-3 flex-1">
+                            <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
+                            <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
+                                <div class="flex items-center" id="req-length">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
+                                    <span>At least {settings.password_min_length} characters long</span>
+                                </div>
+            """
+            )
+            if settings.password_require_uppercase:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                """
+                )
+            if settings.password_require_lowercase:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                """
+                )
+            if settings.password_require_numbers:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                """
+                )
+            if settings.password_require_special:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                """
+                )
+            pr_lines.append(
+                """
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+            )
+            password_requirements_html = "".join(pr_lines)
+        else:
+            # Intentionally an empty string for HTML insertion when no requirements apply.
+            # This is not a password value; suppress Bandit false positive B105.
+            password_requirements_html = ""  # nosec B105
+
         # Create edit form HTML
         edit_form = f"""
         <div class="space-y-4">
@@ -4902,27 +4959,7 @@ async def admin_get_user_edit(
                            oninput="validatePasswordMatch()">
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
-                <!-- Password Requirements -->
-                <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
-                    <div class="flex items-start">
-                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-                        </svg>
-                        <div class="ml-3 flex-1">
-                            <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
-                            <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
-                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>At least {settings.password_min_length} characters long</span>
-                                </div>
-                                {'<div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>' if settings.password_require_uppercase else ''}
-                                {'<div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>' if settings.password_require_lowercase else ''}
-                                {'<div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>' if settings.password_require_numbers else ''}
-                                {'<div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>' if settings.password_require_special else ''}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                {password_requirements_html}
 
                 <script>
                 // Password policy settings injected from backend
@@ -4933,6 +4970,8 @@ async def admin_get_user_edit(
                     requireNumbers: {'true' if settings.password_require_numbers else 'false'},
                     requireSpecial: {'true' if settings.password_require_special else 'false'}
                 }};
+
+                // (No debug output) passwordPolicy available in JS for logic below
 
                 function updateRequirementIcon(elementId, isValid) {{
                     const req = document.getElementById(elementId);
@@ -4957,19 +4996,19 @@ async def admin_get_user_edit(
 
                     // Check uppercase requirement (if enabled)
                     const uppercaseCheck = !passwordPolicy.requireUppercase || /[A-Z]/.test(password);
-                    updateRequirementIcon('req-uppercase', /[A-Z]/.test(password));
+                    updateRequirementIcon('req-uppercase', uppercaseCheck);
 
                     // Check lowercase requirement (if enabled)
                     const lowercaseCheck = !passwordPolicy.requireLowercase || /[a-z]/.test(password);
-                    updateRequirementIcon('req-lowercase', /[a-z]/.test(password));
+                    updateRequirementIcon('req-lowercase', lowercaseCheck);
 
                     // Check numbers requirement (if enabled)
                     const numbersCheck = !passwordPolicy.requireNumbers || /[0-9]/.test(password);
-                    updateRequirementIcon('req-numbers', /[0-9]/.test(password));
+                    updateRequirementIcon('req-numbers', numbersCheck);
 
                     // Check special character requirement (if enabled) - matches backend set
-                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*(),.?":{{}}|<>]/.test(password);
-                    updateRequirementIcon('req-special', /[!@#$%^&*(),.?":{{}}|<>]/.test(password));
+                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*()_+\\-\\=\\[\\]{{}};:'"\\\\|,.<>`~\\/\\?]/.test(password);
+                    updateRequirementIcon('req-special', specialCheck);
 
                     // Enable/disable submit button based on active requirements
                     const submitButton = document.querySelector('#user-edit-modal-content button[type="submit"]');
@@ -5000,9 +5039,25 @@ async def admin_get_user_edit(
                     }}
                 }}
 
-                // Initialize validation on page load
-                document.addEventListener('DOMContentLoaded', function() {{
-                    validatePasswordRequirements();
+                // Initialize validation when the form is present (supports HTMX-injected content)
+                (function initPasswordValidation() {{
+                    if (document.getElementById('password-field')) {{
+                        validatePasswordRequirements();
+                        validatePasswordMatch();
+                    }}
+                }})();
+
+                // Re-run validation after HTMX swaps content into the DOM (modal loaded via HTMX)
+                document.addEventListener('htmx:afterSwap', function(event) {{
+                    try {{
+                        const target = event.detail && event.detail.target ? event.detail.target : null;
+                        if (target && (target.querySelector('#password-field') || target.id === 'user-edit-modal-content')) {{
+                            validatePasswordRequirements();
+                            validatePasswordMatch();
+                        }}
+                    }} catch (e) {{
+                        // Ignore errors from HTMX event handling
+                    }}
                 }});
                 </script>
                 <div class="flex justify-end space-x-3">
