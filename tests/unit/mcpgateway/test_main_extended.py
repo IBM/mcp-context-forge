@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.main import app
 
 
@@ -186,9 +187,9 @@ class TestUtilityFunctions:
             client = TestClient(app)
             response = client.get("/", follow_redirects=False)
 
-            # Should redirect to /admin when UI is enabled
+            # Should redirect to /admin/ when UI is enabled
             if response.status_code == 303:
-                assert response.headers.get("location") == "/admin"
+                assert response.headers.get("location") == f"{settings.app_root_path}/admin/"
             else:
                 # Fallback behavior
                 assert response.status_code == 200
