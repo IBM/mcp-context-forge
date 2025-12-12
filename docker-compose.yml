@@ -95,9 +95,11 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
+      ## Uncomment to enable HTTPS
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
       # - KEY_FILE=/app/certs/key.pem
+      # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # Optional: Set in .env for passphrase-protected keys
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       # Uncomment to enable catalog
@@ -128,16 +130,32 @@ services:
       #   condition: service_completed_successfully
 
     healthcheck:
+      ## Uncomment for HTTP healthcheck
       test: ["CMD", "python3", "-c", "import urllib.request; import json; resp = urllib.request.urlopen('http://localhost:4444/health', timeout=5); data = json.loads(resp.read()); exit(0 if data.get('status') == 'healthy' else 1)"]
-      #test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
+      ## Uncomment for HTTPS healthcheck
+      # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
+      ## Uncomment to skip SSL validation (self-signed certs)
+      # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Volume Mounts
+    # ──────────────────────────────────────────────────────────────────────
+    # Uncomment to mount catalog configuration and SSL certificates
     # volumes:
     #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
-    #   - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+    #   - ./certs:/app/mcpgateway/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
+    #
+    # SSL/TLS Certificate Setup:
+    # 1. Generate certificates:
+    #    - Without passphrase: make certs
+    #    - With passphrase: make certs-passphrase
+    # 2. Uncomment the volumes mount above
+    # 3. Set SSL environment variables
+    # 4. If using passphrase-protected key, set KEY_FILE_PASSWORD in .env file
     #
     # For JWT asymmetric keys:
     # 1. Generate keys: make certs-jwt
