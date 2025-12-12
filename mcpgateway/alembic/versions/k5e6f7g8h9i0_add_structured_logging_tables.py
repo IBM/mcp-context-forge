@@ -1,17 +1,18 @@
 """Add structured logging tables
 
 Revision ID: k5e6f7g8h9i0
-Revises: f3a3a3d901b8
+Revises: 356a2d4eed6f
 Create Date: 2025-01-15 12:00:00.000000
 
 """
 
+# Third-Party
 from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "k5e6f7g8h9i0"
-down_revision = "9e028ecf59c4"
+down_revision = "356a2d4eed6f"
 branch_labels = None
 depends_on = None
 

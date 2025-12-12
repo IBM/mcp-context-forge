@@ -37,8 +37,8 @@ from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
-from mcpgateway.services.event_service import EventService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -1292,7 +1292,7 @@ class PromptService:
                     resource_name=prompt.name,
                     user_email=user_email,
                     team_id=prompt.team_id,
-                    new_values={"is_active": prompt.is_active},
+                    new_values={"enabled": prompt.enabled},
                     context={"action": "activate" if activate else "deactivate"},
                     db=db,
                 )
@@ -1306,7 +1306,7 @@ class PromptService:
                     team_id=prompt.team_id,
                     resource_type="prompt",
                     resource_id=str(prompt.id),
-                    custom_fields={"prompt_name": prompt.name, "is_active": prompt.is_active},
+                    custom_fields={"prompt_name": prompt.name, "enabled": prompt.enabled},
                     db=db,
                 )
 

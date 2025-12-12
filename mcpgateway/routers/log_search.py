@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, desc, select, delete
+from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
@@ -25,12 +25,12 @@ from sqlalchemy.sql import func as sa_func
 from mcpgateway.config import settings
 from mcpgateway.db import (
     AuditTrail,
+    get_db,
     PerformanceMetric,
     SecurityEvent,
     StructuredLogEntry,
-    get_db,
 )
-from mcpgateway.middleware.rbac import require_permission, get_current_user_with_permissions
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
 logger = logging.getLogger(__name__)

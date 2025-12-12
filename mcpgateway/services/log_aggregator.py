@@ -21,8 +21,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import PerformanceMetric, StructuredLogEntry, SessionLocal
 from mcpgateway.config import settings
+from mcpgateway.db import PerformanceMetric, SessionLocal, StructuredLogEntry
 
 logger = logging.getLogger(__name__)
 

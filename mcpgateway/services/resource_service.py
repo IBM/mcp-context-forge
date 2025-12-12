@@ -51,8 +51,8 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
-from mcpgateway.services.event_service import EventService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -1580,7 +1580,7 @@ class ResourceService:
                     user_email=user_email,
                     team_id=resource.team_id,
                     new_values={
-                        "is_active": resource.is_active,
+                        "enabled": resource.enabled,
                     },
                     context={
                         "action": "activate" if activate else "deactivate",
@@ -1600,7 +1600,7 @@ class ResourceService:
                     resource_id=str(resource.id),
                     custom_fields={
                         "resource_uri": resource.uri,
-                        "is_active": resource.is_active,
+                        "enabled": resource.enabled,
                     },
                     db=db,
                 )

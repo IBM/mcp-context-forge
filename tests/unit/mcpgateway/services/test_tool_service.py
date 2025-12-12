@@ -300,7 +300,8 @@ class TestToolService:
         # Verify DB operations
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        # refresh is called twice: once after commit and once after logging commits
+        assert test_db.refresh.call_count == 2
 
         # Verify result
         assert result.name == "test-gateway-test-tool"

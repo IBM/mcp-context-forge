@@ -20,9 +20,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import SecurityEvent, AuditTrail, SessionLocal
-from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.config import settings
+from mcpgateway.db import AuditTrail, SecurityEvent, SessionLocal
+from mcpgateway.utils.correlation_id import get_correlation_id
 
 logger = logging.getLogger(__name__)
 

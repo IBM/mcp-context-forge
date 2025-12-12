@@ -18,6 +18,7 @@ from typing import Any, Callable, cast, Dict, Optional
 # Third-Party - Try to import OpenTelemetry core components - make them truly optional
 OTEL_AVAILABLE = False
 try:
+    # Third-Party
     from opentelemetry import trace
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider

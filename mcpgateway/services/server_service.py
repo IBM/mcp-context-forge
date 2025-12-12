@@ -33,10 +33,10 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import ServerMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
-from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -826,7 +826,7 @@ class ServerService:
             resource_type="server",
             resource_id=server.id,
             custom_fields={
-                "is_active": server.is_active,
+                "enabled": server.enabled,
                 "tool_count": len(getattr(server, "tools", []) or []),
                 "resource_count": len(getattr(server, "resources", []) or []),
                 "prompt_count": len(getattr(server, "prompts", []) or []),
@@ -841,7 +841,7 @@ class ServerService:
             resource_name=server.name,
             user_id="system",
             team_id=getattr(server, "team_id", None),
-            context={"is_active": server.is_active},
+            context={"enabled": server.enabled},
             db=db,
         )
 

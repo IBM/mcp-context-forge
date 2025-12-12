@@ -43,7 +43,6 @@ from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
 from mcpgateway.config import settings
-from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
@@ -64,13 +63,14 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
-from mcpgateway.services.event_service import EventService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -764,6 +764,8 @@ class ToolService:
                 db=db,
             )
 
+            # Refresh db_tool after logging commits (they expire the session objects)
+            db.refresh(db_tool)
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()

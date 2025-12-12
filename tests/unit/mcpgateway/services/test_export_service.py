@@ -726,7 +726,7 @@ async def test_export_servers_with_data(export_service, mock_db):
     mock_server.name = "test_server"
     mock_server.description = "Test server"
     mock_server.associated_tools = ["tool1", "tool2"]
-    mock_server.is_active = True
+    mock_server.enabled = True
     mock_server.tags = ["test", "api"]
 
     export_service.server_service.list_servers.return_value = [mock_server]
@@ -803,7 +803,7 @@ async def test_export_resources_with_data(export_service, mock_db):
     mock_resource.uri = "file:///workspace/test.txt"
     mock_resource.description = "Test resource file"
     mock_resource.mime_type = "text/plain"
-    mock_resource.is_active = True
+    mock_resource.enabled = True
     mock_resource.tags = ["file", "text"]
     mock_resource.updated_at = datetime.now(timezone.utc)
 

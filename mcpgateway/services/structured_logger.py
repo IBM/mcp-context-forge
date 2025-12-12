@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import StructuredLogEntry, SessionLocal
+from mcpgateway.db import SessionLocal, StructuredLogEntry
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.utils.correlation_id import get_correlation_id
 
@@ -94,6 +94,7 @@ class LogEnricher:
 
         # Add OpenTelemetry trace context if available
         try:
+            # Third-Party
             from opentelemetry import trace  # pylint: disable=import-outside-toplevel
 
             span = trace.get_current_span()

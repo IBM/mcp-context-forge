@@ -30,6 +30,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 
 # Optional OpenTelemetry support (Third-Party)
 try:
+    # Third-Party
     from opentelemetry import trace  # type: ignore[import-untyped]
 except ImportError:
     trace = None  # type: ignore[assignment]
@@ -37,6 +38,7 @@ except ImportError:
 AnyioClosedResourceError: Optional[type]  # pylint: disable=invalid-name
 try:
     # Optional import; only used for filtering a known benign upstream error (Third-Party)
+    # Third-Party
     from anyio import ClosedResourceError as AnyioClosedResourceError  # pylint: disable=invalid-name
 except Exception:  # pragma: no cover - environment without anyio
     AnyioClosedResourceError = None  # pylint: disable=invalid-name

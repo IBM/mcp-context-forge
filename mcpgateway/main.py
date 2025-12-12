@@ -113,8 +113,8 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayD
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
-from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.log_aggregator import get_log_aggregator
+from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService, ResourceURIConflictError
