@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import Permissions, SessionLocal
+from mcpgateway.db import EmailTeam, Permissions, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -270,6 +270,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             if team_id is None:
                 form = await request.form()
                 team_id = form.get('team_id')
+
+            if team_id is None:
+                team_service = TeamManagementService(user_context["db"])
+                global_team: EmailTeam = await team_service.get_team_by_slug("global")
+
+                if global_team:
+                    team_id = global_team.id
 
             # First, check if any plugins want to handle permission checking
             # First-Party

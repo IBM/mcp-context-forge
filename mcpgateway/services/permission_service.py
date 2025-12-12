@@ -81,10 +81,10 @@ class PermissionService:
         granted_scopes = []
 
         # Check global roles first
-        global_roles = [r for r in roles if r.scope == "global"]
-        for role in global_roles:
-            effective_perms = role.role.get_effective_permissions()
-            granted_scopes.append({"scope": "global", "scope_id": None, "permissions": list(effective_perms)})
+        # global_roles = [r for r in roles if r.scope == "global"]
+        # for role in global_roles:
+        #     effective_perms = role.role.get_effective_permissions()
+        #     granted_scopes.append({"scope": "global", "scope_id": None, "permissions": list(effective_perms)})
 
         # Check team roles
         team_roles = [r for r in roles if r.scope == "team"]
