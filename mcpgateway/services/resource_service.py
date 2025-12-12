@@ -62,7 +62,6 @@ from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
