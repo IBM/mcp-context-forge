@@ -2,21 +2,19 @@
 """Tests for plugin."""
 
 # Third-Party
+from cedarpolicyplugin.plugin import CedarPolicyPlugin
 import pytest
 
 # First-Party
-from cedarpolicyplugin.plugin import CedarPolicyPlugin
+from mcpgateway.common.models import Message, PromptResult, ResourceContent, Role, TextContent
+from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.hooks.resources import ResourcePostFetchPayload, ResourcePreFetchPayload
+from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
 from mcpgateway.plugins.framework.models import (
+    GlobalContext,
     PluginConfig,
     PluginContext,
-    GlobalContext,
 )
-
-from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload, ResourcePostFetchPayload
-from mcpgateway.plugins.framework.hooks.prompts import PromptPrehookPayload, PromptPosthookPayload
-from mcpgateway.plugins.framework.hooks.tools import ToolPostInvokePayload, ToolPreInvokePayload
-
-from mcpgateway.common.models import Message, ResourceContent, Role, TextContent, PromptResult
 
 
 # This test case is responsible for verifying cedarplugin functionality for post tool hooks in cdear native mode
@@ -25,35 +23,34 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
     """Test plugin for post tool invocation"""
     policy_config = [
         {
-            'id': 'allow-employee-basic-access',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"get_leave_balance"', 'Action::"request_certificate"'],
-            'resource': ['Server::"askHR"', 'Agent::"employee_agent"']
+            "id": "allow-employee-basic-access",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"get_leave_balance"', 'Action::"request_certificate"'],
+            "resource": ['Server::"askHR"', 'Agent::"employee_agent"'],
         },
         {
-            'id': 'allow-manager-full-access',
-            'effect': 'Permit',
-            'principal': 'Role::"manager"',
-            'action':  ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"', 'Action::"view_full_output"'],
-            'resource':  ['Agent::"manager_agent"', 'Server::"payroll_tool"']
+            "id": "allow-manager-full-access",
+            "effect": "Permit",
+            "principal": 'Role::"manager"',
+            "action": ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"', 'Action::"view_full_output"'],
+            "resource": ['Agent::"manager_agent"', 'Server::"payroll_tool"'],
         },
         {
-            'id': 'allow-hr-hr_tool',
-            'effect': 'Permit',
-            'principal': 'Role::"hr"',
-            'action': ['Action::"update_payroll"', 'Action::"view_performance"', 'Action::"view_full_output"'],
-            'resource': ['Server::"hr_tool"']
+            "id": "allow-hr-hr_tool",
+            "effect": "Permit",
+            "principal": 'Role::"hr"',
+            "action": ['Action::"update_payroll"', 'Action::"view_performance"', 'Action::"view_full_output"'],
+            "resource": ['Server::"hr_tool"'],
         },
         {
-            'id': 'redact-non-manager-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': ['Server::"payroll_tool"', 'Agent::"manager_agent"', 'Server::"askHR"']
-
+            "id": "redact-non-manager-views",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"view_redacted_output"'],
+            "resource": ['Server::"payroll_tool"', 'Agent::"manager_agent"', 'Server::"askHR"'],
         },
-        ]
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
     policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
@@ -61,27 +58,17 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "action": "get_leave_balance", "resource": "askHR"},
         {"user": "bob", "action": "view_performance", "resource": "payroll_tool"},
         {"user": "carol", "action": "update_payroll", "resource": "hr_tool"},
         {"user": "alice", "action": "update_payroll", "resource": "hr_tool"},
-        ]
+    ]
 
     redact_count = 0
     allow_count = 0
@@ -106,38 +93,28 @@ async def test_cedarpolicyplugin_post_tool_invoke_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_post_tool_invoke_custom_dsl_rbac():
     """Test plugin for post tool invocation"""
-    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n\
+    policy_config = "[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n\
     [role:employee:agent/employee_agent]\nget_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\
     \nget_leave_balance\napprove_leave\npromote_employee\nview_performance\nview_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\nview_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n\
-    [role:employee:server/askHR]\nview_redacted_output'
+    [role:employee:server/askHR]\nview_redacted_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "action": "get_leave_balance", "resource": "askHR"},
         {"user": "bob", "action": "view_performance", "resource": "payroll_tool"},
         {"user": "carol", "action": "update_payroll", "resource": "hr_tool"},
         {"user": "alice", "action": "update_payroll", "resource": "hr_tool"},
-        ]
+    ]
 
     redact_count = 0
     allow_count = 0
@@ -164,63 +141,52 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
     """Test plugin tool pre invoke hook."""
     policy_config = [
         {
-            'id': 'allow-employee-basic-access',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"get_leave_balance"', 'Action::"request_certificate"'],
-            'resource': ['Server::"askHR"', 'Agent::"employee_agent"']
+            "id": "allow-employee-basic-access",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"get_leave_balance"', 'Action::"request_certificate"'],
+            "resource": ['Server::"askHR"', 'Agent::"employee_agent"'],
         },
         {
-            'id': 'allow-manager-full-access',
-            'effect': 'Permit',
-            'principal': 'Role::"manager"',
-            'action':  ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"', 'Action::"view_full_output"'],
-            'resource':  ['Agent::"manager_agent"', 'Server::"payroll_tool"']
+            "id": "allow-manager-full-access",
+            "effect": "Permit",
+            "principal": 'Role::"manager"',
+            "action": ['Action::"get_leave_balance"', 'Action::"approve_leave"', 'Action::"promote_employee"', 'Action::"view_performance"', 'Action::"view_full_output"'],
+            "resource": ['Agent::"manager_agent"', 'Server::"payroll_tool"'],
         },
         {
-            'id': 'allow-hr-hr_tool',
-            'effect': 'Permit',
-            'principal': 'Role::"hr"',
-            'action': ['Action::"update_payroll"', 'Action::"view_performance"', 'Action::"view_full_output"'],
-            'resource': ['Server::"hr_tool"']
+            "id": "allow-hr-hr_tool",
+            "effect": "Permit",
+            "principal": 'Role::"hr"',
+            "action": ['Action::"update_payroll"', 'Action::"view_performance"', 'Action::"view_full_output"'],
+            "resource": ['Server::"hr_tool"'],
         },
         {
-            'id': 'redact-non-manager-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': ['Server::"payroll_tool"', 'Agent::"manager_agent"', 'Server::"askHR"']
-
+            "id": "redact-non-manager-views",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"view_redacted_output"'],
+            "resource": ['Server::"payroll_tool"', 'Agent::"manager_agent"', 'Server::"askHR"'],
         },
-        ]
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "action": "get_leave_balance", "resource": "askHR"},
         {"user": "bob", "action": "view_performance", "resource": "payroll_tool"},
         {"user": "carol", "action": "update_payroll", "resource": "hr_tool"},
         {"user": "alice", "action": "update_payroll", "resource": "hr_tool"},
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -241,38 +207,28 @@ async def test_cedarpolicyplugin_pre_tool_invoke_cedar_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
     """Test plugin tool pre invoke."""
-    policy_config = '[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\n\
+    policy_config = "[role:employee:server/askHR]\nget_leave_balance\nrequest_certificate\n\n[role:employee:agent/employee_agent]\n\
     get_leave_balance\nrequest_certificate\n\n[role:manager:agent/manager_agent]\nget_leave_balance\napprove_leave\npromote_employee\n\
     view_performance\nview_full_output\n\n[role:manager:server/payroll_tool]\nget_leave_balance\napprove_leave\npromote_employee\nview_performance\n\
     view_full_output\n\n[role:hr:server/hr_tool]\nupdate_payroll\nview_performance\nview_full_output\n\n[role:employee:server/payroll_tool]\n\
-    view_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output'
+    view_redacted_output\n\n[role:employee:agent/manager_agent]\nview_redacted_output\n\n[role:employee:server/askHR]\nview_redacted_output"
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  r"\$\d{1,}(,\d{1,})*"}
+    policy_redaction_spec = {"pattern": r"\$\d{1,}(,\d{1,})*"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "action": "get_leave_balance", "resource": "askHR"},
         {"user": "bob", "action": "view_performance", "resource": "payroll_tool"},
         {"user": "carol", "action": "update_payroll", "resource": "hr_tool"},
         {"user": "alice", "action": "update_payroll", "resource": "hr_tool"},
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -294,49 +250,32 @@ async def test_cedarpolicyplugin_pre_tool_invoke_custom_dsl_rbac():
 async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
     """Test plugin prompt prefetch hook."""
     policy_config = [
+        {"id": "redact-non-admin-views", "effect": "Permit", "principal": 'Role::"employee"', "action": ['Action::"view_redacted_output"'], "resource": 'Prompt::"judge_prompts"'},
         {
-            'id': 'redact-non-admin-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': 'Prompt::"judge_prompts"'
-
+            "id": "allow-admin-prompts",  # policy for resources
+            "effect": "Permit",
+            "principal": 'Role::"admin"',
+            "action": ['Action::"view_full_output"'],
+            "resource": 'Prompt::"judge_prompts"',  # Prompt::<prompt_name>
         },
-        {
-            'id': 'allow-admin-prompts',  # policy for resources
-            'effect': 'Permit',
-            'principal': 'Role::"admin"',
-            'action': ['Action::"view_full_output"'],
-            'resource': 'Prompt::"judge_prompts"'  # Prompt::<prompt_name>
-        }
-        ]
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all"}
+    policy_redaction_spec = {"pattern": "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "judge_prompts"},  # allow
         {"user": "robert", "resource": "judge_prompts"},  # allow
         {"user": "carol", "resource": "judge_prompts"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -360,34 +299,24 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
     """Test plugin prompt prefetch hook."""
-    policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
+    policy_config = "[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all"}
+    policy_redaction_spec = {"pattern": "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "judge_prompts"},  # allow
         {"user": "robert", "resource": "judge_prompts"},  # allow
         {"user": "carol", "resource": "judge_prompts"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -412,49 +341,32 @@ async def test_cedarpolicyplugin_prompt_pre_fetch_custom_dsl_rbac():
 async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
     """Test plugin prompt postfetch hook."""
     policy_config = [
+        {"id": "redact-non-admin-views", "effect": "Permit", "principal": 'Role::"employee"', "action": ['Action::"view_redacted_output"'], "resource": 'Prompt::"judge_prompts"'},
         {
-            'id': 'redact-non-admin-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': 'Prompt::"judge_prompts"'
-
+            "id": "allow-admin-prompts",  # policy for resources
+            "effect": "Permit",
+            "principal": 'Role::"admin"',
+            "action": ['Action::"view_full_output"'],
+            "resource": 'Prompt::"judge_prompts"',  # Prompt::<prompt_name>
         },
-        {
-            'id': 'allow-admin-prompts',  # policy for resources
-            'effect': 'Permit',
-            'principal': 'Role::"admin"',
-            'action': ['Action::"view_full_output"'],
-            'resource': 'Prompt::"judge_prompts"'  # Prompt::<prompt_name>
-        }
-        ]
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all"}
+    policy_redaction_spec = {"pattern": "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "judge_prompts"},  # allow
         {"user": "robert", "resource": "judge_prompts"},  # allow
         {"user": "carol", "resource": "judge_prompts"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -484,34 +396,24 @@ async def test_cedarpolicyplugin_prompt_post_fetch_cedar_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_prompt_post_fetch_custom_dsl_rbac():
     """Test plugin prompt postfetch hook."""
-    policy_config = '[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output'
+    policy_config = "[role:employee:prompt/judge_prompts]\nview_redacted_output\n\n[role:admin:prompt/judge_prompts]\nview_full_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "all"}
+    policy_redaction_spec = {"pattern": "all"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "judge_prompts"},  # allow
         {"user": "robert", "resource": "judge_prompts"},  # allow
         {"user": "carol", "resource": "judge_prompts"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -543,48 +445,37 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
     """Test plugin resource prefetch hook."""
     policy_config = [
         {
-            'id': 'redact-non-admin-resource-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': 'Resource::"https://example.com/data"'
-
+            "id": "redact-non-admin-resource-views",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"view_redacted_output"'],
+            "resource": 'Resource::"https://example.com/data"',
         },
         {
-            'id': 'allow-admin-resources',  # policy for resources
-            'effect': 'Permit',
-            'principal': 'Role::"admin"',
-            'action': ['Action::"view_full_output"'],
-            'resource': 'Resource::"https://example.com/data"'
-        }
-        ]
+            "id": "allow-admin-resources",  # policy for resources
+            "effect": "Permit",
+            "principal": 'Role::"admin"',
+            "action": ['Action::"view_full_output"'],
+            "resource": 'Resource::"https://example.com/data"',
+        },
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "https://example.com/data"},  # allow
         {"user": "robert", "resource": "https://example.com/data"},  # allow
         {"user": "carol", "resource": "https://example.com/data"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -608,34 +499,24 @@ async def test_cedarpolicyplugin_resource_pre_fetch_cedar_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_pre_fetch_custom_dsl_rbac():
     """Test plugin resource prefetch hook."""
-    policy_config = '[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output'
+    policy_config = "[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output"
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "https://example.com/data"},  # allow
         {"user": "robert", "resource": "https://example.com/data"},  # allow
         {"user": "carol", "resource": "https://example.com/data"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -661,48 +542,37 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     """Test plugin resource post fetch."""
     policy_config = [
         {
-            'id': 'redact-non-admin-resource-views',
-            'effect': 'Permit',
-            'principal': 'Role::"employee"',
-            'action': ['Action::"view_redacted_output"'],
-            'resource': 'Resource::"https://example.com/data"'
-
+            "id": "redact-non-admin-resource-views",
+            "effect": "Permit",
+            "principal": 'Role::"employee"',
+            "action": ['Action::"view_redacted_output"'],
+            "resource": 'Resource::"https://example.com/data"',
         },
         {
-            'id': 'allow-admin-resources',  # policy for resources
-            'effect': 'Permit',
-            'principal': 'Role::"admin"',
-            'action': ['Action::"view_full_output"'],
-            'resource': 'Resource::"https://example.com/data"'
-        }
-        ]
+            "id": "allow-admin-resources",  # policy for resources
+            "effect": "Permit",
+            "principal": 'Role::"admin"',
+            "action": ['Action::"view_full_output"'],
+            "resource": 'Resource::"https://example.com/data"',
+        },
+    ]
 
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "cedar",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "cedar", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "https://example.com/data"},  # allow
         {"user": "robert", "resource": "https://example.com/data"},  # allow
         {"user": "carol", "resource": "https://example.com/data"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -711,12 +581,7 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
     for req in requests:
 
         # Prompt post hook output
-        content = ResourceContent(
-            type="resource",
-            uri="test://large",
-            text="test://abc@example.com",
-            id="1"
-            )
+        content = ResourceContent(type="resource", uri="test://large", text="test://abc@example.com", id="1")
         payload = ResourcePostFetchPayload(uri="https://example.com/data", content=content)
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_post_fetch(payload, context)
@@ -736,33 +601,23 @@ async def test_cedarpolicyplugin_resource_post_fetch_cedar_rbac():
 @pytest.mark.asyncio
 async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     """Test plugin resource postfetch hook."""
-    policy_config = '[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output'
+    policy_config = "[role:employee:resource/https://example.com/data]\nview_redacted_output\n\n[role:admin:resource/https://example.com/data]\nview_full_output"
     policy_output_keywords = {"view_full": "view_full_output", "view_redacted": "view_redacted_output"}
-    policy_redaction_spec = {"pattern":  "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
+    policy_redaction_spec = {"pattern": "[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}"}
     config = PluginConfig(
         name="test",
         kind="cedarpolicyplugin.CedarPolicyPlugin",
         hooks=["tool_pre_invoke"],
-        config={
-            "policy_lang": "custom_dsl",
-            "policy" : policy_config,
-            "policy_output_keywords": policy_output_keywords,
-            "policy_redaction_spec": policy_redaction_spec
-            },
+        config={"policy_lang": "custom_dsl", "policy": policy_config, "policy_output_keywords": policy_output_keywords, "policy_redaction_spec": policy_redaction_spec},
     )
     plugin = CedarPolicyPlugin(config)
-    info = {
-            "alice": "employee",
-            "bob": "manager",
-            "carol": "hr",
-            "robert": "admin"
-        }
+    info = {"alice": "employee", "bob": "manager", "carol": "hr", "robert": "admin"}
     plugin._set_jwt_info(info)
     requests = [
         {"user": "alice", "resource": "https://example.com/data"},  # allow
         {"user": "robert", "resource": "https://example.com/data"},  # allow
         {"user": "carol", "resource": "https://example.com/data"},  # deny
-        ]
+    ]
 
     allow_count = 0
     deny_count = 0
@@ -771,12 +626,7 @@ async def test_cedarpolicyplugin_resource_post_fetch_custom_dsl_rbac():
     for req in requests:
 
         # Prompt post hook output
-        content = ResourceContent(
-            type="resource",
-            uri="test://large",
-            text="test://abc@example.com",
-            id="1"
-            )
+        content = ResourceContent(type="resource", uri="test://large", text="test://abc@example.com", id="1")
         payload = ResourcePostFetchPayload(uri="https://example.com/data", content=content)
         context = PluginContext(global_context=GlobalContext(request_id="1", server_id="2", user=req["user"]))
         result = await plugin.resource_post_fetch(payload, context)

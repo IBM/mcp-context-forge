@@ -10,32 +10,33 @@ This module loads configurations for plugins.
 
 # Standard
 from enum import Enum
-from typing import Any
 import re
+from typing import Any
+from urllib.parse import urlparse
 
 # Third-Party
 from cedarpolicyplugin.schema import CedarConfig, CedarInput
-from cedarpy import is_authorized, AuthzResult, Decision
-from urllib.parse import urlparse
+from cedarpy import AuthzResult, Decision, is_authorized
 
 # First-Party
 from mcpgateway.plugins.framework import (
     Plugin,
+    PluginConfig,
+    PluginContext,
     PluginError,
     PluginErrorModel,
-    ToolPreInvokePayload,
-    ToolPreInvokeResult,
-    ToolPostInvokePayload,
-    ToolPostInvokeResult,
+    PluginViolation,
     PromptPosthookPayload,
     PromptPosthookResult,
-    PromptPrehookResult,
     PromptPrehookPayload,
+    PromptPrehookResult,
+    ToolPostInvokePayload,
+    ToolPostInvokeResult,
+    ToolPreInvokePayload,
+    ToolPreInvokeResult,
 )
-from mcpgateway.plugins.framework.hooks.resources import ResourcePreFetchPayload, ResourcePostFetchPayload, ResourcePreFetchResult, ResourcePostFetchResult
-from mcpgateway.plugins.framework import PluginConfig, PluginContext, PluginViolation
+from mcpgateway.plugins.framework.hooks.resources import ResourcePostFetchPayload, ResourcePostFetchResult, ResourcePreFetchPayload, ResourcePreFetchResult
 from mcpgateway.services.logging_service import LoggingService
-
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -380,20 +381,20 @@ class CedarPolicyPlugin(Plugin):
             if result_full == Decision.Allow.value:
                 return PromptPosthookResult(continue_processing=True)
 
-            elif result_redacted == Decision.Allow.value:
+            if result_redacted == Decision.Allow.value:
                 if payload.result.messages:
                     for index, message in enumerate(payload.result.messages):
                         value = self._redact_output(message.content.text, self.cedar_config.policy_redaction_spec.pattern)
                         payload.result.messages[index].content.text = value
                 return PromptPosthookResult(modified_payload=payload, continue_processing=True)
-            else:
-                violation = PluginViolation(
-                    reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
-                    description=CedarResponseTemplates.CEDAR_DESC.format(hook_type=hook_type),
-                    code=CedarCodes.DENIAL_CODE,
-                    details={},
-                )
-                return PromptPosthookResult(modified_payload=payload, violation=violation, continue_processing=False)
+
+            violation = PluginViolation(
+                reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
+                description=CedarResponseTemplates.CEDAR_DESC.format(hook_type=hook_type),
+                code=CedarCodes.DENIAL_CODE,
+                details={},
+            )
+            return PromptPosthookResult(modified_payload=payload, violation=violation, continue_processing=False)
         return PromptPosthookResult(continue_processing=True)
 
     async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
@@ -660,19 +661,18 @@ class CedarPolicyPlugin(Plugin):
             if result_full == Decision.Allow.value:
                 return ResourcePostFetchResult(continue_processing=True)
 
-            elif result_redacted == Decision.Allow.value:
+            if result_redacted == Decision.Allow.value:
                 if payload.content:
                     if hasattr(payload.content, "text"):
                         value = self._redact_output(payload.content.text, self.cedar_config.policy_redaction_spec.pattern)
                         payload.content.text = value
                 return ResourcePostFetchResult(modified_payload=payload, continue_processing=True)
 
-            else:
-                violation = PluginViolation(
-                    reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
-                    description=CedarResponseTemplates.CEDAR_DESC.format(hook_type=hook_type),
-                    code=CedarCodes.DENIAL_CODE,
-                    details={},
-                )
-                return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
+            violation = PluginViolation(
+                reason=CedarResponseTemplates.CEDAR_REASON.format(hook_type=hook_type),
+                description=CedarResponseTemplates.CEDAR_DESC.format(hook_type=hook_type),
+                code=CedarCodes.DENIAL_CODE,
+                details={},
+            )
+            return ResourcePostFetchResult(modified_payload=payload, violation=violation, continue_processing=False)
         return ResourcePostFetchResult(continue_processing=True)
