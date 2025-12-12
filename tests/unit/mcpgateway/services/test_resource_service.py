@@ -1588,7 +1588,7 @@ class TestResourceServiceMetricsExtended:
 
         # One template in cache — but it does NOT match URI
         template_obj = ResourceTemplate(
-            id=1,
+            id="1",
             uriTemplate="file://search/{query}",
             name="search_template",
             description="Template for performing a file search",

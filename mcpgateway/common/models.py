@@ -705,6 +705,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
     """A template for constructing resource URIs (MCP spec-compliant).
 
     Attributes:
+        id (Optional[str]): Unique identifier for resource
         uri_template (str): The URI template string.
         name (str): The unique name of the template.
         description (Optional[str]): A description of the template.
@@ -717,7 +718,7 @@ class ResourceTemplate(BaseModelWithConfigDict):
 
     # ✅ DB field name: uri_template
     # ✅ API (JSON) alias:
-    id: Optional[int] = None
+    id: Optional[str] = None
     uri_template: str = Field(..., alias="uriTemplate")
     name: str
     description: Optional[str] = None
