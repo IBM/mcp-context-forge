@@ -104,6 +104,12 @@
       rel="stylesheet"
     />
     {% endif %}
+    <!-- Font Awesome -->
+    {% if ui_airgapped %}
+    <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
+    {% else %}
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    {% endif %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/flame-graph.css" rel="stylesheet" />
@@ -5198,13 +5204,116 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </label>
                   <input
                     type="password"
+                    id="new_user_password"
                     name="password"
                     required
                     minlength="8"
+                    oninput="validateNewUserPassword()"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
                     placeholder="Strong password"
                   />
+                  <!-- Password policy guidance (visible below password field) -->
+                  <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-md dark:bg-blue-900 dark:border-blue-800">
+                    <div class="flex">
+                      <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-300" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true"><path d="M18 10A8 8 0 11 2 10a8 8 0 0116 0zm-9-1h2v5H9V9zm0-3h2v2H9V6z"/></svg>
+                      </div>
+                      <div class="ml-3 text-sm text-blue-800 dark:text-blue-100">
+                        <div class="font-semibold">Password Requirements</div>
+                        <ul class="mt-2 space-y-1">
+                          <li id="req-length" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            At least {{ password_min_length or 8 }} characters long
+                          </li>
+                          {% if password_require_uppercase %}
+                          <li id="req-uppercase" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains uppercase letters (A-Z)
+                          </li>
+                          {% endif %}
+                          {% if password_require_lowercase %}
+                          <li id="req-lowercase" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains lowercase letters (a-z)
+                          </li>
+                          {% endif %}
+                          {% if password_require_numbers %}
+                          <li id="req-numbers" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains numbers (0-9)
+                          </li>
+                          {% endif %}
+                          {% if password_require_special %}
+                          <li id="req-special" class="flex items-start">
+                            <i class="fas fa-circle text-gray-400 mr-2"></i>
+                            Contains special characters (e.g. !@#$%^&amp;*()_+[]{}:;"'&lt;&gt;?,.-)
+                          </li>
+                          {% endif %}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
                 </div>
+                <script>
+                  // Validate the Create User password box and update requirement icons
+                  (function(){
+                    const minLen = {{ password_min_length | tojson }} || 8;
+                    const REQ_UPPER = {{ password_require_uppercase | tojson }};
+                    const REQ_LOWER = {{ password_require_lowercase | tojson }};
+                    const REQ_NUMS = {{ password_require_numbers | tojson }};
+                    const REQ_SPEC = {{ password_require_special | tojson }};
+
+                    // Helper to update icons if element exists
+                    function updateRequirement(id, met) {
+                      const element = document.getElementById(id);
+                      if (!element) return;
+                      const icon = element.querySelector('i');
+                      if (!icon) return;
+                      if (met) {
+                        icon.className = 'fas fa-check-circle text-green-500 mr-2';
+                        element.classList.remove('text-blue-600');
+                        element.classList.add('text-green-600');
+                      } else {
+                        icon.className = 'fas fa-circle text-gray-400 mr-2';
+                        element.classList.remove('text-green-600');
+                        element.classList.add('text-blue-600');
+                      }
+                    }
+                    window.validateNewUserPassword = function() {
+                      const password = document.getElementById('new_user_password')?.value || '';
+                      // length
+                      const lengthMet = password.length >= minLen;
+                      const uppercaseMet = /[A-Z]/.test(password);
+                      const lowercaseMet = /[a-z]/.test(password);
+                      const numbersMet = /[0-9]/.test(password);
+                      const specialMet = /[!@#$%^&*()_+\-\[\]{};':"\\|,.<>\/?]/.test(password);
+
+                      // Update indicators only if elements exist (they may be conditionally rendered)
+                      updateRequirement('req-length', lengthMet);
+                      if (REQ_UPPER) updateRequirement('req-uppercase', uppercaseMet);
+                      if (REQ_LOWER) updateRequirement('req-lowercase', lowercaseMet);
+                      if (REQ_NUMS) updateRequirement('req-numbers', numbersMet);
+                      if (REQ_SPEC) updateRequirement('req-special', specialMet);
+
+                      // Determine whether submission is allowed
+                      const allRequirementsMet = lengthMet && (!REQ_UPPER || uppercaseMet) && (!REQ_LOWER || lowercaseMet) && (!REQ_NUMS || numbersMet) && (!REQ_SPEC || specialMet);
+                      const submitBtn = document.getElementById('create_user_submit');
+                      if (submitBtn) {
+                        submitBtn.disabled = !allRequirementsMet;
+                        if (submitBtn.disabled) {
+                          submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                        } else {
+                          submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+                        }
+                      }
+                    };
+
+                    document.addEventListener('DOMContentLoaded', function(){
+                      // initialize state
+                      window.validateNewUserPassword();
+                    });
+                  })();
+                </script>
                 <div class="flex items-center">
                   <input
                     type="checkbox"
@@ -5223,6 +5332,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               <div class="flex justify-end">
                 <button
                   type="submit"
+                  id="create_user_submit"
                   class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   Create User
