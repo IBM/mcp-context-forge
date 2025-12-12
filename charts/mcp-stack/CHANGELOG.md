@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ---
 
+## [0.9.1] - 2025-12-03
+
+### Added
+* **Helm Hook Support for Migration Job** - enable recreation of the migration Job on every deployment
+  - helm.sh/hook: pre-install,pre-upgrade — ensures the migration Job runs automatically during installs and upgrades
+  - helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded — removes old migration Jobs to prevent immutable field errors
+  - Eliminates upgrade failures caused by changes to spec.template in Kubernetes Jobs
+
+### Changed
+* **Chart version** - Bumped to 0.9.1 for migration job fix
+
 ## [0.9.0] - 2025-11-05
 
 ### Added
