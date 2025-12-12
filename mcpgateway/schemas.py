@@ -419,6 +419,12 @@ class ToolCreate(BaseModel):
         """
         if v is None:
             return v
+
+        forbidden_patterns = ["&&", ";", "||", "$(", "`", "|", "> ", "< "]
+        for pat in forbidden_patterns:
+            if pat in v:
+                raise ValueError(f"Description contains unsafe characters: '{pat}'")
+
         if len(v) > SecurityValidator.MAX_DESCRIPTION_LENGTH:
             # Truncate the description to the maximum allowed length
             truncated = v[: SecurityValidator.MAX_DESCRIPTION_LENGTH]

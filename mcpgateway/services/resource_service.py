@@ -42,6 +42,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import Gateway as DbGateway
@@ -1372,6 +1373,13 @@ class ResourceService:
                     if pre_result.modified_payload:
                         uri = pre_result.modified_payload.uri
                         logger.debug(f"Resource URI modified by plugin: {original_uri} -> {uri}")
+
+                # Validate resource path if experimental validation is enabled
+                if getattr(settings, "experimental_validate_io", False) and uri and isinstance(uri, str):
+                    try:
+                        SecurityValidator.validate_path(uri, getattr(settings, "allowed_roots", None))
+                    except ValueError as e:
+                        raise ResourceError(f"Path validation failed: {e}")
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
