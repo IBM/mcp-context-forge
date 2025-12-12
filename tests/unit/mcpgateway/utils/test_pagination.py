@@ -18,7 +18,6 @@ This module tests pagination functionality including:
 import base64
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -655,11 +654,10 @@ class TestPaginationSchemas:
 def db_session():
     """Create a test database session."""
     # Standard
-    from unittest.mock import MagicMock
 
     # Third-Party
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import sessionmaker
 
     # First-Party
     from mcpgateway.db import Base
@@ -675,3 +673,4 @@ def db_session():
     yield session
 
     session.close()
+    engine.dispose()  # Properly close all connections in the pool

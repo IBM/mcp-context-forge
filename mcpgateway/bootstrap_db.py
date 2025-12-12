@@ -115,15 +115,11 @@ async def bootstrap_default_roles() -> None:
 
     try:
         # First-Party
-        from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
         from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
-        # Get database session
-        db_gen = get_db()
-        db = next(db_gen)
-
-        try:
+        # Use context manager to ensure proper session cleanup
+        with cast(Any, SessionLocal)() as db:
             role_service = RoleService(db)
             auth_service = EmailAuthService(db)
 
@@ -204,9 +200,6 @@ async def bootstrap_default_roles() -> None:
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
-        finally:
-            db.close()
-
     except Exception as e:
         logger.error(f"Failed to bootstrap default roles: {e}")
         # Don't fail the entire bootstrap process if role creation fails
@@ -255,32 +248,36 @@ async def main() -> None:
     cfg = Config(str(ini_path))  # path in container
     cfg.attributes["configure_logger"] = True
 
-    with engine.begin() as conn:
-        cfg.attributes["connection"] = conn
-        # Escape '%' characters in URL to avoid configparser interpolation errors
-        # (e.g., URL-encoded passwords like %40 for '@')
-        escaped_url = settings.database_url.replace("%", "%%")
-        cfg.set_main_option("sqlalchemy.url", escaped_url)
+    try:
+        with engine.begin() as conn:
+            cfg.attributes["connection"] = conn
+            # Escape '%' characters in URL to avoid configparser interpolation errors
+            # (e.g., URL-encoded passwords like %40 for '@')
+            escaped_url = settings.database_url.replace("%", "%%")
+            cfg.set_main_option("sqlalchemy.url", escaped_url)
 
-        insp = inspect(conn)
+            insp = inspect(conn)
 
-        if "gateways" not in insp.get_table_names():
-            logger.info("Empty DB detected - creating baseline schema")
-            # Apply MariaDB compatibility fixes if needed
-            if settings.database_url.startswith(("mariadb", "mysql")):
-                # pylint: disable=import-outside-toplevel
-                # First-Party
-                from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
+            if "gateways" not in insp.get_table_names():
+                logger.info("Empty DB detected - creating baseline schema")
+                # Apply MariaDB compatibility fixes if needed
+                if settings.database_url.startswith(("mariadb", "mysql")):
+                    # pylint: disable=import-outside-toplevel
+                    # First-Party
+                    from mcpgateway.alembic.env import _modify_metadata_for_mariadb, mariadb_naming_convention
 
-                _modify_metadata_for_mariadb()
-                Base.metadata.naming_convention = mariadb_naming_convention
-                logger.info("Applied MariaDB compatibility modifications")
+                    _modify_metadata_for_mariadb()
+                    Base.metadata.naming_convention = mariadb_naming_convention
+                    logger.info("Applied MariaDB compatibility modifications")
 
-            Base.metadata.create_all(bind=conn)
-            command.stamp(cfg, "head")
-        else:
-            logger.info("Running Alembic migrations to ensure schema is up to date")
-            command.upgrade(cfg, "head")
+                Base.metadata.create_all(bind=conn)
+                command.stamp(cfg, "head")
+            else:
+                logger.info("Running Alembic migrations to ensure schema is up to date")
+                command.upgrade(cfg, "head")
+    finally:
+        # Dispose the engine to close all connections in the pool
+        engine.dispose()
 
     # Post-upgrade normalization passes
     updated = normalize_team_visibility()

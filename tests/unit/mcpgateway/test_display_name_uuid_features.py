@@ -35,6 +35,7 @@ def db_session():
         yield session
     finally:
         session.close()
+        engine.dispose()  # Properly close all connections in the pool
 
 
 @pytest.fixture
