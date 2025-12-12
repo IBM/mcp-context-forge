@@ -516,16 +516,16 @@ class TestServerService:
             side_effect=lambda cls, _id: (
                 mock_server
                 if (cls, _id) == (DbServer, 1)
-                else None 
+                else None
             )
         )
 
         # FIX: Configure db.execute to handle both the conflict check and the bulk item fetches
         mock_db_result = MagicMock()
-        
+
         # 1. Handle name conflict check: scalar_one_or_none() -> None
         mock_db_result.scalar_one_or_none.return_value = None
-        
+
         # 2. Handle bulk fetches: scalars().all() -> lists of items
         # The code executes bulk queries in this order: Tools -> Resources -> Prompts
         mock_db_result.scalars.return_value.all.side_effect = [
@@ -533,9 +533,9 @@ class TestServerService:
             [new_resource],  # Second call: select(DbResource)...
             [new_prompt]     # Third call: select(DbPrompt)...
         ]
-        
+
         test_db.execute = Mock(return_value=mock_db_result)
-        
+
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
@@ -553,7 +553,7 @@ class TestServerService:
         mock_tools.__iter__ = Mock(return_value=iter(tool_items))
         mock_resources.__iter__ = Mock(return_value=iter(resource_items))
         mock_prompts.__iter__ = Mock(return_value=iter(prompt_items))
-        
+
         # Capture assignment to the lists (since the new code does server.tools = list(...))
         mock_server.tools = tool_items
         mock_server.resources = resource_items

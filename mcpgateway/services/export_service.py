@@ -399,7 +399,7 @@ class ExportService:
                 "websocket_endpoint": f"{root_path}/servers/{server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
-                "is_active": server.is_active,
+                "is_active": getattr(server, "enabled", getattr(server, "is_active", False)),
                 "tags": server.tags or [],
             }
 
@@ -469,7 +469,7 @@ class ExportService:
                 "description": resource.description,
                 "mime_type": resource.mime_type,
                 "tags": resource.tags or [],
-                "is_active": resource.is_active,
+                "is_active": getattr(resource, "enabled", getattr(resource, "is_active", False)),
                 "last_modified": resource.updated_at.isoformat() if resource.updated_at else None,
             }
 

@@ -3797,6 +3797,252 @@ def init_db():
         raise Exception(f"Failed to initialize database: {str(e)}")
 
 
+# ============================================================================
+# Structured Logging Models
+# ============================================================================
+
+
+class StructuredLogEntry(Base):
+    """Structured log entry for comprehensive logging and analysis.
+
+    Stores all log entries with correlation IDs, performance metrics,
+    and security context for advanced search and analytics.
+    """
+
+    __tablename__ = "structured_log_entries"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Correlation and request tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+
+    # Log metadata
+    level: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    component: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    logger: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    # User and request context
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    client_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 max length
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    request_method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+
+    # Performance data
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    operation_type: Mapped[Optional[str]] = mapped_column(String(100), index=True, nullable=True)
+
+    # Security context
+    is_security_event: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    security_severity: Mapped[Optional[str]] = mapped_column(String(20), index=True, nullable=True)  # LOW, MEDIUM, HIGH, CRITICAL
+    threat_indicators: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Structured context data
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    error_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    performance_metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # System information
+    hostname: Mapped[str] = mapped_column(String(255), nullable=False)
+    process_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    thread_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    version: Mapped[str] = mapped_column(String(50), nullable=False)
+    environment: Mapped[str] = mapped_column(String(50), nullable=False, default="production")
+
+    # OpenTelemetry trace context
+    trace_id: Mapped[Optional[str]] = mapped_column(String(32), index=True, nullable=True)
+    span_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    # Indexes for performance
+    __table_args__ = (
+        Index("idx_log_correlation_time", "correlation_id", "timestamp"),
+        Index("idx_log_user_time", "user_id", "timestamp"),
+        Index("idx_log_level_time", "level", "timestamp"),
+        Index("idx_log_component_time", "component", "timestamp"),
+        Index("idx_log_security", "is_security_event", "security_severity", "timestamp"),
+        Index("idx_log_operation", "operation_type", "timestamp"),
+        Index("idx_log_trace", "trace_id", "timestamp"),
+    )
+
+
+class PerformanceMetric(Base):
+    """Aggregated performance metrics from log analysis.
+
+    Stores time-windowed aggregations of operation performance
+    for analytics and trend analysis.
+    """
+
+    __tablename__ = "performance_metrics"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamp
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Metric identification
+    operation_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    component: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+
+    # Aggregated metrics
+    request_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    # Duration metrics (in milliseconds)
+    avg_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    min_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    max_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p50_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p95_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    p99_duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Time window
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    window_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Additional context
+    metric_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_perf_operation_time", "operation_type", "window_start"),
+        Index("idx_perf_component_time", "component", "window_start"),
+        Index("idx_perf_window", "window_start", "window_end"),
+    )
+
+
+class SecurityEvent(Base):
+    """Security event logging for threat detection and audit trails.
+
+    Specialized table for security events with enhanced context
+    and threat analysis capabilities.
+    """
+
+    __tablename__ = "security_events"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    # Correlation tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    log_entry_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("structured_log_entries.id"), index=True, nullable=True)
+
+    # Event classification
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # auth_failure, suspicious_activity, rate_limit, etc.
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # LOW, MEDIUM, HIGH, CRITICAL
+    category: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # authentication, authorization, data_access, etc.
+
+    # User and request context
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    client_ip: Mapped[str] = mapped_column(String(45), nullable=False, index=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Event details
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    action_taken: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)  # blocked, allowed, flagged, etc.
+
+    # Threat analysis
+    threat_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)  # 0.0-1.0
+    threat_indicators: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    failed_attempts_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Resolution tracking
+    resolved: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    resolution_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Alert tracking
+    alert_sent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    alert_sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    alert_recipients: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+    # Additional context
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_security_type_time", "event_type", "timestamp"),
+        Index("idx_security_severity_time", "severity", "timestamp"),
+        Index("idx_security_user_time", "user_id", "timestamp"),
+        Index("idx_security_ip_time", "client_ip", "timestamp"),
+        Index("idx_security_unresolved", "resolved", "severity", "timestamp"),
+    )
+
+
+class AuditTrail(Base):
+    """Comprehensive audit trail for data access and changes.
+
+    Tracks all significant system changes and data access for
+    compliance and security auditing.
+    """
+
+    __tablename__ = "audit_trails"
+
+    # Primary key
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+
+    # Timestamps
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
+
+    # Correlation tracking
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+
+    # Action details
+    action: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # create, read, update, delete, execute, etc.
+    resource_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)  # tool, resource, prompt, user, etc.
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    resource_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
+    # User context
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
+
+    # Request context
+    client_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    request_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    request_method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+
+    # Change tracking
+    old_values: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    new_values: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    changes: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Data classification
+    data_classification: Mapped[Optional[str]] = mapped_column(String(50), index=True, nullable=True)  # public, internal, confidential, restricted
+    requires_review: Mapped[bool] = mapped_column(Boolean, default=False, index=True, nullable=False)
+
+    # Result
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, index=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Additional context
+    context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    __table_args__ = (
+        Index("idx_audit_action_time", "action", "timestamp"),
+        Index("idx_audit_resource_time", "resource_type", "resource_id", "timestamp"),
+        Index("idx_audit_user_time", "user_id", "timestamp"),
+        Index("idx_audit_classification", "data_classification", "timestamp"),
+        Index("idx_audit_review", "requires_review", "timestamp"),
+    )
+
+
 if __name__ == "__main__":
     # Wait for database to be ready before initializing
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s

@@ -63,10 +63,14 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import ToolCreate, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.metrics_common import build_top_performers
@@ -80,6 +84,11 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize performance tracker, structured logger, and audit trail for tool operations
+perf_tracker = get_performance_tracker()
+structured_logger = get_structured_logger("tool_service")
+audit_trail = get_audit_trail_service()
 
 
 def extract_using_jq(data, jq_filter=""):
@@ -710,17 +719,109 @@ class ToolService:
             db.commit()
             db.refresh(db_tool)
             await self._notify_tool_added(db_tool)
+
+            # Structured logging: Audit trail for tool creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_tool",
+                resource_type="tool",
+                resource_id=db_tool.id,
+                resource_name=db_tool.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "name": db_tool.name,
+                    "display_name": db_tool.display_name,
+                    "visibility": visibility,
+                    "integration_type": db_tool.integration_type,
+                },
+                context={
+                    "created_via": created_via,
+                    "import_batch_id": import_batch_id,
+                    "federation_source": federation_source,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful tool creation
+            structured_logger.log(
+                level="INFO",
+                message="Tool created successfully",
+                event_type="tool_created",
+                component="tool_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="tool",
+                resource_id=db_tool.id,
+                custom_fields={
+                    "tool_name": db_tool.name,
+                    "visibility": visibility,
+                    "integration_type": db_tool.integration_type,
+                },
+                db=db,
+            )
+
+            # Refresh db_tool after logging commits (they expire the session objects)
+            db.refresh(db_tool)
             return self._convert_tool_to_read(db_tool)
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool registration: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Tool creation failed due to database integrity error",
+                event_type="tool_creation_failed",
+                component="tool_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ie,
+                custom_fields={
+                    "tool_name": tool.name,
+                },
+                db=db,
+            )
             raise ie
         except ToolNameConflictError as tnce:
             db.rollback()
             logger.error(f"ToolNameConflictError during tool registration: {tnce}")
+
+            # Structured logging: Log name conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Tool creation failed due to name conflict",
+                event_type="tool_name_conflict",
+                component="tool_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "tool_name": tool.name,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
             raise tnce
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic tool creation failure
+            structured_logger.log(
+                level="ERROR",
+                message="Tool creation failed",
+                event_type="tool_creation_failed",
+                component="tool_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=e,
+                custom_fields={
+                    "tool_name": tool.name,
+                },
+                db=db,
+            )
             raise ToolError(f"Failed to register tool: {str(e)}")
 
     async def list_tools(
@@ -1009,7 +1110,25 @@ class ToolService:
         if not tool:
             raise ToolNotFoundError(f"Tool not found: {tool_id}")
         tool.team = self._get_team_name(db, getattr(tool, "team_id", None))
-        return self._convert_tool_to_read(tool)
+
+        tool_read = self._convert_tool_to_read(tool)
+
+        structured_logger.log(
+            level="INFO",
+            message="Tool retrieved successfully",
+            event_type="tool_viewed",
+            component="tool_service",
+            team_id=getattr(tool, "team_id", None),
+            resource_type="tool",
+            resource_id=str(tool.id),
+            custom_fields={
+                "tool_name": tool.name,
+                "include_metrics": bool(getattr(tool_read, "metrics", {})),
+            },
+            db=db,
+        )
+
+        return tool_read
 
     async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None) -> None:
         """
@@ -1053,15 +1172,75 @@ class ToolService:
                     raise PermissionError("Only the owner can delete this tool")
 
             tool_info = {"id": tool.id, "name": tool.name}
+            tool_name = tool.name
+            tool_team_id = tool.team_id
+
             db.delete(tool)
             db.commit()
             await self._notify_tool_deleted(tool_info)
             logger.info(f"Permanently deleted tool: {tool_info['name']}")
-        except PermissionError:
+
+            # Structured logging: Audit trail for tool deletion
+            audit_trail.log_action(
+                user_id=user_email or "system",
+                action="delete_tool",
+                resource_type="tool",
+                resource_id=tool_info["id"],
+                resource_name=tool_name,
+                user_email=user_email,
+                team_id=tool_team_id,
+                old_values={
+                    "name": tool_name,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful tool deletion
+            structured_logger.log(
+                level="INFO",
+                message="Tool deleted successfully",
+                event_type="tool_deleted",
+                component="tool_service",
+                user_email=user_email,
+                team_id=tool_team_id,
+                resource_type="tool",
+                resource_id=tool_info["id"],
+                custom_fields={
+                    "tool_name": tool_name,
+                },
+                db=db,
+            )
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Tool deletion failed due to permission error",
+                event_type="tool_delete_permission_denied",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=pe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic tool deletion failure
+            structured_logger.log(
+                level="ERROR",
+                message="Tool deletion failed",
+                event_type="tool_deletion_failed",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=e,
+                db=db,
+            )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
     async def toggle_tool_status(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None) -> ToolRead:
@@ -1140,11 +1319,74 @@ class ToolService:
                     await self._notify_tool_activated(tool)
 
                 logger.info(f"Tool: {tool.name} is {'enabled' if activate else 'disabled'}{' and accessible' if reachable else ' but inaccessible'}")
+
+                # Structured logging: Audit trail for tool status toggle
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="toggle_tool_status",
+                    resource_type="tool",
+                    resource_id=tool.id,
+                    resource_name=tool.name,
+                    user_email=user_email,
+                    team_id=tool.team_id,
+                    new_values={
+                        "enabled": tool.enabled,
+                        "reachable": tool.reachable,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                    },
+                    db=db,
+                )
+
+                # Structured logging: Log successful tool status toggle
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Tool {'activated' if activate else 'deactivated'} successfully",
+                    event_type="tool_status_toggled",
+                    component="tool_service",
+                    user_email=user_email,
+                    team_id=tool.team_id,
+                    resource_type="tool",
+                    resource_id=tool.id,
+                    custom_fields={
+                        "tool_name": tool.name,
+                        "enabled": tool.enabled,
+                        "reachable": tool.reachable,
+                    },
+                    db=db,
+                )
+
             return self._convert_tool_to_read(tool)
         except PermissionError as e:
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Tool status toggle failed due to permission error",
+                event_type="tool_toggle_permission_denied",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=e,
+                db=db,
+            )
             raise e
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic tool status toggle failure
+            structured_logger.log(
+                level="ERROR",
+                message="Tool status toggle failed",
+                event_type="tool_toggle_failed",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=e,
+                db=db,
+            )
             raise ToolError(f"Failed to toggle tool status: {str(e)}")
 
     async def invoke_tool(
@@ -1182,15 +1424,17 @@ class ToolService:
 
         Examples:
             >>> from mcpgateway.services.tool_service import ToolService
-            >>> from unittest.mock import MagicMock
+            >>> from unittest.mock import MagicMock, patch
             >>> service = ToolService()
             >>> db = MagicMock()
             >>> tool = MagicMock()
             >>> db.execute.return_value.scalar_one_or_none.side_effect = [tool, None]
             >>> tool.reachable = True
             >>> import asyncio
-            >>> result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
-            >>> isinstance(result, object)
+            >>> # Mock structured_logger to prevent database writes during doctest
+            >>> with patch('mcpgateway.services.tool_service.structured_logger'):
+            ...     result = asyncio.run(service.invoke_tool(db, 'tool_name', {}))
+            ...     isinstance(result, object)
             True
         """
         # pylint: disable=comparison-with-callable
@@ -1224,7 +1468,8 @@ class ToolService:
                 global_context.server_id = gateway_id
         else:
             # Create new context (fallback when middleware didn't run)
-            request_id = uuid.uuid4().hex
+            # Use correlation ID from context if available, otherwise generate new one
+            request_id = get_correlation_id() or uuid.uuid4().hex
             gateway_id = getattr(tool, "gateway_id", "unknown")
             server_id = gateway_id if isinstance(gateway_id, str) else "unknown"
             global_context = GlobalContext(request_id=request_id, server_id=server_id, tenant_id=None, user=app_user_email)
@@ -1445,12 +1690,58 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            Exception: On connection or communication errors
                         """
-                        async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                            async with ClientSession(*streams) as session:
-                                await session.initialize()
-                                tool_call_result = await session.call_tool(tool.original_name, arguments)
-                        return tool_call_result
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+
+                        # Add correlation ID to headers
+                        if correlation_id and headers:
+                            headers["X-Correlation-ID"] = correlation_id
+
+                        # Log MCP call start
+                        mcp_start_time = time.time()
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"MCP tool call started: {tool.original_name}",
+                            component="tool_service",
+                            correlation_id=correlation_id,
+                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "sse"},
+                        )
+
+                        try:
+                            async with sse_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as streams:
+                                async with ClientSession(*streams) as session:
+                                    await session.initialize()
+                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse", "success": True},
+                            )
+
+                            return tool_call_result
+                        except Exception as e:
+                            # Log failed MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "sse"},
+                            )
+                            raise
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -1461,12 +1752,58 @@ class ToolService:
 
                         Returns:
                             ToolResult: Result of tool call
+
+                        Raises:
+                            Exception: On connection or communication errors
                         """
-                        async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                await session.initialize()
-                                tool_call_result = await session.call_tool(tool.original_name, arguments)
-                        return tool_call_result
+                        # Get correlation ID for distributed tracing
+                        correlation_id = get_correlation_id()
+
+                        # Add correlation ID to headers
+                        if correlation_id and headers:
+                            headers["X-Correlation-ID"] = correlation_id
+
+                        # Log MCP call start
+                        mcp_start_time = time.time()
+                        structured_logger.log(
+                            level="INFO",
+                            message=f"MCP tool call started: {tool.original_name}",
+                            component="tool_service",
+                            correlation_id=correlation_id,
+                            metadata={"event": "mcp_call_started", "tool_name": tool.original_name, "tool_id": tool.id, "server_url": server_url, "transport": "streamablehttp"},
+                        )
+
+                        try:
+                            async with streamablehttp_client(url=server_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+                                    tool_call_result = await session.call_tool(tool.original_name, arguments)
+
+                            # Log successful MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="INFO",
+                                message=f"MCP tool call completed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                metadata={"event": "mcp_call_completed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp", "success": True},
+                            )
+
+                            return tool_call_result
+                        except Exception as e:
+                            # Log failed MCP call
+                            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+                            structured_logger.log(
+                                level="ERROR",
+                                message=f"MCP tool call failed: {tool.original_name}",
+                                component="tool_service",
+                                correlation_id=correlation_id,
+                                duration_ms=mcp_duration_ms,
+                                error_details={"error_type": type(e).__name__, "error_message": str(e)},
+                                metadata={"event": "mcp_call_failed", "tool_name": tool.original_name, "tool_id": tool.id, "transport": "streamablehttp"},
+                            )
+                            raise
 
                     tool_gateway_id = tool.gateway_id
                     tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id).where(DbGateway.enabled)).scalar_one_or_none()
@@ -1546,11 +1883,43 @@ class ToolService:
                     span.set_attribute("error.message", str(e))
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
+                # Calculate duration
+                duration_ms = (time.monotonic() - start_time) * 1000
+
                 # Add final span attributes
                 if span:
                     span.set_attribute("success", success)
-                    span.set_attribute("duration.ms", (time.monotonic() - start_time) * 1000)
+                    span.set_attribute("duration.ms", duration_ms)
+
+                # Record tool metric
                 await self._record_tool_metric(db, tool, start_time, success, error_message)
+
+                # Log structured message with performance tracking
+                if success:
+                    structured_logger.info(
+                        f"Tool '{name}' invoked successfully",
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=str(tool.id),
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "arguments_count": len(arguments) if arguments else 0},
+                    )
+                else:
+                    structured_logger.error(
+                        f"Tool '{name}' invocation failed",
+                        error=Exception(error_message) if error_message else None,
+                        user_id=app_user_email,
+                        resource_type="tool",
+                        resource_id=str(tool.id),
+                        resource_action="invoke",
+                        duration_ms=duration_ms,
+                        custom_fields={"tool_name": name, "integration_type": tool.integration_type, "error_message": error_message},
+                    )
+
+                # Track performance with threshold checking
+                with perf_tracker.track_operation("tool_invocation", name):
+                    pass  # Duration already captured above
 
     async def update_tool(
         self,
@@ -1696,24 +2065,142 @@ class ToolService:
             db.refresh(tool)
             await self._notify_tool_updated(tool)
             logger.info(f"Updated tool: {tool.name}")
+
+            # Structured logging: Audit trail for tool update
+            changes = []
+            if tool_update.name:
+                changes.append(f"name: {tool_update.name}")
+            if tool_update.visibility:
+                changes.append(f"visibility: {tool_update.visibility}")
+            if tool_update.description:
+                changes.append("description updated")
+
+            audit_trail.log_action(
+                user_id=user_email or modified_by or "system",
+                action="update_tool",
+                resource_type="tool",
+                resource_id=tool.id,
+                resource_name=tool.name,
+                user_email=user_email,
+                team_id=tool.team_id,
+                client_ip=modified_from_ip,
+                user_agent=modified_user_agent,
+                new_values={
+                    "name": tool.name,
+                    "display_name": tool.display_name,
+                    "version": tool.version,
+                },
+                context={
+                    "modified_via": modified_via,
+                    "changes": ", ".join(changes) if changes else "metadata only",
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful tool update
+            structured_logger.log(
+                level="INFO",
+                message="Tool updated successfully",
+                event_type="tool_updated",
+                component="tool_service",
+                user_id=modified_by,
+                user_email=user_email,
+                team_id=tool.team_id,
+                resource_type="tool",
+                resource_id=tool.id,
+                custom_fields={
+                    "tool_name": tool.name,
+                    "version": tool.version,
+                },
+                db=db,
+            )
+
             return self._convert_tool_to_read(tool)
-        except PermissionError:
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Tool update failed due to permission error",
+                event_type="tool_update_permission_denied",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=pe,
+                db=db,
+            )
             raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityError during tool update: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Tool update failed due to database integrity error",
+                event_type="tool_update_failed",
+                component="tool_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=ie,
+                db=db,
+            )
             raise ie
         except ToolNotFoundError as tnfe:
             db.rollback()
             logger.error(f"Tool not found during update: {tnfe}")
+
+            # Structured logging: Log not found error
+            structured_logger.log(
+                level="ERROR",
+                message="Tool update failed - tool not found",
+                event_type="tool_not_found",
+                component="tool_service",
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=tnfe,
+                db=db,
+            )
             raise tnfe
         except ToolNameConflictError as tnce:
             db.rollback()
             logger.error(f"Tool name conflict during update: {tnce}")
+
+            # Structured logging: Log name conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Tool update failed due to name conflict",
+                event_type="tool_name_conflict",
+                component="tool_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=tnce,
+                db=db,
+            )
             raise tnce
         except Exception as ex:
             db.rollback()
+
+            # Structured logging: Log generic tool update failure
+            structured_logger.log(
+                level="ERROR",
+                message="Tool update failed",
+                event_type="tool_update_failed",
+                component="tool_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="tool",
+                resource_id=tool_id,
+                error=ex,
+                db=db,
+            )
             raise ToolError(f"Failed to update tool: {str(ex)}")
 
     async def _notify_tool_updated(self, tool: DbTool) -> None:

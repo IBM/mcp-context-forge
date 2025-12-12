@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """tag records changes list[str] to list[Dict[str,str]]
 
 Revision ID: 9e028ecf59c4

@@ -15,18 +15,28 @@ debugging information.
 # Standard
 import json
 import logging
+import time
 from typing import Callable
 
 # Third-Party
-from fastapi import Request, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 # First-Party
+from mcpgateway.auth import get_current_user
+from mcpgateway.db import SessionLocal
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.utils.correlation_id import get_correlation_id
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger for gateway boundary logging
+structured_logger = get_structured_logger("http_gateway")
 
 SENSITIVE_KEYS = {"password", "secret", "token", "apikey", "access_token", "refresh_token", "client_secret", "authorization", "jwt_token"}
 
@@ -106,19 +116,66 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
     masking sensitive information like passwords, tokens, and authorization headers.
     """
 
-    def __init__(self, app, log_requests: bool = True, log_level: str = "DEBUG", max_body_size: int = 4096):
+    def __init__(self, app, enable_gateway_logging: bool = True, log_detailed_requests: bool = False, log_level: str = "DEBUG", max_body_size: int = 4096):
         """Initialize the request logging middleware.
 
         Args:
             app: The FastAPI application instance
-            log_requests: Whether to enable request logging
+            enable_gateway_logging: Whether to enable gateway boundary logging (request_started/completed)
+            log_detailed_requests: Whether to enable detailed request/response payload logging
             log_level: The log level for requests (not used, logs at INFO)
             max_body_size: Maximum request body size to log in bytes
         """
         super().__init__(app)
-        self.log_requests = log_requests
+        self.enable_gateway_logging = enable_gateway_logging
+        self.log_detailed_requests = log_detailed_requests
         self.log_level = log_level.upper()
         self.max_body_size = max_body_size  # Expected to be in bytes
+
+    async def _resolve_user_identity(self, request: Request):
+        """Best-effort extraction of user identity for request logs.
+
+        Args:
+            request: The incoming HTTP request
+
+        Returns:
+            Tuple[Optional[str], Optional[str]]: User ID and email
+        """
+        # Prefer context injected by upstream middleware
+        if hasattr(request.state, "user") and request.state.user is not None:
+            raw_user_id = getattr(request.state.user, "id", None)
+            user_email = getattr(request.state.user, "email", None)
+            return (str(raw_user_id) if raw_user_id is not None else None, user_email)
+
+        # Fallback: try to authenticate using cookies/headers (matches AuthContextMiddleware)
+        token = None
+        if request.cookies:
+            token = request.cookies.get("jwt_token") or request.cookies.get("access_token") or request.cookies.get("token")
+
+        if not token:
+            auth_header = request.headers.get("authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.replace("Bearer ", "")
+
+        if not token:
+            return (None, None)
+
+        db = None
+        try:
+            db = SessionLocal()
+            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+            user = await get_current_user(credentials, db)
+            raw_user_id = getattr(user, "id", None)
+            user_email = getattr(user, "email", None)
+            return (str(raw_user_id) if raw_user_id is not None else None, user_email)
+        except Exception:
+            return (None, None)
+        finally:
+            if db:
+                try:
+                    db.close()
+                except Exception:  # nosec B110 - Silently handle db.close() failures during cleanup
+                    pass
 
     async def dispatch(self, request: Request, call_next: Callable):
         """Process incoming request and log details with sensitive data masked.
@@ -129,10 +186,74 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: The HTTP response from downstream handlers
+
+        Raises:
+            Exception: Any exception from downstream handlers is re-raised
         """
-        # Skip logging if disabled
-        if not self.log_requests:
-            return await call_next(request)
+        # Track start time for total duration
+        start_time = time.time()
+
+        # Get correlation ID and request metadata for boundary logging
+        correlation_id = get_correlation_id()
+        path = request.url.path
+        method = request.method
+        user_agent = request.headers.get("user-agent", "unknown")
+        client_ip = request.client.host if request.client else "unknown"
+        user_id, user_email = await self._resolve_user_identity(request)
+
+        # Skip boundary logging for health checks and static assets
+        skip_paths = ["/health", "/healthz", "/static", "/favicon.ico"]
+        should_log_boundary = self.enable_gateway_logging and not any(path.startswith(skip_path) for skip_path in skip_paths)
+
+        # Log gateway request started
+        if should_log_boundary:
+            try:
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Request started: {method} {path}",
+                    component="http_gateway",
+                    correlation_id=correlation_id,
+                    user_email=user_email,
+                    user_id=user_id,
+                    operation_type="http_request",
+                    request_method=method,
+                    request_path=path,
+                    user_agent=user_agent,
+                    client_ip=client_ip,
+                    metadata={"event": "request_started", "query_params": str(request.query_params) if request.query_params else None},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log request start: {e}")
+
+        # Skip detailed logging if disabled
+        if not self.log_detailed_requests:
+            response = await call_next(request)
+
+            # Still log request completed even if detailed logging is disabled
+            if should_log_boundary:
+                duration_ms = (time.time() - start_time) * 1000
+                try:
+                    log_level = "ERROR" if response.status_code >= 500 else "WARNING" if response.status_code >= 400 else "INFO"
+                    structured_logger.log(
+                        level=log_level,
+                        message=f"Request completed: {method} {path} - {response.status_code}",
+                        component="http_gateway",
+                        correlation_id=correlation_id,
+                        user_email=user_email,
+                        user_id=user_id,
+                        operation_type="http_request",
+                        request_method=method,
+                        request_path=path,
+                        response_status_code=response.status_code,
+                        user_agent=user_agent,
+                        client_ip=client_ip,
+                        duration_ms=duration_ms,
+                        metadata={"event": "request_completed", "response_time_category": "fast" if duration_ms < 100 else "normal" if duration_ms < 1000 else "slow"},
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to log request completion: {e}")
+
+            return response
 
         # Always log at INFO level for request payloads to ensure visibility
         log_level = logging.INFO
@@ -171,13 +292,28 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             # Mask sensitive headers
             masked_headers = mask_sensitive_headers(dict(request.headers))
 
-            logger.log(
-                log_level,
-                f"📩 Incoming request: {request.method} {request.url.path}\n"
-                f"Query params: {dict(request.query_params)}\n"
-                f"Headers: {masked_headers}\n"
-                f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
-            )
+            # Get correlation ID for request tracking
+            request_id = get_correlation_id()
+
+            # Try to log with extra parameter, fall back to without if not supported
+            try:
+                logger.log(
+                    log_level,
+                    f"📩 Incoming request: {request.method} {request.url.path}\n"
+                    f"Query params: {dict(request.query_params)}\n"
+                    f"Headers: {masked_headers}\n"
+                    f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
+                    extra={"request_id": request_id},
+                )
+            except TypeError:
+                # Fall back for test loggers that don't accept extra parameter
+                logger.log(
+                    log_level,
+                    f"📩 Incoming request: {request.method} {request.url.path}\n"
+                    f"Query params: {dict(request.query_params)}\n"
+                    f"Headers: {masked_headers}\n"
+                    f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
+                )
 
         except Exception as e:
             logger.warning(f"Failed to log request body: {e}")
@@ -195,5 +331,80 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         new_scope = request.scope.copy()
         new_request = Request(new_scope, receive=receive)
 
-        response: Response = await call_next(new_request)
+        # Process request
+        try:
+            response: Response = await call_next(new_request)
+            status_code = response.status_code
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Log request failed
+            if should_log_boundary:
+                try:
+                    structured_logger.log(
+                        level="ERROR",
+                        message=f"Request failed: {method} {path}",
+                        component="gateway",
+                        correlation_id=correlation_id,
+                        user_email=user_email,
+                        user_id=user_id,
+                        operation_type="http_request",
+                        request_method=method,
+                        request_path=path,
+                        user_agent=user_agent,
+                        client_ip=client_ip,
+                        duration_ms=duration_ms,
+                        error=e,
+                        metadata={"event": "request_failed"},
+                    )
+                except Exception as log_error:
+                    logger.warning(f"Failed to log request failure: {log_error}")
+
+            raise
+
+        # Calculate total duration
+        duration_ms = (time.time() - start_time) * 1000
+
+        # Log gateway request completed
+        if should_log_boundary:
+            try:
+                log_level = "ERROR" if status_code >= 500 else "WARNING" if status_code >= 400 else "INFO"
+
+                structured_logger.log(
+                    level=log_level,
+                    message=f"Request completed: {method} {path} - {status_code}",
+                    component="gateway",
+                    correlation_id=correlation_id,
+                    user_email=user_email,
+                    user_id=user_id,
+                    operation_type="http_request",
+                    request_method=method,
+                    request_path=path,
+                    response_status_code=status_code,
+                    user_agent=user_agent,
+                    client_ip=client_ip,
+                    duration_ms=duration_ms,
+                    metadata={"event": "request_completed", "response_time_category": self._categorize_response_time(duration_ms)},
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log request completion: {e}")
+
         return response
+
+    @staticmethod
+    def _categorize_response_time(duration_ms: float) -> str:
+        """Categorize response time for analytics.
+
+        Args:
+            duration_ms: Response time in milliseconds
+
+        Returns:
+            Category string
+        """
+        if duration_ms < 100:
+            return "fast"
+        if duration_ms < 500:
+            return "normal"
+        if duration_ms < 2000:
+            return "slow"
+        return "very_slow"

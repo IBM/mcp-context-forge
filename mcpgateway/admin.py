@@ -47,7 +47,7 @@ import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -105,6 +105,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -120,6 +121,7 @@ from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNo
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
@@ -8369,6 +8371,17 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             status_code=200,
         )
     except Exception as ex:
+        # Roll back only when a transaction is active to avoid sqlite3 "no transaction" errors.
+        try:
+            active_transaction = db.get_transaction() if hasattr(db, "get_transaction") else None
+            if db.is_active and active_transaction is not None:
+                db.rollback()
+        except (InvalidRequestError, OperationalError) as rollback_error:
+            LOGGER.warning(
+                "Rollback failed (ignoring for SQLite compatibility): %s",
+                rollback_error,
+            )
+
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
@@ -8587,7 +8600,11 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
+        await resource_service.delete_resource(
+            user["db"] if isinstance(user, dict) else db,
+            resource_id,
+            user_email=user_email,
+        )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
@@ -9676,7 +9693,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> result = asyncio.run(test_admin_test_gateway())
@@ -9702,7 +9719,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_text_response():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientTextOnly()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.body.get("details") == "plain text response"
         >>>
         >>> asyncio.run(test_admin_test_gateway_text_response())
@@ -9720,7 +9737,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_network_error():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientError()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return response.status_code == 502 and "Network error" in str(response.body)
         >>>
         >>> asyncio.run(test_admin_test_gateway_network_error())
@@ -9738,7 +9755,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_post():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_post, mock_user)
+        ...         response = await admin_test_gateway(mock_request_post, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_post())
@@ -9756,7 +9773,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_trailing_slash():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_trailing, mock_user)
+        ...         response = await admin_test_gateway(mock_request_trailing, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_trailing_slash())
@@ -9846,11 +9863,56 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         except json.JSONDecodeError:
             response_body = {"details": response.text}
 
+        # Structured logging: Log successful gateway test
+        structured_logger = get_structured_logger("gateway_service")
+        structured_logger.log(
+            level="INFO",
+            message=f"Gateway test completed: {request.base_url}",
+            event_type="gateway_tested",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": str(request.base_url),
+                "test_method": request.method,
+                "test_path": request.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+            db=db,
+        )
+
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
         LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
+
+        # Structured logging: Log failed gateway test
+        structured_logger = get_structured_logger("gateway_service")
+        structured_logger.log(
+            level="ERROR",
+            message=f"Gateway test failed: {request.base_url}",
+            event_type="gateway_test_failed",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            error=e,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": str(request.base_url),
+                "test_method": request.method,
+                "test_path": request.path,
+                "latency_ms": latency_ms,
+            },
+            db=db,
+        )
+
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
 
@@ -11896,6 +11958,7 @@ async def admin_test_a2a_agent(
         return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
     try:
+        user_email = get_user_email(user)
         # Get the agent by ID
         agent = await a2a_service.get_agent(db, agent_id)
 
@@ -11911,7 +11974,14 @@ async def admin_test_a2a_agent(
             test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
 
         # Invoke the agent
-        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+        result = await a2a_service.invoke_agent(
+            db,
+            agent.name,
+            test_params,
+            "admin_test",
+            user_email=user_email,
+            user_id=user_email,
+        )
 
         return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
@@ -12536,6 +12606,7 @@ async def list_plugins(
         HTTPException: If there's an error retrieving plugins
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin list")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12556,10 +12627,35 @@ async def list_plugins(
         enabled_count = sum(1 for p in plugins if p["status"] == "enabled")
         disabled_count = sum(1 for p in plugins if p["status"] == "disabled")
 
+        # Log plugin marketplace browsing activity
+        structured_logger.info(
+            "User browsed plugin marketplace",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_list",
+            resource_action="browse",
+            custom_fields={
+                "search_query": search,
+                "filter_mode": mode,
+                "filter_hook": hook,
+                "filter_tag": tag,
+                "results_count": len(plugins),
+                "enabled_count": enabled_count,
+                "disabled_count": disabled_count,
+                "has_filters": any([search, mode, hook, tag]),
+            },
+            db=db,
+        )
+
         return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
+        structured_logger.error(
+            "Failed to list plugins in marketplace", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12579,6 +12675,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         HTTPException: If there's an error getting plugin statistics
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin statistics")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12592,10 +12689,33 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Get statistics
         stats = plugin_service.get_plugin_statistics()
 
+        # Log marketplace analytics access
+        structured_logger.info(
+            "User accessed plugin marketplace statistics",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_stats",
+            resource_action="view",
+            custom_fields={
+                "total_plugins": stats.get("total_plugins", 0),
+                "enabled_plugins": stats.get("enabled_plugins", 0),
+                "disabled_plugins": stats.get("disabled_plugins", 0),
+                "hooks_count": len(stats.get("plugins_by_hook", {})),
+                "tags_count": len(stats.get("plugins_by_tag", {})),
+                "authors_count": len(stats.get("plugins_by_author", {})),
+            },
+            db=db,
+        )
+
         return PluginStatsResponse(**stats)
 
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
+        structured_logger.error(
+            "Failed to get plugin marketplace statistics", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12616,6 +12736,8 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         HTTPException: If plugin not found
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for plugin {name}")
+    structured_logger = get_structured_logger()
+    audit_service = get_audit_trail_service()
 
     try:
         # Get plugin service
@@ -12630,7 +12752,43 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin = plugin_service.get_plugin_by_name(name)
 
         if not plugin:
+            structured_logger.warning(
+                f"Plugin '{name}' not found in marketplace",
+                user_id=str(user.id),
+                user_email=get_user_email(user),
+                component="plugin_marketplace",
+                category="business_logic",
+                custom_fields={"plugin_name": name, "action": "view_details"},
+                db=db,
+            )
             raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+        # Log plugin view activity
+        structured_logger.info(
+            f"User viewed plugin details: '{name}'",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin",
+            resource_id=name,
+            resource_action="view_details",
+            custom_fields={
+                "plugin_name": name,
+                "plugin_version": plugin.get("version"),
+                "plugin_author": plugin.get("author"),
+                "plugin_status": plugin.get("status"),
+                "plugin_mode": plugin.get("mode"),
+                "plugin_hooks": plugin.get("hooks", []),
+                "plugin_tags": plugin.get("tags", []),
+            },
+            db=db,
+        )
+
+        # Create audit trail for plugin access
+        audit_service.log_audit(
+            user_id=str(user.id), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
+        )
 
         return PluginDetail(**plugin)
 
@@ -12638,6 +12796,9 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         raise
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
+        structured_logger.error(
+            f"Failed to get plugin details: '{name}'", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 

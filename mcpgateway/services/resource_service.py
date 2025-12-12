@@ -51,10 +51,12 @@ from mcpgateway.db import ResourceSubscription as DbSubscription
 from mcpgateway.db import server_resource_association
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import ResourceCreate, ResourceMetrics, ResourceRead, ResourceSubscription, ResourceUpdate, TopPerformer
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.services_auth import decode_auth
@@ -73,6 +75,10 @@ except ImportError:
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger and audit trail for resource operations
+structured_logger = get_structured_logger("resource_service")
+audit_trail = get_audit_trail_service()
 
 
 class ResourceError(Exception):
@@ -240,6 +246,17 @@ class ResourceService:
         resource_dict.pop("_sa_instance_state", None)
         resource_dict.pop("metrics", None)
 
+        # Ensure required base fields are present even if SQLAlchemy hasn't loaded them into __dict__ yet
+        resource_dict["id"] = getattr(resource, "id", resource_dict.get("id"))
+        resource_dict["uri"] = getattr(resource, "uri", resource_dict.get("uri"))
+        resource_dict["name"] = getattr(resource, "name", resource_dict.get("name"))
+        resource_dict["description"] = getattr(resource, "description", resource_dict.get("description"))
+        resource_dict["mime_type"] = getattr(resource, "mime_type", resource_dict.get("mime_type"))
+        resource_dict["size"] = getattr(resource, "size", resource_dict.get("size"))
+        resource_dict["created_at"] = getattr(resource, "created_at", resource_dict.get("created_at"))
+        resource_dict["updated_at"] = getattr(resource, "updated_at", resource_dict.get("updated_at"))
+        resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
+
         # Compute aggregated metrics from the resource's metrics list.
         total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0
         successful = sum(1 for m in resource.metrics if m.is_success) if total > 0 else 0
@@ -397,16 +414,106 @@ class ResourceService:
             await self._notify_resource_added(db_resource)
 
             logger.info(f"Registered resource: {resource.uri}")
+
+            # Structured logging: Audit trail for resource creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_resource",
+                resource_type="resource",
+                resource_id=str(db_resource.id),
+                resource_name=db_resource.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "uri": db_resource.uri,
+                    "name": db_resource.name,
+                    "visibility": visibility,
+                    "mime_type": db_resource.mime_type,
+                },
+                context={
+                    "created_via": created_via,
+                    "import_batch_id": import_batch_id,
+                    "federation_source": federation_source,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource creation
+            structured_logger.log(
+                level="INFO",
+                message="Resource created successfully",
+                event_type="resource_created",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="resource",
+                resource_id=str(db_resource.id),
+                custom_fields={
+                    "resource_uri": db_resource.uri,
+                    "resource_name": db_resource.name,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
+
             db_resource.team = self._get_team_name(db, db_resource.team_id)
             return self._convert_resource_to_read(db_resource)
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource creation failed due to database integrity error",
+                event_type="resource_creation_failed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ie,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                },
+                db=db,
+            )
             raise ie
         except ResourceURIConflictError as rce:
             logger.error(f"ResourceURIConflictError in group: {resource.uri}")
+
+            # Structured logging: Log URI conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource creation failed due to URI conflict",
+                event_type="resource_uri_conflict",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
             raise rce
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource creation failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource creation failed",
+                event_type="resource_creation_failed",
+                component="resource_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=e,
+                custom_fields={
+                    "resource_uri": resource.uri,
+                },
+                db=db,
+            )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
     async def list_resources(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[ResourceRead], Optional[str]]:
@@ -1463,12 +1570,72 @@ class ResourceService:
 
                 logger.info(f"Resource {resource.uri} {'activated' if activate else 'deactivated'}")
 
+                # Structured logging: Audit trail for resource status toggle
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="toggle_resource_status",
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    resource_name=resource.name,
+                    user_email=user_email,
+                    team_id=resource.team_id,
+                    new_values={
+                        "enabled": resource.enabled,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                    },
+                    db=db,
+                )
+
+                # Structured logging: Log successful resource status toggle
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Resource {'activated' if activate else 'deactivated'} successfully",
+                    event_type="resource_status_toggled",
+                    component="resource_service",
+                    user_email=user_email,
+                    team_id=resource.team_id,
+                    resource_type="resource",
+                    resource_id=str(resource.id),
+                    custom_fields={
+                        "resource_uri": resource.uri,
+                        "enabled": resource.enabled,
+                    },
+                    db=db,
+                )
+
             resource.team = self._get_team_name(db, resource.team_id)
             return self._convert_resource_to_read(resource)
         except PermissionError as e:
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource status toggle failed due to permission error",
+                event_type="resource_toggle_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise e
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource status toggle failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource status toggle failed",
+                event_type="resource_toggle_failed",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to toggle resource status: {str(e)}")
 
     async def subscribe_resource(self, db: Session, subscription: ResourceSubscription) -> None:
@@ -1684,21 +1851,138 @@ class ResourceService:
             await self._notify_resource_updated(resource)
 
             logger.info(f"Updated resource: {resource.uri}")
+
+            # Structured logging: Audit trail for resource update
+            changes = []
+            if resource_update.uri:
+                changes.append(f"uri: {resource_update.uri}")
+            if resource_update.visibility:
+                changes.append(f"visibility: {resource_update.visibility}")
+            if resource_update.description:
+                changes.append("description updated")
+
+            audit_trail.log_action(
+                user_id=user_email or modified_by or "system",
+                action="update_resource",
+                resource_type="resource",
+                resource_id=str(resource.id),
+                resource_name=resource.name,
+                user_email=user_email,
+                team_id=resource.team_id,
+                client_ip=modified_from_ip,
+                user_agent=modified_user_agent,
+                new_values={
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "version": resource.version,
+                },
+                context={
+                    "modified_via": modified_via,
+                    "changes": ", ".join(changes) if changes else "metadata only",
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource update
+            structured_logger.log(
+                level="INFO",
+                message="Resource updated successfully",
+                event_type="resource_updated",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                team_id=resource.team_id,
+                resource_type="resource",
+                resource_id=str(resource.id),
+                custom_fields={
+                    "resource_uri": resource.uri,
+                    "version": resource.version,
+                },
+                db=db,
+            )
+
             return self._convert_resource_to_read(resource)
-        except PermissionError:
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource update failed due to permission error",
+                event_type="resource_update_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            # Structured logging: Log database integrity error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource update failed due to database integrity error",
+                event_type="resource_update_failed",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=ie,
+                db=db,
+            )
             raise ie
         except ResourceURIConflictError as pe:
             logger.error(f"Resource URI conflict: {pe}")
+
+            # Structured logging: Log URI conflict error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource update failed due to URI conflict",
+                event_type="resource_uri_conflict",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise pe
         except Exception as e:
             db.rollback()
             if isinstance(e, ResourceNotFoundError):
+                # Structured logging: Log not found error
+                structured_logger.log(
+                    level="ERROR",
+                    message="Resource update failed - resource not found",
+                    event_type="resource_not_found",
+                    component="resource_service",
+                    user_email=user_email,
+                    resource_type="resource",
+                    resource_id=str(resource_id),
+                    error=e,
+                    db=db,
+                )
                 raise e
+
+            # Structured logging: Log generic resource update failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource update failed",
+                event_type="resource_update_failed",
+                component="resource_service",
+                user_id=modified_by,
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
     async def delete_resource(self, db: Session, resource_id: Union[int, str], user_email: Optional[str] = None) -> None:
@@ -1757,6 +2041,10 @@ class ResourceService:
             db.execute(delete(DbSubscription).where(DbSubscription.resource_id == resource.id))
 
             # Hard delete the resource.
+            resource_uri = resource.uri
+            resource_name = resource.name
+            resource_team_id = resource.team_id
+
             db.delete(resource)
             db.commit()
 
@@ -1765,14 +2053,84 @@ class ResourceService:
 
             logger.info(f"Permanently deleted resource: {resource.uri}")
 
-        except PermissionError:
+            # Structured logging: Audit trail for resource deletion
+            audit_trail.log_action(
+                user_id=user_email or "system",
+                action="delete_resource",
+                resource_type="resource",
+                resource_id=str(resource_info["id"]),
+                resource_name=resource_name,
+                user_email=user_email,
+                team_id=resource_team_id,
+                old_values={
+                    "uri": resource_uri,
+                    "name": resource_name,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful resource deletion
+            structured_logger.log(
+                level="INFO",
+                message="Resource deleted successfully",
+                event_type="resource_deleted",
+                component="resource_service",
+                user_email=user_email,
+                team_id=resource_team_id,
+                resource_type="resource",
+                resource_id=str(resource_info["id"]),
+                custom_fields={
+                    "resource_uri": resource_uri,
+                },
+                db=db,
+            )
+
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Resource deletion failed due to permission error",
+                event_type="resource_delete_permission_denied",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=pe,
+                db=db,
+            )
             raise
-        except ResourceNotFoundError:
+        except ResourceNotFoundError as rnfe:
             # ResourceNotFoundError is re-raised to be handled in the endpoint.
+            # Structured logging: Log not found error
+            structured_logger.log(
+                level="ERROR",
+                message="Resource deletion failed - resource not found",
+                event_type="resource_not_found",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=rnfe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic resource deletion failure
+            structured_logger.log(
+                level="ERROR",
+                message="Resource deletion failed",
+                event_type="resource_deletion_failed",
+                component="resource_service",
+                user_email=user_email,
+                resource_type="resource",
+                resource_id=str(resource_id),
+                error=e,
+                db=db,
+            )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
     async def get_resource_by_id(self, db: Session, resource_id: str, include_inactive: bool = False) -> ResourceRead:
@@ -1819,7 +2177,24 @@ class ResourceService:
 
             raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-        return self._convert_resource_to_read(resource)
+        resource_read = self._convert_resource_to_read(resource)
+
+        structured_logger.log(
+            level="INFO",
+            message="Resource retrieved successfully",
+            event_type="resource_viewed",
+            component="resource_service",
+            team_id=getattr(resource, "team_id", None),
+            resource_type="resource",
+            resource_id=str(resource.id),
+            custom_fields={
+                "resource_uri": resource.uri,
+                "include_inactive": include_inactive,
+            },
+            db=db,
+        )
+
+        return resource_read
 
     async def _notify_resource_activated(self, resource: DbResource) -> None:
         """

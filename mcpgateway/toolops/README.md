@@ -9,7 +9,7 @@
 * Please provide all configurations such as LLM provider, api keys etc., in `.env` file. And you need to set `TOOLOPS_ENABLED=true` for enabling toolops functionality`
 * While selecting LLM model , please use the model that supports instruction following (IF) text generation tasks and tool-calling capabilities for executing tools in chat mode. For example `granite4:micro` , `llama-3-3-70b-instruct` etc.,
 * Toolops depends on `agent life cycle toolkit(ALTK)` which is specified in `pyproject.toml` required packages, to install ALTK please set-up github public key SSH if required.
-* For toolops developement (Caution) : Only if required to re-install of latest version of `agent life cycle toolkit(ALTK)` from git repo in case of fixes/updates please use pip install via git ssh url. 
+* For toolops developement (Caution) : Only if required to re-install of latest version of `agent life cycle toolkit(ALTK)` from git repo in case of fixes/updates please use pip install via git ssh url.
 
 ### Testing toolops requires MCP server running to set up MCP server using OAPI specification
 ```
