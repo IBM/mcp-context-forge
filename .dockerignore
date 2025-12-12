@@ -109,6 +109,9 @@ cython_debug/
 #----------------------------------------------------------------------
 .env
 .venv
+.venv/
+**/.venv
+**/.venv/
 env/
 venv/
 ENV/
@@ -122,6 +125,10 @@ venv.bak/
 pdm.lock
 .pdm.toml
 .pdm-python
+
+# uv
+uv.lock
+**/uv.lock
 
 #----------------------------------------------------------------------
 # 5. Package managers and dependencies
