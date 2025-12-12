@@ -4871,7 +4871,8 @@ async def admin_get_user_edit(
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
-            pr_lines.append(f"""                <!-- Password Requirements -->
+            pr_lines.append(
+                f"""                <!-- Password Requirements -->
                 <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
                     <div class="flex items-start">
                         <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
@@ -4884,29 +4885,40 @@ async def admin_get_user_edit(
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
-            """)
+            """
+            )
             if settings.password_require_uppercase:
-                pr_lines.append("""
+                pr_lines.append(
+                    """
                                 <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
-                """)
+                """
+                )
             if settings.password_require_lowercase:
-                pr_lines.append("""
+                pr_lines.append(
+                    """
                                 <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
-                """)
+                """
+                )
             if settings.password_require_numbers:
-                pr_lines.append("""
+                pr_lines.append(
+                    """
                                 <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
-                """)
+                """
+                )
             if settings.password_require_special:
-                pr_lines.append("""
+                pr_lines.append(
+                    """
                                 <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
-                """)
-            pr_lines.append("""
+                """
+                )
+            pr_lines.append(
+                """
                             </div>
                         </div>
                     </div>
                 </div>
-            """)
+            """
+            )
             password_requirements_html = "".join(pr_lines)
         else:
             # Intentionally an empty string for HTML insertion when no requirements apply.
