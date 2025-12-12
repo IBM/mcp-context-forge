@@ -315,7 +315,7 @@ sys.stdout.flush()
             await endpoint.send("hello world\n")
 
             # Wait for response
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
 
             # Check that process was started
             assert endpoint._proc is not None
