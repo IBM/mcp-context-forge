@@ -6,7 +6,6 @@ Authors: Mihai Criveti
 """
 
 # Standard
-import asyncio
 import os
 import tempfile
 from unittest.mock import AsyncMock
@@ -19,13 +18,14 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
+import mcpgateway.db as db_mod
 from mcpgateway.config import Settings
-from mcpgateway.db import Base
 
 # Local
 
 # Skip session-level RBAC patching for now - let individual tests handle it
 # _session_rbac_originals = patch_rbac_decorators()
+
 
 def resolve_test_db_url():
     """Return DB URL based on GitHub Actions matrix or default to SQLite."""
@@ -62,9 +62,9 @@ def test_engine(test_db_url):
     else:
         engine = create_engine(test_db_url)
 
-    Base.metadata.create_all(bind=engine)
+    db_mod.Base.metadata.create_all(bind=engine)
     yield engine
-    Base.metadata.drop_all(bind=engine)
+    db_mod.Base.metadata.drop_all(bind=engine)
     if os.path.exists("./test.db"):
         os.remove("./test.db")
 
@@ -107,9 +107,6 @@ def app():
     from mcpgateway.config import settings
 
     mp.setattr(settings, "database_url", url, raising=False)
-
-    # First-Party
-    import mcpgateway.db as db_mod
 
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -185,9 +182,6 @@ def app_with_temp_db():
 
     mp.setattr(settings, "database_url", url, raising=False)
 
-    # First-Party
-    import mcpgateway.db as db_mod
-
     engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     mp.setattr(db_mod, "engine", engine, raising=False)
@@ -237,6 +231,11 @@ def app_with_temp_db():
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Restore RBAC decorators at the end of the test session."""
-    # restore_rbac_decorators(_session_rbac_originals)
-    pass
+    """Clean up resources at the end of the test session."""
+    # Dispose the module-level engine to close all SQLite connections
+    # This prevents ResourceWarning about unclosed database connections
+    try:
+        if hasattr(db_mod, "engine") and db_mod.engine is not None:
+            db_mod.engine.dispose()
+    except Exception:
+        pass  # Ignore errors during cleanup
