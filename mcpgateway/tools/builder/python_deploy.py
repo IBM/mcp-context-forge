@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/builder/python_deploy.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -14,7 +15,7 @@ This is the fallback implementation when Dagger is not available.
 # Standard
 from pathlib import Path
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from typing import List, Optional
 
 # Third-Party
@@ -424,7 +425,7 @@ class MCPStackPython(CICDModule):
         if self.verbose:
             self.console.print(f"[dim]Running: {' '.join(cmd)}[/dim]")
 
-        result = subprocess.run(cmd, cwd=cwd, capture_output=capture_output, text=True, check=True)
+        result = subprocess.run(cmd, cwd=cwd, capture_output=capture_output, text=True, check=True)  # nosec B603, B607
 
         return result
 

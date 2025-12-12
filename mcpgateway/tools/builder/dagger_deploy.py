@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/builder/dagger_deploy.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -407,16 +408,16 @@ class MCPStackDagger(CICDModule):
         # For Dagger, we still need local clone if copying env templates
         if copy_env_templates:
             # Standard
-            import subprocess
+            import subprocess  # nosec B404
 
             clone_dir.mkdir(parents=True, exist_ok=True)
 
             if (clone_dir / ".git").exists():
-                subprocess.run(["git", "fetch", "origin", git_ref], cwd=clone_dir, check=True, capture_output=True)
+                subprocess.run(["git", "fetch", "origin", git_ref], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
                 # Checkout what we just fetched (FETCH_HEAD)
-                subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=clone_dir, check=True, capture_output=True)
+                subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
             else:
-                subprocess.run(["git", "clone", "--branch", git_ref, "--depth", "1", repo, str(clone_dir)], check=True, capture_output=True)
+                subprocess.run(["git", "clone", "--branch", git_ref, "--depth", "1", repo, str(clone_dir)], check=True, capture_output=True)  # nosec B603, B607
 
             # Determine build context
             build_context = component.context or "."

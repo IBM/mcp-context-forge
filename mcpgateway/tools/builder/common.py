@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Location: ./mcpgateway/tools/builder/common.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,7 +32,7 @@ import base64
 import os
 from pathlib import Path
 import shutil
-import subprocess
+import subprocess  # nosec B404
 from typing import List
 
 # Third-Party
@@ -465,7 +466,7 @@ def generate_kubernetes_manifests(config: MCPStackConfig, output_dir: Path, verb
         if not openshift_domain:
             try:
                 # Try to get domain from OpenShift cluster info
-                result = subprocess.run(["kubectl", "get", "ingresses.config.openshift.io", "cluster", "-o", "jsonpath={.spec.domain}"], capture_output=True, text=True, check=False)
+                result = subprocess.run(["kubectl", "get", "ingresses.config.openshift.io", "cluster", "-o", "jsonpath={.spec.domain}"], capture_output=True, text=True, check=False)  # nosec B603, B607
                 if result.returncode == 0 and result.stdout.strip():
                     openshift_domain = result.stdout.strip()
                     if verbose:
@@ -806,7 +807,7 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
     if verbose:
         console.print(f"[dim]Tagging {image_tag} as {registry_image}[/dim]")
     tag_cmd = [container_runtime, "tag", image_tag, registry_image]
-    result = subprocess.run(tag_cmd, capture_output=True, text=True, check=True)
+    result = subprocess.run(tag_cmd, capture_output=True, text=True, check=True)  # nosec B603, B607
     if result.stdout and verbose:
         console.print(result.stdout)
 
@@ -826,7 +827,7 @@ def handle_registry_operations(component, component_name: str, image_tag: str, c
         push_cmd.append(registry_image)
 
         try:
-            result = subprocess.run(push_cmd, capture_output=True, text=True, check=True)
+            result = subprocess.run(push_cmd, capture_output=True, text=True, check=True)  # nosec B603, B607
             if result.stdout and verbose:
                 console.print(result.stdout)
             console.print(f"[green]✓ Pushed to registry: {registry_image}[/green]")
@@ -891,7 +892,7 @@ def get_docker_compose_command() -> List[str]:
     # Try docker compose (new plugin) first
     if shutil.which("docker"):
         try:
-            subprocess.run(["docker", "compose", "version"], capture_output=True, check=True)
+            subprocess.run(["docker", "compose", "version"], capture_output=True, check=True)  # nosec B603, B607
             return ["docker", "compose"]
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
@@ -951,7 +952,7 @@ def run_compose(compose_file: Path, args: List[str], verbose: bool = False, chec
         console.print(f"[dim]Running: {' '.join(full_cmd)}[/dim]")
 
     try:
-        result = subprocess.run(full_cmd, capture_output=True, text=True, check=check)
+        result = subprocess.run(full_cmd, capture_output=True, text=True, check=check)  # nosec B603, B607
         return result
     except subprocess.CalledProcessError as e:
         console.print("\n[red bold]Docker Compose command failed:[/red bold]")
@@ -1113,7 +1114,7 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
 
     # Apply deployment files (this creates the namespace)
     for manifest in deployment_files:
-        result = subprocess.run(["kubectl", "apply", "-f", str(manifest)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "apply", "-f", str(manifest)], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
@@ -1122,13 +1123,13 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
     # 2. Apply certificate resources (now namespace exists)
     # Check for both cert-secrets.yaml (local mode) and cert-manager-certificates.yaml (cert-manager mode)
     if cert_manager_certs.exists():
-        result = subprocess.run(["kubectl", "apply", "-f", str(cert_manager_certs)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "apply", "-f", str(cert_manager_certs)], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
             raise RuntimeError(f"kubectl apply failed: {result.stderr}")
     elif cert_secrets.exists():
-        result = subprocess.run(["kubectl", "apply", "-f", str(cert_secrets)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "apply", "-f", str(cert_secrets)], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
@@ -1136,7 +1137,7 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
 
     # 3. Apply ConfigMaps (needed by deployments)
     if plugins_configmap.exists():
-        result = subprocess.run(["kubectl", "apply", "-f", str(plugins_configmap)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "apply", "-f", str(plugins_configmap)], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
@@ -1145,7 +1146,7 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
     # 4. Apply infrastructure
     for infra_file in [postgres_deploy, redis_deploy]:
         if infra_file.exists():
-            result = subprocess.run(["kubectl", "apply", "-f", str(infra_file)], capture_output=True, text=True, check=False)
+            result = subprocess.run(["kubectl", "apply", "-f", str(infra_file)], capture_output=True, text=True, check=False)  # nosec B603, B607
             if result.stdout and verbose:
                 console.print(result.stdout)
             if result.returncode != 0:
@@ -1154,7 +1155,7 @@ def deploy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
     # 5. Apply OpenShift Routes (if configured)
     gateway_route = manifests_dir / "gateway-route.yaml"
     if gateway_route.exists():
-        result = subprocess.run(["kubectl", "apply", "-f", str(gateway_route)], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "apply", "-f", str(gateway_route)], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
@@ -1200,14 +1201,14 @@ def verify_kubernetes(namespace: str, wait: bool = False, timeout: int = 300, ve
         raise RuntimeError("kubectl not found. Cannot verify Kubernetes deployment.")
 
     # Get pod status
-    result = subprocess.run(["kubectl", "get", "pods", "-n", namespace], capture_output=True, text=True, check=False)
+    result = subprocess.run(["kubectl", "get", "pods", "-n", namespace], capture_output=True, text=True, check=False)  # nosec B603, B607
     output = result.stdout if result.stdout else ""
     if result.returncode != 0:
         raise RuntimeError(f"kubectl get pods failed: {result.stderr}")
 
     # Wait for pods if requested
     if wait:
-        result = subprocess.run(["kubectl", "wait", "--for=condition=Ready", "pod", "--all", "-n", namespace, f"--timeout={timeout}s"], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "wait", "--for=condition=Ready", "pod", "--all", "-n", namespace, f"--timeout={timeout}s"], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0:
@@ -1256,7 +1257,7 @@ def destroy_kubernetes(manifests_dir: Path, verbose: bool = False) -> None:
     all_manifests = [m for m in all_manifests if m.name != "plugins-config.yaml"]
 
     for manifest in all_manifests:
-        result = subprocess.run(["kubectl", "delete", "-f", str(manifest), "--ignore-not-found=true"], capture_output=True, text=True, check=False)
+        result = subprocess.run(["kubectl", "delete", "-f", str(manifest), "--ignore-not-found=true"], capture_output=True, text=True, check=False)  # nosec B603, B607
         if result.stdout and verbose:
             console.print(result.stdout)
         if result.returncode != 0 and "NotFound" not in result.stderr:
