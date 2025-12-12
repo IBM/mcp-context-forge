@@ -104,12 +104,12 @@ async def bootstrap_admin_user() -> None:
 
                 role_service = RoleService(db)
 
-                platform_owner_role: Optional[Role] = await role_service.get_role_by_name("platform_owner", "global")
+                team_owner_role: Optional[Role] = await role_service.get_role_by_name("team_owner", "team")
 
-                if platform_owner_role:
+                if team_owner_role:
 
                     await role_service.assign_role_to_user(settings.platform_owner_email,
-                                                       platform_owner_role.id, "global",
+                                                       team_owner_role.id, "team",
                                                        public_team.id, settings.platform_owner_email)
 
             # Mark admin user as email verified and require password change on first login
