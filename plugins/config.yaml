@@ -755,7 +755,7 @@ plugins:
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
     # mode: "permissive"
-    mode: "disabled"
+    mode: "permissive"
     priority: 10
     conditions:
       - prompts: []
