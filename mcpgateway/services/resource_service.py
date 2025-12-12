@@ -814,7 +814,6 @@ class ResourceService:
         'using template: /template'
 
         """
-
         uri = None
         if resource_uri and resource_template_uri:
             uri = resource_template_uri
@@ -1969,8 +1968,10 @@ class ResourceService:
             # # Handle binary template
             raise NotImplementedError("Binary resource templates not yet supported")
 
+        except ResourceNotFoundError:
+            raise
         except Exception as e:
-            raise ResourceError(f"Failed to process template: {str(e)}")
+            raise ResourceError(f"Failed to process template: {str(e)}") from e
 
     def _build_regex(self, template: str) -> re.Pattern:
         """

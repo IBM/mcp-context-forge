@@ -8079,6 +8079,87 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
+@admin_router.get("/resources/test/{resource_uri:path}")
+async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """
+    Test reading a resource by its URI for the admin UI.
+
+    Args:
+        resource_uri: The full resource URI (may include encoded characters).
+        db: Database session dependency.
+        user: Authenticated user with proper permissions.
+
+    Returns:
+        A dictionary containing the resolved resource content.
+
+    Raises:
+        HTTPException: If the resource is not found.
+        Exception: For unexpected errors.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.services.resource_service import ResourceNotFoundError
+        >>> from fastapi import HTTPException
+
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user"}
+        >>> test_uri = "resource://example/demo"
+
+        >>> # --- Mock successful content read ---
+        >>> original_read_resource = resource_service.read_resource
+        >>> resource_service.read_resource = AsyncMock(return_value={"hello": "world"})
+
+        >>> async def test_success():
+        ...     result = await admin_test_resource(test_uri, mock_db, mock_user)
+        ...     return result["content"] == {"hello": "world"}
+
+        >>> asyncio.run(test_success())
+        True
+
+        >>> # --- Mock resource not found ---
+        >>> resource_service.read_resource = AsyncMock(
+        ...     side_effect=ResourceNotFoundError("Not found")
+        ... )
+
+        >>> async def test_not_found():
+        ...     try:
+        ...         await admin_test_resource("resource://missing", mock_db, mock_user)
+        ...         return False
+        ...     except HTTPException as e:
+        ...         return e.status_code == 404 and "Not found" in e.detail
+
+        >>> asyncio.run(test_not_found())
+        True
+
+        >>> # --- Mock unexpected exception ---
+        >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Boom"))
+
+        >>> async def test_error():
+        ...     try:
+        ...         await admin_test_resource(test_uri, mock_db, mock_user)
+        ...         return False
+        ...     except Exception as e:
+        ...         return str(e) == "Boom"
+
+        >>> asyncio.run(test_error())
+        True
+
+        >>> # Restore original method
+        >>> resource_service.read_resource = original_read_resource
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_uri}")
+
+    try:
+        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri)
+        return {"content": resource_content}
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting resource for {resource_uri}: {e}")
+        raise e
+
+
 @admin_router.get("/resources/{resource_id}")
 async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
@@ -8089,7 +8170,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         user: Authenticated user.
 
     Returns:
-        A dictionary containing resource details and its content.
+        A dictionary containing resource details.
 
     Raises:
         HTTPException: If the resource is not found.
@@ -8098,77 +8179,79 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics, ResourceContent
+        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
         >>> from datetime import datetime, timezone
-        >>> from mcpgateway.services.resource_service import ResourceNotFoundError # Added import
+        >>> from mcpgateway.services.resource_service import ResourceNotFoundError
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
+        >>> resource_id = "1"
         >>> resource_uri = "test://resource/get"
-        >>> resource_id = "ca627760127d409080fdefc309147e08"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
         ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), enabled=True, metrics=ResourceMetrics(
+        ...     updated_at=datetime.now(timezone.utc), is_active=True,enabled=True,
+        ...     metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
-        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
-        ...         last_execution_time=None
+        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
+        ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
         ...     tags=[]
         ... )
-        >>> mock_content = ResourceContent(id=str(resource_id), type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
-        >>> # Mock service methods
+        >>> # Mock service call
         >>> original_get_resource_by_id = resource_service.get_resource_by_id
-        >>> original_read_resource = resource_service.read_resource
         >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource)
-        >>> resource_service.read_resource = AsyncMock(return_value=mock_content)
         >>>
-        >>> # Test successful retrieval
-        >>> async def test_admin_get_resource_success():
+        >>> # Test: successful retrieval
+        >>> async def test_success():
         ...     result = await admin_get_resource(resource_id, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['resource']['id'] == resource_id and result['content'].text == "Hello content" # Corrected to .text
+        ...     return result["resource"]["id"] == resource_id
         >>>
-        >>> asyncio.run(test_admin_get_resource_success())
+        >>> asyncio.run(test_success())
         True
         >>>
-        >>> # Test resource not found
-        >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
-        >>> async def test_admin_get_resource_not_found():
+        >>> # Test: resource not found
+        >>> resource_service.get_resource_by_id = AsyncMock(
+        ...     side_effect=ResourceNotFoundError("Resource not found")
+        ... )
+        >>>
+        >>> async def test_not_found():
         ...     try:
         ...         await admin_get_resource("39334ce0ed2644d79ede8913a66930c9", mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
         >>>
-        >>> asyncio.run(test_admin_get_resource_not_found())
+        >>> asyncio.run(test_not_found())
         True
         >>>
-        >>> # Test exception during content read (resource found but content fails)
-        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource) # Resource found
-        >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Content read error"))
-        >>> async def test_admin_get_resource_content_error():
+        >>> # Test: unexpected exception
+        >>> resource_service.get_resource_by_id = AsyncMock(
+        ...     side_effect=Exception("Unexpected error")
+        ... )
+        >>>
+        >>> async def test_exception():
         ...     try:
         ...         await admin_get_resource(resource_id, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
-        ...         return str(e) == "Content read error"
+        ...         return str(e) == "Unexpected error"
         >>>
-        >>> asyncio.run(test_admin_get_resource_content_error())
+        >>> asyncio.run(test_exception())
         True
         >>>
-        >>> # Restore original methods
+        >>> # Restore original method
         >>> resource_service.get_resource_by_id = original_get_resource_by_id
-        >>> resource_service.read_resource = original_read_resource
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
         resource = await resource_service.get_resource_by_id(db, resource_id)
-        content = await resource_service.read_resource(db, resource_id)
-        return {"resource": resource.model_dump(by_alias=True), "content": content}
+        # content = await resource_service.read_resource(db, resource_id=resource_id)
+        return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
