@@ -133,11 +133,15 @@ prune .ruff_cache
 prune .mypy_cache
 prune htmlcov
 
-# Virtual environments
+# Virtual environments (including nested in plugins)
 prune venv
 prune .venv
 prune env
 prune node_modules
+prune plugins/external/opa/.venv
+prune plugins/external/llmguard/.venv
+prune plugins/external/cedar/.venv
+global-exclude **/.venv/*
 
 # Environment files (security sensitive!)
 exclude .env
@@ -150,8 +154,9 @@ exclude *.db
 exclude *.sqlite
 exclude *.log
 
-# Lock files
+# Lock files (including nested in plugins)
 exclude uv.lock
+global-exclude **/uv.lock
 
 # Coverage data
 exclude .coverage
