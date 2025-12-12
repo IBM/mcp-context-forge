@@ -5261,25 +5261,21 @@ if UI_ENABLED:
 
     # Redirect root path to admin UI
     @app.get("/")
-    async def root_redirect(request: Request):
+    async def root_redirect():
         """
-        Redirects the root path ("/") to "/admin".
+        Redirects the root path ("/") to "/admin/".
 
         Logs a debug message before redirecting.
 
-        Args:
-            request (Request): The incoming HTTP request (used only to build the
-                target URL via :pymeth:`starlette.requests.Request.url_for`).
-
         Returns:
-            RedirectResponse: Redirects to /admin.
+            RedirectResponse: Redirects to /admin/.
 
         Raises:
             HTTPException: If there is an error during redirection.
         """
-        logger.debug("Redirecting root path to /admin")
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin", status_code=303)
+        logger.debug("Redirecting root path to /admin/")
+        root_path = settings.app_root_path
+        return RedirectResponse(f"{root_path}/admin/", status_code=303)
         # return RedirectResponse(request.url_for("admin_home"))
 
 else:
