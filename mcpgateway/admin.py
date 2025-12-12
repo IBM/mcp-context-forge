@@ -2997,6 +2997,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
         {
             "request": request,
             "root_path": root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
