@@ -47,7 +47,7 @@ import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -2211,7 +2211,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "rpc.method": method,
                 "rpc.service": "mcp-gateway",
                 "http.method": "POST",
-                "http.url": f"{gateway.url}/rpc",
+                "http.url": urljoin(gateway.url, "/rpc"),
                 "peer.service": gateway.name,
             },
         ) as span:
@@ -2271,7 +2271,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         headers = self._get_auth_headers()
 
                 # Directly use the persistent HTTP client (no async with)
-                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -2373,7 +2373,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     request["params"] = params
 
                 # Forward request with proper authentication headers
-                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -2709,6 +2709,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if span:
                         span.set_attribute("health.status", "unhealthy")
                         span.set_attribute("error.message", str(e))
+                    logger.error(f"Health check failed for gateway {gateway.name}: {e}")
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
