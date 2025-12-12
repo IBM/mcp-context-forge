@@ -282,6 +282,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 [project.scripts]
 mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "mcpgateway.plugins.tools.cli:main"
+cforge = "mcpgateway.tools.cli:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
@@ -300,6 +301,9 @@ exclude = ["tests*"]
 #  - templates -> Jinja2 templates shipped at runtime
 [tool.setuptools.package-data]
 mcpgateway = [
+  "tools/builder/templates/*.yaml.j2",
+  "tools/builder/templates/compose/*.yaml.j2",
+  "tools/builder/templates/kubernetes/*.yaml.j2",
   "py.typed",
   "static/*.css",
   "static/*.js",
@@ -674,7 +678,11 @@ omit = [
     "*/test_*.py",
     "*/__init__.py",
     "*/alembic/*",
-    "*/version.py"
+    "*/version.py",
+    # Builder deployment files - require external tools (docker, kubectl, templates)
+    "mcpgateway/tools/builder/common.py",
+    "mcpgateway/tools/builder/dagger_deploy.py",
+    "mcpgateway/tools/builder/python_deploy.py"
 ]
 
 # --------------------------------------------------------------------

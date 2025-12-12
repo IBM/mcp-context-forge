@@ -115,6 +115,14 @@ def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str)
         >>> # Test invalid signature
         >>> validate_signature(b"wrong data", signature, public_pem)
         False
+        >>>
+        >>> # Test with string data (gets encoded)
+        >>> validate_signature("test message", signature, public_pem)
+        True
+        >>>
+        >>> # Test invalid hex signature format
+        >>> validate_signature(data, "not-valid-hex", public_pem)
+        False
     """
     if isinstance(data, str):
         data = data.encode()
@@ -181,6 +189,20 @@ def resign_data(
         >>> data = b"test message"
         >>> new_sig = resign_data(data, old_public_pem, "", new_private_pem)
         >>> isinstance(new_sig, str)
+        True
+        >>>
+        >>> # Test re-signing with valid old signature
+        >>> old_sig = old_private.sign(data)
+        >>> new_sig2 = resign_data(data, old_public_pem, old_sig, new_private_pem)
+        >>> isinstance(new_sig2, str)
+        True
+        >>> new_sig2 != old_sig.hex()  # New signature should be different
+        True
+        >>>
+        >>> # Test with invalid old signature (should return None)
+        >>> bad_sig = b"invalid signature bytes"
+        >>> result = resign_data(data, old_public_pem, bad_sig, new_private_pem)
+        >>> result is None
         True
     """
     # Handle first-time signing (no old signature)

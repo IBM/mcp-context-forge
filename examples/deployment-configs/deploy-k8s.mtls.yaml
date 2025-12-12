@@ -1,0 +1,84 @@
+# MCP Stack - Kubernetes Test Configuration
+# Simple test config using pre-built images
+
+deployment:
+  type: kubernetes
+  namespace: mcp-gateway-test
+
+# MCP Gateway configuration
+gateway:
+  # Use pre-built gateway image
+  image: mcpgateway/mcpgateway:latest
+  image_pull_policy: IfNotPresent
+
+  port: 4444
+
+  # Service configuration
+  service_type: ClusterIP
+  service_port: 4444
+
+  # Resource limits
+  replicas: 1
+  memory_request: 256Mi
+  memory_limit: 512Mi
+  cpu_request: 100m
+  cpu_limit: 500m
+
+  # Environment configuration
+  env_vars:
+    LOG_LEVEL: DEBUG
+    HOST: 0.0.0.0
+    PORT: 4444
+    MCPGATEWAY_UI_ENABLED: "true"
+    MCPGATEWAY_ADMIN_API_ENABLED: "true"
+    MCPGATEWAY_A2A_ENABLED: "true"
+    AUTH_REQUIRED: "false"
+    MCPGATEWAY_ENABLE_FEDERATION: "false"
+
+  # mTLS client configuration (gateway connects to plugins)
+  mtls_enabled: true
+  mtls_verify: true  # Verify server certificates (default: true)
+  mtls_check_hostname: false  # Don't verify hostname (default: false for compose)
+
+# External plugins
+plugins:
+  # OPA Plugin Filter
+  - name: OPAPluginFilter
+
+    # Use pre-built image for faster testing
+    image: mcpgateway-opapluginfilter:latest
+    image_pull_policy: IfNotPresent
+
+    port: 8000
+
+    # Service configuration
+    service_type: ClusterIP
+    service_port: 8000
+
+    # Resource limits
+    replicas: 1
+    memory_request: 128Mi
+    memory_limit: 256Mi
+    cpu_request: 50m
+    cpu_limit: 200m
+
+    env_vars:
+      LOG_LEVEL: DEBUG
+      OPA_POLICY_PATH: /app/policies
+
+    mtls_enabled: true
+
+    # Plugin manager overrides
+    plugin_overrides:
+      priority: 10
+      mode: "enforce"
+      description: "OPA policy enforcement"
+      tags: ["security", "policy", "opa"]
+
+# mTLS Certificate configuration
+certificates:
+  validity_days: 825
+  auto_generate: true
+  ca_path: ./certs/mcp/ca
+  gateway_path: ./certs/mcp/gateway
+  plugins_path: ./certs/mcp/plugins

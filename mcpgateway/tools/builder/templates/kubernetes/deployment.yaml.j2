@@ -1,0 +1,248 @@
+# Location: ./mcpgateway/tools/builder/templates/kubernetes/deployment.yaml.j2
+# Copyright 2025
+# SPDX-License-Identifier: Apache-2.0
+# Authors: Teryl Taylor
+# Kubernetes Deployment for {{ name }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ namespace }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ name }}-env
+  namespace: {{ namespace }}
+type: Opaque
+stringData:
+{% if env_vars is defined and env_vars %}
+  # Environment variables
+  # NOTE: In production, these should come from CI/CD vault secrets
+{% for key, value in env_vars.items() %}
+  {{ key }}: "{{ value }}"
+{% endfor %}
+{% endif %}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ name }}
+  namespace: {{ namespace }}
+  labels:
+    app: {{ name }}
+    component: {% if name == 'mcpgateway' %}gateway{% else %}plugin{% endif %}
+spec:
+  replicas: {{ replicas | default(1) }}
+  selector:
+    matchLabels:
+      app: {{ name }}
+  template:
+    metadata:
+      labels:
+        app: {{ name }}
+        component: {% if name == 'mcpgateway' %}gateway{% else %}plugin{% endif %}
+    spec:
+      {% if image_pull_secret is defined %}
+      imagePullSecrets:
+      - name: {{ image_pull_secret }}
+      {% endif %}
+
+      {% if init_containers is defined %}
+      initContainers:
+      {% for init_container in init_containers %}
+      - name: {{ init_container.name }}
+        image: {{ init_container.image }}
+        command: {{ init_container.command | tojson }}
+      {% endfor %}
+      {% endif %}
+
+      containers:
+      - name: {{ name }}
+        image: {{ image }}
+        imagePullPolicy: {{ image_pull_policy | default('IfNotPresent') }}
+
+        ports:
+        - name: http
+          containerPort: {{ port | default(8000) }}
+          protocol: TCP
+        {% if mtls_enabled | default(true) and name != 'mcpgateway' %}
+        - name: health
+          containerPort: 9000
+          protocol: TCP
+        {% endif %}
+
+        env:
+        {% if mtls_enabled | default(true) %}
+        {% if name == 'mcpgateway' %}
+        # mTLS client configuration (gateway connects to plugins)
+        - name: PLUGINS_CLIENT_MTLS_CA_BUNDLE
+          value: "/app/certs/ca/ca.crt"
+        - name: PLUGINS_CLIENT_MTLS_CERTFILE
+          value: "/app/certs/mcp/tls.crt"
+        - name: PLUGINS_CLIENT_MTLS_KEYFILE
+          value: "/app/certs/mcp/tls.key"
+        - name: PLUGINS_CLIENT_MTLS_VERIFY
+          value: "{{ mtls_verify | default('true') }}"
+        - name: PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME
+          value: "{{ mtls_check_hostname | default('false') }}"
+        {% else %}
+        # mTLS server configuration (plugin accepts gateway connections)
+        - name: PLUGINS_TRANSPORT
+          value: "http"
+        - name: PLUGINS_SERVER_HOST
+          value: "0.0.0.0"
+        - name: PLUGINS_SERVER_PORT
+          value: "{{ port | default(8000) }}"
+        - name: PLUGINS_SERVER_SSL_ENABLED
+          value: "true"
+        - name: PLUGINS_SERVER_SSL_KEYFILE
+          value: "/app/certs/mcp/tls.key"
+        - name: PLUGINS_SERVER_SSL_CERTFILE
+          value: "/app/certs/mcp/tls.crt"
+        - name: PLUGINS_SERVER_SSL_CA_CERTS
+          value: "/app/certs/ca/ca.crt"
+        - name: PLUGINS_SERVER_SSL_CERT_REQS
+          value: "2"  # CERT_REQUIRED
+        {% endif %}
+        {% endif %}
+
+        envFrom:
+        - secretRef:
+            name: {{ name }}-env
+
+        {% if health_check | default(true) %}
+        livenessProbe:
+          httpGet:
+            path: /health
+            {% if mtls_enabled | default(true) and name != 'mcpgateway' %}
+            # Plugin with mTLS: use separate health check server on port 9000
+            port: health
+            scheme: HTTP
+            {% else %}
+            # Gateway or non-mTLS: health check on main HTTP port
+            port: http
+            scheme: HTTP
+            {% endif %}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            {% if mtls_enabled | default(true) and name != 'mcpgateway' %}
+            # Plugin with mTLS: use separate health check server on port 9000
+            port: health
+            scheme: HTTP
+            {% else %}
+            # Gateway or non-mTLS: health check on main HTTP port
+            port: http
+            scheme: HTTP
+            {% endif %}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        {% endif %}
+
+        resources:
+          requests:
+            memory: "{{ memory_request | default('256Mi') }}"
+            cpu: "{{ cpu_request | default('100m') }}"
+          limits:
+            memory: "{{ memory_limit | default('512Mi') }}"
+            cpu: "{{ cpu_limit | default('500m') }}"
+
+        volumeMounts:
+        {% if mtls_enabled | default(true) %}
+        - name: server-cert
+          mountPath: /app/certs/mcp
+          readOnly: true
+        - name: ca-cert
+          mountPath: /app/certs/ca
+          readOnly: true
+        {% endif %}
+        {% if name == 'mcpgateway' and has_plugins | default(false) %}
+        - name: plugins-config
+          mountPath: /app/config
+          readOnly: true
+        {% endif %}
+
+        {% if volume_mounts is defined %}
+        {% for mount in volume_mounts %}
+        - name: {{ mount.name }}
+          mountPath: {{ mount.path }}
+          {% if mount.readonly | default(false) %}
+          readOnly: true
+          {% endif %}
+        {% endfor %}
+        {% endif %}
+
+        securityContext:
+          runAsNonRoot: true
+          {% if run_as_user is defined %}
+          runAsUser: {{ run_as_user }}
+          {% endif %}
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: false
+
+      volumes:
+      {% if mtls_enabled | default(true) %}
+      - name: server-cert
+        secret:
+          secretName: mcp-{{ name }}-server-cert
+          defaultMode: 0444
+      - name: ca-cert
+        secret:
+          secretName: mcp-ca-secret
+          defaultMode: 0444
+      {% endif %}
+      {% if name == 'mcpgateway' and has_plugins | default(false) %}
+      - name: plugins-config
+        configMap:
+          name: plugins-config
+          defaultMode: 0444
+      {% endif %}
+
+      {% if volumes is defined %}
+      {% for volume in volumes %}
+      - name: {{ volume.name }}
+        {% if volume.type == 'secret' %}
+        secret:
+          secretName: {{ volume.secret_name }}
+          {% if volume.default_mode is defined %}
+          defaultMode: {{ volume.default_mode }}
+          {% endif %}
+        {% elif volume.type == 'configmap' %}
+        configMap:
+          name: {{ volume.configmap_name }}
+        {% elif volume.type == 'persistentVolumeClaim' %}
+        persistentVolumeClaim:
+          claimName: {{ volume.claim_name }}
+        {% endif %}
+      {% endfor %}
+      {% endif %}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ name }}
+  namespace: {{ namespace }}
+  labels:
+    app: {{ name }}
+spec:
+  type: {{ service_type | default('ClusterIP') }}
+  ports:
+  - name: http
+    port: {{ port | default(8000) }}
+    targetPort: http
+    protocol: TCP
+    {% if service_type == 'NodePort' and node_port is defined %}
+    nodePort: {{ node_port }}
+    {% endif %}
+  selector:
+    app: {{ name }}
