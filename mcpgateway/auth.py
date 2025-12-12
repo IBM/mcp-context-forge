@@ -26,11 +26,63 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
 from mcpgateway.plugins.framework import get_plugin_manager, GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.verify_credentials import verify_jwt_token
 
 # Security scheme
-bearer_scheme = HTTPBearer(auto_error=False)
+security = HTTPBearer(auto_error=False)
+
+
+def _log_auth_event(
+    logger: logging.Logger,
+    message: str,
+    level: int = logging.INFO,
+    user_id: Optional[str] = None,
+    auth_method: Optional[str] = None,
+    auth_success: bool = False,
+    security_event: Optional[str] = None,
+    security_severity: str = "low",
+    **extra_context,
+) -> None:
+    """Log authentication event with structured context and request_id.
+
+    This helper creates structured log records that include request_id from the
+    correlation ID context, enabling end-to-end tracing of authentication flows.
+
+    Args:
+        logger: Logger instance to use
+        message: Log message
+        level: Log level (default: INFO)
+        user_id: User identifier
+        auth_method: Authentication method used (jwt, api_token, etc.)
+        auth_success: Whether authentication succeeded
+        security_event: Type of security event (authentication, authorization, etc.)
+        security_severity: Severity level (low, medium, high, critical)
+        **extra_context: Additional context fields
+    """
+    # Get request_id from correlation ID context
+    request_id = get_correlation_id()
+
+    # Build structured log record
+    extra = {
+        "request_id": request_id,
+        "entity_type": "auth",
+        "auth_success": auth_success,
+        "security_event": security_event or "authentication",
+        "security_severity": security_severity,
+    }
+
+    if user_id:
+        extra["user_id"] = user_id
+    if auth_method:
+        extra["auth_method"] = auth_method
+
+    # Add any additional context
+    extra.update(extra_context)
+
+    # Log with structured context
+    logger.log(level, message, extra=extra)
 
 
 def get_db() -> Generator[Session, Never, None]:
@@ -119,7 +171,7 @@ async def get_team_from_token(payload: Dict[str, Any], db: Session) -> Optional[
 
 
 async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: Session = Depends(get_db),
     request: Optional[object] = None,
 ) -> EmailUser:
@@ -169,10 +221,15 @@ async def get_current_user(
             if request and hasattr(request, "headers"):
                 headers = dict(request.headers)
 
-            # Get request ID from request state (set by middleware) or generate new one
-            request_id = getattr(request.state, "request_id", None) if request else None
+            # Get request ID from correlation ID context (set by CorrelationIDMiddleware)
+            request_id = get_correlation_id()
             if not request_id:
-                request_id = uuid.uuid4().hex
+                # Fallback chain for safety
+                if request and hasattr(request, "state") and hasattr(request.state, "request_id"):
+                    request_id = request.state.request_id
+                else:
+                    request_id = uuid.uuid4().hex
+                    logger.debug(f"Generated fallback request ID in get_current_user: {request_id}")
 
             # Get plugin contexts from request state if available
             global_context = getattr(request.state, "plugin_global_context", None) if request else None

@@ -27,7 +27,7 @@ Structure:
 
 # Standard
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 import json
 import os as _os  # local alias to avoid collisions
@@ -70,6 +70,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
+from mcpgateway.middleware.correlation_id import CorrelationIDMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -112,6 +113,7 @@ from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayD
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
+from mcpgateway.services.log_aggregator import get_log_aggregator
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError, PromptNotFoundError, PromptService
@@ -406,6 +408,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         Exception: Any unhandled error that occurs during service
             initialisation or shutdown is re-raised to the caller.
     """
+    aggregation_stop_event: Optional[asyncio.Event] = None
+    aggregation_loop_task: Optional[asyncio.Task] = None
+    aggregation_backfill_task: Optional[asyncio.Task] = None
+
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting MCP Gateway services")
@@ -461,6 +467,54 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
+        if settings.metrics_aggregation_enabled and settings.metrics_aggregation_auto_start:
+            aggregation_stop_event = asyncio.Event()
+            log_aggregator = get_log_aggregator()
+
+            async def run_log_backfill() -> None:
+                """Backfill log aggregation metrics for configured hours."""
+                hours = getattr(settings, "metrics_aggregation_backfill_hours", 0)
+                if hours <= 0:
+                    return
+                try:
+                    await asyncio.to_thread(log_aggregator.backfill, hours)
+                    logger.info("Log aggregation backfill completed for last %s hour(s)", hours)
+                except Exception as backfill_error:  # pragma: no cover - defensive logging
+                    logger.warning("Log aggregation backfill failed: %s", backfill_error)
+
+            async def run_log_aggregation_loop() -> None:
+                """Run continuous log aggregation at configured intervals.
+
+                Raises:
+                    asyncio.CancelledError: When aggregation is stopped
+                """
+                interval_seconds = max(1, int(settings.metrics_aggregation_window_minutes)) * 60
+                logger.info(
+                    "Starting log aggregation loop (window=%s min)",
+                    log_aggregator.aggregation_window_minutes,
+                )
+                try:
+                    while not aggregation_stop_event.is_set():
+                        try:
+                            await asyncio.to_thread(log_aggregator.aggregate_all_components)
+                        except Exception as agg_error:  # pragma: no cover - defensive logging
+                            logger.warning("Log aggregation loop iteration failed: %s", agg_error)
+
+                        try:
+                            await asyncio.wait_for(aggregation_stop_event.wait(), timeout=interval_seconds)
+                        except asyncio.TimeoutError:
+                            continue
+                except asyncio.CancelledError:
+                    logger.debug("Log aggregation loop cancelled")
+                    raise
+                finally:
+                    logger.info("Log aggregation loop stopped")
+
+            aggregation_backfill_task = asyncio.create_task(run_log_backfill())
+            aggregation_loop_task = asyncio.create_task(run_log_aggregation_loop())
+        elif settings.metrics_aggregation_enabled:
+            logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -474,6 +528,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             raise SystemExit(1)
         raise
     finally:
+        if aggregation_stop_event is not None:
+            aggregation_stop_event.set()
+        for task in (aggregation_backfill_task, aggregation_loop_task):
+            if task:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+
         # Shutdown plugin manager
         if plugin_manager:
             try:
@@ -1169,6 +1231,15 @@ else:
 # Add HTTP authentication hook middleware for plugins (before auth dependencies)
 if plugin_manager:
     app.add_middleware(HttpAuthMiddleware, plugin_manager=plugin_manager)
+    logger.info("🔌 HTTP authentication hooks enabled for plugins")
+
+# Add request logging middleware FIRST (always enabled for gateway boundary logging)
+# IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
+# Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
+# Detailed payload logging only runs if log_detailed_requests=True
+app.add_middleware(
+    RequestLoggingMiddleware, enable_gateway_logging=True, log_detailed_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024
+)  # Convert MB to bytes
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
@@ -1176,13 +1247,27 @@ app.add_middleware(DocsAuthMiddleware)
 # Trust all proxies (or lock down with a list of host patterns)
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
-# Add request logging middleware if enabled
-if settings.log_requests:
-    app.add_middleware(RequestLoggingMiddleware, log_requests=settings.log_requests, log_level=settings.log_level, max_body_size=settings.log_max_size_mb * 1024 * 1024)  # Convert MB to bytes
+# Add correlation ID middleware if enabled
+# Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
+if settings.correlation_id_enabled:
+    app.add_middleware(CorrelationIDMiddleware)
+    logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
+
+# Add authentication context middleware if security logging is enabled
+# This middleware extracts user context and logs security events (authentication attempts)
+# Note: This is independent of observability - security logging is always important
+if settings.security_logging_enabled:
+    # First-Party
+    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
+
+    app.add_middleware(AuthContextMiddleware)
+    logger.info("🔐 Authentication context middleware enabled - logging security events")
+else:
+    logger.info("🔐 Security event logging disabled")
 
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
-# We add ObservabilityMiddleware first so it wraps AuthContextMiddleware
+# If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
 if settings.observability_enabled:
     # First-Party
@@ -1190,13 +1275,6 @@ if settings.observability_enabled:
 
     app.add_middleware(ObservabilityMiddleware, enabled=True)
     logger.info("🔍 Observability middleware enabled - tracing all HTTP requests")
-
-    # Add authentication context middleware (runs BEFORE observability in execution)
-    # First-Party
-    from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
-
-    app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - extracting user info for observability")
 else:
     logger.info("🔍 Observability middleware disabled")
 
@@ -2402,7 +2480,20 @@ async def invoke_a2a_agent(
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-        return await a2a_service.invoke_agent(db, agent_name, parameters, interaction_type)
+        user_email = get_user_email(user)
+        user_id = None
+        if isinstance(user, dict):
+            user_id = str(user.get("id") or user.get("sub") or user_email)
+        else:
+            user_id = str(user)
+        return await a2a_service.invoke_agent(
+            db,
+            agent_name,
+            parameters,
+            interaction_type,
+            user_id=user_id,
+            user_email=user_email,
+        )
     except A2AAgentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except A2AAgentError as e:
@@ -4979,6 +5070,19 @@ app.include_router(server_router)
 app.include_router(metrics_router)
 app.include_router(tag_router)
 app.include_router(export_import_router)
+
+# Include log search router if structured logging is enabled
+if getattr(settings, "structured_logging_enabled", True):
+    try:
+        # First-Party
+        from mcpgateway.routers.log_search import router as log_search_router
+
+        app.include_router(log_search_router)
+        logger.info("Log search router included - structured logging enabled")
+    except ImportError as e:
+        logger.warning(f"Failed to import log search router: {e}")
+else:
+    logger.info("Log search router not included - structured logging disabled")
 
 # Conditionally include observability router if enabled
 if settings.observability_enabled:

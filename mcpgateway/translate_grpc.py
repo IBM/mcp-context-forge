@@ -173,7 +173,7 @@ class GrpcEndpoint:
                         # Add to pool (ignore if already exists)
                         try:
                             self._pool.Add(file_desc_proto)
-                        except Exception as e:  # noqa: B110
+                        except Exception as e:  # pylint: disable=broad-except
                             # Descriptor already in pool, safe to skip
                             logger.debug(f"Descriptor already in pool: {e}")
 

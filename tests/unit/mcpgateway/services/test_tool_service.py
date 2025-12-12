@@ -36,6 +36,16 @@ from mcpgateway.services.tool_service import (
 from mcpgateway.utils.services_auth import encode_auth
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def tool_service():
     """Create a tool service instance."""
@@ -290,7 +300,8 @@ class TestToolService:
         # Verify DB operations
         test_db.add.assert_called_once()
         test_db.commit.assert_called_once()
-        test_db.refresh.assert_called_once()
+        # refresh is called twice: once after commit and once after logging commits
+        assert test_db.refresh.call_count == 2
 
         # Verify result
         assert result.name == "test-gateway-test-tool"
@@ -1875,7 +1886,7 @@ class TestToolService:
             "avg_response_time": None,
             "last_execution_time": None,
         }
-        
+
         # Verify optimization
         assert mock_db.execute.call_count == 1
 
@@ -1987,7 +1998,7 @@ class TestToolService:
 
         with patch("mcpgateway.services.tool_service.build_top_performers") as mock_build:
             mock_build.return_value = ["top_performer1", "top_performer2"]
-            
+
             # Run the method
             result = await tool_service.get_top_tools(test_db, limit=5)
 
@@ -1996,7 +2007,7 @@ class TestToolService:
 
             # Assert build_top_performers was called with the mock results
             mock_build.assert_called_once_with(mock_results)
-            
+
             # Verify that the execute method was called once
             test_db.execute.assert_called_once()
 

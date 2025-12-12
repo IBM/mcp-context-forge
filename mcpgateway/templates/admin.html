@@ -590,11 +590,65 @@
               <h2
                 class="text-lg font-medium text-gray-900 dark:text-white mb-4"
               >
-                System Logs
+                📋 System Logs
               </h2>
 
+              <!-- Quick Actions -->
+              <div class="mb-4 flex gap-2 flex-wrap">
+                <button
+                  onclick="searchStructuredLogs()"
+                  class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                >
+                  🔍 Search Logs
+                </button>
+                <button
+                  onclick="showCorrelationTrace()"
+                  class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
+                >
+                  🔗 Trace Correlation ID
+                </button>
+                <button
+                  onclick="showSecurityEvents()"
+                  class="px-3 py-2 bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  🛡️ Security Events
+                </button>
+                <button
+                  onclick="showAuditTrail()"
+                  class="px-3 py-2 bg-yellow-600 text-white rounded hover:bg-yellow-700"
+                >
+                  📝 Audit Trail
+                </button>
+                <button
+                  onclick="showPerformanceMetrics()"
+                  class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  ⚡ Performance
+                </button>
+              </div>
+
+              <!-- Performance Aggregation Controls (toggle visibility via JS) -->
+              <div id="performance-aggregation-controls" class="mb-4 hidden">
+                <label
+                  for="performance-aggregation-select"
+                  class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                >
+                  Performance aggregation level
+                </label>
+                <div class="mt-1 max-w-xs">
+                  <select
+                    id="performance-aggregation-select"
+                    class="px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    onchange="handlePerformanceAggregationChange(event)"
+                  >
+                    <option value="5m">5 minutes</option>
+                    <option value="24h">24 hours</option>
+                  </select>
+                </div>
+              </div>
+
               <!-- Log Filters -->
-              <div class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div id="log-filters" class="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300"
@@ -603,80 +657,51 @@
                   <select
                     id="log-level-filter"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    onchange="searchStructuredLogs()"
                   >
                     <option value="">All Levels</option>
-                    <option value="debug">Debug</option>
-                    <option value="info">Info</option>
-                    <option value="warning">Warning</option>
-                    <option value="error">Error</option>
-                    <option value="critical">Critical</option>
+                    <option value="DEBUG">Debug</option>
+                    <option value="INFO">Info</option>
+                    <option value="WARNING">Warning</option>
+                    <option value="ERROR">Error</option>
+                    <option value="CRITICAL">Critical</option>
                   </select>
                 </div>
 
                 <div>
                   <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >Entity Type</label
+                    >Component</label
                   >
                   <select
-                    id="log-entity-filter"
+                    id="log-component-filter"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    onchange="searchStructuredLogs()"
                   >
-                    <option value="">All Types</option>
-                    <option value="tool">Tool</option>
-                    <option value="resource">Resource</option>
-                    <option value="server">Server</option>
-                    <option value="gateway">Gateway</option>
+                    <option value="">All Components</option>
+                    <option value="http_gateway">HTTP Gateway</option>
+                    <option value="gateway_service">Gateway Service</option>
+                    <option value="tool_service">Tool Service</option>
+                    <option value="resource_service">Resource Service</option>
+                    <option value="prompt_service">Prompt Service</option>
+                    <option value="server_service">Server Service</option>
+                    <option value="a2a_service">A2A Service</option>
+                    <option value="auth">Authentication</option>
                   </select>
                 </div>
 
                 <div>
                   <label
                     class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >Search</label
+                    >Search / Correlation ID</label
                   >
                   <input
                     type="text"
                     id="log-search"
-                    placeholder="Search logs..."
+                    placeholder="Search or paste correlation ID..."
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   />
                 </div>
-              </div>
-
-              <!-- Action Buttons -->
-              <div class="mb-4 flex gap-2">
-                <button
-                  onclick="refreshLogs()"
-                  class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-                >
-                  Refresh
-                </button>
-                <button
-                  onclick="toggleLogStream()"
-                  id="stream-toggle"
-                  class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-                >
-                  Start Live Stream
-                </button>
-                <button
-                  onclick="exportLogs('json')"
-                  class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-                >
-                  Export JSON
-                </button>
-                <button
-                  onclick="exportLogs('csv')"
-                  class="px-3 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-                >
-                  Export CSV
-                </button>
-                <button
-                  onclick="showLogFiles()"
-                  class="px-3 py-2 bg-purple-600 text-white rounded hover:bg-purple-700"
-                >
-                  Download Files
-                </button>
               </div>
 
               <!-- Log Stats -->
@@ -684,9 +709,7 @@
                 id="log-stats"
                 class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300"
               >
-                <span class="text-sm text-gray-600 dark:text-gray-300"
-                  >Loading stats...</span
-                >
+                <span class="text-sm">Loading...</span>
               </div>
 
               <!-- Log Table -->
@@ -694,27 +717,42 @@
                 <table
                   class="min-w-full divide-y divide-gray-200 dark:divide-gray-700"
                 >
-                  <thead class="bg-gray-50 dark:bg-gray-700">
+                  <thead id="logs-thead" class="bg-gray-50 dark:bg-gray-700">
                     <tr>
                       <th
-                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                       >
                         Time
                       </th>
                       <th
-                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                       >
                         Level
                       </th>
                       <th
-                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                       >
-                        Entity
+                        Component
                       </th>
                       <th
-                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
                       >
                         Message
+                      </th>
+                      <th
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
+                        User
+                      </th>
+                      <th
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
+                        Duration
+                      </th>
+                      <th
+                        class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
+                      >
+                        Correlation ID
                       </th>
                     </tr>
                   </thead>
@@ -1718,7 +1756,7 @@
         <!-- Unified Search & Filter Bar for Virtual Servers -->
         <div class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800">
           <div class="flex flex-col space-y-4">
-            
+
             <!-- Search and Filter Row -->
             <div class="flex items-center space-x-2">
               <!-- Search Input -->
@@ -2577,7 +2615,7 @@
                 Clear
               </button>
             </div>
-            
+
             <!-- Hidden tag filter for functionality -->
             <input type="hidden" id="tools-tag-filter" />
           </div>
@@ -3575,7 +3613,7 @@
                 Clear
               </button>
             </div>
-            
+
             <!-- Hidden tag filter for functionality -->
             <input type="hidden" id="resources-tag-filter" />
           </div>
@@ -3795,7 +3833,7 @@
                 Clear
               </button>
             </div>
-            
+
             <!-- Hidden tag filter for functionality -->
             <input type="hidden" id="prompts-tag-filter" />
           </div>
@@ -4046,7 +4084,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Clear
               </button>
             </div>
-            
+
             <!-- Hidden tag filter for functionality -->
             <input type="hidden" id="gateways-tag-filter" />
           </div>
@@ -5463,7 +5501,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 Clear
               </button>
             </div>
-            
+
             <!-- Hidden tag filter for functionality -->
             <input type="hidden" id="a2a-agents-tag-filter" />
           </div>
@@ -7615,7 +7653,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             class="inline-block align-bottom bg-white dark:bg-gray-900 rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
           >
             <div class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
-              
+
               <!-- Title -->
               <h3
                 id="resource-test-modal-title"
@@ -7633,9 +7671,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 <button
                   type="button"
                   onclick="runResourceTest()"
-                  class="mt-4 inline-flex items-center px-3 py-2 border border-transparent 
-                        text-sm leading-4 font-medium rounded-md text-white 
-                        bg-indigo-600 hover:bg-indigo-700 focus:outline-none 
+                  class="mt-4 inline-flex items-center px-3 py-2 border border-transparent
+                        text-sm leading-4 font-medium rounded-md text-white
+                        bg-indigo-600 hover:bg-indigo-700 focus:outline-none
                         focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   Test Resource
@@ -7651,8 +7689,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
                   <div
                     id="resource-test-result"
-                    class="bg-gray-50 dark:bg-gray-800 p-3 rounded-md border 
-                          border-gray-200 dark:border-gray-700 text-gray-700 
+                    class="bg-gray-50 dark:bg-gray-800 p-3 rounded-md border
+                          border-gray-200 dark:border-gray-700 text-gray-700
                           dark:text-gray-300 text-sm whitespace-pre-wrap"
                   >
                     <!-- JSON content injected here -->
@@ -7668,11 +7706,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <button
                 type="button"
                 onclick="closeModal('resource-test-modal')"
-                class="mt-3 w-full inline-flex justify-center rounded-md border 
-                      border-gray-300 shadow-sm px-4 py-2 bg-white text-base 
-                      font-medium text-gray-700 hover:bg-gray-50 
-                      dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600 
-                      focus:outline-none focus:ring-2 focus:ring-offset-2 
+                class="mt-3 w-full inline-flex justify-center rounded-md border
+                      border-gray-300 shadow-sm px-4 py-2 bg-white text-base
+                      font-medium text-gray-700 hover:bg-gray-50
+                      dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600
+                      focus:outline-none focus:ring-2 focus:ring-offset-2
                       focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
               >
                 Close
@@ -7758,13 +7796,13 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                     </div>
                     <!-- Removing Content form Edit Form -->
                     <!-- Remove required attribute to avoid browser validation issues -->
-                     
-                    <!-- 
+
+                    <!--
                     <div>
                       <label class="block text-sm font-medium text-gray-700"
                         >Content</label
                       >
-                      
+
                       <textarea
                         name="content"
                         id="edit-resource-content"
@@ -11085,131 +11123,22 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       let currentLogPage = 0;
       const logsPerPage = 100;
 
-      async function refreshLogs() {
-        const level = document.getElementById("log-level-filter").value;
-        const entityType = document.getElementById("log-entity-filter").value;
-        const search = document.getElementById("log-search").value;
+      // Main search function for structured logs
+      // Note: Structured logging functions are defined in admin.js which loads below:
+      // - searchStructuredLogs() - Search logs with filters
+      // - displayLogResults() - Display log table
+      // - showCorrelationTrace() - Show correlation trace modal
+      // - displayCorrelationTrace() - Display trace results
+      // - Helper functions: getLevelClass(), formatDuration(), getDurationClass()
+      //
+      // Keeping all structured logging UI logic centralized in admin.js to avoid
+      // duplication and maintenance issues. admin.js loads last and provides the
+      // definitive implementations.
 
-        const params = new URLSearchParams({
-          limit: logsPerPage,
-          offset: currentLogPage * logsPerPage,
-          order: "desc",
-        });
-
-        if (level) params.append("level", level);
-        if (entityType) params.append("entity_type", entityType);
-        if (search) params.append("search", search);
-
-        try {
-          const headers = {};
-          const token = localStorage.getItem("token");
-          if (token) {
-            headers["Authorization"] = `Bearer ${token}`;
-          }
-
-          const response = await fetch(
-            `${window.ROOT_PATH || ""}/admin/logs?${params}`,
-            {
-              headers: headers,
-              credentials: "same-origin",
-            },
-          );
-
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-
-          const data = await response.json();
-          displayLogs(data.logs);
-          updateLogStats(data.stats);
-          updateLogCount(data.total);
-        } catch (error) {
-          console.error("Error fetching logs:", error);
-          showErrorMessage("Failed to fetch logs");
-        }
-      }
-
-      function displayLogs(logs) {
-        const tbody = document.getElementById("logs-tbody");
-        tbody.innerHTML = "";
-
-        logs.forEach((log) => {
-          const row = document.createElement("tr");
-          row.className = "hover:bg-gray-50 dark:hover:bg-gray-700";
-
-          const timestamp = new Date(log.timestamp).toLocaleString();
-          const levelClass = getLevelClass(log.level);
-          const entity = log.entity_name || log.entity_id || "-";
-
-          row.innerHTML = `
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-              ${timestamp}
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap">
-              <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${levelClass}">
-                ${log.level}
-              </span>
-            </td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-100">
-              ${log.entity_type ? `${log.entity_type}: ${entity}` : entity}
-            </td>
-            <td class="px-6 py-4 text-sm text-gray-900 dark:text-gray-100">
-              ${escapeHtml(log.message)}
-            </td>
-          `;
-
-          tbody.appendChild(row);
-        });
-      }
-
-      function getLevelClass(level) {
-        switch (level) {
-          case "debug":
-            return "bg-gray-100 text-gray-800";
-          case "info":
-            return "bg-blue-100 text-blue-800";
-          case "warning":
-            return "bg-yellow-100 text-yellow-800";
-          case "error":
-            return "bg-red-100 text-red-800";
-          case "critical":
-            return "bg-red-600 text-white";
-          default:
-            return "bg-gray-100 text-gray-800";
-        }
-      }
-
-      function updateLogStats(stats) {
-        if (!stats) return;
-
-        const statsDiv = document.getElementById("log-stats");
-        const levelDist = stats.level_distribution || {};
-        const entityDist = stats.entity_distribution || {};
-
-        let html = `
-          <div class="flex flex-wrap gap-4 text-sm">
-            <span>Buffer: ${stats.usage_percent || 0}% (${stats.buffer_size_mb || 0}/${stats.max_size_mb || 0} MB)</span>
-            <span>Total: ${stats.total_logs || 0} logs</span>
-        `;
-
-        if (Object.keys(levelDist).length > 0) {
-          html += "<span>Levels: ";
-          for (const [level, count] of Object.entries(levelDist)) {
-            html += `${level}(${count}) `;
-          }
-          html += "</span>";
-        }
-
-        html += "</div>";
-        statsDiv.innerHTML = html;
-      }
-
-      function updateLogCount(total) {
-        document.getElementById("log-count").textContent = `${total} logs`;
-
-        // Update pagination buttons
-        document.getElementById("prev-page").disabled = currentLogPage === 0;
-        document.getElementById("next-page").disabled =
-          (currentLogPage + 1) * logsPerPage >= total;
-      }
+      // Note: showSecurityEvents, showAuditTrail, showPerformanceMetrics,
+      // updateLogStats, and updateLogCount are also defined in admin.js which
+      // is loaded below and overrides any inline definitions.
+      // Keeping functions centralized in admin.js to avoid duplication and maintenance issues.
 
       function toggleLogStream() {
         const button = document.getElementById("stream-toggle");
@@ -11303,7 +11232,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         try {
           // Use the same auth approach as other admin endpoints
           const headers = {};
-          const token = localStorage.getItem("token");
+          const token = getAuthToken();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -11354,7 +11283,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function showLogFiles() {
         try {
           const headers = {};
-          const token = localStorage.getItem("token");
+          const token = getAuthToken();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -11422,7 +11351,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       async function downloadLogFile(filename) {
         try {
           const headers = {};
-          const token = localStorage.getItem("token");
+          const token = getAuthToken();
           if (token) {
             headers["Authorization"] = `Bearer ${token}`;
           }
@@ -11483,7 +11412,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       document.addEventListener("DOMContentLoaded", () => {
         const logFilters = [
           "log-level-filter",
-          "log-entity-filter",
+          "log-component-filter",
           "log-search",
         ];
         logFilters.forEach((id) => {

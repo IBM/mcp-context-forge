@@ -26,14 +26,19 @@ from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, EmailTeam
 from mcpgateway.schemas import A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth  # ,decode_auth
 
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger for A2A lifecycle tracking
+structured_logger = get_structured_logger("a2a_service")
 
 
 class A2AAgentError(Exception):
@@ -279,6 +284,25 @@ class A2AAgentService:
             )
 
             logger.info(f"Registered new A2A agent: {new_agent.name} (ID: {new_agent.id})")
+
+            # Log A2A agent registration for lifecycle tracking
+            structured_logger.info(
+                f"A2A agent '{new_agent.name}' registered successfully",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="a2a_agent",
+                resource_id=str(new_agent.id),
+                resource_action="create",
+                custom_fields={
+                    "agent_name": new_agent.name,
+                    "agent_type": new_agent.agent_type,
+                    "protocol_version": new_agent.protocol_version,
+                    "visibility": visibility,
+                    "endpoint_url": new_agent.endpoint_url,
+                },
+            )
+
             return self._db_to_schema(db=db, db_agent=new_agent)
 
         except A2AAgentNameConflictError as ie:
@@ -716,6 +740,21 @@ class A2AAgentService:
         status = "activated" if activate else "deactivated"
         logger.info(f"A2A agent {status}: {agent.name} (ID: {agent.id})")
 
+        structured_logger.log(
+            level="INFO",
+            message=f"A2A agent {status}",
+            event_type="a2a_agent_status_changed",
+            component="a2a_service",
+            user_email=user_email,
+            resource_type="a2a_agent",
+            resource_id=str(agent.id),
+            custom_fields={
+                "agent_name": agent.name,
+                "enabled": agent.enabled,
+                "reachable": agent.reachable,
+            },
+        )
+
         return self._db_to_schema(db=db, db_agent=agent)
 
     async def delete_agent(self, db: Session, agent_id: str, user_email: Optional[str] = None) -> None:
@@ -751,11 +790,31 @@ class A2AAgentService:
             db.commit()
 
             logger.info(f"Deleted A2A agent: {agent_name} (ID: {agent_id})")
+
+            structured_logger.log(
+                level="INFO",
+                message="A2A agent deleted",
+                event_type="a2a_agent_deleted",
+                component="a2a_service",
+                user_email=user_email,
+                resource_type="a2a_agent",
+                resource_id=str(agent_id),
+                custom_fields={"agent_name": agent_name},
+            )
         except PermissionError:
             db.rollback()
             raise
 
-    async def invoke_agent(self, db: Session, agent_name: str, parameters: Dict[str, Any], interaction_type: str = "query") -> Dict[str, Any]:
+    async def invoke_agent(
+        self,
+        db: Session,
+        agent_name: str,
+        parameters: Dict[str, Any],
+        interaction_type: str = "query",
+        *,
+        user_id: Optional[str] = None,
+        user_email: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Invoke an A2A agent.
 
         Args:
@@ -763,6 +822,8 @@ class A2AAgentService:
             agent_name: Name of the agent to invoke.
             parameters: Parameters for the interaction.
             interaction_type: Type of interaction.
+            user_id: Identifier of the user initiating the call.
+            user_email: Email of the user initiating the call.
 
         Returns:
             Agent response.
@@ -803,13 +864,64 @@ class A2AAgentService:
                     if token_value:
                         headers["Authorization"] = f"Bearer {token_value}"
 
+                # Add correlation ID to outbound headers for distributed tracing
+                correlation_id = get_correlation_id()
+                if correlation_id:
+                    headers["X-Correlation-ID"] = correlation_id
+
+                # Log A2A external call start
+                call_start_time = datetime.now(timezone.utc)
+                structured_logger.log(
+                    level="INFO",
+                    message=f"A2A external call started: {agent_name}",
+                    component="a2a_service",
+                    user_id=user_id,
+                    user_email=user_email,
+                    correlation_id=correlation_id,
+                    metadata={
+                        "event": "a2a_call_started",
+                        "agent_name": agent_name,
+                        "agent_id": agent.id,
+                        "endpoint_url": agent.endpoint_url,
+                        "interaction_type": interaction_type,
+                        "protocol_version": agent.protocol_version,
+                    },
+                )
+
                 http_response = await client.post(agent.endpoint_url, json=request_data, headers=headers)
+                call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
 
                 if http_response.status_code == 200:
                     response = http_response.json()
                     success = True
+
+                    # Log successful A2A call
+                    structured_logger.log(
+                        level="INFO",
+                        message=f"A2A external call completed: {agent_name}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent.id, "status_code": http_response.status_code, "success": True},
+                    )
                 else:
                     error_message = f"HTTP {http_response.status_code}: {http_response.text}"
+
+                    # Log failed A2A call
+                    structured_logger.log(
+                        level="ERROR",
+                        message=f"A2A external call failed: {agent_name}",
+                        component="a2a_service",
+                        user_id=user_id,
+                        user_email=user_email,
+                        correlation_id=correlation_id,
+                        duration_ms=call_duration_ms,
+                        error_details={"error_type": "A2AHTTPError", "error_message": error_message},
+                        metadata={"event": "a2a_call_failed", "agent_name": agent_name, "agent_id": agent.id, "status_code": http_response.status_code},
+                    )
+
                     raise A2AAgentError(error_message)
 
         except Exception as e:

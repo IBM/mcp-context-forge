@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """UUID Change for Prompt and Resources
 
 Revision ID: 356a2d4eed6f

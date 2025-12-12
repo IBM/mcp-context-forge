@@ -26,6 +26,26 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.a2a_service import A2AAgentService
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.gateway_service.audit_trail") as mock_gw_audit, \
+         patch("mcpgateway.services.gateway_service.structured_logger") as mock_gw_logger, \
+         patch("mcpgateway.services.tool_service.audit_trail") as mock_tool_audit, \
+         patch("mcpgateway.services.tool_service.structured_logger") as mock_tool_logger, \
+         patch("mcpgateway.services.resource_service.audit_trail") as mock_res_audit, \
+         patch("mcpgateway.services.resource_service.structured_logger") as mock_res_logger, \
+         patch("mcpgateway.services.prompt_service.audit_trail") as mock_prompt_audit, \
+         patch("mcpgateway.services.prompt_service.structured_logger") as mock_prompt_logger, \
+         patch("mcpgateway.services.a2a_service.structured_logger") as mock_a2a_logger:
+        for mock in [mock_gw_audit, mock_tool_audit, mock_res_audit, mock_prompt_audit]:
+            mock.log_action = MagicMock(return_value=None)
+        for mock in [mock_gw_logger, mock_tool_logger, mock_res_logger, mock_prompt_logger, mock_a2a_logger]:
+            mock.log = MagicMock(return_value=None)
+            mock.info = MagicMock(return_value=None)
+        yield
+
+
 @pytest.fixture
 def mock_db_session():
     """Create a mock database session."""
