@@ -3779,6 +3779,37 @@ def patch_string_columns_for_mariadb(base, engine_) -> None:
                 column.type = VARCHAR(255)
 
 
+def extract_json_field(column, json_path: str):
+    """Extract a JSON field in a database-agnostic way.
+
+    This function provides cross-database compatibility for JSON field extraction,
+    supporting both SQLite and PostgreSQL backends.
+
+    Args:
+        column: SQLAlchemy column containing JSON data
+        json_path: JSON path in SQLite format (e.g., '$.\"tool.name\"')
+
+    Returns:
+        SQLAlchemy expression for extracting the JSON field as text
+
+    Note:
+        - For SQLite: Uses json_extract(column, '$.\"key\"')
+        - For PostgreSQL: Uses column ->> 'key' operator
+        - Backend-specific behavior is tested via unit tests in test_db.py
+    """
+
+    if backend == "postgresql":
+        # PostgreSQL uses ->> operator for text extraction
+        # Convert $.\"key\" or $.\"nested.key\" format to just the key
+        # Handle both simple keys and nested keys with dots
+        path_key = json_path.replace('$."', "").replace('"', "")
+        return column.op("->>")(path_key)
+
+    # SQLite and other databases use json_extract function
+    # Keep the original $.\"key\" format
+    return func.json_extract(column, json_path)
+
+
 # Create all tables
 def init_db():
     """

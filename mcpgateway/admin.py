@@ -57,7 +57,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.auth import get_current_user
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
@@ -13466,7 +13466,7 @@ async def get_observability_traces(
                 db.query(ObservabilitySpan.trace_id)
                 .filter(
                     ObservabilitySpan.name == "tool.invoke",
-                    func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),  # pylint: disable=not-callable
+                    extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
                 )
                 .distinct()
                 .subquery()
@@ -14143,14 +14143,13 @@ async def get_latency_heatmap(
     """
     db = next(get_db())
     try:
+        # Make cutoff_time UTC aware
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        # Remove timezone info for SQLite compatibility
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
         # Query all traces with duration
         traces = (
             db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
-            .filter(ObservabilityTrace.start_time >= cutoff_time_naive, ObservabilityTrace.duration_ms.isnot(None))
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
             .order_by(ObservabilityTrace.start_time)
             .all()
         )
@@ -14174,8 +14173,13 @@ async def get_latency_heatmap(
 
         # Populate heatmap
         for trace in traces:
+            trace_time = trace.start_time
+            # Convert naive SQLite datetime to UTC aware
+            if trace_time.tzinfo is None:
+                trace_time = trace_time.replace(tzinfo=timezone.utc)
+
             # Calculate time bucket index
-            time_diff = (trace.start_time - cutoff_time_naive).total_seconds() / 60  # minutes
+            time_diff = (trace_time - cutoff_time).total_seconds() / 60  # minutes
             time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
 
             # Calculate latency bucket index
@@ -14186,7 +14190,7 @@ async def get_latency_heatmap(
         # Generate labels
         time_labels = []
         for i in range(time_buckets):
-            bucket_time = cutoff_time_naive + timedelta(minutes=i * time_bucket_minutes)
+            bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
             time_labels.append(bucket_time.strftime("%H:%M"))
 
         latency_labels = []
@@ -14233,15 +14237,15 @@ async def get_tool_usage(
         # Note: Using $."tool.name" because the JSON key contains a dot
         tool_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14295,14 +14299,14 @@ async def get_tool_performance(
         # First, get all tool invocations with durations
         tool_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
             .all()
         )
@@ -14387,16 +14391,16 @@ async def get_tool_errors(
         # Query tool error rates
         tool_errors = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
             .order_by(func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14450,13 +14454,13 @@ async def get_tool_chains(
         tool_spans = (
             db.query(
                 ObservabilitySpan.trace_id,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 ObservabilitySpan.start_time,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
             .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
             .all()
@@ -14549,15 +14553,15 @@ async def get_prompt_usage(
         # The prompt id should be in attributes as "prompt.id"
         prompt_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14611,14 +14615,14 @@ async def get_prompt_performance(
         # First, get all prompt renders with durations
         prompt_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
             .all()
         )
@@ -14698,16 +14702,16 @@ async def get_prompts_errors(
         # Get all prompt spans with their status
         prompt_stats = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name == "prompt.render",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
             .all()
         )
 
@@ -14787,15 +14791,15 @@ async def get_resource_usage(
         # The resource URI should be in attributes
         resource_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14849,14 +14853,14 @@ async def get_resource_performance(
         # First, get all resource reads with durations
         resource_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
             .all()
         )
@@ -14936,16 +14940,16 @@ async def get_resources_errors(
         # Get all resource spans with their status
         resource_stats = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
             .all()
         )
 
