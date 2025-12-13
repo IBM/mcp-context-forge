@@ -59,9 +59,17 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/codemirror/codemirror.min.js"></script>
     <script src="{{ root_path }}/static/vendor/codemirror/mode/javascript/javascript.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/codemirror/mode/python/python.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/codemirror/mode/shell/shell.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/codemirror/mode/go/go.min.js"></script>
+    <script src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
     {% else %}
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"></script>
     {% endif %}
     <!-- Alpine.js -->
     {% if ui_airgapped %}
@@ -144,453 +152,431 @@
   </head>
 
   <body class="bg-gray-100 dark:bg-gray-900">
-    <div class="w-full max-w-screen-2xl mx-auto px-4 py-8">
-      <header
-        id="sticky-header"
-        class="sticky top-0 left-0 right-0 z-50 w-full"
-        aria-hidden="false"
+    <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
+
+      <!-- Mobile sidebar backdrop -->
+      <div
+        x-show="sidebarOpen"
+        @click="sidebarOpen = false"
+        class="fixed inset-0 bg-gray-900/50 z-40 lg:hidden"
+        x-transition:enter="transition-opacity ease-linear duration-300"
+        x-transition:enter-start="opacity-0"
+        x-transition:enter-end="opacity-100"
+        x-transition:leave="transition-opacity ease-linear duration-300"
+        x-transition:leave-start="opacity-100"
+        x-transition:leave-end="opacity-0"
+        style="display: none;"
+      ></div>
+
+      <!-- Sidebar -->
+      <aside
+        id="sidebar"
+        class="sidebar-nav flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 transition-all duration-300"
+        :class="{
+          'w-64': !sidebarCollapsed,
+          'w-16': sidebarCollapsed,
+          '-translate-x-full lg:translate-x-0': !sidebarOpen,
+          'translate-x-0': sidebarOpen
+        }"
+        x-show="sidebarOpen || window.innerWidth >= 1024"
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="-translate-x-full"
+        x-transition:enter-end="translate-x-0"
+        x-transition:leave="transition ease-in duration-300"
+        x-transition:leave-start="translate-x-0"
+        x-transition:leave-end="-translate-x-full"
       >
-        <!-- inner container kept identical to original layout so initial load is unchanged -->
-        <div
-          class="w-full max-w-screen-2xl mx-auto px-4 py-6 header-inner flex justify-between items-start"
-        >
-          <!-- LEFT SIDE (exact original content/placement) -->
-          <div class="header-left">
-            <h1
-              class="text-3xl font-bold text-gray-800 dark:text-gray-200 leading-tight"
-            >
-              Context Forge - Gateway Administration
-            </h1>
-            <p class="text-gray-600 dark:text-gray-400 mt-1 header-subtitle">
-              AI Gateway and Registry supporting MCP, A2A and REST
-              <span class="mx-2 text-gray-400">|</span>
-              <a
-                href="https://ibm.github.io/mcp-context-forge/"
-                target="_blank"
-                class="text-indigo-600 dark:text-indigo-500 hover:underline"
-                >Docs</a
-              >
-              <span class="mx-2 text-gray-400">|</span>
-              <a
-                href="https://github.com/IBM/mcp-context-forge"
-                target="_blank"
-                class="text-indigo-600 dark:text-indigo-500 hover:underline"
-                >⭐ GitHub</a
-              >
-              <span class="mx-2 text-gray-400">|</span>
-              <button
-                @click="darkMode = !darkMode"
-                class="p-2 text-indigo-600 dark:text-indigo-500 hover:text-indigo-800 dark:hover:text-indigo-300"
-              >
-                <span x-text="darkMode ? '☀️' : '🌙'"></span>
-              </button>
-            </p>
-          </div>
-
-          <!-- RIGHT SIDE (exact original controls & markup; added lightweight classes for styling on compact) -->
-          <div class="flex items-center space-x-4 header-right">
-            <!-- Team Selector (preserved) -->
-            {% if email_auth_enabled %}
-            <div
-              class="relative inline-block text-left mr-3"
-              x-data="{
-                open: false,
-                selectedTeam: '',
-                selectedTeamName: 'All Teams',
-                teams: [],
-                init() {
-                  this.teams = window.USER_TEAMS_DATA || [];
-                  const urlParams = new URLSearchParams(window.location.search);
-                  this.selectedTeam = urlParams.get('team_id') || '';
-                  if (this.selectedTeam) {
-                    const team = this.teams.find(t => t.id === this.selectedTeam);
-                    this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
-                  }
-                }
-              }"
-            >
-              <button
-                type="button"
-                @click="open = !open"
-                id="team-selector-button"
-                aria-expanded="false"
-                aria-haspopup="true"
-                class="inline-flex justify-center items-center px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 header-team-btn"
-              >
-                <span x-text="selectedTeamName" class="mr-2">All Teams</span>
-                <svg
-                  class="ml-2 -mr-1 h-4 w-4"
-                  xmlns="http://www.w3.org/2000/svg"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fill-rule="evenodd"
-                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                    clip-rule="evenodd"
-                  />
-                </svg>
-              </button>
-
-              <div
-                x-show="open"
-                @click.away="open = false"
-                x-transition:enter="transition ease-out duration-100"
-                x-transition:enter-start="transform opacity-0 scale-95"
-                x-transition:enter-end="transform opacity-100 scale-100"
-                x-transition:leave="transition ease-in duration-75"
-                x-transition:leave-start="transform opacity-100 scale-100"
-                x-transition:leave-end="transform opacity-0 scale-95"
-                class="origin-top-right absolute right-0 mt-2 w-64 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 dark:divide-gray-700 z-50"
-                role="menu"
-                aria-orientation="vertical"
-                aria-labelledby="team-selector-button"
-                style="display: none"
-              >
-                <div class="py-1" role="none">
-                  <button
-                    @click="selectedTeam = ''; selectedTeamName = 'All Teams'; open = false; updateTeamContext('')"
-                    class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                  >
-                    🌐 All Teams
-                  </button>
-
-                  <template x-for="team in teams" :key="team.id">
-                    <button
-                      @click="selectedTeam = team.id; selectedTeamName = (team.is_personal ? '👤 ' : '🏢 ') + team.name; open = false; updateTeamContext(team.id)"
-                      class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
-                      role="menuitem"
-                      x-bind:class="selectedTeam === team.id ? 'bg-blue-50 dark:bg-blue-900' : ''"
-                    >
-                      <span
-                        x-text="(team.is_personal ? '👤 ' : '🏢 ') + team.name"
-                      ></span>
-                      <span
-                        class="text-xs text-gray-500 dark:text-gray-400 ml-2"
-                        x-text="team.member_count + ' members'"
-                      ></span>
-                    </button>
-                  </template>
-                </div>
-              </div>
-            </div>
-            {% endif %}
-
-            <!-- User Email (preserved) -->
-            <div
-              class="text-sm text-gray-600 dark:text-gray-400 flex items-center header-user"
-            >
-              <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
-                <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
-              </svg>
-              {{ current_user }}
-            </div>
-
-            <!-- Admin Menu (preserved) -->
-            <div
-              class="relative inline-block text-left"
-              x-data="{ open: false }"
-            >
-              <div>
-                <button
-                  type="button"
-                  @click="open = !open"
-                  id="admin-menu-button"
-                  aria-expanded="false"
-                  aria-haspopup="true"
-                  class="inline-flex justify-center items-center px-3 py-1 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 header-admin-btn"
-                >
-                  ⚙️ Admin
-                  <svg
-                    class="ml-2 -mr-1 h-4 w-4"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                  >
-                    <path
-                      fill-rule="evenodd"
-                      d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                      clip-rule="evenodd"
-                    />
-                  </svg>
-                </button>
-              </div>
-
-              <div
-                x-show="open"
-                @click.away="open = false"
-                x-transition:enter="transition ease-out duration-100"
-                x-transition:enter-start="transform opacity-0 scale-95"
-                x-transition:enter-end="transform opacity-100 scale-100"
-                x-transition:leave="transition ease-in duration-75"
-                x-transition:leave-start="transform opacity-100 scale-100"
-                x-transition:leave-end="transform opacity-0 scale-95"
-                class="origin-top-right absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 dark:divide-gray-700 z-50"
-                role="menu"
-                aria-orientation="vertical"
-                aria-labelledby="admin-menu-button"
-                style="display: none"
-              >
-                <div class="py-1" role="none">
-                  {% if email_auth_enabled %}
-                  <a
-                    href="#users"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('users')"
-                    >👤 User Management</a
-                  >
-                  <a
-                    href="#tokens"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('tokens')"
-                    >🎫 API Tokens</a
-                  >
-                  {% endif %}
-                  <a
-                    href="#roots"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('roots')"
-                    >📁 Roots Management</a
-                  >
-                  <a
-                    href="#export-import"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('export-import')"
-                    >📤 Export/Import</a
-                  >
-                </div>
-
-                <div class="py-1" role="none">
-                  <a
-                    href="#logs"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('logs')"
-                    >📋 System Logs</a
-                  >
-                  <a
-                    href="#version-info"
-                    @click="open = false"
-                    class="text-gray-700 dark:text-gray-300 block px-4 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
-                    role="menuitem"
-                    onclick="showTab('version-info')"
-                    >ℹ️ Version & Environment</a
-                  >
-                </div>
-              </div>
-            </div>
-
-            <!-- Logout (preserved) -->
-            <form
-              method="post"
-              action="{{ root_path }}/admin/logout"
-              class="inline"
-            >
-              <button
-                type="submit"
-                class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 header-logout-btn"
-                onclick="return confirm('Are you sure you want to logout?')"
-              >
-                Logout
-              </button>
-            </form>
-          </div>
+        <!-- Sidebar Header -->
+        <div class="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <a href="{{ root_path }}/admin" class="flex items-center" x-show="!sidebarCollapsed">
+            <span class="text-xl font-bold text-gray-800 dark:text-gray-200">Context Forge</span>
+          </a>
+          <a href="{{ root_path }}/admin" class="flex items-center justify-center" x-show="sidebarCollapsed">
+            <span class="text-xl">⚡</span>
+          </a>
+          <button
+            @click="sidebarCollapsed = !sidebarCollapsed"
+            class="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 hidden lg:block"
+            :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          >
+            <svg class="w-5 h-5 transition-transform" :class="{ 'rotate-180': sidebarCollapsed }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path>
+            </svg>
+          </button>
         </div>
 
-
-      </header>
-
-      <!-- Global notification container for flash messages -->
-      <div id="global-notification" class="mt-4" style="display: none;">
-        <!-- Notification content will be inserted here -->
-      </div>
-
-      <!-- SENTINEL must be OUTSIDE the header so it scrolls out of view correctly -->
-      <div id="header-sentinel" style="height: 1px"></div>
-
-      <script>
-        (function () {
-          const header = document.getElementById("sticky-header");
-          const sentinel = document.getElementById("header-sentinel");
-          if (!header || !sentinel) return;
-
-          let compactActive = false;
-
-          const observer = new IntersectionObserver(
-            ([entry]) => {
-              // when sentinel is NOT intersecting the viewport => we've scrolled past it
-              const shouldCompact = !entry.isIntersecting;
-              if (shouldCompact !== compactActive) {
-                header.classList.toggle("compact", shouldCompact);
-                compactActive = shouldCompact;
-              }
-            },
-            {
-              rootMargin: "-80px 0px 0px 0px", // trigger when we've scrolled ~80px
-              threshold: 0,
-            },
-          );
-
-          observer.observe(sentinel);
-        })();
-      </script>
-
-      <!-- Tabs -->
-      <div class="mt-8 mb-4">
-        <div class="border-b border-gray-200">
-          <nav class="-mb-px flex space-x-4 md:space-x-6 lg:space-x-8">
-            <a
-              href="#gateways"
-              id="tab-gateways"
-              data-testid="gateways-tab"
-              class="tab-link border-indigo-500 text-indigo-600 dark:text-indigo-500 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('gateways')"
-            >
-              🖥️ MCP Servers
+        <!-- Sidebar Navigation -->
+        <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
+          <!-- MCP Section -->
+          <div class="sidebar-section" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('gateways')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
+              <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
-            <a
-              href="#catalog"
-              id="tab-catalog"
-              data-testid="servers-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('catalog')"
-            >
-              🔗 Virtual Servers
+            <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('catalog')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
+              <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
-            <a
-              href="#tools"
-              id="tab-tools"
-              data-testid="tools-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('tools')"
-            >
-              🛠️ Tools
+            <a href="#tools" id="tab-tools" data-testid="tools-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('tools')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🛠️</span>
+              <span x-show="!sidebarCollapsed">Tools</span>
             </a>
             {% if toolops_enabled %}
-            <a
-              href="#tool-ops"
-              id="tab-tool-ops"
-              data-testid="tool-ops-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('tool-ops')"
-            >
-              ⚙️ ToolOps
+            <a href="#tool-ops" id="tab-tool-ops" data-testid="tool-ops-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('tool-ops')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
+              <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
             {% endif %}
-            <a
-              href="#prompts"
-              id="tab-prompts"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('prompts')"
-            >
-              💬 Prompts
+            <a href="#prompts" id="tab-prompts"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('prompts')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
+              <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
-            <a
-              href="#resources"
-              id="tab-resources"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('resources')"
-            >
-              📁 Resources
+            <a href="#resources" id="tab-resources"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('resources')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
+              <span x-show="!sidebarCollapsed">Resources</span>
             </a>
+            <a href="#roots" id="tab-roots"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('roots')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
+              <span x-show="!sidebarCollapsed">Roots</span>
+            </a>
+            <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('mcp-registry')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
+              <span x-show="!sidebarCollapsed">MCP Registry</span>
+            </a>
+          </div>
+
+          <!-- Agents Section -->
+          {% if a2a_enabled or grpc_enabled %}
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
+          </div>
+          <div class="space-y-1 px-2">
             {% if a2a_enabled %}
-            <a
-              href="#a2a-agents"
-              id="tab-a2a-agents"
-              data-testid="a2a-agents-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('a2a-agents')"
-            >
-              🤖 Agents (A2A)
+            <a href="#a2a-agents" id="tab-a2a-agents" data-testid="a2a-agents-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('a2a-agents')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🤖</span>
+              <span x-show="!sidebarCollapsed">Agents (A2A)</span>
             </a>
             {% endif %}
             {% if grpc_enabled %}
-            <a
-              href="#grpc-services"
-              id="tab-grpc-services"
-              data-testid="grpc-services-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('grpc-services')"
-            >
-              🔌 gRPC Services
+            <a href="#grpc-services" id="tab-grpc-services" data-testid="grpc-services-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('grpc-services')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔌</span>
+              <span x-show="!sidebarCollapsed">gRPC Services</span>
             </a>
             {% endif %}
-            <a
-              href="#metrics"
-              id="tab-metrics"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('metrics')"
-            >
-              📊 Metrics
+          </div>
+          {% endif %}
+
+          <!-- LLM Section -->
+          {% if llmchat_enabled %}
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">LLM</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('llm-chat')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
+              <span x-show="!sidebarCollapsed">LLM Chat</span>
+            </a>
+            <a href="#llm-settings" id="tab-llm-settings"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('llm-settings')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
+              <span x-show="!sidebarCollapsed">LLM Settings</span>
+            </a>
+          </div>
+          {% endif %}
+
+          <!-- Monitoring Section -->
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#metrics" id="tab-metrics"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('metrics')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
+              <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
             {% if observability_enabled %}
-            <a
-              href="#observability"
-              id="tab-observability"
-              data-testid="observability-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('observability')"
-            >
-              🔍 Observability
+            <a href="#observability" id="tab-observability" data-testid="observability-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('observability')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔍</span>
+              <span x-show="!sidebarCollapsed">Observability</span>
             </a>
             {% endif %}
-            <a
-              href="#plugins"
-              id="tab-plugins"
-              data-testid="plugins-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('plugins')"
-            >
-              🔌 Plugins
-            </a>
-            <a
-              href="#mcp-registry"
-              id="tab-mcp-registry"
-              data-testid="mcp-registry-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('mcp-registry')"
-            >
-              📦 MCP Registry
-            </a>
-            {% if llmchat_enabled %}
-            <a
-              href="#llm-chat" \
-              id="tab-llm-chat"
-              data-testid="llm-chat-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('llm-chat')">
-              👨‍💻 LLM Chat
-            </a>
-            {% endif %}
+          </div>
 
-            {% if email_auth_enabled %}
-            <a
-              href="#teams"
-              id="tab-teams"
-              data-testid="teams-tab"
-              class="tab-link border-transparent text-gray-500 dark:text-gray-300 hover:text-gray-700 hover:border-gray-300 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
-              onclick="showTab('teams')"
-            >
-              👥 Teams
+          <!-- Extensions Section -->
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('plugins')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
+              <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
-            {% endif %}
-          </nav>
+          </div>
+
+          <!-- Organization Section -->
+          {% if email_auth_enabled %}
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#teams" id="tab-teams" data-testid="teams-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('teams')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
+              <span x-show="!sidebarCollapsed">Teams</span>
+            </a>
+            <a href="#users" id="tab-users"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('users')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👤</span>
+              <span x-show="!sidebarCollapsed">Users</span>
+            </a>
+            <a href="#tokens" id="tab-tokens"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('tokens')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
+              <span x-show="!sidebarCollapsed">API Tokens</span>
+            </a>
+          </div>
+          {% endif %}
+
+          <!-- Admin Section -->
+          <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
+            <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
+          </div>
+          <div class="space-y-1 px-2">
+            <a href="#export-import" id="tab-export-import"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('export-import')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
+              <span x-show="!sidebarCollapsed">Export/Import</span>
+            </a>
+            <a href="#logs" id="tab-logs"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('logs')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
+              <span x-show="!sidebarCollapsed">System Logs</span>
+            </a>
+            <a href="#version-info" id="tab-version-info"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('version-info')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
+              <span x-show="!sidebarCollapsed">Version Info</span>
+            </a>
+          </div>
+        </nav>
+
+        <!-- Sidebar Footer -->
+        <div class="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
+          <div class="flex items-center" :class="{ 'justify-center': sidebarCollapsed, 'justify-between': !sidebarCollapsed }">
+            <!-- Dark mode toggle -->
+            <button
+              @click="darkMode = !darkMode"
+              class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+              :title="darkMode ? 'Switch to light mode' : 'Switch to dark mode'"
+            >
+              <span x-text="darkMode ? '☀️' : '🌙'" class="text-lg"></span>
+            </button>
+            <!-- Links (hidden when collapsed) -->
+            <div x-show="!sidebarCollapsed" class="flex items-center space-x-2">
+              <a href="https://ibm.github.io/mcp-context-forge/" target="_blank"
+                 class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                 title="Documentation">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                </svg>
+              </a>
+              <a href="https://github.com/IBM/mcp-context-forge" target="_blank"
+                 class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                 title="GitHub">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+                </svg>
+              </a>
+            </div>
+          </div>
         </div>
-      </div>
+      </aside>
+
+      <!-- Main Content Area -->
+      <div class="flex-1 flex flex-col overflow-hidden">
+        <!-- Top Header Bar -->
+        <header class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+          <div class="flex items-center justify-between h-16 px-4">
+            <!-- Left side: mobile menu button + title -->
+            <div class="flex items-center">
+              <!-- Mobile menu button -->
+              <button
+                @click="sidebarOpen = !sidebarOpen"
+                class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 lg:hidden mr-2"
+              >
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+                </svg>
+              </button>
+              <h1 class="text-lg font-semibold text-gray-800 dark:text-gray-200 hidden sm:block">Gateway Administration</h1>
+            </div>
+
+            <!-- Right side: team selector, user, logout -->
+            <div class="flex items-center space-x-4">
+              <!-- Team Selector -->
+              {% if email_auth_enabled %}
+              <div
+                class="relative inline-block text-left"
+                x-data="{
+                  open: false,
+                  selectedTeam: '',
+                  selectedTeamName: 'All Teams',
+                  teams: [],
+                  init() {
+                    this.teams = window.USER_TEAMS_DATA || [];
+                    const urlParams = new URLSearchParams(window.location.search);
+                    this.selectedTeam = urlParams.get('team_id') || '';
+                    if (this.selectedTeam) {
+                      const team = this.teams.find(t => t.id === this.selectedTeam);
+                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                    }
+                  }
+                }"
+              >
+                <button
+                  type="button"
+                  @click="open = !open"
+                  id="team-selector-button"
+                  aria-expanded="false"
+                  aria-haspopup="true"
+                  class="inline-flex justify-center items-center px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 border border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  <span x-text="selectedTeamName" class="mr-2">All Teams</span>
+                  <svg class="h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                  </svg>
+                </button>
+
+                <div
+                  x-show="open"
+                  @click.away="open = false"
+                  x-transition:enter="transition ease-out duration-100"
+                  x-transition:enter-start="transform opacity-0 scale-95"
+                  x-transition:enter-end="transform opacity-100 scale-100"
+                  x-transition:leave="transition ease-in duration-75"
+                  x-transition:leave-start="transform opacity-100 scale-100"
+                  x-transition:leave-end="transform opacity-0 scale-95"
+                  class="origin-top-right absolute right-0 mt-2 w-64 rounded-md shadow-lg bg-white dark:bg-gray-800 ring-1 ring-black ring-opacity-5 divide-y divide-gray-100 dark:divide-gray-700 z-50"
+                  role="menu"
+                  aria-orientation="vertical"
+                  aria-labelledby="team-selector-button"
+                  style="display: none"
+                >
+                  <div class="py-1" role="none">
+                    <button
+                      @click="selectedTeam = ''; selectedTeamName = 'All Teams'; open = false; updateTeamContext('')"
+                      class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                      role="menuitem"
+                    >
+                      🌐 All Teams
+                    </button>
+
+                    <template x-for="team in teams" :key="team.id">
+                      <button
+                        @click="selectedTeam = team.id; selectedTeamName = (team.is_personal ? '👤 ' : '🏢 ') + team.name; open = false; updateTeamContext(team.id)"
+                        class="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+                        role="menuitem"
+                        x-bind:class="selectedTeam === team.id ? 'bg-blue-50 dark:bg-blue-900' : ''"
+                      >
+                        <span x-text="(team.is_personal ? '👤 ' : '🏢 ') + team.name"></span>
+                        <span class="text-xs text-gray-500 dark:text-gray-400 ml-2" x-text="team.member_count + ' members'"></span>
+                      </button>
+                    </template>
+                  </div>
+                </div>
+              </div>
+              {% endif %}
+
+              <!-- User Email -->
+              <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center hidden sm:flex">
+                <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                  <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
+                </svg>
+                {{ current_user }}
+              </div>
+
+              <!-- Logout -->
+              <form method="post" action="{{ root_path }}/admin/logout" class="inline">
+                <button
+                  type="submit"
+                  class="px-3 py-1.5 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+                  onclick="return confirm('Are you sure you want to logout?')"
+                >
+                  Logout
+                </button>
+              </form>
+            </div>
+          </div>
+        </header>
+
+        <!-- Global notification container for flash messages -->
+        <div id="global-notification" class="px-4 mt-4" style="display: none;">
+          <!-- Notification content will be inserted here -->
+        </div>
+
+        <!-- Tab Panels Container -->
+        <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
               <h2
@@ -800,12 +786,10 @@
               </div>
             </div>
           </div>
-        </div>
       </div>
 
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
               <h2
@@ -1231,7 +1215,6 @@
               </div>
             </div>
           </div>
-        </div>
       </div>
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
@@ -1258,7 +1241,7 @@
       {% if llmchat_enabled %}
       <!-- LLM Chat Panel -->
       <div id="llm-chat-panel" class="tab-panel hidden">
-          <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div class="max-w-7xl mx-auto">
               <div class="flex flex-col lg:flex-row gap-6 h-[calc(100vh-12rem)]">
 
                   <!-- Left Column: Virtual Servers & Info -->
@@ -1654,11 +1637,36 @@
               </div>
           </div>
       </div>
+
+      <!-- LLM Settings Panel -->
+      <div id="llm-settings-panel" class="tab-panel hidden">
+        <div class="max-w-4xl mx-auto">
+          <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+            <div class="px-4 py-5 sm:p-6">
+              <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                ⚙️ LLM Settings
+              </h2>
+              <p class="text-gray-600 dark:text-gray-400 mb-6">
+                Configure default LLM providers and model settings for the chat interface.
+              </p>
+              <div class="border border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center">
+                <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <p class="mt-4 text-sm text-gray-500 dark:text-gray-400">
+                  LLM settings configuration coming soon. Use the configuration panel in LLM Chat for now.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       {% endif %}
 
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
-        <div class="container mx-auto px-4 py-8">
+        <div class="container mx-auto">
           <!-- Server Grid (includes filters and overview) -->
           <div id="mcp-registry-servers">
             <div class="text-center py-8">
@@ -5046,7 +5054,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       <!-- Teams Panel -->
       {% if email_auth_enabled %}
       <div id="teams-panel" class="tab-panel hidden">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <!-- Header with Create Team Button -->
           <div class="flex justify-between items-center mb-8">
             <div>
@@ -5135,7 +5142,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
             </div>
           </div>
-        </div>
       </div>
       {% endif %}
 
@@ -10237,7 +10243,6 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           </div>
         </div>
       </div>
-    </div>
     <!-- Scripts -->
     <script>
       // User creation form event handler
@@ -13652,5 +13657,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         URL.revokeObjectURL(url);
       }
     </script>
+        </main>
+      </div>
+    </div>
   </body>
 </html>

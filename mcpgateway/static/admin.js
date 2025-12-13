@@ -6618,19 +6618,9 @@ function showTab(tabName) {
             }
         });
 
-        document.querySelectorAll(".tab-link").forEach((l) => {
+        document.querySelectorAll(".sidebar-link").forEach((l) => {
             if (l) {
-                l.classList.remove(
-                    "border-indigo-500",
-                    "text-indigo-600",
-                    "dark:text-indigo-500",
-                    "dark:border-indigo-400",
-                );
-                l.classList.add(
-                    "border-transparent",
-                    "text-gray-500",
-                    "dark:text-gray-400",
-                );
+                l.classList.remove("active");
             }
         });
 
@@ -6643,19 +6633,9 @@ function showTab(tabName) {
             return;
         }
 
-        const nav = document.querySelector(`[href="#${tabName}"]`);
+        const nav = document.querySelector(`.sidebar-link[href="#${tabName}"]`);
         if (nav) {
-            nav.classList.add(
-                "border-indigo-500",
-                "text-indigo-600",
-                "dark:text-indigo-500",
-                "dark:border-indigo-400",
-            );
-            nav.classList.remove(
-                "border-transparent",
-                "text-gray-500",
-                "dark:text-gray-400",
-            );
+            nav.classList.add("active");
         }
 
         // Debounced content loading
@@ -16468,7 +16448,7 @@ function initializeTabState() {
     if (hash) {
         showTab(hash.slice(1));
     } else {
-        showTab("catalog");
+        showTab("gateways");
     }
 
     // Pre-load version info if that's the initial tab
