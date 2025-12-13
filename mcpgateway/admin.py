@@ -8382,7 +8382,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_id(db, resource_id)
+        resource = await resource_service.get_resource_by_id(db, resource_id, include_inactive=True)
         # content = await resource_service.read_resource(db, resource_id=resource_id)
         return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
     except ResourceNotFoundError as e:
