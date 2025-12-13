@@ -342,6 +342,21 @@ curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
 ```
 
+<details>
+<summary><strong>⚡ Alternative: uv (faster)</strong></summary>
+
+```powershell
+# 1️⃣  Isolated env + install from PyPI using uv
+mkdir mcpgateway ; cd mcpgateway
+uv venv
+.\.venv\Scripts\activate
+uv pip install mcp-contextforge-gateway
+
+# Continue with steps 2️⃣-4️⃣ above...
+```
+
+</details>
+
 </details>
 
 <details>
