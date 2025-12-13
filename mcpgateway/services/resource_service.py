@@ -257,6 +257,7 @@ class ResourceService:
         resource_dict["created_at"] = getattr(resource, "created_at", resource_dict.get("created_at"))
         resource_dict["updated_at"] = getattr(resource, "updated_at", resource_dict.get("updated_at"))
         resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
+        resource_dict["enabled"] = getattr(resource, "enabled", resource_dict.get("enabled"))
 
         # Compute aggregated metrics from the resource's metrics list.
         total = len(resource.metrics) if hasattr(resource, "metrics") and resource.metrics is not None else 0

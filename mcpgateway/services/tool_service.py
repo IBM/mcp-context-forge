@@ -366,6 +366,12 @@ class ToolService:
         Returns:
             ToolRead: The Pydantic model representing the tool, including aggregated metrics and new fields.
         """
+        # NOTE: This serves two purposes:
+        #   1. It determines whether to decode auth (used later)
+        #   2. It forces the tool object to lazily evaluate (required before copy)
+        auth_type_set = tool.auth_type and tool.auth_value
+
+        # Copy the dict from the tool
         tool_dict = tool.__dict__.copy()
         tool_dict.pop("_sa_instance_state", None)
 
@@ -377,7 +383,7 @@ class ToolService:
         tool_dict["annotations"] = tool.annotations or {}
 
         # Only decode auth if auth_type is set
-        if tool.auth_type and tool.auth_value:
+        if auth_type_set:
             decoded_auth_value = decode_auth(tool.auth_value)
             if tool.auth_type == "basic":
                 decoded_bytes = base64.b64decode(decoded_auth_value["Authorization"].split("Basic ")[1])
