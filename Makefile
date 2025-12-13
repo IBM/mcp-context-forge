@@ -195,9 +195,12 @@ check-env-dev:
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
+# help: stop                 - Stop all mcpgateway server processes
+# help: stop-dev             - Stop uvicorn dev server (port 8000)
+# help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev run certs certs-jwt certs-jwt-ecdsa certs-all \
+.PHONY: serve serve-ssl dev stop stop-dev stop-serve run certs certs-jwt certs-jwt-ecdsa certs-all \
         certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -209,6 +212,21 @@ serve-ssl: certs
 
 dev:
 	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+stop:                            ## Stop all mcpgateway server processes
+	@echo "Stopping all mcpgateway processes..."
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@echo "Done."
+
+stop-dev:                        ## Stop uvicorn dev server (port 8000)
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+
+stop-serve:                      ## Stop gunicorn production server (port 4444)
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+
 run:
 	./run.sh
 
