@@ -1966,6 +1966,7 @@ async def delete_server(server_id: str, db: Session = Depends(get_db), user=Depe
     try:
         logger.debug(f"User {user} is deleting server with ID {server_id}")
         user_email = user.get("email") if isinstance(user, dict) else str(user)
+        await server_service.get_server(db, server_id)
         await server_service.delete_server(db, server_id, user_email=user_email)
         return {
             "status": "success",
