@@ -3554,10 +3554,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 validation_errors.append(error_msg)
             except ValueError as e:
                 if "JSON structure exceeds maximum depth" in str(e):
-                    error_msg = (
-                        f"Tool '{tool_name}' schema too deeply nested. "
-                        f"Current depth limit: {settings.validation_max_json_depth}"
-                    )
+                    error_msg = f"Tool '{tool_name}' schema too deeply nested. " f"Current depth limit: {settings.validation_max_json_depth}"
                     logger.error(error_msg)
                     logger.warning("Consider increasing VALIDATION_MAX_JSON_DEPTH environment variable")
                 else:
@@ -3570,23 +3567,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 validation_errors.append(error_msg)
 
         if validation_errors:
-            logger.warning(
-                f"Tool validation completed with {len(validation_errors)} error(s). "
-                f"Successfully validated {len(valid_tools)} tool(s)."
-            )
+            logger.warning(f"Tool validation completed with {len(validation_errors)} error(s). " f"Successfully validated {len(valid_tools)} tool(s).")
             for err in validation_errors[:3]:
                 logger.debug(f"Validation error: {err}")
 
         if not valid_tools and validation_errors:
             if context == "oauth":
-                raise OAuthToolValidationError(
-                    f"OAuth tool fetch failed: all {len(tools)} tools failed validation. "
-                    f"First error: {validation_errors[0][:200]}"
-                )
-            raise GatewayConnectionError(
-                f"Failed to fetch tools: All {len(tools)} tools failed validation. "
-                f"First error: {validation_errors[0][:200]}"
-            )
+                raise OAuthToolValidationError(f"OAuth tool fetch failed: all {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
+            raise GatewayConnectionError(f"Failed to fetch tools: All {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
 
         return valid_tools
 
@@ -3617,9 +3605,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     response = await session.list_tools()
                     tools = response.tools
-                    tools = [
-                        tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools
-                    ]
+                    tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                     tools = self._validate_tools(tools, context="oauth")
                     if tools:
@@ -3762,9 +3748,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 response = await session.list_tools()
                 tools = response.tools
-                tools = [
-                    tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools
-                ]
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools = self._validate_tools(tools)
                 if tools:
@@ -3904,9 +3888,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 response = await session.list_tools()
                 tools = response.tools
-                tools = [
-                    tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools
-                ]
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
                 tools = self._validate_tools(tools)
                 for tool in tools:
