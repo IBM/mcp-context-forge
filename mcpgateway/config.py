@@ -1435,7 +1435,17 @@ Disallow: /
     validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
-    validation_max_json_depth: int = 10
+    validation_max_json_depth: int = Field(
+        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        description=(
+            "Maximum allowed JSON nesting depth for tool/resource schemas. "
+            "Increased from 10 to 30 for compatibility with deeply nested schemas "
+            "like Notion MCP (issue #1542). Override with VALIDATION_MAX_JSON_DEPTH "
+            "environment variable. Minimum: 1, Maximum: 100"
+        ),
+        ge=1,
+        le=100,
+    )
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
 
