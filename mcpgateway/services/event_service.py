@@ -212,7 +212,7 @@ class EventService:
                             yield json.loads(message["data"])
                 except asyncio.CancelledError:
                     # Handle client disconnection
-                    logger.error(f"Client disconnected from Redis subscription: {self.channel_name}")
+                    logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")
                     raise
                 except Exception as e:
                     logger.error(f"Redis subscription error on {self.channel_name}: {e}")
@@ -238,7 +238,7 @@ class EventService:
                     event = await queue.get()
                     yield event
             except asyncio.CancelledError:
-                logger.error(f"Client disconnected from local event subscription: {self.channel_name}")
+                logger.debug(f"Client disconnected from local event subscription: {self.channel_name}")
                 raise
             finally:
                 if queue in self._event_subscribers:
