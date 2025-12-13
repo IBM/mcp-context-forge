@@ -57,7 +57,7 @@
 }
 
 /* Mobile sidebar overlay */
-@media (max-width: 1023px) {
+@media (width <= 1023px) {
   .sidebar-nav {
     position: fixed;
     top: 0;
@@ -73,6 +73,7 @@
   display: none;
 }
 
+/* stylelint-disable-next-line selector-class-pattern -- third-party library class */
 .code-example + .CodeMirror {
   border-radius: 0.5rem;
   font-size: 0.8125rem;
@@ -80,6 +81,7 @@
   position: relative;
 }
 
+/* stylelint-disable-next-line selector-class-pattern -- third-party library class */
 .code-example + .CodeMirror.cm-s-monokai {
   background: #272822;
 }
