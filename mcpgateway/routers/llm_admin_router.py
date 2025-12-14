@@ -640,7 +640,7 @@ async def fetch_provider_models(
     import httpx
 
     # First-Party
-    from mcpgateway.utils.auth_utils import decode_auth
+    from mcpgateway.utils.services_auth import decode_auth
 
     db = current_user_ctx["db"]
 
