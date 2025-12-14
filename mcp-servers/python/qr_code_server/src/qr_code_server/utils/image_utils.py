@@ -138,7 +138,7 @@ def load_image(image_data: str, max_image_size: int, preprocessing: bool) -> np.
             img_bytes = base64.b64decode(image_data.strip())
             img = Image.open(BytesIO(img_bytes))
         except Exception as e:
-            raise LoadImageError("Invalid base64 image data") from e
+            raise LoadImageError("Could not load image from file or as base64") from e
 
     if getattr(img, "is_animated", False):
         img.seek(0)
