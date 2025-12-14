@@ -52,7 +52,7 @@ def qr_decode(request: QRDecodingRequest) -> dict[str, Any]:
     try:
         retval, decoded_info, points, _ = detector.detectAndDecodeMulti(img)
     except Exception as e:
-        logger.warning("Could not decode multiple QR codes")
+        logger.error("Failed to decode QR code, %s", str(e))
         return {"success": False, "error": str(e)}
 
     if not retval or not any(decoded_info):
