@@ -27017,14 +27017,134 @@ function switchLLMSettingsTab(tabName) {
     }
 }
 
+// Cache for provider defaults
+let llmProviderDefaults = null;
+
+/**
+ * Load provider defaults from the server
+ */
+async function loadLLMProviderDefaults() {
+    if (llmProviderDefaults) {
+        return llmProviderDefaults;
+    }
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/provider-defaults`,
+            {
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+        if (response.ok) {
+            llmProviderDefaults = await response.json();
+        }
+    } catch (error) {
+        console.error("Failed to load provider defaults:", error);
+    }
+    return llmProviderDefaults || {};
+}
+
+// Track previous provider type for smart auto-fill
+let previousProviderType = null;
+
+/**
+ * Handle provider type change - auto-fill defaults
+ */
+async function onLLMProviderTypeChange() {
+    const providerType = document.getElementById("llm-provider-type").value;
+    if (!providerType) {
+        return;
+    }
+
+    const defaults = await loadLLMProviderDefaults();
+    const config = defaults[providerType];
+
+    if (!config) {
+        return;
+    }
+
+    // Only auto-fill if creating new provider (not editing)
+    const providerId = document.getElementById("llm-provider-id").value;
+    if (providerId) {
+        return;
+    }
+
+    const apiBaseField = document.getElementById("llm-provider-api-base");
+    const defaultModelField = document.getElementById(
+        "llm-provider-default-model",
+    );
+
+    // Check if current values match previous provider's defaults
+    const previousConfig = previousProviderType
+        ? defaults[previousProviderType]
+        : null;
+    const apiBaseMatchesPrevious =
+        previousConfig &&
+        (apiBaseField.value === previousConfig.api_base ||
+            apiBaseField.value === "");
+    const modelMatchesPrevious =
+        previousConfig &&
+        (defaultModelField.value === previousConfig.default_model ||
+            defaultModelField.value === "");
+
+    // Auto-fill API base if empty or matches previous provider's default
+    if ((apiBaseMatchesPrevious || !apiBaseField.value) && config.api_base) {
+        apiBaseField.value = config.api_base;
+    }
+
+    // Auto-fill default model if empty or matches previous provider's default
+    if (
+        (modelMatchesPrevious || !defaultModelField.value) &&
+        config.default_model
+    ) {
+        defaultModelField.value = config.default_model;
+    }
+
+    // Remember this provider type for next change
+    previousProviderType = providerType;
+
+    // Update description/help text
+    const descEl = document.getElementById("llm-provider-type-description");
+    if (descEl && config.description) {
+        descEl.textContent = config.description;
+        descEl.classList.remove("hidden");
+    }
+
+    // Show/hide API key requirement indicator
+    const apiKeyRequired = document.getElementById(
+        "llm-provider-api-key-required",
+    );
+    if (apiKeyRequired) {
+        if (config.requires_api_key) {
+            apiKeyRequired.classList.remove("hidden");
+        } else {
+            apiKeyRequired.classList.add("hidden");
+        }
+    }
+}
+
 /**
  * Show Add Provider Modal
  */
-function showAddProviderModal() {
+async function showAddProviderModal() {
     document.getElementById("llm-provider-id").value = "";
     document.getElementById("llm-provider-form").reset();
     document.getElementById("llm-provider-modal-title").textContent =
         "Add LLM Provider";
+
+    // Reset helper elements
+    const descEl = document.getElementById("llm-provider-type-description");
+    if (descEl) {
+        descEl.classList.add("hidden");
+    }
+
+    // Reset provider type tracker for smart auto-fill
+    previousProviderType = null;
+
+    // Load defaults for quick access
+    await loadLLMProviderDefaults();
+
     document.getElementById("llm-provider-modal").classList.remove("hidden");
 }
 
@@ -27033,6 +27153,91 @@ function showAddProviderModal() {
  */
 function closeLLMProviderModal() {
     document.getElementById("llm-provider-modal").classList.add("hidden");
+}
+
+/**
+ * Fetch models from a provider's API
+ */
+async function fetchLLMProviderModels(providerId) {
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success) {
+            const modelList = result.models
+                .map((m) => `- ${m.id} (${m.owned_by || "unknown"})`)
+                .join("\n");
+            showCopyableModal(
+                `Found ${result.count} Models`,
+                modelList || "No models found",
+                "success",
+            );
+        } else {
+            showCopyableModal("Failed to Fetch Models", result.error, "error");
+        }
+
+        return result;
+    } catch (error) {
+        console.error("Error fetching models:", error);
+        showCopyableModal(
+            "Failed to Fetch Models",
+            `Error: ${error.message}`,
+            "error",
+        );
+        return { success: false, error: error.message, models: [] };
+    }
+}
+
+/**
+ * Sync models from provider API to database
+ */
+async function syncLLMProviderModels(providerId) {
+    try {
+        showToast("Syncing models...", "info");
+
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/sync-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success) {
+            showCopyableModal(
+                "Models Synced Successfully",
+                `${result.message}\n\nTotal available: ${result.total || 0}`,
+                "success",
+            );
+            // Refresh the models list
+            refreshLLMModels();
+        } else {
+            showCopyableModal("Failed to Sync Models", result.error, "error");
+        }
+
+        return result;
+    } catch (error) {
+        console.error("Error syncing models:", error);
+        showCopyableModal(
+            "Failed to Sync Models",
+            `Error: ${error.message}`,
+            "error",
+        );
+        return { success: false, error: error.message };
+    }
 }
 
 /**
@@ -27678,6 +27883,9 @@ window.deleteLLMProvider = deleteLLMProvider;
 window.toggleLLMProvider = toggleLLMProvider;
 window.checkLLMProviderHealth = checkLLMProviderHealth;
 window.refreshLLMProviders = refreshLLMProviders;
+window.onLLMProviderTypeChange = onLLMProviderTypeChange;
+window.fetchLLMProviderModels = fetchLLMProviderModels;
+window.syncLLMProviderModels = syncLLMProviderModels;
 window.showAddModelModal = showAddModelModal;
 window.closeLLMModelModal = closeLLMModelModal;
 window.editLLMModel = editLLMModel;

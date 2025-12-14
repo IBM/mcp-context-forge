@@ -286,7 +286,7 @@ async def check_provider_health(
             "status": health.status.value,
             "provider_id": health.provider_id,
             "latency_ms": int(health.response_time_ms) if health.response_time_ms else None,
-            "error": health.error_message,
+            "error": health.error,
         }
     except LLMProviderNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
@@ -598,3 +598,231 @@ async def admin_test_api(
             },
             status_code=500,
         )
+
+
+# ---------------------------------------------------------------------------
+# Provider Defaults and Model Discovery
+# ---------------------------------------------------------------------------
+
+
+@llm_admin_router.get("/provider-defaults")
+@require_permission("admin.system_config")
+async def get_provider_defaults(
+    request: Request,
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """Get default configuration for all provider types.
+
+    Returns:
+        Dictionary of provider type to default config.
+    """
+    return LLMProviderType.get_provider_defaults()
+
+
+@llm_admin_router.post("/providers/{provider_id}/fetch-models")
+@require_permission("admin.system_config")
+async def fetch_provider_models(
+    request: Request,
+    provider_id: str,
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """Fetch available models from a provider's API.
+
+    Args:
+        request: FastAPI request object.
+        provider_id: Provider ID to fetch models from.
+        current_user_ctx: Authenticated user context.
+
+    Returns:
+        List of available models from the provider.
+    """
+    # Third-Party
+    import httpx
+
+    # First-Party
+    from mcpgateway.utils.auth_utils import decode_auth
+
+    db = current_user_ctx["db"]
+
+    try:
+        provider = llm_provider_service.get_provider(db, provider_id)
+    except LLMProviderNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    # Get provider defaults for model list support
+    defaults = LLMProviderType.get_provider_defaults()
+    provider_config = defaults.get(provider.provider_type, {})
+
+    if not provider_config.get("supports_model_list"):
+        return {
+            "success": False,
+            "error": f"Provider type '{provider.provider_type}' does not support model listing",
+            "models": [],
+        }
+
+    # Build API URL
+    base_url = provider.api_base or provider_config.get("api_base", "")
+    if not base_url:
+        return {
+            "success": False,
+            "error": "No API base URL configured",
+            "models": [],
+        }
+
+    models_endpoint = provider_config.get("models_endpoint", "/models")
+    url = f"{base_url.rstrip('/')}{models_endpoint}"
+
+    # Get API key if needed
+    headers = {"Content-Type": "application/json"}
+    if provider.api_key:
+        auth_data = decode_auth(provider.api_key)
+        api_key = auth_data.get("api_key")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+
+            # Parse models based on provider type
+            models = []
+            if "data" in data:
+                # OpenAI-compatible format
+                for model in data["data"]:
+                    model_id = model.get("id", "")
+                    models.append(
+                        {
+                            "id": model_id,
+                            "name": model.get("name", model_id),
+                            "owned_by": model.get("owned_by", provider.provider_type),
+                            "created": model.get("created"),
+                        }
+                    )
+            elif "models" in data:
+                # Ollama native format or Cohere format
+                for model in data["models"]:
+                    if isinstance(model, dict):
+                        model_id = model.get("name", model.get("id", ""))
+                        models.append(
+                            {
+                                "id": model_id,
+                                "name": model_id,
+                                "owned_by": provider.provider_type,
+                            }
+                        )
+                    else:
+                        models.append(
+                            {
+                                "id": str(model),
+                                "name": str(model),
+                                "owned_by": provider.provider_type,
+                            }
+                        )
+
+            return {
+                "success": True,
+                "models": models,
+                "count": len(models),
+            }
+
+    except httpx.HTTPStatusError as e:
+        return {
+            "success": False,
+            "error": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+            "models": [],
+        }
+    except httpx.RequestError as e:
+        return {
+            "success": False,
+            "error": f"Connection error: {str(e)}",
+            "models": [],
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "models": [],
+        }
+
+
+@llm_admin_router.post("/providers/{provider_id}/sync-models")
+@require_permission("admin.system_config")
+async def sync_provider_models(
+    request: Request,
+    provider_id: str,
+    current_user_ctx: dict = Depends(get_current_user_with_permissions),
+):
+    """Sync models from provider API to database.
+
+    Fetches available models from the provider and creates model records
+    for any that don't already exist.
+
+    Args:
+        request: FastAPI request object.
+        provider_id: Provider ID to sync models for.
+        current_user_ctx: Authenticated user context.
+
+    Returns:
+        Sync results with counts of added/skipped models.
+    """
+    # First-Party
+    from mcpgateway.llm_schemas import LLMModelCreate
+
+    db = current_user_ctx["db"]
+
+    # First fetch models from the provider
+    fetch_result = await fetch_provider_models(request, provider_id, current_user_ctx)
+
+    if not fetch_result.get("success"):
+        return fetch_result
+
+    models = fetch_result.get("models", [])
+    if not models:
+        return {
+            "success": True,
+            "message": "No models found to sync",
+            "added": 0,
+            "skipped": 0,
+        }
+
+    # Get existing models for this provider
+    existing_models, _ = llm_provider_service.list_models(db, provider_id=provider_id)
+    existing_model_ids = {m.model_id for m in existing_models}
+
+    added = 0
+    skipped = 0
+
+    for model in models:
+        model_id = model.get("id", "")
+        if not model_id:
+            continue
+
+        if model_id in existing_model_ids:
+            skipped += 1
+            continue
+
+        # Create the model
+        try:
+            model_create = LLMModelCreate(
+                model_id=model_id,
+                model_name=model.get("name", model_id),
+                description=f"Auto-synced from {model.get('owned_by', 'provider')}",
+                supports_chat=True,
+                supports_streaming=True,
+                enabled=True,
+            )
+            llm_provider_service.create_model(db, provider_id, model_create)
+            added += 1
+        except Exception as e:
+            logger.warning(f"Failed to create model {model_id}: {e}")
+            skipped += 1
+
+    return {
+        "success": True,
+        "message": f"Synced models: {added} added, {skipped} skipped",
+        "added": added,
+        "skipped": skipped,
+        "total": len(models),
+    }

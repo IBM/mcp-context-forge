@@ -334,24 +334,42 @@ class LLMProxyService:
             Tuple of (url, headers, body).
         """
         base_url = provider.api_base or "http://localhost:11434"
-        url = f"{base_url.rstrip('/')}/api/chat"
+        base_url = base_url.rstrip("/")
 
-        headers = {"Content-Type": "application/json"}
-
-        body: Dict[str, Any] = {
-            "model": model.model_id,
-            "messages": [{"role": msg.role, "content": msg.content or ""} for msg in request.messages],
-            "stream": request.stream,
-        }
-
-        options = {}
-        if request.temperature is not None:
-            options["temperature"] = request.temperature
-        elif provider.default_temperature:
-            options["temperature"] = provider.default_temperature
-
-        if options:
-            body["options"] = options
+        # Check if using OpenAI-compatible endpoint
+        if base_url.endswith("/v1"):
+            # Use OpenAI-compatible API
+            url = f"{base_url}/chat/completions"
+            headers = {"Content-Type": "application/json"}
+            body: Dict[str, Any] = {
+                "model": model.model_id,
+                "messages": [{"role": msg.role, "content": msg.content or ""} for msg in request.messages],
+                "stream": request.stream,
+            }
+            if request.temperature is not None:
+                body["temperature"] = request.temperature
+            elif provider.default_temperature:
+                body["temperature"] = provider.default_temperature
+            if request.max_tokens:
+                body["max_tokens"] = request.max_tokens
+            elif provider.default_max_tokens:
+                body["max_tokens"] = provider.default_max_tokens
+        else:
+            # Use native Ollama API
+            url = f"{base_url}/api/chat"
+            headers = {"Content-Type": "application/json"}
+            body = {
+                "model": model.model_id,
+                "messages": [{"role": msg.role, "content": msg.content or ""} for msg in request.messages],
+                "stream": request.stream,
+            }
+            options = {}
+            if request.temperature is not None:
+                options["temperature"] = request.temperature
+            elif provider.default_temperature:
+                options["temperature"] = provider.default_temperature
+            if options:
+                body["options"] = options
 
         return url, headers, body
 
@@ -400,6 +418,10 @@ class LLMProxyService:
             if provider.provider_type == LLMProviderType.ANTHROPIC:
                 return self._transform_anthropic_response(data, model.model_id)
             if provider.provider_type == LLMProviderType.OLLAMA:
+                # Check if using OpenAI-compatible endpoint
+                base_url = (provider.api_base or "").rstrip("/")
+                if base_url.endswith("/v1"):
+                    return self._transform_openai_response(data)
                 return self._transform_ollama_response(data, model.model_id)
             return self._transform_openai_response(data)
 
@@ -467,7 +489,12 @@ class LLMProxyService:
                             if provider.provider_type == LLMProviderType.ANTHROPIC:
                                 chunk = self._transform_anthropic_stream_chunk(data, response_id, created, model.model_id)
                             elif provider.provider_type == LLMProviderType.OLLAMA:
-                                chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
+                                # Check if using OpenAI-compatible endpoint
+                                base_url = (provider.api_base or "").rstrip("/")
+                                if base_url.endswith("/v1"):
+                                    chunk = data_str  # Already OpenAI format
+                                else:
+                                    chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
                             else:
                                 chunk = data_str
 
@@ -477,15 +504,17 @@ class LLMProxyService:
                         except json.JSONDecodeError:
                             continue
 
-                    # Handle Ollama's newline-delimited JSON
+                    # Handle Ollama's newline-delimited JSON (native API only)
                     elif provider.provider_type == LLMProviderType.OLLAMA:
-                        try:
-                            data = json.loads(line)
-                            chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
-                            if chunk:
-                                yield f"data: {chunk}\n\n"
-                        except json.JSONDecodeError:
-                            continue
+                        base_url = (provider.api_base or "").rstrip("/")
+                        if not base_url.endswith("/v1"):
+                            try:
+                                data = json.loads(line)
+                                chunk = self._transform_ollama_stream_chunk(data, response_id, created, model.model_id)
+                                if chunk:
+                                    yield f"data: {chunk}\n\n"
+                            except json.JSONDecodeError:
+                                continue
 
         except httpx.HTTPStatusError as e:
             error_chunk = {

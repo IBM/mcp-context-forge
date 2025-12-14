@@ -1754,22 +1754,22 @@
                       </div>
                       <div>
                         <label for="llm-provider-type" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider Type *</label>
-                        <select id="llm-provider-type" name="provider_type" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-provider-type" name="provider_type" required onchange="onLLMProviderTypeChange()" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider type</option>
                           <option value="openai">OpenAI</option>
                           <option value="azure_openai">Azure OpenAI</option>
                           <option value="anthropic">Anthropic</option>
-                          <option value="google">Google</option>
                           <option value="ollama">Ollama</option>
-                          <option value="openrouter">OpenRouter</option>
                           <option value="groq">Groq</option>
                           <option value="mistral">Mistral</option>
                           <option value="cohere">Cohere</option>
                           <option value="together">Together AI</option>
-                          <option value="fireworks">Fireworks</option>
-                          <option value="deepseek">DeepSeek</option>
-                          <option value="custom">Custom</option>
+                          <option value="google_vertex">Google Vertex AI</option>
+                          <option value="bedrock">AWS Bedrock</option>
+                          <option value="watsonx">IBM watsonx</option>
+                          <option value="openai_compatible">OpenAI Compatible</option>
                         </select>
+                        <p id="llm-provider-type-description" class="mt-1 text-sm text-gray-500 dark:text-gray-400 hidden"></p>
                       </div>
                     </div>
                     <div>
@@ -1778,12 +1778,16 @@
                     </div>
                     <div class="grid grid-cols-2 gap-4">
                       <div>
-                        <label for="llm-provider-api-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300">API Key</label>
+                        <label for="llm-provider-api-key" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                          API Key
+                          <span id="llm-provider-api-key-required" class="text-red-500 hidden">*</span>
+                        </label>
                         <input type="password" id="llm-provider-api-key" name="api_key" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
                       </div>
                       <div>
                         <label for="llm-provider-api-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300">API Base URL</label>
-                        <input type="url" id="llm-provider-api-base" name="api_base" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="https://api.openai.com/v1">
+                        <input type="text" id="llm-provider-api-base" name="api_base" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Auto-filled based on provider type">
+                        <p class="mt-1 text-xs text-gray-400">Will be auto-filled when you select a provider type</p>
                       </div>
                     </div>
                     <div class="grid grid-cols-3 gap-4">

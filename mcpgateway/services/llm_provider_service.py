@@ -659,7 +659,13 @@ class LLMProviderService:
                 elif provider.provider_type == LLMProviderType.OLLAMA:
                     # Check Ollama health endpoint
                     base_url = provider.api_base or "http://localhost:11434"
-                    response = await client.get(f"{base_url}/api/tags")
+                    # Handle OpenAI-compatible endpoint (/v1)
+                    if base_url.rstrip("/").endswith("/v1"):
+                        # Use OpenAI-compatible models endpoint
+                        response = await client.get(f"{base_url.rstrip('/')}/models")
+                    else:
+                        # Use native Ollama API
+                        response = await client.get(f"{base_url.rstrip('/')}/api/tags")
                     if response.status_code == 200:
                         status = HealthStatus.HEALTHY
                     else:

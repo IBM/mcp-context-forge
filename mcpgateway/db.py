@@ -4056,6 +4056,107 @@ class LLMProviderType:
             cls.TOGETHER,
         ]
 
+    @classmethod
+    def get_provider_defaults(cls) -> Dict[str, Dict[str, Any]]:
+        """Get default configuration for each provider type.
+
+        Returns:
+            Dictionary mapping provider type to default config.
+        """
+        return {
+            cls.OPENAI: {
+                "api_base": "https://api.openai.com/v1",
+                "default_model": "gpt-4o",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "OpenAI GPT models (GPT-4, GPT-4o, etc.)",
+            },
+            cls.AZURE_OPENAI: {
+                "api_base": "https://{resource}.openai.azure.com/openai/deployments/{deployment}",
+                "default_model": "",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Azure OpenAI Service",
+            },
+            cls.ANTHROPIC: {
+                "api_base": "https://api.anthropic.com",
+                "default_model": "claude-sonnet-4-20250514",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "Anthropic Claude models",
+            },
+            cls.OLLAMA: {
+                "api_base": "http://localhost:11434/v1",
+                "default_model": "llama3.2",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Local Ollama server (OpenAI-compatible)",
+            },
+            cls.OPENAI_COMPATIBLE: {
+                "api_base": "http://localhost:8080/v1",
+                "default_model": "",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": False,
+                "description": "Any OpenAI-compatible API server",
+            },
+            cls.COHERE: {
+                "api_base": "https://api.cohere.ai/v1",
+                "default_model": "command-r-plus",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Cohere Command models",
+            },
+            cls.MISTRAL: {
+                "api_base": "https://api.mistral.ai/v1",
+                "default_model": "mistral-large-latest",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Mistral AI models",
+            },
+            cls.GROQ: {
+                "api_base": "https://api.groq.com/openai/v1",
+                "default_model": "llama-3.3-70b-versatile",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Groq high-speed inference",
+            },
+            cls.TOGETHER: {
+                "api_base": "https://api.together.xyz/v1",
+                "default_model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "Together AI inference",
+            },
+            cls.BEDROCK: {
+                "api_base": "",
+                "default_model": "anthropic.claude-3-sonnet-20240229-v1:0",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "AWS Bedrock (uses IAM credentials)",
+            },
+            cls.GOOGLE_VERTEX: {
+                "api_base": "",
+                "default_model": "gemini-1.5-pro",
+                "supports_model_list": False,
+                "requires_api_key": False,
+                "description": "Google Vertex AI (uses service account)",
+            },
+            cls.WATSONX: {
+                "api_base": "https://us-south.ml.cloud.ibm.com",
+                "default_model": "ibm/granite-13b-chat-v2",
+                "supports_model_list": False,
+                "requires_api_key": True,
+                "description": "IBM watsonx.ai",
+            },
+        }
+
 
 class LLMProvider(Base):
     """ORM model for LLM provider configurations.
