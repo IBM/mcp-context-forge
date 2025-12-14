@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.main import app
 
 
@@ -186,9 +187,9 @@ class TestUtilityFunctions:
             client = TestClient(app)
             response = client.get("/", follow_redirects=False)
 
-            # Should redirect to /admin when UI is enabled
+            # Should redirect to /admin/ when UI is enabled
             if response.status_code == 303:
-                assert response.headers.get("location") == "/admin"
+                assert response.headers.get("location") == f"{settings.app_root_path}/admin/"
             else:
                 # Fallback behavior
                 assert response.status_code == 200
@@ -324,7 +325,7 @@ class TestUtilityFunctions:
 def test_client(app):
     """Test client with auth override for testing protected endpoints."""
     # Standard
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     # First-Party
     from mcpgateway.auth import get_current_user
@@ -340,6 +341,13 @@ def test_client(app):
         is_active=True,
         auth_provider="test",
     )
+
+    # Mock security_logger to prevent database access
+    mock_sec_logger = MagicMock()
+    mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+    mock_sec_logger.log_security_event = MagicMock(return_value=None)
+    sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
+    sec_patcher.start()
 
     # Mock require_auth_override function
     def mock_require_auth_override(user: str) -> str:
@@ -390,6 +398,7 @@ def test_client(app):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     patcher.stop()  # Stop the require_auth_override patch
+    sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
 

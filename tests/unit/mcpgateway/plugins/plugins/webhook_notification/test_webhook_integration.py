@@ -56,6 +56,7 @@ plugin_dirs: []
         config_path.write_text(config_content)
 
         # Mock HTTP client for webhook delivery
+        #with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
         with patch('plugins.webhook_notification.webhook_notification.httpx.AsyncClient') as mock_client_class:
             mock_client = AsyncMock()
             mock_response = MagicMock()

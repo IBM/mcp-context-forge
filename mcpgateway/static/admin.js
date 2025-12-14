@@ -300,6 +300,8 @@ function validateInputName(name, type = "input") {
 /**
  * Extracts content from various formats with fallback
  */
+
+/**
 function extractContent(content, fallback = "") {
     if (typeof content === "object" && content !== null) {
         if (content.text !== undefined && content.text !== null) {
@@ -314,6 +316,7 @@ function extractContent(content, fallback = "") {
     }
     return String(content || fallback);
 }
+ */
 
 /**
  * SECURITY: Validate URL inputs
@@ -705,6 +708,8 @@ function closeModal(modalId, clearId = null) {
             cleanupToolTestModal(); // ADD THIS LINE
         } else if (modalId === "prompt-test-modal") {
             cleanupPromptTestModal();
+        } else if (modalId === "resource-test-modal") {
+            cleanupResourceTestModal();
         }
 
         modal.classList.add("hidden");
@@ -3569,6 +3574,295 @@ function toggleA2AAuthFields(authType) {
     }
 }
 
+// -------------------- Resource Testing ------------------ //
+
+// ----- URI Template Parsing -------------- //
+function parseUriTemplate(template) {
+    const regex = /{([^}]+)}/g;
+    const fields = [];
+    let match;
+
+    while ((match = regex.exec(template)) !== null) {
+        fields.push(match[1]); // capture inside {}
+    }
+    return fields;
+}
+
+async function testResource(resourceId) {
+    try {
+        console.log(`Testing the resource: ${resourceId}`);
+
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
+        );
+
+        if (!response.ok) {
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
+        }
+
+        const data = await response.json();
+        const resource = data.resource;
+        //  console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
+        openResourceTestModal(resource);
+    } catch (error) {
+        console.error("Error fetching resource details:", error);
+        const errorMessage = handleFetchError(error, "load resource details");
+        showErrorMessage(errorMessage);
+    }
+}
+
+function openResourceTestModal(resource) {
+    const title = document.getElementById("resource-test-modal-title");
+    const fieldsContainer = document.getElementById(
+        "resource-test-form-fields",
+    );
+    const resultBox = document.getElementById("resource-test-result");
+
+    title.textContent = `Test Resource: ${resource.name}`;
+
+    fieldsContainer.innerHTML = "";
+    resultBox.textContent = "Fill the fields and click Invoke Resource";
+
+    // 1️⃣ Build form fields ONLY if uriTemplate exists
+    if (resource.uriTemplate) {
+        const fieldNames = parseUriTemplate(resource.uriTemplate);
+
+        fieldNames.forEach((name) => {
+            const div = document.createElement("div");
+            div.className = "space-y-1";
+
+            div.innerHTML = `
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    ${name}
+                </label>
+                <input type="text"
+                       id="resource-field-${name}"
+                       class="mt-1 px-2 py-1 block w-full rounded-md border border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
+                />
+            `;
+
+            fieldsContainer.appendChild(div);
+        });
+    } else {
+        // 2️⃣ If no template → show a simple message
+        fieldsContainer.innerHTML = `
+            <div class="text-gray-500 dark:text-gray-400 italic">
+                This resource has no URI template.
+                Click "Invoke Resource" to test directly.
+            </div>
+        `;
+    }
+
+    window.CurrentResourceUnderTest = resource;
+    openModal("resource-test-modal");
+}
+
+async function runResourceTest() {
+    const resource = window.CurrentResourceUnderTest;
+    if (!resource) {
+        return;
+    }
+
+    let finalUri = "";
+
+    if (resource.uriTemplate) {
+        finalUri = resource.uriTemplate;
+
+        const fieldNames = parseUriTemplate(resource.uriTemplate);
+        fieldNames.forEach((name) => {
+            const value = document.getElementById(
+                `resource-field-${name}`,
+            ).value;
+            finalUri = finalUri.replace(`{${name}}`, encodeURIComponent(value));
+        });
+    } else {
+        finalUri = resource.uri; // direct test
+    }
+
+    console.log("Final URI:", finalUri);
+
+    const response = await fetchWithTimeout(
+        `${window.ROOT_PATH}/admin/resources/test/${encodeURIComponent(finalUri)}`,
+    );
+
+    const json = await response.json();
+
+    const resultBox = document.getElementById("resource-test-result");
+    resultBox.innerHTML = ""; // clear previous
+
+    const container = document.createElement("div");
+    resultBox.appendChild(container);
+
+    // Extract the content text (fallback if missing)
+    const content = json.content || {};
+    let contentStr = content.text || JSON.stringify(content, null, 2);
+
+    // Try to prettify JSON content
+    try {
+        const parsed = JSON.parse(contentStr);
+        contentStr = JSON.stringify(parsed, null, 2);
+    } catch (_) {}
+
+    // ---- Content Section (same as prompt tester) ----
+    const contentSection = document.createElement("div");
+    contentSection.className = "mt-4";
+
+    // Header
+    const contentHeader = document.createElement("div");
+    contentHeader.className =
+        "flex items-center justify-between cursor-pointer select-none p-2 bg-gray-200 dark:bg-gray-700 rounded";
+    contentSection.appendChild(contentHeader);
+
+    // Title
+    const contentTitle = document.createElement("strong");
+    contentTitle.textContent = "Content";
+    contentHeader.appendChild(contentTitle);
+
+    // Right controls (arrow/copy/fullscreen/download)
+    const headerRight = document.createElement("div");
+    headerRight.className = "flex items-center space-x-2";
+    contentHeader.appendChild(headerRight);
+
+    // Arrow icon
+    const toggleIcon = document.createElement("span");
+    toggleIcon.innerHTML = "▶";
+    toggleIcon.className = "transform transition-transform text-xs";
+    headerRight.appendChild(toggleIcon);
+
+    // Copy button
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy";
+    copyBtn.className =
+        "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
+    headerRight.appendChild(copyBtn);
+
+    // Fullscreen button
+    const fullscreenBtn = document.createElement("button");
+    fullscreenBtn.textContent = "Fullscreen";
+    fullscreenBtn.className =
+        "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
+    headerRight.appendChild(fullscreenBtn);
+
+    // Download button
+    const downloadBtn = document.createElement("button");
+    downloadBtn.textContent = "Download";
+    downloadBtn.className =
+        "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
+    headerRight.appendChild(downloadBtn);
+
+    // Collapsible body
+    const contentBody = document.createElement("div");
+    contentBody.className = "hidden mt-2";
+    contentSection.appendChild(contentBody);
+
+    // Pre block
+    const contentPre = document.createElement("pre");
+    contentPre.className =
+        "bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100 text-sm whitespace-pre-wrap";
+    contentPre.textContent = contentStr;
+    contentBody.appendChild(contentPre);
+
+    // Auto-collapse if too large
+    const lineCount = contentStr.split("\n").length;
+
+    if (lineCount > 30) {
+        contentBody.classList.add("hidden");
+        toggleIcon.style.transform = "rotate(0deg)";
+        contentTitle.textContent = "Content (Large - Click to expand)";
+    } else {
+        contentBody.classList.remove("hidden");
+        toggleIcon.style.transform = "rotate(90deg)";
+    }
+
+    // Toggle expand/collapse
+    contentHeader.onclick = () => {
+        contentBody.classList.toggle("hidden");
+        toggleIcon.style.transform = contentBody.classList.contains("hidden")
+            ? "rotate(0deg)"
+            : "rotate(90deg)";
+    };
+
+    // Copy button
+    copyBtn.onclick = (event) => {
+        event.stopPropagation();
+        navigator.clipboard.writeText(contentStr).then(() => {
+            copyBtn.textContent = "Copied!";
+            setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+        });
+    };
+
+    // Fullscreen mode
+    fullscreenBtn.onclick = (event) => {
+        event.stopPropagation();
+
+        const overlay = document.createElement("div");
+        overlay.className =
+            "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+
+        const box = document.createElement("div");
+        box.className =
+            "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
+
+        const closeBtn = document.createElement("button");
+        closeBtn.textContent = "Close";
+        closeBtn.className =
+            "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
+
+        closeBtn.onclick = () => overlay.remove();
+
+        const fsPre = document.createElement("pre");
+        fsPre.className =
+            "bg-gray-100 p-4 rounded overflow-auto h-full dark:bg-gray-800 dark:text-gray-100 text-sm whitespace-pre-wrap";
+        fsPre.textContent = contentStr;
+
+        box.appendChild(closeBtn);
+        box.appendChild(fsPre);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+    };
+
+    // Download
+    downloadBtn.onclick = (event) => {
+        event.stopPropagation();
+
+        let blob;
+        let filename;
+
+        // JSON?
+        try {
+            JSON.parse(contentStr);
+            blob = new Blob([contentStr], { type: "application/json" });
+            filename = "resource.json";
+        } catch (_) {
+            blob = new Blob([contentStr], { type: "text/plain" });
+            filename = "resource.txt";
+        }
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    container.appendChild(contentSection);
+
+    // resultBox.textContent = JSON.stringify(json, null, 2);
+}
+
+// -------------------- Resource Testing ------------------ //
+
 /**
  * SECURE: View Resource function with safe display
  */
@@ -3594,7 +3888,9 @@ async function viewResource(resourceId) {
 
         const data = await response.json();
         const resource = data.resource;
-        const content = data.content;
+
+        // console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
+        // const content = data.content;
 
         const resourceDetailsDiv = safeGetElement("resource-details");
         if (resourceDetailsDiv) {
@@ -3649,39 +3945,41 @@ async function viewResource(resourceId) {
             statusStrong.textContent = "Status: ";
             statusP.appendChild(statusStrong);
 
+            const isActive = resource.enabled === true;
             const statusSpan = document.createElement("span");
             statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                resource.isActive
+                isActive
                     ? "bg-green-100 text-green-800"
                     : "bg-red-100 text-red-800"
             }`;
-            statusSpan.textContent = resource.isActive ? "Active" : "Inactive";
+            statusSpan.textContent = isActive ? "Active" : "Inactive";
+
             statusP.appendChild(statusSpan);
             container.appendChild(statusP);
 
             // Content display - safely handle different types
-            const contentDiv = document.createElement("div");
-            const contentStrong = document.createElement("strong");
-            contentStrong.textContent = "Content:";
-            contentDiv.appendChild(contentStrong);
+            // const contentDiv = document.createElement("div");
+            // const contentStrong = document.createElement("strong");
+            // contentStrong.textContent = "Content:";
+            // contentDiv.appendChild(contentStrong);
 
-            const contentPre = document.createElement("pre");
-            contentPre.className =
-                "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
+            // const contentPre = document.createElement("pre");
+            // contentPre.className =
+            //     "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
 
-            // Handle content display - extract actual content from object if needed
-            let contentStr = extractContent(
-                content,
-                resource.description || "No content available",
-            );
+            // // Handle content display - extract actual content from object if needed
+            // let contentStr = extractContent(
+            //     content,
+            //     resource.description || "No content available",
+            // );
 
-            if (!contentStr.trim()) {
-                contentStr = resource.description || "No content available";
-            }
+            // if (!contentStr.trim()) {
+            //     contentStr = resource.description || "No content available";
+            // }
 
-            contentPre.textContent = contentStr;
-            contentDiv.appendChild(contentPre);
-            container.appendChild(contentDiv);
+            // contentPre.textContent = contentStr;
+            // contentDiv.appendChild(contentPre);
+            // container.appendChild(contentDiv);
 
             // Metrics display
             if (resource.metrics) {
@@ -3855,21 +4153,29 @@ async function viewResource(resourceId) {
 /**
  * SECURE: Edit Resource function with validation
  */
-async function editResource(resourceUri) {
+async function editResource(resourceId) {
     try {
-        console.log(`Editing resource: ${resourceUri}`);
+        console.log(`Editing resource: ${resourceId}`);
 
         const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}`,
+            `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`,
         );
 
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
         }
 
         const data = await response.json();
         const resource = data.resource;
-        const content = data.content;
+        // const content = data.content;
         // Ensure hidden inactive flag is preserved
         const isInactiveCheckedBool = isInactiveChecked("resources");
         let hiddenField = safeGetElement("edit-resource-show-inactive");
@@ -3917,7 +4223,7 @@ async function editResource(resourceUri) {
 
         // Set form action and populate fields with validation
         if (editForm) {
-            editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceUri)}/edit`;
+            editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}/edit`;
         }
 
         // Validate inputs
@@ -3928,7 +4234,7 @@ async function editResource(resourceUri) {
         const nameField = safeGetElement("edit-resource-name");
         const descField = safeGetElement("edit-resource-description");
         const mimeField = safeGetElement("edit-resource-mime-type");
-        const contentField = safeGetElement("edit-resource-content");
+        // const contentField = safeGetElement("edit-resource-content");
 
         if (uriField && uriValidation.valid) {
             uriField.value = uriValidation.value;
@@ -3956,33 +4262,33 @@ async function editResource(resourceUri) {
             tagsField.value = rawTags.join(", ");
         }
 
-        if (contentField) {
-            let contentStr = extractContent(
-                content,
-                resource.description || "No content available",
-            );
+        // if (contentField) {
+        //     let contentStr = extractContent(
+        //         content,
+        //         resource.description || "No content available",
+        //     );
 
-            if (!contentStr.trim()) {
-                contentStr = resource.description || "No content available";
-            }
+        //     if (!contentStr.trim()) {
+        //         contentStr = resource.description || "No content available";
+        //     }
 
-            contentField.value = contentStr;
-        }
+        //     contentField.value = contentStr;
+        // }
 
-        // Update CodeMirror editor if it exists
-        if (window.editResourceContentEditor) {
-            let contentStr = extractContent(
-                content,
-                resource.description || "No content available",
-            );
+        // // Update CodeMirror editor if it exists
+        // if (window.editResourceContentEditor) {
+        //     let contentStr = extractContent(
+        //         content,
+        //         resource.description || "No content available",
+        //     );
 
-            if (!contentStr.trim()) {
-                contentStr = resource.description || "No content available";
-            }
+        //     if (!contentStr.trim()) {
+        //         contentStr = resource.description || "No content available";
+        //     }
 
-            window.editResourceContentEditor.setValue(contentStr);
-            window.editResourceContentEditor.refresh();
-        }
+        //     window.editResourceContentEditor.setValue(contentStr);
+        //     window.editResourceContentEditor.refresh();
+        // }
 
         openModal("resource-edit-modal");
 
@@ -5660,7 +5966,7 @@ async function editServer(serverId) {
                   );
 
             resourceCheckboxes.forEach((checkbox) => {
-                const checkboxValue = parseInt(checkbox.value);
+                const checkboxValue = checkbox.value;
                 const isChecked =
                     server.associatedResources &&
                     server.associatedResources.includes(checkboxValue);
@@ -5678,7 +5984,7 @@ async function editServer(serverId) {
                 : document.querySelectorAll('input[name="associatedPrompts"]');
 
             promptCheckboxes.forEach((checkbox) => {
-                const checkboxValue = parseInt(checkbox.value);
+                const checkboxValue = checkbox.value;
                 const isChecked =
                     server.associatedPrompts &&
                     server.associatedPrompts.includes(checkboxValue);
@@ -5779,7 +6085,7 @@ function setEditServerAssociations(server) {
         : document.querySelectorAll('input[name="associatedResources"]');
 
     resourceCheckboxes.forEach((checkbox) => {
-        const checkboxValue = parseInt(checkbox.value);
+        const checkboxValue = checkbox.value;
         const isChecked =
             server.associatedResources &&
             server.associatedResources.includes(checkboxValue);
@@ -5793,7 +6099,7 @@ function setEditServerAssociations(server) {
         : document.querySelectorAll('input[name="associatedPrompts"]');
 
     promptCheckboxes.forEach((checkbox) => {
-        const checkboxValue = parseInt(checkbox.value);
+        const checkboxValue = checkbox.value;
         const isChecked =
             server.associatedPrompts &&
             server.associatedPrompts.includes(checkboxValue);
@@ -5979,6 +6285,38 @@ if (window.htmx && !window._toolsHtmxHandlerAttached) {
                             container.dispatchEvent(event);
                         }
                     }
+                    // If we're in the Add Server tools container, restore persisted selections
+                    else if (container.id === "associatedTools") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-tools",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (
+                                    Array.isArray(selectedIds) &&
+                                    selectedIds.length > 0
+                                ) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(
+                                "Error restoring associatedTools selections:",
+                                e,
+                            );
+                        }
+                    }
                 }
             }, 10); // Small delay to ensure DOM is updated
         }
@@ -6060,7 +6398,7 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                         try {
                             const associatedResourceIds = JSON.parse(dataAttr);
                             newCheckboxes.forEach((cb) => {
-                                const checkboxValue = parseInt(cb.value);
+                                const checkboxValue = cb.value;
                                 if (
                                     associatedResourceIds.includes(
                                         checkboxValue,
@@ -6080,6 +6418,39 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
                         } catch (e) {
                             console.error(
                                 "Error parsing data-server-resources:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // If we're in the Add Server resources container, restore persisted selections
+                    else if (container.id === "associatedResources") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-resources",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (
+                                    Array.isArray(selectedIds) &&
+                                    selectedIds.length > 0
+                                ) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(
+                                "Error restoring associatedResources selections:",
                                 e,
                             );
                         }
@@ -6164,7 +6535,7 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                         try {
                             const associatedPromptIds = JSON.parse(dataAttr);
                             newCheckboxes.forEach((cb) => {
-                                const checkboxValue = parseInt(cb.value);
+                                const checkboxValue = cb.value;
                                 if (
                                     associatedPromptIds.includes(checkboxValue)
                                 ) {
@@ -6182,6 +6553,39 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
                         } catch (e) {
                             console.error(
                                 "Error parsing data-server-prompts:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // If we're in the Add Server prompts container, restore persisted selections
+                    else if (container.id === "associatedPrompts") {
+                        try {
+                            const dataAttr = container.getAttribute(
+                                "data-selected-prompts",
+                            );
+                            if (dataAttr) {
+                                const selectedIds = JSON.parse(dataAttr);
+                                if (
+                                    Array.isArray(selectedIds) &&
+                                    selectedIds.length > 0
+                                ) {
+                                    newCheckboxes.forEach((cb) => {
+                                        if (selectedIds.includes(cb.value)) {
+                                            cb.checked = true;
+                                        }
+                                        cb.removeAttribute("data-auto-check");
+                                    });
+
+                                    const event = new Event("change", {
+                                        bubbles: true,
+                                    });
+                                    container.dispatchEvent(event);
+                                }
+                            }
+                        } catch (e) {
+                            console.warn(
+                                "Error restoring associatedPrompts selections:",
                                 e,
                             );
                         }
@@ -6214,19 +6618,9 @@ function showTab(tabName) {
             }
         });
 
-        document.querySelectorAll(".tab-link").forEach((l) => {
+        document.querySelectorAll(".sidebar-link").forEach((l) => {
             if (l) {
-                l.classList.remove(
-                    "border-indigo-500",
-                    "text-indigo-600",
-                    "dark:text-indigo-500",
-                    "dark:border-indigo-400",
-                );
-                l.classList.add(
-                    "border-transparent",
-                    "text-gray-500",
-                    "dark:text-gray-400",
-                );
+                l.classList.remove("active");
             }
         });
 
@@ -6239,19 +6633,9 @@ function showTab(tabName) {
             return;
         }
 
-        const nav = document.querySelector(`[href="#${tabName}"]`);
+        const nav = document.querySelector(`.sidebar-link[href="#${tabName}"]`);
         if (nav) {
-            nav.classList.add(
-                "border-indigo-500",
-                "text-indigo-600",
-                "dark:text-indigo-500",
-                "dark:border-indigo-400",
-            );
-            nav.classList.remove(
-                "border-transparent",
-                "text-gray-500",
-                "dark:text-gray-400",
-            );
+            nav.classList.add("active");
         }
 
         // Debounced content loading
@@ -6265,6 +6649,14 @@ function showTab(tabName) {
                 }
                 if (tabName === "llm-chat") {
                     initializeLLMChat();
+                }
+
+                if (tabName === "logs") {
+                    // Load structured logs when tab is first opened
+                    const logsTbody = safeGetElement("logs-tbody");
+                    if (logsTbody && logsTbody.children.length === 0) {
+                        searchStructuredLogs();
+                    }
                 }
 
                 if (tabName === "teams") {
@@ -7027,6 +7419,45 @@ function initToolSelect(
         return;
     }
 
+    // Instrument changes to the data-selected-tools attribute for debugging
+    if (!container.dataset.attrObserverAttached) {
+        try {
+            const attrObserver = new MutationObserver((mutationsList) => {
+                for (const mut of mutationsList) {
+                    if (
+                        mut.type === "attributes" &&
+                        mut.attributeName === "data-selected-tools"
+                    ) {
+                        const oldVal = mut.oldValue;
+                        const newVal = container.getAttribute(
+                            "data-selected-tools",
+                        );
+                        console.info(
+                            `[DATA-INSTRUMENT] ${selectId} data-selected-tools changed — old: ${oldVal} new: ${newVal}`,
+                        );
+                    }
+                }
+            });
+
+            // Observe attribute changes and capture previous value
+            attrObserver.observe(container, {
+                attributes: true,
+                attributeOldValue: true,
+                attributeFilter: ["data-selected-tools"],
+            });
+
+            // Prevent double attaching
+            container.dataset.attrObserverAttached = "true";
+            // Keep a reference so it doesn't get GC'd (and so we could disconnect if needed)
+            container._dbgAttrObserver = attrObserver;
+        } catch (e) {
+            console.error(
+                "[DATA-INSTRUMENT] failed to attach attribute observer:",
+                e,
+            );
+        }
+    }
+
     const pillClasses =
         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
 
@@ -7060,7 +7491,27 @@ function initToolSelect(
                 }
             }
 
+            // Get persisted selections for Add Server mode
+            let persistedToolIds = [];
+            if (selectId === "associatedTools") {
+                const dataAttr = container.getAttribute("data-selected-tools");
+                if (dataAttr) {
+                    try {
+                        persistedToolIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error("Error parsing data-selected-tools:", e);
+                    }
+                }
+                if (
+                    (!persistedToolIds || persistedToolIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedTools)
+                ) {
+                    persistedToolIds = window._selectedAssociatedTools.slice();
+                }
+            }
+
             let count = checked.length;
+            const pillsData = [];
 
             // If Select All mode is active, use the count from allToolIds
             if (
@@ -7083,34 +7534,67 @@ function initToolSelect(
             ) {
                 count = serverTools.length;
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (
+                selectId === "associatedTools" &&
+                persistedToolIds &&
+                persistedToolIds.length > 0
+            ) {
+                count = persistedToolIds.length;
+                // Build pill data from persisted IDs using toolMapping
+                if (window.toolMapping) {
+                    persistedToolIds.forEach((id) => {
+                        const toolName = window.toolMapping[id];
+                        if (toolName) {
+                            pillsData.push({ id, name: toolName });
+                        }
+                    });
+                }
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            // In edit server mode, we want to show the server tools rather than just currently checked ones
-            let pillsToDisplay = checked;
-            if (
+            // Determine which pills to display based on mode
+            if (selectId === "associatedTools" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else if (
                 isEditServerMode &&
                 serverTools &&
                 Array.isArray(serverTools) &&
                 window.toolMapping
             ) {
-                // Create a list of tools that exist both in serverTools and currently loaded tools
+                // In edit server mode, show the server tools rather than just currently checked ones
                 const allLoadedTools = Array.from(checkboxes);
-                pillsToDisplay = allLoadedTools.filter((checkbox) => {
+                const pillsToDisplay = allLoadedTools.filter((checkbox) => {
                     const toolName = window.toolMapping[checkbox.value];
                     return toolName && serverTools.includes(toolName);
                 });
+                pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
             }
-
-            pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
@@ -7347,6 +7831,82 @@ function initToolSelect(
                         );
                     }
                 }
+                // If we're in the Add Server tools container, persist selected IDs
+                else if (selectId === "associatedTools") {
+                    try {
+                        // Incrementally update persisted selection instead of
+                        // replacing it wholesale. This preserves selections made
+                        // in previous filtered views where those checkboxes are
+                        // not present in the current DOM.
+                        const changedEl = e.target;
+                        const changedId = changedEl.value;
+
+                        // Load existing persisted set: prefer container attribute,
+                        // fall back to the in-memory window variable.
+                        let persisted = [];
+                        const dataAttr = container.getAttribute(
+                            "data-selected-tools",
+                        );
+                        if (dataAttr) {
+                            try {
+                                const parsed = JSON.parse(dataAttr);
+                                if (Array.isArray(parsed)) {
+                                    persisted = parsed.slice();
+                                }
+                            } catch (parseErr) {
+                                console.error(
+                                    "Error parsing existing data-selected-tools:",
+                                    parseErr,
+                                );
+                            }
+                        } else if (
+                            Array.isArray(window._selectedAssociatedTools)
+                        ) {
+                            persisted = window._selectedAssociatedTools.slice();
+                        }
+
+                        if (changedEl.checked) {
+                            if (!persisted.includes(changedId)) {
+                                persisted.push(changedId);
+                            }
+                        } else {
+                            persisted = persisted.filter(
+                                (x) => x !== changedId,
+                            );
+                        }
+
+                        // Ensure any currently visible checked boxes are included
+                        const visibleChecked = Array.from(
+                            container.querySelectorAll(
+                                'input[type="checkbox"]:checked',
+                            ),
+                        ).map((cb) => cb.value);
+                        visibleChecked.forEach((id) => {
+                            if (!persisted.includes(id)) {
+                                persisted.push(id);
+                            }
+                        });
+
+                        // Persist back to both the container attribute and global fallback
+                        container.setAttribute(
+                            "data-selected-tools",
+                            JSON.stringify(persisted),
+                        );
+                        try {
+                            window._selectedAssociatedTools = persisted.slice();
+                        } catch (e) {
+                            console.error(
+                                "Error persisting window._selectedAssociatedTools:",
+                                e,
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-selected-tools (incremental):",
+                            err,
+                        );
+                    }
+                }
 
                 update();
             }
@@ -7384,7 +7944,6 @@ function initResourceSelect(
                 'input[type="checkbox"]',
             );
             const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-            // const count = checked.length;
 
             // Select All handling
             const selectAllInput = container.querySelector(
@@ -7394,7 +7953,35 @@ function initResourceSelect(
                 'input[name="allResourceIds"]',
             );
 
+            // Get persisted selections for Add Server mode
+            let persistedResourceIds = [];
+            if (selectId === "associatedResources") {
+                const dataAttr = container.getAttribute(
+                    "data-selected-resources",
+                );
+                if (dataAttr) {
+                    try {
+                        persistedResourceIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error(
+                            "Error parsing data-selected-resources:",
+                            e,
+                        );
+                    }
+                }
+                if (
+                    (!persistedResourceIds ||
+                        persistedResourceIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedResources)
+                ) {
+                    persistedResourceIds =
+                        window._selectedAssociatedResources.slice();
+                }
+            }
+
             let count = checked.length;
+            const pillsData = [];
+
             if (
                 selectAllInput &&
                 selectAllInput.value === "true" &&
@@ -7407,18 +7994,51 @@ function initResourceSelect(
                     console.error("Error parsing allResourceIds:", e);
                 }
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (
+                selectId === "associatedResources" &&
+                persistedResourceIds &&
+                persistedResourceIds.length > 0
+            ) {
+                count = persistedResourceIds.length;
+                // Build pill data from persisted IDs - find matching checkboxes or use ID as fallback
+                const checkboxMap = new Map();
+                checkboxes.forEach((cb) => {
+                    checkboxMap.set(
+                        cb.value,
+                        cb.nextElementSibling?.textContent?.trim() || cb.value,
+                    );
+                });
+                persistedResourceIds.forEach((id) => {
+                    const name = checkboxMap.get(id) || id;
+                    pillsData.push({ id, name });
+                });
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            checked.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
+            // Determine which pills to display based on mode
+            if (selectId === "associatedResources" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            }
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
@@ -7623,7 +8243,7 @@ function initResourceSelect(
                             }
                         }
 
-                        const idVal = parseInt(e.target.value);
+                        const idVal = e.target.value;
                         if (!Number.isNaN(idVal)) {
                             if (e.target.checked) {
                                 if (!serverResources.includes(idVal)) {
@@ -7643,6 +8263,76 @@ function initResourceSelect(
                     } catch (err) {
                         console.error(
                             "Error updating data-server-resources:",
+                            err,
+                        );
+                    }
+                }
+                // If we're in the Add Server resources container, persist selected IDs incrementally
+                else if (selectId === "associatedResources") {
+                    try {
+                        const changedEl = e.target;
+                        const changedId = changedEl.value;
+
+                        let persisted = [];
+                        const dataAttr = container.getAttribute(
+                            "data-selected-resources",
+                        );
+                        if (dataAttr) {
+                            try {
+                                const parsed = JSON.parse(dataAttr);
+                                if (Array.isArray(parsed)) {
+                                    persisted = parsed.slice();
+                                }
+                            } catch (parseErr) {
+                                console.error(
+                                    "Error parsing existing data-selected-resources:",
+                                    parseErr,
+                                );
+                            }
+                        } else if (
+                            Array.isArray(window._selectedAssociatedResources)
+                        ) {
+                            persisted =
+                                window._selectedAssociatedResources.slice();
+                        }
+
+                        if (changedEl.checked) {
+                            if (!persisted.includes(changedId)) {
+                                persisted.push(changedId);
+                            }
+                        } else {
+                            persisted = persisted.filter(
+                                (x) => x !== changedId,
+                            );
+                        }
+
+                        const visibleChecked = Array.from(
+                            container.querySelectorAll(
+                                'input[type="checkbox"]:checked',
+                            ),
+                        ).map((cb) => cb.value);
+                        visibleChecked.forEach((id) => {
+                            if (!persisted.includes(id)) {
+                                persisted.push(id);
+                            }
+                        });
+
+                        container.setAttribute(
+                            "data-selected-resources",
+                            JSON.stringify(persisted),
+                        );
+                        try {
+                            window._selectedAssociatedResources =
+                                persisted.slice();
+                        } catch (err) {
+                            console.error(
+                                "Error persisting window._selectedAssociatedResources:",
+                                err,
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-selected-resources (incremental):",
                             err,
                         );
                     }
@@ -7693,7 +8383,34 @@ function initPromptSelect(
                 'input[name="allPromptIds"]',
             );
 
+            // Get persisted selections for Add Server mode
+            let persistedPromptIds = [];
+            if (selectId === "associatedPrompts") {
+                const dataAttr = container.getAttribute(
+                    "data-selected-prompts",
+                );
+                if (dataAttr) {
+                    try {
+                        persistedPromptIds = JSON.parse(dataAttr);
+                    } catch (e) {
+                        console.error(
+                            "Error parsing data-selected-prompts:",
+                            e,
+                        );
+                    }
+                }
+                if (
+                    (!persistedPromptIds || persistedPromptIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedPrompts)
+                ) {
+                    persistedPromptIds =
+                        window._selectedAssociatedPrompts.slice();
+                }
+            }
+
             let count = checked.length;
+            const pillsData = [];
+
             if (
                 selectAllInput &&
                 selectAllInput.value === "true" &&
@@ -7706,18 +8423,51 @@ function initPromptSelect(
                     console.error("Error parsing allPromptIds:", e);
                 }
             }
+            // If in Add Server mode with persisted selections, use persisted count and build pills from persisted data
+            else if (
+                selectId === "associatedPrompts" &&
+                persistedPromptIds &&
+                persistedPromptIds.length > 0
+            ) {
+                count = persistedPromptIds.length;
+                // Build pill data from persisted IDs - find matching checkboxes or use ID as fallback
+                const checkboxMap = new Map();
+                checkboxes.forEach((cb) => {
+                    checkboxMap.set(
+                        cb.value,
+                        cb.nextElementSibling?.textContent?.trim() || cb.value,
+                    );
+                });
+                persistedPromptIds.forEach((id) => {
+                    const name = checkboxMap.get(id) || id;
+                    pillsData.push({ id, name });
+                });
+            }
 
             // Rebuild pills safely - show first 3, then summarize the rest
             pillsBox.innerHTML = "";
             const maxPillsToShow = 3;
 
-            checked.slice(0, maxPillsToShow).forEach((cb) => {
-                const span = document.createElement("span");
-                span.className = pillClasses;
-                span.textContent =
-                    cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-                pillsBox.appendChild(span);
-            });
+            // Determine which pills to display based on mode
+            if (selectId === "associatedPrompts" && pillsData.length > 0) {
+                // In Add Server mode with persisted data, show pills from persisted selections
+                pillsData.slice(0, maxPillsToShow).forEach((item) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent = item.name || "Unnamed";
+                    span.title = item.name;
+                    pillsBox.appendChild(span);
+                });
+            } else {
+                // Default: show pills from currently checked checkboxes
+                checked.slice(0, maxPillsToShow).forEach((cb) => {
+                    const span = document.createElement("span");
+                    span.className = pillClasses;
+                    span.textContent =
+                        cb.nextElementSibling?.textContent?.trim() || "Unnamed";
+                    pillsBox.appendChild(span);
+                });
+            }
 
             // If more than maxPillsToShow, show a summary pill
             if (count > maxPillsToShow) {
@@ -7921,7 +8671,7 @@ function initPromptSelect(
                             }
                         }
 
-                        const idVal = parseInt(e.target.value);
+                        const idVal = e.target.value;
                         if (!Number.isNaN(idVal)) {
                             if (e.target.checked) {
                                 if (!serverPrompts.includes(idVal)) {
@@ -7941,6 +8691,77 @@ function initPromptSelect(
                     } catch (err) {
                         console.error(
                             "Error updating data-server-prompts:",
+                            err,
+                        );
+                    }
+                }
+
+                // If we're in the Add Server prompts container, persist selected IDs incrementally
+                else if (selectId === "associatedPrompts") {
+                    try {
+                        const changedEl = e.target;
+                        const changedId = changedEl.value;
+
+                        let persisted = [];
+                        const dataAttr = container.getAttribute(
+                            "data-selected-prompts",
+                        );
+                        if (dataAttr) {
+                            try {
+                                const parsed = JSON.parse(dataAttr);
+                                if (Array.isArray(parsed)) {
+                                    persisted = parsed.slice();
+                                }
+                            } catch (parseErr) {
+                                console.error(
+                                    "Error parsing existing data-selected-prompts:",
+                                    parseErr,
+                                );
+                            }
+                        } else if (
+                            Array.isArray(window._selectedAssociatedPrompts)
+                        ) {
+                            persisted =
+                                window._selectedAssociatedPrompts.slice();
+                        }
+
+                        if (changedEl.checked) {
+                            if (!persisted.includes(changedId)) {
+                                persisted.push(changedId);
+                            }
+                        } else {
+                            persisted = persisted.filter(
+                                (x) => x !== changedId,
+                            );
+                        }
+
+                        const visibleChecked = Array.from(
+                            container.querySelectorAll(
+                                'input[type="checkbox"]:checked',
+                            ),
+                        ).map((cb) => cb.value);
+                        visibleChecked.forEach((id) => {
+                            if (!persisted.includes(id)) {
+                                persisted.push(id);
+                            }
+                        });
+
+                        container.setAttribute(
+                            "data-selected-prompts",
+                            JSON.stringify(persisted),
+                        );
+                        try {
+                            window._selectedAssociatedPrompts =
+                                persisted.slice();
+                        } catch (err) {
+                            console.error(
+                                "Error persisting window._selectedAssociatedPrompts:",
+                                err,
+                            );
+                        }
+                    } catch (err) {
+                        console.error(
+                            "Error updating data-selected-prompts (incremental):",
                             err,
                         );
                     }
@@ -8539,7 +9360,59 @@ function reloadAssociatedItems() {
                     "[Filter Update DEBUG] Resources fetch successful, HTML length:",
                     html.length,
                 );
+                // Persist current selections to window fallback before replacing container
+                // AND preserve the data-selected-resources attribute
+                let persistedResourceIds = [];
+                try {
+                    // First, try to get from the container's data attribute
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-selected-resources",
+                    );
+                    if (dataAttr) {
+                        try {
+                            const parsed = JSON.parse(dataAttr);
+                            if (Array.isArray(parsed)) {
+                                persistedResourceIds = parsed.slice();
+                            }
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-selected-resources:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // Merge with currently checked items
+                    const currentChecked = Array.from(
+                        resourcesContainer.querySelectorAll(
+                            'input[type="checkbox"]:checked',
+                        ),
+                    ).map((cb) => cb.value);
+                    const merged = new Set([
+                        ...persistedResourceIds,
+                        ...currentChecked,
+                    ]);
+                    persistedResourceIds = Array.from(merged);
+
+                    // Update window fallback
+                    window._selectedAssociatedResources =
+                        persistedResourceIds.slice();
+                } catch (e) {
+                    console.error(
+                        "Error capturing current resource selections before reload:",
+                        e,
+                    );
+                }
+
                 resourcesContainer.innerHTML = html;
+
+                // Immediately restore the data-selected-resources attribute after innerHTML replacement
+                if (persistedResourceIds.length > 0) {
+                    resourcesContainer.setAttribute(
+                        "data-selected-resources",
+                        JSON.stringify(persistedResourceIds),
+                    );
+                }
                 // If HTMX is available, process the newly-inserted HTML so hx-*
                 // triggers (like the infinite-scroll 'intersect' trigger) are
                 // initialized. To avoid HTMX re-triggering the container's
@@ -8607,6 +9480,91 @@ function reloadAssociatedItems() {
                     ? "clearAllEditResourcesBtn"
                     : "clearAllResourcesBtn";
 
+                // The data-selected-resources attribute should already be restored above,
+                // but double-check and merge with window fallback if needed
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-selected-resources",
+                    );
+                    let selectedIds = [];
+                    if (dataAttr) {
+                        try {
+                            const parsed = JSON.parse(dataAttr);
+                            if (Array.isArray(parsed)) {
+                                selectedIds = parsed.slice();
+                            }
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-selected-resources:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // Merge with window fallback if it has additional selections
+                    if (
+                        Array.isArray(window._selectedAssociatedResources) &&
+                        window._selectedAssociatedResources.length > 0
+                    ) {
+                        const merged = new Set([
+                            ...selectedIds,
+                            ...window._selectedAssociatedResources,
+                        ]);
+                        const mergedArray = Array.from(merged);
+                        if (mergedArray.length > selectedIds.length) {
+                            resourcesContainer.setAttribute(
+                                "data-selected-resources",
+                                JSON.stringify(mergedArray),
+                            );
+                            console.log(
+                                "[Filter Update DEBUG] Merged additional selections from window fallback",
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring data-selected-resources after fetch reload:",
+                        e,
+                    );
+                }
+
+                // First restore persisted selections from data-selected-resources (Add Server mode)
+                try {
+                    const dataAttr = resourcesContainer.getAttribute(
+                        "data-selected-resources",
+                    );
+                    if (
+                        dataAttr &&
+                        resourcesContainerId === "associatedResources"
+                    ) {
+                        const selectedIds = JSON.parse(dataAttr);
+                        if (
+                            Array.isArray(selectedIds) &&
+                            selectedIds.length > 0
+                        ) {
+                            const resourceCheckboxes =
+                                resourcesContainer.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedResources"]',
+                                );
+                            resourceCheckboxes.forEach((cb) => {
+                                if (selectedIds.includes(cb.value)) {
+                                    cb.checked = true;
+                                }
+                            });
+                            console.log(
+                                "[Filter Update DEBUG] Restored",
+                                selectedIds.length,
+                                "persisted resource selections",
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.warn(
+                        "Error restoring persisted resource selections:",
+                        e,
+                    );
+                }
+
                 initResourceSelect(
                     resourcesContainerId,
                     resPills,
@@ -8615,9 +9573,10 @@ function reloadAssociatedItems() {
                     resSelectBtn,
                     resClearBtn,
                 );
+
                 // Re-apply server-associated resource selections so selections
-                // persist across gateway-filtered reloads. The resources partial
-                // replaces checkbox inputs; use the container's
+                // persist across gateway-filtered reloads (Edit Server mode).
+                // The resources partial replaces checkbox inputs; use the container's
                 // `data-server-resources` attribute (set when opening edit modal)
                 // to restore checked state.
                 try {
@@ -8635,7 +9594,7 @@ function reloadAssociatedItems() {
                                     'input[type="checkbox"][name="associatedResources"]',
                                 );
                             resourceCheckboxes.forEach((cb) => {
-                                const val = parseInt(cb.value);
+                                const val = cb.value;
                                 if (
                                     !Number.isNaN(val) &&
                                     associated.includes(val)
@@ -8675,11 +9634,91 @@ function reloadAssociatedItems() {
             ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
             : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
 
+        // Persist current prompt selections before HTMX replaces the container
+        try {
+            const currentCheckedPrompts = Array.from(
+                promptsContainer.querySelectorAll(
+                    'input[type="checkbox"]:checked',
+                ),
+            ).map((cb) => cb.value);
+            if (
+                !Array.isArray(window._selectedAssociatedPrompts) ||
+                window._selectedAssociatedPrompts.length === 0
+            ) {
+                window._selectedAssociatedPrompts =
+                    currentCheckedPrompts.slice();
+            } else {
+                const merged = new Set([
+                    ...(window._selectedAssociatedPrompts || []),
+                    ...currentCheckedPrompts,
+                ]);
+                window._selectedAssociatedPrompts = Array.from(merged);
+            }
+        } catch (e) {
+            console.error(
+                "Error capturing current prompt selections before reload:",
+                e,
+            );
+        }
+
         if (window.htmx) {
             htmx.ajax("GET", promptsUrl, {
                 target: `#${promptsContainerId}`,
                 swap: "innerHTML",
             }).then(() => {
+                try {
+                    const containerEl =
+                        document.getElementById(promptsContainerId);
+                    if (containerEl) {
+                        const existingAttr = containerEl.getAttribute(
+                            "data-selected-prompts",
+                        );
+                        let existingIds = null;
+                        if (existingAttr) {
+                            try {
+                                existingIds = JSON.parse(existingAttr);
+                            } catch (e) {
+                                console.error(
+                                    "Error parsing existing data-selected-prompts after reload:",
+                                    e,
+                                );
+                            }
+                        }
+
+                        if (
+                            (!existingIds ||
+                                !Array.isArray(existingIds) ||
+                                existingIds.length === 0) &&
+                            Array.isArray(window._selectedAssociatedPrompts) &&
+                            window._selectedAssociatedPrompts.length > 0
+                        ) {
+                            containerEl.setAttribute(
+                                "data-selected-prompts",
+                                JSON.stringify(
+                                    window._selectedAssociatedPrompts.slice(),
+                                ),
+                            );
+                        } else if (
+                            Array.isArray(existingIds) &&
+                            Array.isArray(window._selectedAssociatedPrompts) &&
+                            window._selectedAssociatedPrompts.length > 0
+                        ) {
+                            const merged = new Set([
+                                ...(existingIds || []),
+                                ...window._selectedAssociatedPrompts,
+                            ]);
+                            containerEl.setAttribute(
+                                "data-selected-prompts",
+                                JSON.stringify(Array.from(merged)),
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring data-selected-prompts after HTMX reload:",
+                        e,
+                    );
+                }
                 // Re-initialize the prompt select after content is loaded
                 const pPills = useEditContainers
                     ? "selectedEditPromptsPills"
@@ -9277,19 +10316,22 @@ async function loadTools() {
     console.log("Loading tools...");
     try {
         if (toolBody !== null) {
-            toolBody.innerHTML = ` 
+            toolBody.innerHTML = `
                 <tr>
                     <td colspan="5" class="text-center py-4 text-gray-500">Loading tools...</td>
                 </tr>
                 `;
-            const response = await fetch(`${window.ROOT_PATH}/tools`, {
+            const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
                 method: "GET",
             });
 
             if (!response.ok) {
                 throw new Error("Failed to load tools");
             }
-            const tools = await response.json(); // 👈 expect JSON array
+            let tools = await response.json(); // 👈 expect JSON array
+            if ("data" in tools) {
+                tools = tools.data;
+            }
             console.log("Fetched tools:", tools);
 
             //   document.getElementById("temp_lable").innerText = `Loaded ${tools.length} tools`;
@@ -11685,6 +12727,42 @@ async function runPromptTest() {
             runButton.disabled = false;
             runButton.textContent = "Render Prompt";
         }
+    }
+}
+
+/**
+ * Clean up resource test modal state
+ */
+function cleanupResourceTestModal() {
+    try {
+        // Clear stored state
+        window.CurrentResourceUnderTest = null;
+
+        // Reset form fields container
+        const fieldsContainer = safeGetElement("resource-test-form-fields");
+        if (fieldsContainer) {
+            fieldsContainer.innerHTML = "";
+        }
+
+        // Reset result box
+        const resultBox = safeGetElement("resource-test-result");
+        if (resultBox) {
+            resultBox.innerHTML = `
+                <div class="text-gray-500 dark:text-gray-400 italic">
+                    Fill the fields and click Invoke Resource
+                </div>
+            `;
+        }
+
+        // Hide loading if exists
+        const loading = safeGetElement("resource-test-loading");
+        if (loading) {
+            loading.classList.add("hidden");
+        }
+
+        console.log("✓ Resource test modal cleaned up");
+    } catch (err) {
+        console.error("Error cleaning up resource test modal:", err);
     }
 }
 
@@ -15370,7 +16448,7 @@ function initializeTabState() {
     if (hash) {
         showTab(hash.slice(1));
     } else {
-        showTab("catalog");
+        showTab("gateways");
     }
 
     // Pre-load version info if that's the initial tab
@@ -15452,6 +16530,8 @@ window.editTool = editTool;
 window.testTool = testTool;
 window.validateTool = validateTool;
 window.viewResource = viewResource;
+window.runResourceTest = runResourceTest;
+window.testResource = testResource;
 window.editResource = editResource;
 window.viewPrompt = viewPrompt;
 window.editPrompt = editPrompt;
@@ -18159,9 +19239,27 @@ async function getAuthToken() {
     if (!token) {
         token = localStorage.getItem("auth_token");
     }
-    console.log("MY TOKEN GENERATED:", token);
-
     return token || "";
+}
+
+/**
+ * Fetch helper that always includes auth context.
+ * Ensures HTTP-only cookies are sent even when JS cannot read them.
+ */
+async function fetchWithAuth(url, options = {}) {
+    const opts = { ...options };
+    // Always send same-origin cookies unless caller overrides explicitly
+    opts.credentials = options.credentials || "same-origin";
+
+    // Clone headers to avoid mutating caller-provided object
+    const headers = new Headers(options.headers || {});
+    const token = await getAuthToken();
+    if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+    opts.headers = headers;
+
+    return fetch(url, opts);
 }
 
 // Expose token management functions to global scope
@@ -19195,8 +20293,8 @@ function resetImportSelection() {
                     // Many panels use specific ids — attempt to call generic initializers if they exist
                     initResourceSelect(
                         "associatedResources",
-                        "resource-pills",
-                        "resource-warn",
+                        "selectedResourcePills",
+                        "selectedResourceWarning",
                         10,
                         null,
                         null,
@@ -19205,8 +20303,8 @@ function resetImportSelection() {
                 if (typeof initToolSelect === "function") {
                     initToolSelect(
                         "associatedTools",
-                        "tool-pills",
-                        "tool-warn",
+                        "selectedToolsPills",
+                        "selectedToolsWarning",
                         10,
                         null,
                         null,
@@ -20074,6 +21172,25 @@ function initializeLLMChat() {
     // Generate or retrieve user ID
     llmChatState.userId = generateUserId();
 
+    // Restore previously selected server (if any) from sessionStorage
+    try {
+        const persistedServerId = sessionStorage.getItem(
+            "llm_chat_selected_server_id",
+        );
+        const persistedServerName = sessionStorage.getItem(
+            "llm_chat_selected_server_name",
+        );
+        if (persistedServerId) {
+            llmChatState.selectedServerId = persistedServerId;
+            if (persistedServerName) {
+                llmChatState.selectedServerName = persistedServerName;
+            }
+        }
+    } catch (e) {
+        // sessionStorage may be unavailable in some environments
+        console.warn("Could not restore persisted LLM server selection:", e);
+    }
+
     // Load servers if not already loaded
     const serversList = document.getElementById("llm-chat-servers-list");
     if (serversList && serversList.children.length <= 1) {
@@ -20259,6 +21376,15 @@ async function selectServerForChat(
     // Update state
     llmChatState.selectedServerId = serverId;
     llmChatState.selectedServerName = serverName;
+
+    // Persist selection so it survives tab reloads within the session
+    try {
+        sessionStorage.setItem("llm_chat_selected_server_id", serverId);
+        sessionStorage.setItem("llm_chat_selected_server_name", serverName);
+    } catch (e) {
+        // sessionStorage may be unavailable (e.g. privacy mode); ignore silently
+        console.warn("Could not persist selected LLM server:", e);
+    }
 
     // Update UI to show selected server
     const serverItems = document.querySelectorAll(".server-item");
@@ -21887,6 +23013,109 @@ async function serverSideToolSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // --- DOM instrumentation for debugging replacement during searches ---
+    // Assign a stable debug id to the container (persists through innerHTML swaps
+    // but will change if the element is replaced). Observe the parent node for
+    // childList mutations and log if the container is removed or replaced.
+    let _domInstrObserver = null;
+    let _domInstrId = null;
+    try {
+        if (!container.dataset.debugNodeId) {
+            container.dataset.debugNodeId = `dbg-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+        }
+        _domInstrId = container.dataset.debugNodeId;
+        console.info(
+            `[DOM-INSTRUMENT] serverSideToolSearch start for #associatedTools debugId=${_domInstrId} searchTerm='${searchTerm}'`,
+        );
+
+        const parentNode = container.parentNode;
+        if (parentNode) {
+            _domInstrObserver = new MutationObserver((mutationsList) => {
+                for (const mut of mutationsList) {
+                    if (mut.type === "childList") {
+                        const current =
+                            document.getElementById("associatedTools");
+                        if (!current) {
+                            console.warn(
+                                `[DOM-INSTRUMENT] associatedTools element REMOVED during search (original debugId=${_domInstrId})`,
+                                mut,
+                            );
+                        } else {
+                            const curId = current.dataset.debugNodeId || null;
+                            if (curId !== _domInstrId) {
+                                console.warn(
+                                    `[DOM-INSTRUMENT] associatedTools element REPLACED during search. original=${_domInstrId} current=${curId}`,
+                                    mut,
+                                );
+                            }
+                        }
+                    }
+                }
+            });
+            try {
+                _domInstrObserver.observe(parentNode, { childList: true });
+            } catch (e) {
+                console.error(
+                    "[DOM-INSTRUMENT] Failed to observe parent node for associatedTools:",
+                    e,
+                );
+            }
+        }
+    } catch (e) {
+        console.error("[DOM-INSTRUMENT] setup error:", e);
+    }
+
+    // Persist current selections to window fallback AND data attribute before we replace/clear the container
+    let persistedToolIds = [];
+    try {
+        // First get from data attribute if it exists
+        const dataAttr = container.getAttribute("data-selected-tools");
+        if (dataAttr) {
+            try {
+                const parsed = JSON.parse(dataAttr);
+                if (Array.isArray(parsed)) {
+                    persistedToolIds = parsed.slice();
+                }
+            } catch (e) {
+                console.error("Error parsing data-selected-tools:", e);
+            }
+        }
+
+        // Then merge with currently checked items (important for search results)
+        const currentChecked = Array.from(
+            container.querySelectorAll('input[type="checkbox"]:checked'),
+        ).map((cb) => cb.value);
+        const merged = new Set([...persistedToolIds, ...currentChecked]);
+        persistedToolIds = Array.from(merged);
+
+        // Update both the window fallback and the container attribute
+        window._selectedAssociatedTools = persistedToolIds.slice();
+        if (persistedToolIds.length > 0) {
+            container.setAttribute(
+                "data-selected-tools",
+                JSON.stringify(persistedToolIds),
+            );
+        }
+
+        console.log(
+            `[Tool Search] Persisted ${persistedToolIds.length} tool selections before search:`,
+            persistedToolIds,
+        );
+    } catch (e) {
+        console.error("Error capturing current selections before search:", e);
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -21899,22 +23128,141 @@ async function serverSideToolSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default tool list
+        // If search term is empty, reload the default tool list with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Tool Search] Loading default tools with URL: ${toolsUrl}`,
             );
+
+            const response = await fetch(toolsUrl);
             if (response.ok) {
                 const html = await response.text();
-                container.innerHTML = html;
 
-                // Hide no results message
-                if (noResultsMessage) {
-                    noResultsMessage.style.display = "none";
+                // Preserve the data-selected-tools attribute before replacing innerHTML
+                let persistedToolIds = [];
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-selected-tools",
+                    );
+                    if (dataAttr) {
+                        try {
+                            const parsed = JSON.parse(dataAttr);
+                            if (Array.isArray(parsed)) {
+                                persistedToolIds = parsed.slice();
+                            }
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-selected-tools before clearing search:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // Merge with currently checked items
+                    const currentChecked = Array.from(
+                        container.querySelectorAll(
+                            'input[type="checkbox"]:checked',
+                        ),
+                    ).map((cb) => cb.value);
+                    const merged = new Set([
+                        ...persistedToolIds,
+                        ...currentChecked,
+                    ]);
+                    persistedToolIds = Array.from(merged);
+
+                    // Update window fallback
+                    window._selectedAssociatedTools = persistedToolIds.slice();
+                } catch (e) {
+                    console.error(
+                        "Error capturing current tool selections before clearing search:",
+                        e,
+                    );
                 }
 
-                // Update tool mapping if needed
-                updateToolMapping(container);
+                container.innerHTML = html;
+
+                // Immediately restore the data-selected-tools attribute after innerHTML replacement
+                if (persistedToolIds.length > 0) {
+                    container.setAttribute(
+                        "data-selected-tools",
+                        JSON.stringify(persistedToolIds),
+                    );
+                }
+
+                // If the container has been re-rendered server-side and our
+                // `data-selected-tools` attribute was lost, restore from the
+                // global fallback `window._selectedAssociatedTools`.
+                try {
+                    updateToolMapping(container);
+
+                    // Re-initialize selector so handlers are attached
+                    initToolSelect(
+                        "associatedTools",
+                        "selectedToolsPills",
+                        "selectedToolsWarning",
+                        6,
+                        "selectAllToolsBtn",
+                        "clearAllToolsBtn",
+                    );
+
+                    const dataAttr = container.getAttribute(
+                        "data-selected-tools",
+                    );
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error(
+                                "Error parsing server data-selected-tools:",
+                                e,
+                            );
+                        }
+                    }
+
+                    if (
+                        (!selectedIds ||
+                            !Array.isArray(selectedIds) ||
+                            selectedIds.length === 0) &&
+                        Array.isArray(window._selectedAssociatedTools)
+                    ) {
+                        selectedIds = window._selectedAssociatedTools.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+
+                    // Hide no results message
+                    if (noResultsMessage) {
+                        noResultsMessage.style.display = "none";
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring selections after loading default tools:",
+                        e,
+                    );
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load tools</div>';
@@ -21928,10 +23276,14 @@ async function serverSideToolSearch(searchTerm) {
     }
 
     try {
-        // Call the new search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(`[Tool Search] Searching tools with URL: ${searchUrl}`);
+
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -21969,9 +23321,134 @@ async function serverSideToolSearch(searchTerm) {
             });
 
             container.innerHTML = searchResultsHtml;
+            // If server-side didn't provide `data-selected-tools` (or provided
+            // an empty array), restore/merge from the in-memory fallback so
+            // the attribute isn't left empty and selectors can pick it up.
+            try {
+                const existingAttr = container.getAttribute(
+                    "data-selected-tools",
+                );
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error(
+                            "Error parsing existing data-selected-tools after search insert:",
+                            e,
+                        );
+                    }
+                }
+
+                if (
+                    (!existingIds ||
+                        !Array.isArray(existingIds) ||
+                        existingIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedTools) &&
+                    window._selectedAssociatedTools.length > 0
+                ) {
+                    // Write a merged view back to the container attribute so
+                    // subsequent init/observers see the selection
+                    container.setAttribute(
+                        "data-selected-tools",
+                        JSON.stringify(window._selectedAssociatedTools.slice()),
+                    );
+                } else if (
+                    Array.isArray(existingIds) &&
+                    Array.isArray(window._selectedAssociatedTools) &&
+                    window._selectedAssociatedTools.length > 0
+                ) {
+                    // Merge the two sets to avoid losing either
+                    const merged = new Set([
+                        ...(existingIds || []),
+                        ...window._selectedAssociatedTools,
+                    ]);
+                    container.setAttribute(
+                        "data-selected-tools",
+                        JSON.stringify(Array.from(merged)),
+                    );
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring data-selected-tools attribute after inserting search results:",
+                    e,
+                );
+            }
 
             // Update tool mapping with search results
             updateToolMapping(container);
+
+            // Re-initialize selector behavior for the add-server container
+            try {
+                initToolSelect(
+                    "associatedTools",
+                    "selectedToolsPills",
+                    "selectedToolsWarning",
+                    6,
+                    "selectAllToolsBtn",
+                    "clearAllToolsBtn",
+                );
+
+                // Restore any previously selected tool IDs stored on the container
+                try {
+                    const dataAttr = container.getAttribute(
+                        "data-selected-tools",
+                    );
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error(
+                                "Error parsing data-selected-tools:",
+                                e,
+                            );
+                        }
+                    }
+
+                    // If parsed attribute is missing or an empty array, fall back
+                    // to the in-memory `window._selectedAssociatedTools` saved earlier.
+                    if (
+                        (!selectedIds ||
+                            !Array.isArray(selectedIds) ||
+                            selectedIds.length === 0) &&
+                        Array.isArray(window._selectedAssociatedTools)
+                    ) {
+                        selectedIds = window._selectedAssociatedTools.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring data-selected-tools after search:",
+                        e,
+                    );
+                }
+            } catch (e) {
+                console.error(
+                    "Error initializing associatedTools selector:",
+                    e,
+                );
+            }
 
             // Hide no results message
             if (noResultsMessage) {
@@ -22078,6 +23555,41 @@ async function serverSidePromptSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // Persist current selections to window fallback before we replace/clear the container
+    try {
+        const currentChecked = Array.from(
+            container.querySelectorAll('input[type="checkbox"]:checked'),
+        ).map((cb) => cb.value);
+        if (
+            !Array.isArray(window._selectedAssociatedPrompts) ||
+            window._selectedAssociatedPrompts.length === 0
+        ) {
+            window._selectedAssociatedPrompts = currentChecked.slice();
+        } else {
+            const merged = new Set([
+                ...(window._selectedAssociatedPrompts || []),
+                ...currentChecked,
+            ]);
+            window._selectedAssociatedPrompts = Array.from(merged);
+        }
+    } catch (e) {
+        console.error(
+            "Error capturing current prompt selections before search:",
+            e,
+        );
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22090,11 +23602,17 @@ async function serverSidePromptSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompt selector
+        // If search term is empty, reload the default prompt selector with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
             );
+
+            const response = await fetch(promptsUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22104,15 +23622,67 @@ async function serverSidePromptSearch(searchTerm) {
                     noResultsMessage.style.display = "none";
                 }
 
-                // Initialize prompt mapping if needed
-                initPromptSelect(
-                    "associatedPrompts",
-                    "selectedPromptsPills",
-                    "selectedPromptsWarning",
-                    6,
-                    "selectAllPromptsBtn",
-                    "clearAllPromptsBtn",
-                );
+                try {
+                    // Update mapping and ensure persisted selections are applied
+                    // Initialize prompt mapping if needed
+                    // If the server did not supply `data-selected-prompts`, restore from fallback
+                    const dataAttr = container.getAttribute(
+                        "data-selected-prompts",
+                    );
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error(
+                                "Error parsing server data-selected-prompts:",
+                                e,
+                            );
+                        }
+                    }
+
+                    if (
+                        (!selectedIds ||
+                            !Array.isArray(selectedIds) ||
+                            selectedIds.length === 0) &&
+                        Array.isArray(window._selectedAssociatedPrompts)
+                    ) {
+                        selectedIds = window._selectedAssociatedPrompts.slice();
+                    }
+
+                    initPromptSelect(
+                        "associatedPrompts",
+                        "selectedPromptsPills",
+                        "selectedPromptsWarning",
+                        6,
+                        "selectAllPromptsBtn",
+                        "clearAllPromptsBtn",
+                    );
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring selections after loading default prompts:",
+                        e,
+                    );
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load prompts</div>';
@@ -22126,9 +23696,14 @@ async function serverSidePromptSearch(searchTerm) {
     }
 
     try {
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
-        );
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(`[Prompt Search] Searching prompts with URL: ${searchUrl}`);
+
+        const response = await fetch(searchUrl);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -22155,6 +23730,57 @@ async function serverSidePromptSearch(searchTerm) {
                     </label>
                 `;
             });
+
+            // Before initializing, ensure any persisted selections are merged into the container
+            try {
+                const existingAttr = container.getAttribute(
+                    "data-selected-prompts",
+                );
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error(
+                            "Error parsing existing data-selected-prompts after search insert:",
+                            e,
+                        );
+                    }
+                }
+
+                if (
+                    (!existingIds ||
+                        !Array.isArray(existingIds) ||
+                        existingIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedPrompts) &&
+                    window._selectedAssociatedPrompts.length > 0
+                ) {
+                    container.setAttribute(
+                        "data-selected-prompts",
+                        JSON.stringify(
+                            window._selectedAssociatedPrompts.slice(),
+                        ),
+                    );
+                } else if (
+                    Array.isArray(existingIds) &&
+                    Array.isArray(window._selectedAssociatedPrompts) &&
+                    window._selectedAssociatedPrompts.length > 0
+                ) {
+                    const merged = new Set([
+                        ...(existingIds || []),
+                        ...window._selectedAssociatedPrompts,
+                    ]);
+                    container.setAttribute(
+                        "data-selected-prompts",
+                        JSON.stringify(Array.from(merged)),
+                    );
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring data-selected-prompts attribute after inserting search results:",
+                    e,
+                );
+            }
 
             container.innerHTML = searchResultsHtml;
 
@@ -22203,6 +23829,41 @@ async function serverSideResourceSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // Persist current selections to window fallback before we replace/clear the container
+    try {
+        const currentChecked = Array.from(
+            container.querySelectorAll('input[type="checkbox"]:checked'),
+        ).map((cb) => cb.value);
+        if (
+            !Array.isArray(window._selectedAssociatedResources) ||
+            window._selectedAssociatedResources.length === 0
+        ) {
+            window._selectedAssociatedResources = currentChecked.slice();
+        } else {
+            const merged = new Set([
+                ...(window._selectedAssociatedResources || []),
+                ...currentChecked,
+            ]);
+            window._selectedAssociatedResources = Array.from(merged);
+        }
+    } catch (e) {
+        console.error(
+            "Error capturing current resource selections before search:",
+            e,
+        );
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22215,29 +23876,114 @@ async function serverSideResourceSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompt selector
+        // If search term is empty, reload the default resource selector with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Resource Search] Loading default resources with URL: ${resourcesUrl}`,
             );
+
+            const response = await fetch(resourcesUrl);
             if (response.ok) {
                 const html = await response.text();
-                container.innerHTML = html;
 
-                // Hide no results message
-                if (noResultsMessage) {
-                    noResultsMessage.style.display = "none";
+                // Persist current selections to window fallback before we replace/clear the container
+                try {
+                    const currentChecked = Array.from(
+                        container.querySelectorAll(
+                            'input[type="checkbox"]:checked',
+                        ),
+                    ).map((cb) => cb.value);
+                    if (
+                        !Array.isArray(window._selectedAssociatedResources) ||
+                        window._selectedAssociatedResources.length === 0
+                    ) {
+                        window._selectedAssociatedResources =
+                            currentChecked.slice();
+                    } else {
+                        const merged = new Set([
+                            ...(window._selectedAssociatedResources || []),
+                            ...currentChecked,
+                        ]);
+                        window._selectedAssociatedResources =
+                            Array.from(merged);
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error capturing current resource selections before search:",
+                        e,
+                    );
                 }
 
-                // Initialize resource mapping if needed
-                initResourceSelect(
-                    "associatedResources",
-                    "selectedResourcesPills",
-                    "selectedResourcesWarning",
-                    6,
-                    "selectAllResourcesBtn",
-                    "clearAllResourcesBtn",
-                );
+                container.innerHTML = html;
+
+                // If the container has been re-rendered server-side and our
+                // `data-selected-resources` attribute was lost, restore from the
+                // global fallback `window._selectedAssociatedResources`.
+                try {
+                    // Initialize resource mapping if needed
+                    initResourceSelect(
+                        "associatedResources",
+                        "selectedResourcesPills",
+                        "selectedResourcesWarning",
+                        6,
+                        "selectAllResourcesBtn",
+                        "clearAllResourcesBtn",
+                    );
+
+                    const dataAttr = container.getAttribute(
+                        "data-selected-resources",
+                    );
+                    let selectedIds = null;
+                    if (dataAttr) {
+                        try {
+                            selectedIds = JSON.parse(dataAttr);
+                        } catch (e) {
+                            console.error(
+                                "Error parsing server data-selected-resources:",
+                                e,
+                            );
+                        }
+                    }
+
+                    if (
+                        (!selectedIds ||
+                            !Array.isArray(selectedIds) ||
+                            selectedIds.length === 0) &&
+                        Array.isArray(window._selectedAssociatedResources)
+                    ) {
+                        selectedIds =
+                            window._selectedAssociatedResources.slice();
+                    }
+
+                    if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            if (selectedIds.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
+                        }
+                    }
+                } catch (e) {
+                    console.error(
+                        "Error restoring selections after loading default resources:",
+                        e,
+                    );
+                }
             } else {
                 container.innerHTML =
                     '<div class="text-center py-4 text-red-600">Failed to load resources</div>';
@@ -22251,9 +23997,16 @@ async function serverSideResourceSearch(searchTerm) {
     }
 
     try {
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(
+            `[Resource Search] Searching resources with URL: ${searchUrl}`,
         );
+
+        const response = await fetch(searchUrl);
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -22280,6 +24033,59 @@ async function serverSideResourceSearch(searchTerm) {
                     </label>
                 `;
             });
+
+            container.innerHTML = searchResultsHtml;
+
+            // Before initializing, ensure any persisted selections are merged into the container
+            try {
+                const existingAttr = container.getAttribute(
+                    "data-selected-resources",
+                );
+                let existingIds = null;
+                if (existingAttr) {
+                    try {
+                        existingIds = JSON.parse(existingAttr);
+                    } catch (e) {
+                        console.error(
+                            "Error parsing existing data-selected-resources after search insert:",
+                            e,
+                        );
+                    }
+                }
+
+                if (
+                    (!existingIds ||
+                        !Array.isArray(existingIds) ||
+                        existingIds.length === 0) &&
+                    Array.isArray(window._selectedAssociatedResources) &&
+                    window._selectedAssociatedResources.length > 0
+                ) {
+                    container.setAttribute(
+                        "data-selected-resources",
+                        JSON.stringify(
+                            window._selectedAssociatedResources.slice(),
+                        ),
+                    );
+                } else if (
+                    Array.isArray(existingIds) &&
+                    Array.isArray(window._selectedAssociatedResources) &&
+                    window._selectedAssociatedResources.length > 0
+                ) {
+                    const merged = new Set([
+                        ...(existingIds || []),
+                        ...window._selectedAssociatedResources,
+                    ]);
+                    container.setAttribute(
+                        "data-selected-resources",
+                        JSON.stringify(Array.from(merged)),
+                    );
+                }
+            } catch (e) {
+                console.error(
+                    "Error restoring data-selected-resources attribute after inserting search results:",
+                    e,
+                );
+            }
 
             container.innerHTML = searchResultsHtml;
 
@@ -22328,6 +24134,43 @@ async function serverSideEditToolSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Edit Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // Persist current selections before we replace/clear the container
+    let serverToolsData = null;
+    let currentCheckedTools = [];
+    try {
+        // Preserve the data-server-tools attribute
+        const dataAttr = container.getAttribute("data-server-tools");
+        if (dataAttr) {
+            serverToolsData = dataAttr;
+        }
+
+        // Also capture currently checked items (important for search results)
+        currentCheckedTools = Array.from(
+            container.querySelectorAll('input[type="checkbox"]:checked'),
+        ).map((cb) => cb.value);
+
+        console.log(
+            `[Edit Tool Search] Persisted ${currentCheckedTools.length} checked tools before search:`,
+            currentCheckedTools,
+        );
+    } catch (e) {
+        console.error(
+            "Error preserving selections before edit tool search:",
+            e,
+        );
+    }
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22340,14 +24183,29 @@ async function serverSideEditToolSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default tool selector partial
+        // If search term is empty, reload the default tool selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`,
+            const toolsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Edit Tool Search] Loading default tools with URL: ${toolsUrl}`,
             );
+
+            const response = await fetch(toolsUrl);
             if (response.ok) {
                 const html = await response.text();
+
                 container.innerHTML = html;
+
+                // Restore the data-server-tools attribute after innerHTML replacement
+                if (serverToolsData) {
+                    container.setAttribute(
+                        "data-server-tools",
+                        serverToolsData,
+                    );
+                }
 
                 // Hide no results message
                 if (noResultsMessage) {
@@ -22358,46 +24216,64 @@ async function serverSideEditToolSearch(searchTerm) {
                 updateToolMapping(container);
 
                 // Restore checked state for any tools already associated with the server
+                // PLUS any tools that were checked during the search
                 try {
                     const dataAttr =
                         container.getAttribute("data-server-tools");
+                    const toolsToCheck = new Set();
+
+                    // Add server-associated tools
                     if (dataAttr) {
                         const serverTools = JSON.parse(dataAttr);
                         if (
                             Array.isArray(serverTools) &&
                             serverTools.length > 0
                         ) {
-                            // Normalize serverTools to a set of strings for robust comparison
-                            const serverToolSet = new Set(
-                                serverTools.map((s) => String(s)),
+                            serverTools.forEach((t) =>
+                                toolsToCheck.add(String(t)),
                             );
-                            const checkboxes = container.querySelectorAll(
-                                'input[name="associatedTools"]',
-                            );
-                            checkboxes.forEach((cb) => {
-                                const toolId = cb.value;
-                                const toolName =
-                                    cb.getAttribute("data-tool-name") ||
-                                    (window.toolMapping &&
-                                        window.toolMapping[cb.value]);
-                                if (
-                                    serverToolSet.has(toolId) ||
-                                    (toolName &&
-                                        serverToolSet.has(String(toolName)))
-                                ) {
-                                    cb.checked = true;
-                                }
-                            });
+                        }
+                    }
 
-                            // Trigger update so pills/counts refresh
-                            const firstCb = container.querySelector(
-                                'input[type="checkbox"]',
-                            );
-                            if (firstCb) {
-                                firstCb.dispatchEvent(
-                                    new Event("change", { bubbles: true }),
-                                );
+                    // Add tools that were checked during search
+                    if (
+                        Array.isArray(currentCheckedTools) &&
+                        currentCheckedTools.length > 0
+                    ) {
+                        currentCheckedTools.forEach((t) =>
+                            toolsToCheck.add(String(t)),
+                        );
+                        console.log(
+                            `[Edit Tool Search] Restoring ${currentCheckedTools.length} tools checked during search`,
+                        );
+                    }
+
+                    if (toolsToCheck.size > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedTools"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const toolId = cb.value;
+                            const toolName =
+                                cb.getAttribute("data-tool-name") ||
+                                (window.toolMapping &&
+                                    window.toolMapping[cb.value]);
+                            if (
+                                toolsToCheck.has(toolId) ||
+                                (toolName && toolsToCheck.has(String(toolName)))
+                            ) {
+                                cb.checked = true;
                             }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
                         }
                     }
                 } catch (e) {
@@ -22429,10 +24305,16 @@ async function serverSideEditToolSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/tools/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(
+            `[Edit Tool Search] Searching tools with URL: ${searchUrl}`,
         );
+
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -22566,6 +24448,26 @@ async function serverSideEditPromptsSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Edit Prompt Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // Capture currently checked prompts BEFORE clearing the container
+    const currentlyCheckedPrompts = new Set();
+    const existingCheckboxes = container.querySelectorAll(
+        'input[name="associatedPrompts"]:checked',
+    );
+    existingCheckboxes.forEach((cb) => {
+        currentlyCheckedPrompts.add(cb.value);
+    });
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22578,11 +24480,17 @@ async function serverSideEditPromptsSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default prompts selector partial
+        // If search term is empty, reload the default prompts selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`,
+            const promptsUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Edit Prompt Search] Loading default prompts with URL: ${promptsUrl}`,
             );
+
+            const response = await fetch(promptsUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22595,51 +24503,52 @@ async function serverSideEditPromptsSearch(searchTerm) {
                 // Update prompt mapping
                 updatePromptMapping(container);
 
-                // Restore checked state for any prompts already associated with the server
+                // Restore checked state for prompts (both original server associations AND newly selected ones)
                 try {
+                    // Combine original server prompts with currently checked prompts
+                    const allSelectedPrompts = new Set(currentlyCheckedPrompts);
+
                     const dataAttr = container.getAttribute(
                         "data-server-prompts",
                     );
                     if (dataAttr) {
                         const serverPrompts = JSON.parse(dataAttr);
-                        if (
-                            Array.isArray(serverPrompts) &&
-                            serverPrompts.length > 0
-                        ) {
-                            // Normalize serverPrompts to a set of strings for robust comparison
-                            const serverPromptSet = new Set(
-                                serverPrompts.map((s) => String(s)),
+                        if (Array.isArray(serverPrompts)) {
+                            serverPrompts.forEach((p) =>
+                                allSelectedPrompts.add(String(p)),
                             );
+                        }
+                    }
 
-                            const checkboxes = container.querySelectorAll(
-                                'input[name="associatedPrompts"]',
-                            );
-                            checkboxes.forEach((cb) => {
-                                const promptId = cb.value;
-                                const promptName =
-                                    cb.getAttribute("data-prompt-name") ||
-                                    (window.promptMapping &&
-                                        window.promptMapping[cb.value]);
+                    if (allSelectedPrompts.size > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedPrompts"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const promptId = cb.value;
+                            const promptName =
+                                cb.getAttribute("data-prompt-name") ||
+                                (window.promptMapping &&
+                                    window.promptMapping[cb.value]);
 
-                                // Check by id first (string), then by name as a fallback
-                                if (
-                                    serverPromptSet.has(promptId) ||
-                                    (promptName &&
-                                        serverPromptSet.has(String(promptName)))
-                                ) {
-                                    cb.checked = true;
-                                }
-                            });
-
-                            // Trigger update so pills/counts refresh
-                            const firstCb = container.querySelector(
-                                'input[type="checkbox"]',
-                            );
-                            if (firstCb) {
-                                firstCb.dispatchEvent(
-                                    new Event("change", { bubbles: true }),
-                                );
+                            // Check by id first (string), then by name as a fallback
+                            if (
+                                allSelectedPrompts.has(promptId) ||
+                                (promptName &&
+                                    allSelectedPrompts.has(String(promptName)))
+                            ) {
+                                cb.checked = true;
                             }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
                         }
                     }
                 } catch (e) {
@@ -22671,10 +24580,16 @@ async function serverSideEditPromptsSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/prompts/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(
+            `[Edit Prompt Search] Searching prompts with URL: ${searchUrl}`,
         );
+
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -22808,6 +24723,26 @@ async function serverSideEditResourcesSearch(searchTerm) {
         return;
     }
 
+    // Get selected gateway IDs to maintain filtering
+    const selectedGatewayIds = getSelectedGatewayIds
+        ? getSelectedGatewayIds()
+        : [];
+    const gatewayIdParam =
+        selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
+
+    console.log(
+        `[Edit Resource Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
+    );
+
+    // Capture currently checked resources BEFORE clearing the container
+    const currentlyCheckedResources = new Set();
+    const existingCheckboxes = container.querySelectorAll(
+        'input[name="associatedResources"]:checked',
+    );
+    existingCheckboxes.forEach((cb) => {
+        currentlyCheckedResources.add(cb.value);
+    });
+
     // Show loading state
     container.innerHTML = `
         <div class="text-center py-4">
@@ -22820,11 +24755,17 @@ async function serverSideEditResourcesSearch(searchTerm) {
     `;
 
     if (searchTerm.trim() === "") {
-        // If search term is empty, reload the default resources selector partial
+        // If search term is empty, reload the default resources selector partial with gateway filter
         try {
-            const response = await fetch(
-                `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`,
+            const resourcesUrl = gatewayIdParam
+                ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+                : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
+
+            console.log(
+                `[Edit Resource Search] Loading default resources with URL: ${resourcesUrl}`,
             );
+
+            const response = await fetch(resourcesUrl);
             if (response.ok) {
                 const html = await response.text();
                 container.innerHTML = html;
@@ -22836,50 +24777,55 @@ async function serverSideEditResourcesSearch(searchTerm) {
 
                 // Update resource mapping
                 updateResourceMapping(container);
-                // Restore checked state for any resources already associated with the server
+
+                // Restore checked state for resources (both original server associations AND newly selected ones)
                 try {
+                    // Combine original server resources with currently checked resources
+                    const allSelectedResources = new Set(
+                        currentlyCheckedResources,
+                    );
+
                     const dataAttr = container.getAttribute(
                         "data-server-resources",
                     );
                     if (dataAttr) {
                         const serverResources = JSON.parse(dataAttr);
-                        if (
-                            Array.isArray(serverResources) &&
-                            serverResources.length > 0
-                        ) {
-                            // Normalize serverResources to a set of strings for robust comparison
-                            const serverResourceSet = new Set(
-                                serverResources.map((s) => String(s)),
+                        if (Array.isArray(serverResources)) {
+                            serverResources.forEach((r) =>
+                                allSelectedResources.add(String(r)),
                             );
-                            const checkboxes = container.querySelectorAll(
-                                'input[name="associatedResources"]',
-                            );
-                            checkboxes.forEach((cb) => {
-                                const resourceId = cb.value;
-                                const resourceName =
-                                    cb.getAttribute("data-resource-name") ||
-                                    (window.resourceMapping &&
-                                        window.resourceMapping[cb.value]);
-                                if (
-                                    serverResourceSet.has(resourceId) ||
-                                    (resourceName &&
-                                        serverResourceSet.has(
-                                            String(resourceName),
-                                        ))
-                                ) {
-                                    cb.checked = true;
-                                }
-                            });
+                        }
+                    }
 
-                            // Trigger update so pills/counts refresh
-                            const firstCb = container.querySelector(
-                                'input[type="checkbox"]',
-                            );
-                            if (firstCb) {
-                                firstCb.dispatchEvent(
-                                    new Event("change", { bubbles: true }),
-                                );
+                    if (allSelectedResources.size > 0) {
+                        const checkboxes = container.querySelectorAll(
+                            'input[name="associatedResources"]',
+                        );
+                        checkboxes.forEach((cb) => {
+                            const resourceId = cb.value;
+                            const resourceName =
+                                cb.getAttribute("data-resource-name") ||
+                                (window.resourceMapping &&
+                                    window.resourceMapping[cb.value]);
+                            if (
+                                allSelectedResources.has(resourceId) ||
+                                (resourceName &&
+                                    allSelectedResources.has(
+                                        String(resourceName),
+                                    ))
+                            ) {
+                                cb.checked = true;
                             }
+                        });
+
+                        // Trigger update so pills/counts refresh
+                        const firstCb = container.querySelector(
+                            'input[type="checkbox"]',
+                        );
+                        if (firstCb) {
+                            firstCb.dispatchEvent(
+                                new Event("change", { bubbles: true }),
+                            );
                         }
                     }
                 } catch (e) {
@@ -22911,10 +24857,16 @@ async function serverSideEditResourcesSearch(searchTerm) {
     }
 
     try {
-        // Call the search API
-        const response = await fetch(
-            `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`,
+        // Call the search API with gateway filter
+        const searchUrl = gatewayIdParam
+            ? `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+            : `${window.ROOT_PATH}/admin/resources/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
+
+        console.log(
+            `[Edit Resource Search] Searching resources with URL: ${searchUrl}`,
         );
+
+        const response = await fetch(searchUrl);
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -23632,6 +25584,378 @@ function updateEntityStatus(type, data) {
         updateEntityActionButtons(actionCell, type, data.id, isEnabled);
     }
 }
+// ============================================================================
+// Structured Logging UI Functions
+// ============================================================================
+
+// Current log search state
+let currentLogPage = 0;
+const currentLogLimit = 50;
+// eslint-disable-next-line no-unused-vars
+let currentLogFilters = {};
+const PERFORMANCE_HISTORY_HOURS = 24;
+const PERFORMANCE_AGGREGATION_OPTIONS = {
+    "5m": { label: "5-minute aggregation", query: "5m" },
+    "24h": { label: "24-hour aggregation", query: "24h" },
+};
+let currentPerformanceAggregationKey = "5m";
+
+function getPerformanceAggregationConfig(
+    rangeKey = currentPerformanceAggregationKey,
+) {
+    return (
+        PERFORMANCE_AGGREGATION_OPTIONS[rangeKey] ||
+        PERFORMANCE_AGGREGATION_OPTIONS["5m"]
+    );
+}
+
+function getPerformanceAggregationLabel(
+    rangeKey = currentPerformanceAggregationKey,
+) {
+    return getPerformanceAggregationConfig(rangeKey).label;
+}
+
+function getPerformanceAggregationQuery(
+    rangeKey = currentPerformanceAggregationKey,
+) {
+    return getPerformanceAggregationConfig(rangeKey).query;
+}
+
+function syncPerformanceAggregationSelect() {
+    const select = document.getElementById("performance-aggregation-select");
+    if (select && select.value !== currentPerformanceAggregationKey) {
+        select.value = currentPerformanceAggregationKey;
+    }
+}
+
+function setPerformanceAggregationVisibility(shouldShow) {
+    const controls = document.getElementById(
+        "performance-aggregation-controls",
+    );
+    if (!controls) {
+        return;
+    }
+    if (shouldShow) {
+        controls.classList.remove("hidden");
+    } else {
+        controls.classList.add("hidden");
+    }
+}
+
+function setLogFiltersVisibility(shouldShow) {
+    const filters = document.getElementById("log-filters");
+    if (!filters) {
+        return;
+    }
+    if (shouldShow) {
+        filters.classList.remove("hidden");
+    } else {
+        filters.classList.add("hidden");
+    }
+}
+
+function handlePerformanceAggregationChange(event) {
+    const selectedKey = event?.target?.value;
+    if (selectedKey && PERFORMANCE_AGGREGATION_OPTIONS[selectedKey]) {
+        showPerformanceMetrics(selectedKey);
+    }
+}
+
+/**
+ * Search structured logs with filters
+ */
+async function searchStructuredLogs() {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(true);
+    const levelFilter = document.getElementById("log-level-filter")?.value;
+    const componentFilter = document.getElementById(
+        "log-component-filter",
+    )?.value;
+    const searchQuery = document.getElementById("log-search")?.value;
+
+    // Restore default log table headers (in case we're coming from performance metrics view)
+    restoreLogTableHeaders();
+
+    // Build search request
+    const searchRequest = {
+        limit: currentLogLimit,
+        offset: currentLogPage * currentLogLimit,
+        sort_by: "timestamp",
+        sort_order: "desc",
+    };
+
+    // Only add filters if they have actual values (not empty strings)
+    if (searchQuery && searchQuery.trim() !== "") {
+        const trimmedSearch = searchQuery.trim();
+        // Check if search is a correlation ID (32 hex chars or UUID format) or text search
+        const correlationIdPattern =
+            /^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+        if (correlationIdPattern.test(trimmedSearch)) {
+            searchRequest.correlation_id = trimmedSearch;
+        } else {
+            searchRequest.search_text = trimmedSearch;
+        }
+    }
+    if (levelFilter && levelFilter !== "") {
+        searchRequest.level = [levelFilter];
+    }
+    if (componentFilter && componentFilter !== "") {
+        searchRequest.component = [componentFilter];
+    }
+
+    // Store filters for pagination
+    currentLogFilters = searchRequest;
+
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/search`,
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(searchRequest),
+            },
+        );
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            console.error("API Error Response:", errorText);
+            throw new Error(
+                `Failed to search logs: ${response.statusText} - ${errorText}`,
+            );
+        }
+
+        const data = await response.json();
+        displayLogResults(data);
+    } catch (error) {
+        console.error("Error searching logs:", error);
+        showToast("Failed to search logs: " + error.message, "error");
+        document.getElementById("logs-tbody").innerHTML = `
+            <tr><td colspan="7" class="px-4 py-4 text-center text-red-600 dark:text-red-400">
+                ❌ Error: ${escapeHtml(error.message)}
+            </td></tr>
+        `;
+    }
+}
+
+/**
+ * Display log search results
+ */
+function displayLogResults(data) {
+    const tbody = document.getElementById("logs-tbody");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+    const prevButton = document.getElementById("prev-page");
+    const nextButton = document.getElementById("next-page");
+
+    // Ensure default headers are shown for log view
+    restoreLogTableHeaders();
+
+    if (!data.results || data.results.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                📭 No logs found matching your criteria
+            </td></tr>
+        `;
+        logCount.textContent = "0 logs";
+        logStats.innerHTML = '<span class="text-sm">No results</span>';
+        return;
+    }
+
+    // Update stats
+    logCount.textContent = `${data.total.toLocaleString()} logs`;
+    const start = currentLogPage * currentLogLimit + 1;
+    const end = Math.min(start + data.results.length - 1, data.total);
+    logStats.innerHTML = `
+        <span class="text-sm">
+            Showing ${start}-${end} of ${data.total.toLocaleString()} logs
+        </span>
+    `;
+
+    // Update pagination buttons
+    prevButton.disabled = currentLogPage === 0;
+    nextButton.disabled = end >= data.total;
+
+    // Render log entries
+    tbody.innerHTML = data.results
+        .map((log) => {
+            const levelClass = getLogLevelClass(log.level);
+            const durationDisplay = log.duration_ms
+                ? `${log.duration_ms.toFixed(2)}ms`
+                : "-";
+            const correlationId = log.correlation_id || "-";
+            const userDisplay = log.user_email || log.user_id || "-";
+
+            return `
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
+                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${formatTimestamp(log.timestamp)}
+                </td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 text-xs font-semibold rounded ${levelClass}">
+                        ${log.level}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(log.component || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${escapeHtml(truncateText(log.message, 80))}
+                    ${log.error_details ? '<span class="text-red-600">⚠️</span>' : ""}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(userDisplay)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${durationDisplay}
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    ${
+                        correlationId !== "-"
+                            ? `
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(correlationId)}')"
+                                class="text-blue-600 dark:text-blue-400 hover:underline">
+                            ${escapeHtml(truncateText(correlationId, 12))}
+                        </button>
+                    `
+                            : "-"
+                    }
+                </td>
+            </tr>
+        `;
+        })
+        .join("");
+}
+
+/**
+ * Get CSS class for log level badge
+ */
+function getLogLevelClass(level) {
+    const classes = {
+        DEBUG: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
+        INFO: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+        WARNING:
+            "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        ERROR: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+        CRITICAL:
+            "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
+    };
+    return classes[level] || classes.INFO;
+}
+
+/**
+ * Format timestamp for display
+ */
+function formatTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+    });
+}
+
+/**
+ * Truncate text with ellipsis
+ */
+function truncateText(text, maxLength) {
+    if (!text) {
+        return "";
+    }
+    return text.length > maxLength
+        ? text.substring(0, maxLength) + "..."
+        : text;
+}
+
+/**
+ * Show detailed log entry (future enhancement - modal)
+ */
+function showLogDetails(logId, correlationId) {
+    if (correlationId) {
+        showCorrelationTrace(correlationId);
+    } else {
+        console.log("Log details:", logId);
+        showToast("Full log details view coming soon", "info");
+    }
+}
+
+/**
+ * Restore default log table headers
+ */
+function restoreLogTableHeaders() {
+    const thead = document.getElementById("logs-thead");
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Level
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Component
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Message
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    User
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Duration
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Correlation ID
+                </th>
+            </tr>
+        `;
+    }
+}
+
+/**
+ * Trace all logs for a correlation ID
+ */
+async function showCorrelationTrace(correlationId) {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(true);
+    if (!correlationId) {
+        const searchInput = document.getElementById("log-search");
+        correlationId = prompt(
+            "Enter Correlation ID to trace:",
+            searchInput?.value || "",
+        );
+        if (!correlationId) {
+            return;
+        }
+    }
+
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
+            {
+                method: "GET",
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error(`Failed to fetch trace: ${response.statusText}`);
+        }
+
+        const trace = await response.json();
+        displayCorrelationTrace(trace);
+    } catch (error) {
+        console.error("Error fetching correlation trace:", error);
+        showToast(
+            "Failed to fetch correlation trace: " + error.message,
+            "error",
+        );
+    }
+}
 
 /**
  * Generates the HTML for the status badge (Active/Inactive/Offline)
@@ -23677,7 +26001,6 @@ function generateStatusBadgeHtml(enabled, reachable, typeLabel) {
 /**
  * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
  */
-
 function updateEntityActionButtons(cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
     const form = cell.querySelector('form[action*="/toggle"]');
@@ -23790,3 +26113,719 @@ console.log("🔧 MCP SERVERS SEARCH DEBUG FUNCTIONS LOADED!");
 console.log("💡 Use: window.emergencyFixMCPSearch() to fix search");
 console.log("💡 Use: window.testMCPSearchManually('github') to test search");
 console.log("💡 Use: window.debugMCPSearchState() to check current state");
+
+/**
+ * Display correlation trace results
+ */
+function displayCorrelationTrace(trace) {
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
+    // Calculate total events
+    const totalEvents =
+        (trace.logs?.length || 0) +
+        (trace.security_events?.length || 0) +
+        (trace.audit_trails?.length || 0);
+
+    // Update table headers for trace view
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Event Type
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Component
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Message/Description
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    User
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Duration
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Status/Severity
+                </th>
+            </tr>
+        `;
+    }
+
+    // Update stats
+    logCount.textContent = `${totalEvents} events`;
+    logStats.innerHTML = `
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+            <div>
+                <strong>Correlation ID:</strong><br>
+                <code class="text-xs bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded">${escapeHtml(trace.correlation_id)}</code>
+            </div>
+            <div>
+                <strong>Logs:</strong> <span class="text-blue-600">${trace.log_count || 0}</span>
+            </div>
+            <div>
+                <strong>Security:</strong> <span class="text-red-600">${trace.security_events?.length || 0}</span>
+            </div>
+            <div>
+                <strong>Audit:</strong> <span class="text-yellow-600">${trace.audit_trails?.length || 0}</span>
+            </div>
+            <div>
+                <strong>Duration:</strong> ${trace.total_duration_ms ? trace.total_duration_ms.toFixed(2) + "ms" : "N/A"}
+            </div>
+        </div>
+    `;
+
+    if (totalEvents === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                📭 No events found for this correlation ID
+            </td></tr>
+        `;
+        return;
+    }
+
+    // Combine all events into a unified timeline
+    const allEvents = [];
+
+    // Add logs
+    (trace.logs || []).forEach((log) => {
+        const levelClass = getLogLevelClass(log.level);
+        allEvents.push({
+            timestamp: new Date(log.timestamp),
+            html: `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-blue-500">
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${formatTimestamp(log.timestamp)}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200">
+                            📝 Log
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(log.component || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${escapeHtml(log.message)}
+                        ${log.error_details ? `<br><small class="text-red-600">⚠️ ${escapeHtml(log.error_details.error_message || JSON.stringify(log.error_details))}</small>` : ""}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(log.user_email || log.user_id || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${log.duration_ms ? log.duration_ms.toFixed(2) + "ms" : "-"}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded ${levelClass}">
+                            ${log.level}
+                        </span>
+                    </td>
+                </tr>
+            `,
+        });
+    });
+
+    // Add security events
+    (trace.security_events || []).forEach((event) => {
+        const severityClass = getSeverityClass(event.severity);
+        const threatScore = event.threat_score
+            ? (event.threat_score * 100).toFixed(0)
+            : 0;
+        allEvents.push({
+            timestamp: new Date(event.timestamp),
+            html: `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-red-500 bg-red-50 dark:bg-red-900/10">
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${formatTimestamp(event.timestamp)}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200">
+                            🛡️ Security
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(event.event_type || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${escapeHtml(event.description || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(event.user_email || event.user_id || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                        -
+                    </td>
+                    <td class="px-4 py-3">
+                        <div class="flex flex-col gap-1">
+                            <span class="px-2 py-1 text-xs font-semibold rounded ${severityClass} w-fit">
+                                ${event.severity}
+                            </span>
+                            <div class="flex items-center gap-1">
+                                <span class="text-xs text-gray-600 dark:text-gray-400">Threat:</span>
+                                <div class="w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-2">
+                                    <div class="bg-red-600 h-2 rounded-full" style="width: ${threatScore}%"></div>
+                                </div>
+                                <span class="text-xs font-medium text-gray-700 dark:text-gray-300">${threatScore}%</span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            `,
+        });
+    });
+
+    // Add audit trails
+    (trace.audit_trails || []).forEach((audit) => {
+        const actionBadgeColors = {
+            create: "bg-green-200 text-green-800",
+            update: "bg-blue-200 text-blue-800",
+            delete: "bg-red-200 text-red-800",
+            read: "bg-gray-200 text-gray-800",
+        };
+        const actionBadge =
+            actionBadgeColors[audit.action?.toLowerCase()] ||
+            "bg-purple-200 text-purple-800";
+        const statusIcon = audit.success ? "✓" : "✗";
+        const statusClass = audit.success ? "text-green-600" : "text-red-600";
+        const statusBg = audit.success
+            ? "bg-green-100 dark:bg-green-900"
+            : "bg-red-100 dark:bg-red-900";
+
+        allEvents.push({
+            timestamp: new Date(audit.timestamp),
+            html: `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 border-l-4 border-yellow-500 bg-yellow-50 dark:bg-yellow-900/10">
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${formatTimestamp(audit.timestamp)}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded ${actionBadge}">
+                            📋 ${audit.action?.toUpperCase()}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(audit.resource_type || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        <strong>${audit.action}:</strong> ${audit.resource_type}
+                        <code class="text-xs bg-gray-200 px-1 rounded">${escapeHtml(audit.resource_id || "-")}</code>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(audit.user_email || audit.user_id || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                        -
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded ${statusBg} ${statusClass}">
+                            ${statusIcon} ${audit.success ? "Success" : "Failed"}
+                        </span>
+                    </td>
+                </tr>
+            `,
+        });
+    });
+
+    // Sort all events chronologically
+    allEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+    // Render sorted events
+    tbody.innerHTML = allEvents.map((event) => event.html).join("");
+}
+
+/**
+ * Show security events
+ */
+async function showSecurityEvents() {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(false);
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
+            {
+                method: "GET",
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch security events: ${response.statusText}`,
+            );
+        }
+
+        const events = await response.json();
+        displaySecurityEvents(events);
+    } catch (error) {
+        console.error("Error fetching security events:", error);
+        showToast("Failed to fetch security events: " + error.message, "error");
+    }
+}
+
+/**
+ * Display security events
+ */
+function displaySecurityEvents(events) {
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
+    // Update table headers for security events
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Severity
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Event Type
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Description
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    User/Source
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Threat Score
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Correlation ID
+                </th>
+            </tr>
+        `;
+    }
+
+    logCount.textContent = `${events.length} security events`;
+    logStats.innerHTML = `
+        <span class="text-sm text-red-600 dark:text-red-400">
+            🛡️ Unresolved Security Events
+        </span>
+    `;
+
+    if (events.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
+                ✅ No unresolved security events
+            </td></tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = events
+        .map((event) => {
+            const severityClass = getSeverityClass(event.severity);
+            const threatScore = (event.threat_score * 100).toFixed(0);
+
+            return `
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${formatTimestamp(event.timestamp)}
+                </td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 text-xs font-semibold rounded ${severityClass}">
+                        ${event.severity}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(event.event_type)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${escapeHtml(event.description)}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(event.user_email || event.user_id || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    <div class="flex items-center">
+                        <div class="w-16 bg-gray-200 dark:bg-gray-600 rounded-full h-2 mr-2">
+                            <div class="bg-red-600 h-2 rounded-full" style="width: ${threatScore}%"></div>
+                        </div>
+                        <span class="text-xs">${threatScore}%</span>
+                    </div>
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    ${
+                        event.correlation_id
+                            ? `
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
+                                class="text-blue-600 dark:text-blue-400 hover:underline">
+                            ${escapeHtml(truncateText(event.correlation_id, 12))}
+                        </button>
+                    `
+                            : "-"
+                    }
+                </td>
+            </tr>
+        `;
+        })
+        .join("");
+}
+
+/**
+ * Get CSS class for severity badge
+ */
+function getSeverityClass(severity) {
+    const classes = {
+        LOW: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+        MEDIUM: "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        HIGH: "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+        CRITICAL: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+    };
+    return classes[severity] || classes.MEDIUM;
+}
+
+/**
+ * Show audit trail
+ */
+async function showAuditTrail() {
+    setPerformanceAggregationVisibility(false);
+    setLogFiltersVisibility(false);
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
+            {
+                method: "GET",
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch audit trails: ${response.statusText}`,
+            );
+        }
+
+        const trails = await response.json();
+        displayAuditTrail(trails);
+    } catch (error) {
+        console.error("Error fetching audit trails:", error);
+        showToast("Failed to fetch audit trails: " + error.message, "error");
+    }
+}
+
+/**
+ * Display audit trail entries
+ */
+function displayAuditTrail(trails) {
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+
+    // Update table headers for audit trail
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Action
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Resource Type
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Resource
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    User
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Status
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Correlation ID
+                </th>
+            </tr>
+        `;
+    }
+
+    logCount.textContent = `${trails.length} audit entries`;
+    logStats.innerHTML = `
+        <span class="text-sm text-yellow-600 dark:text-yellow-400">
+            📝 Audit Trail Entries Requiring Review
+        </span>
+    `;
+
+    if (trails.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
+                ✅ No audit entries require review
+            </td></tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = trails
+        .map((trail) => {
+            const actionClass = trail.success
+                ? "text-green-600"
+                : "text-red-600";
+            const actionIcon = trail.success ? "✓" : "✗";
+
+            // Determine action badge color
+            const actionBadgeColors = {
+                create: "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
+                update: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+                delete: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+                read: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
+                activate:
+                    "bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200",
+                deactivate:
+                    "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+            };
+            const actionBadge =
+                actionBadgeColors[trail.action.toLowerCase()] ||
+                "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200";
+
+            // Format resource name with ID
+            const resourceName =
+                trail.resource_name || trail.resource_id || "-";
+            const resourceDisplay = `
+            <div class="font-medium">${escapeHtml(resourceName)}</div>
+            ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ""}
+            ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ""}
+        `;
+
+            return `
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${formatTimestamp(trail.timestamp)}
+                </td>
+                <td class="px-4 py-3">
+                    <span class="px-2 py-1 text-xs font-semibold rounded ${actionBadge}">
+                        ${trail.action.toUpperCase()}
+                    </span>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(trail.resource_type || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${resourceDisplay}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(trail.user_email || trail.user_id || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm ${actionClass}">
+                    ${actionIcon} ${trail.success ? "Success" : "Failed"}
+                </td>
+                <td class="px-4 py-3 text-sm">
+                    ${
+                        trail.correlation_id
+                            ? `
+                        <button onclick="event.stopPropagation(); showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
+                                class="text-blue-600 dark:text-blue-400 hover:underline">
+                            ${escapeHtml(truncateText(trail.correlation_id, 12))}
+                        </button>
+                    `
+                            : "-"
+                    }
+                </td>
+            </tr>
+        `;
+        })
+        .join("");
+}
+
+/**
+ * Show performance metrics
+ */
+async function showPerformanceMetrics(rangeKey) {
+    if (rangeKey && PERFORMANCE_AGGREGATION_OPTIONS[rangeKey]) {
+        currentPerformanceAggregationKey = rangeKey;
+    } else {
+        const select = document.getElementById(
+            "performance-aggregation-select",
+        );
+        if (select?.value && PERFORMANCE_AGGREGATION_OPTIONS[select.value]) {
+            currentPerformanceAggregationKey = select.value;
+        }
+    }
+
+    syncPerformanceAggregationSelect();
+    setPerformanceAggregationVisibility(true);
+    setLogFiltersVisibility(false);
+    const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
+    const aggregationParam = encodeURIComponent(
+        getPerformanceAggregationQuery(),
+    );
+
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
+            {
+                method: "GET",
+            },
+        );
+
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch performance metrics: ${response.statusText}`,
+            );
+        }
+
+        const metrics = await response.json();
+        displayPerformanceMetrics(metrics);
+    } catch (error) {
+        console.error("Error fetching performance metrics:", error);
+        showToast(
+            "Failed to fetch performance metrics: " + error.message,
+            "error",
+        );
+    }
+}
+
+/**
+ * Display performance metrics
+ */
+function displayPerformanceMetrics(metrics) {
+    const tbody = document.getElementById("logs-tbody");
+    const thead = document.getElementById("logs-thead");
+    const logCount = document.getElementById("log-count");
+    const logStats = document.getElementById("log-stats");
+    const aggregationLabel = getPerformanceAggregationLabel();
+
+    // Update table headers for performance metrics
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Component
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Operation
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Avg Duration
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Requests
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Error Rate
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    P99 Duration
+                </th>
+            </tr>
+        `;
+    }
+
+    logCount.textContent = `${metrics.length} metrics`;
+    logStats.innerHTML = `
+        <span class="text-sm text-green-600 dark:text-green-400">
+            ⚡ Performance Metrics (${aggregationLabel})
+        </span>
+    `;
+
+    if (metrics.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                📊 No performance metrics available for ${aggregationLabel.toLowerCase()}
+            </td></tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = metrics
+        .map((metric) => {
+            const errorRatePercent = (metric.error_rate * 100).toFixed(2);
+            const errorClass =
+                metric.error_rate > 0.1 ? "text-red-600" : "text-green-600";
+
+            return `
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    ${formatTimestamp(metric.window_start)}
+                </td>
+                <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-300">
+                    ${escapeHtml(metric.component || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${escapeHtml(metric.operation_type || "-")}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                    <div class="text-xs">
+                        <div>Avg: <strong>${metric.avg_duration_ms.toFixed(2)}ms</strong></div>
+                        <div class="text-gray-500">P95: ${metric.p95_duration_ms.toFixed(2)}ms</div>
+                    </div>
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                    ${metric.request_count.toLocaleString()} requests
+                </td>
+                <td class="px-4 py-3 text-sm ${errorClass}">
+                    ${errorRatePercent}%
+                    ${metric.error_rate > 0.1 ? "⚠️" : ""}
+                </td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                    <div class="text-xs">
+                        P99: ${metric.p99_duration_ms.toFixed(2)}ms
+                    </div>
+                </td>
+            </tr>
+        `;
+        })
+        .join("");
+}
+
+/**
+ * Navigate to previous log page
+ */
+function previousLogPage() {
+    if (currentLogPage > 0) {
+        currentLogPage--;
+        searchStructuredLogs();
+    }
+}
+
+/**
+ * Navigate to next log page
+ */
+function nextLogPage() {
+    currentLogPage++;
+    searchStructuredLogs();
+}
+
+/**
+ * Get root path for API calls
+ */
+function getRootPath() {
+    return window.ROOT_PATH || "";
+}
+
+/**
+ * Show toast notification
+ */
+function showToast(message, type = "info") {
+    // Check if showMessage function exists (from existing admin.js)
+    if (typeof showMessage === "function") {
+        // eslint-disable-next-line no-undef
+        showMessage(message, type === "error" ? "danger" : type);
+    } else {
+        console.log(`[${type.toUpperCase()}] ${message}`);
+    }
+}
+
+// Make functions globally available for HTML onclick handlers
+window.searchStructuredLogs = searchStructuredLogs;
+window.showCorrelationTrace = showCorrelationTrace;
+window.showSecurityEvents = showSecurityEvents;
+window.showAuditTrail = showAuditTrail;
+window.showPerformanceMetrics = showPerformanceMetrics;
+window.handlePerformanceAggregationChange = handlePerformanceAggregationChange;
+window.previousLogPage = previousLogPage;
+window.nextLogPage = nextLogPage;
+window.showLogDetails = showLogDetails;

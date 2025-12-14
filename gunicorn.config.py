@@ -14,6 +14,9 @@ will have to wait a long time for queries
 Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 """
 
+# Standard
+import os
+
 # First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings
@@ -46,11 +49,56 @@ reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 # accesslog = '/tmp/gunicorn-accesslog'
 # access_log_format = '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
 
+# SSL/TLS Configuration
+# Note: certfile and keyfile are set via command-line arguments in run-gunicorn.sh
+# If a passphrase is provided via SSL_KEY_PASSWORD environment variable,
+# the key will be decrypted by the SSL key manager before Gunicorn starts.
 # certfile = 'certs/cert.pem'
 # keyfile  = 'certs/key.pem'
 # ca-certs = '/etc/ca_bundle.crt'
 
+# Global variable to store the prepared key file path
+_prepared_key_file = None
+
 # server hooks
+
+
+def on_starting(server):
+    """Called just before the master process is initialized.
+
+    This is where we handle passphrase-protected SSL keys by decrypting
+    them to a temporary file before Gunicorn workers start.
+    """
+    global _prepared_key_file
+
+    # Check if SSL is enabled via environment variable (set by run-gunicorn.sh)
+    # and a passphrase is provided
+    ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
+    ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
+
+    if ssl_enabled and ssl_key_password:
+        try:
+            from mcpgateway.utils.ssl_key_manager import prepare_ssl_key
+
+            # Get the key file path from environment (set by run-gunicorn.sh)
+            key_file = os.environ.get("KEY_FILE", "certs/key.pem")
+
+            server.log.info(f"Preparing passphrase-protected SSL key: {key_file}")
+
+            # Decrypt the key and get the temporary file path
+            _prepared_key_file = prepare_ssl_key(key_file, ssl_key_password)
+
+            server.log.info(f"SSL key prepared successfully: {_prepared_key_file}")
+
+            # Update the keyfile setting to use the decrypted temporary file
+            # This is a bit of a hack, but Gunicorn doesn't provide a better way
+            # to modify the keyfile after it's been set via command line
+            if hasattr(server, 'cfg'):
+                server.cfg.set('keyfile', _prepared_key_file)
+
+        except Exception as e:
+            server.log.error(f"Failed to prepare SSL key: {e}")
+            raise
 
 
 def when_ready(server):

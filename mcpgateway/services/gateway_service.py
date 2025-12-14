@@ -47,7 +47,7 @@ import ssl
 import tempfile
 import time
 from typing import Any, AsyncGenerator, cast, Dict, Generator, List, Optional, Set, TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -56,6 +56,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from pydantic import ValidationError
 from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -80,11 +81,13 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span
 from mcpgateway.schemas import GatewayCreate, GatewayRead, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
-from mcpgateway.services.event_service import EventService
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
+from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.utils.create_slug import slugify
@@ -97,6 +100,10 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger and audit trail for gateway operations
+structured_logger = get_structured_logger("gateway_service")
+audit_trail = get_audit_trail_service()
 
 
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
@@ -264,6 +271,10 @@ class GatewayConnectionError(GatewayError):
         >>> isinstance(error, GatewayError)
         True
     """
+
+
+class OAuthToolValidationError(GatewayConnectionError):
+    """Raised when tool validation fails during OAuth-driven fetch."""
 
 
 class GatewayService:  # pylint: disable=too-many-instance-attributes
@@ -809,6 +820,54 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Notify subscribers
             await self._notify_gateway_added(db_gateway)
 
+            logger.info(f"Registered gateway: {gateway.name}")
+
+            # Structured logging: Audit trail for gateway creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_gateway",
+                resource_type="gateway",
+                resource_id=str(db_gateway.id),
+                resource_name=db_gateway.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "name": db_gateway.name,
+                    "url": db_gateway.url,
+                    "visibility": visibility,
+                    "transport": db_gateway.transport,
+                    "tools_count": len(tools),
+                    "resources_count": len(db_resources),
+                    "prompts_count": len(db_prompts),
+                },
+                context={
+                    "created_via": created_via,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful gateway creation
+            structured_logger.log(
+                level="INFO",
+                message="Gateway created successfully",
+                event_type="gateway_created",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="gateway",
+                resource_id=str(db_gateway.id),
+                custom_fields={
+                    "gateway_name": db_gateway.name,
+                    "gateway_url": normalized_url,
+                    "visibility": visibility,
+                    "transport": db_gateway.transport,
+                },
+                db=db,
+            )
+
             # Add team name for response
             db_gateway.team = self._get_team_name(db, db_gateway.team_id)
             return GatewayRead.model_validate(self._prepare_gateway_for_read(db_gateway)).masked()
@@ -816,31 +875,101 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
             logger.error(f"GatewayConnectionError in group: {ge.exceptions}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway creation failed due to connection error",
+                event_type="gateway_creation_failed",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ge.exceptions[0],
+                custom_fields={"gateway_name": gateway.name, "gateway_url": str(gateway.url)},
+                db=db,
+            )
             raise ge.exceptions[0]
         except* GatewayNameConflictError as gnce:  # pragma: no mutate
             if TYPE_CHECKING:
                 gnce: ExceptionGroup[GatewayNameConflictError]
             logger.error(f"GatewayNameConflictError in group: {gnce.exceptions}")
+
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway creation failed due to name conflict",
+                event_type="gateway_name_conflict",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={"gateway_name": gateway.name, "visibility": visibility},
+                db=db,
+            )
             raise gnce.exceptions[0]
         except* GatewayDuplicateConflictError as guce:  # pragma: no mutate
             if TYPE_CHECKING:
                 guce: ExceptionGroup[GatewayDuplicateConflictError]
             logger.error(f"GatewayDuplicateConflictError in group: {guce.exceptions}")
+
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway creation failed due to duplicate",
+                event_type="gateway_duplicate_conflict",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={"gateway_name": gateway.name},
+                db=db,
+            )
             raise guce.exceptions[0]
         except* ValueError as ve:  # pragma: no mutate
             if TYPE_CHECKING:
                 ve: ExceptionGroup[ValueError]
             logger.error(f"ValueErrors in group: {ve.exceptions}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway creation failed due to validation error",
+                event_type="gateway_creation_failed",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ve.exceptions[0],
+                custom_fields={"gateway_name": gateway.name},
+                db=db,
+            )
             raise ve.exceptions[0]
         except* RuntimeError as re:  # pragma: no mutate
             if TYPE_CHECKING:
                 re: ExceptionGroup[RuntimeError]
             logger.error(f"RuntimeErrors in group: {re.exceptions}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway creation failed due to runtime error",
+                event_type="gateway_creation_failed",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=re.exceptions[0],
+                custom_fields={"gateway_name": gateway.name},
+                db=db,
+            )
             raise re.exceptions[0]
         except* IntegrityError as ie:  # pragma: no mutate
             if TYPE_CHECKING:
                 ie: ExceptionGroup[IntegrityError]
             logger.error(f"IntegrityErrors in group: {ie.exceptions}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway creation failed due to database integrity error",
+                event_type="gateway_creation_failed",
+                component="gateway_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ie.exceptions[0],
+                custom_fields={"gateway_name": gateway.name},
+                db=db,
+            )
             raise ie.exceptions[0]
         except* BaseException as other:  # catches every other sub-exception  # pragma: no mutate
             if TYPE_CHECKING:
@@ -986,6 +1115,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
+        except GatewayConnectionError as gce:
+            # Surface validation or depth-related failures directly to the user
+            logger.error(f"GatewayConnectionError during OAuth fetch for {gateway_id}: {gce}")
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
@@ -1461,6 +1594,47 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 await self._notify_gateway_updated(gateway)
 
                 logger.info(f"Updated gateway: {gateway.name}")
+
+                # Structured logging: Audit trail for gateway update
+                audit_trail.log_action(
+                    user_id=user_email or modified_by or "system",
+                    action="update_gateway",
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    resource_name=gateway.name,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    client_ip=modified_from_ip,
+                    user_agent=modified_user_agent,
+                    new_values={
+                        "name": gateway.name,
+                        "url": gateway.url,
+                        "version": gateway.version,
+                    },
+                    context={
+                        "modified_via": modified_via,
+                    },
+                    db=db,
+                )
+
+                # Structured logging: Log successful gateway update
+                structured_logger.log(
+                    level="INFO",
+                    message="Gateway updated successfully",
+                    event_type="gateway_updated",
+                    component="gateway_service",
+                    user_id=modified_by,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    custom_fields={
+                        "gateway_name": gateway.name,
+                        "version": gateway.version,
+                    },
+                    db=db,
+                )
+
                 gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
 
                 return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway))
@@ -1468,18 +1642,78 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             return None
         except GatewayNameConflictError as ge:
             logger.error(f"GatewayNameConflictError in group: {ge}")
+
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway update failed due to name conflict",
+                event_type="gateway_name_conflict",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=ge,
+                db=db,
+            )
             raise ge
         except GatewayNotFoundError as gnfe:
             logger.error(f"GatewayNotFoundError: {gnfe}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway update failed - gateway not found",
+                event_type="gateway_not_found",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=gnfe,
+                db=db,
+            )
             raise gnfe
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway update failed due to database integrity error",
+                event_type="gateway_update_failed",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=ie,
+                db=db,
+            )
             raise ie
-        except PermissionError:
+        except PermissionError as pe:
             db.rollback()
+
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway update failed due to permission error",
+                event_type="gateway_update_permission_denied",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=pe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway update failed",
+                event_type="gateway_update_failed",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=e,
+                db=db,
+            )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
     async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
@@ -1542,6 +1776,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
         if gateway.enabled or include_inactive:
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
+
+            # Structured logging: Log gateway view
+            structured_logger.log(
+                level="INFO",
+                message="Gateway retrieved successfully",
+                event_type="gateway_viewed",
+                component="gateway_service",
+                team_id=getattr(gateway, "team_id", None),
+                resource_type="gateway",
+                resource_id=str(gateway.id),
+                custom_fields={
+                    "gateway_name": gateway.name,
+                    "gateway_url": gateway.url,
+                    "include_inactive": include_inactive,
+                },
+                db=db,
+            )
+
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
@@ -1689,13 +1941,76 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 logger.info(f"Gateway status: {gateway.name} - {'enabled' if activate else 'disabled'} and {'accessible' if reachable else 'inaccessible'}")
 
+                # Structured logging: Audit trail for gateway status toggle
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="toggle_gateway_status",
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    resource_name=gateway.name,
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    new_values={
+                        "enabled": gateway.enabled,
+                        "reachable": gateway.reachable,
+                    },
+                    context={
+                        "action": "activate" if activate else "deactivate",
+                        "only_update_reachable": only_update_reachable,
+                    },
+                    db=db,
+                )
+
+                # Structured logging: Log successful gateway status toggle
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Gateway {'activated' if activate else 'deactivated'} successfully",
+                    event_type="gateway_status_toggled",
+                    component="gateway_service",
+                    user_email=user_email,
+                    team_id=gateway.team_id,
+                    resource_type="gateway",
+                    resource_id=str(gateway.id),
+                    custom_fields={
+                        "gateway_name": gateway.name,
+                        "enabled": gateway.enabled,
+                        "reachable": gateway.reachable,
+                    },
+                    db=db,
+                )
+
             gateway.team = self._get_team_name(db, getattr(gateway, "team_id", None))
             return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
 
         except PermissionError as e:
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway status toggle failed due to permission error",
+                event_type="gateway_toggle_permission_denied",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=e,
+                db=db,
+            )
             raise e
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic gateway status toggle failure
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway status toggle failed",
+                event_type="gateway_toggle_failed",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=e,
+                db=db,
+            )
             raise GatewayError(f"Failed to toggle gateway status: {str(e)}")
 
     async def _notify_gateway_updated(self, gateway: DbGateway) -> None:
@@ -1765,6 +2080,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             # Store gateway info for notification before deletion
             gateway_info = {"id": gateway.id, "name": gateway.name, "url": gateway.url}
+            gateway_name = gateway.name
+            gateway_team_id = gateway.team_id
 
             # Hard delete gateway
             db.delete(gateway)
@@ -1778,11 +2095,70 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             logger.info(f"Permanently deleted gateway: {gateway.name}")
 
-        except PermissionError:
+            # Structured logging: Audit trail for gateway deletion
+            audit_trail.log_action(
+                user_id=user_email or "system",
+                action="delete_gateway",
+                resource_type="gateway",
+                resource_id=str(gateway_info["id"]),
+                resource_name=gateway_name,
+                user_email=user_email,
+                team_id=gateway_team_id,
+                old_values={
+                    "name": gateway_name,
+                    "url": gateway_info["url"],
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful gateway deletion
+            structured_logger.log(
+                level="INFO",
+                message="Gateway deleted successfully",
+                event_type="gateway_deleted",
+                component="gateway_service",
+                user_email=user_email,
+                team_id=gateway_team_id,
+                resource_type="gateway",
+                resource_id=str(gateway_info["id"]),
+                custom_fields={
+                    "gateway_name": gateway_name,
+                    "gateway_url": gateway_info["url"],
+                },
+                db=db,
+            )
+
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Gateway deletion failed due to permission error",
+                event_type="gateway_delete_permission_denied",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=pe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
+
+            # Structured logging: Log generic gateway deletion failure
+            structured_logger.log(
+                level="ERROR",
+                message="Gateway deletion failed",
+                event_type="gateway_deletion_failed",
+                component="gateway_service",
+                user_email=user_email,
+                resource_type="gateway",
+                resource_id=gateway_id,
+                error=e,
+                db=db,
+            )
             raise GatewayError(f"Failed to delete gateway: {str(e)}")
 
     async def forward_request(
@@ -1844,7 +2220,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 "rpc.method": method,
                 "rpc.service": "mcp-gateway",
                 "http.method": "POST",
-                "http.url": f"{gateway.url}/rpc",
+                "http.url": urljoin(gateway.url, "/rpc"),
                 "peer.service": gateway.name,
             },
         ) as span:
@@ -1904,7 +2280,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         headers = self._get_auth_headers()
 
                 # Directly use the persistent HTTP client (no async with)
-                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -2006,7 +2382,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     request["params"] = params
 
                 # Forward request with proper authentication headers
-                response = await self._http_client.post(f"{gateway.url}/rpc", json=request, headers=headers)
+                response = await self._http_client.post(urljoin(gateway.url, "/rpc"), json=request, headers=headers)
                 response.raise_for_status()
                 result = response.json()
 
@@ -2342,6 +2718,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     if span:
                         span.set_attribute("health.status", "unhealthy")
                         span.set_attribute("error.message", str(e))
+                    logger.error(f"Health check failed for gateway {gateway.name}: {e}")
                     await self._handle_gateway_failure(gateway)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
@@ -3146,6 +3523,61 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """
         await self._event_service.publish_event(event)
 
+    def _validate_tools(self, tools: list[dict[str, Any]], context: str = "default") -> list[ToolCreate]:
+        """Validate tools individually with richer logging and error aggregation.
+
+        Args:
+            tools: list of tool dicts
+            context: caller context, e.g. "oauth" to tailor errors/messages
+
+        Returns:
+            list[ToolCreate]: List of successfully validated tools
+
+        Raises:
+            OAuthToolValidationError: If all tools fail validation in OAuth context
+            GatewayConnectionError: If all tools fail validation in default context
+        """
+        valid_tools: list[ToolCreate] = []
+        validation_errors: list[str] = []
+
+        for i, tool_dict in enumerate(tools):
+            tool_name = tool_dict.get("name", f"unknown_tool_{i}")
+            try:
+                logger.debug(f"Validating tool: {tool_name}")
+                validated_tool = ToolCreate.model_validate(tool_dict)
+                valid_tools.append(validated_tool)
+                logger.debug(f"Tool '{tool_name}' validated successfully")
+            except ValidationError as e:
+                error_msg = f"Validation failed for tool '{tool_name}': {e.errors()}"
+                logger.error(error_msg)
+                logger.debug(f"Failed tool schema: {tool_dict}")
+                validation_errors.append(error_msg)
+            except ValueError as e:
+                if "JSON structure exceeds maximum depth" in str(e):
+                    error_msg = f"Tool '{tool_name}' schema too deeply nested. " f"Current depth limit: {settings.validation_max_json_depth}"
+                    logger.error(error_msg)
+                    logger.warning("Consider increasing VALIDATION_MAX_JSON_DEPTH environment variable")
+                else:
+                    error_msg = f"ValueError for tool '{tool_name}': {str(e)}"
+                    logger.error(error_msg)
+                validation_errors.append(error_msg)
+            except Exception as e:  # pragma: no cover - defensive
+                error_msg = f"Unexpected error validating tool '{tool_name}': {type(e).__name__}: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                validation_errors.append(error_msg)
+
+        if validation_errors:
+            logger.warning(f"Tool validation completed with {len(validation_errors)} error(s). " f"Successfully validated {len(valid_tools)} tool(s).")
+            for err in validation_errors[:3]:
+                logger.debug(f"Validation error: {err}")
+
+        if not valid_tools and validation_errors:
+            if context == "oauth":
+                raise OAuthToolValidationError(f"OAuth tool fetch failed: all {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
+            raise GatewayConnectionError(f"Failed to fetch tools: All {len(tools)} tools failed validation. " f"First error: {validation_errors[0][:200]}")
+
+        return valid_tools
+
     async def _connect_to_sse_server_without_validation(self, server_url: str, authentication: Optional[Dict[str, str]] = None):
         """Connect to an MCP server running with SSE transport, skipping URL validation.
 
@@ -3173,9 +3605,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                     response = await session.list_tools()
                     tools = response.tools
-                    tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                    tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                    tools = [ToolCreate.model_validate(tool) for tool in tools]
+                    tools = self._validate_tools(tools, context="oauth")
                     if tools:
                         logger.info(f"Fetched {len(tools)} tools from gateway")
                     # Fetch resources if supported
@@ -3316,9 +3748,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 response = await session.list_tools()
                 tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools = [ToolCreate.model_validate(tool) for tool in tools]
+                tools = self._validate_tools(tools)
                 if tools:
                     logger.info(f"Fetched {len(tools)} tools from gateway")
                 # Fetch resources if supported
@@ -3354,26 +3786,26 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     except Exception as e:
                         logger.warning(f"Failed to fetch resources: {e}")
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                    # resource template URI
+                    try:
+                        response_templates = await session.list_resource_templates()
+                        raw_resources_templates = response_templates.resourceTemplates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
-                        except Exception as ei:
-                            logger.warning(f"Failed to fetch resource templates: {ei}")
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info(f"Fetched {len(raw_resources_templates)} resource templates from gateway")
+                    except Exception as ei:
+                        logger.warning(f"Failed to fetch resource templates: {ei}")
 
                 # Fetch prompts if supported
                 prompts = []
@@ -3456,9 +3888,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 response = await session.list_tools()
                 tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True) for tool in tools]
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools = [ToolCreate.model_validate(tool) for tool in tools]
+                tools = self._validate_tools(tools)
                 for tool in tools:
                     tool.request_type = "STREAMABLEHTTP"
                 if tools:

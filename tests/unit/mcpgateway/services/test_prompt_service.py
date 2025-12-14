@@ -44,6 +44,16 @@ from mcpgateway.services.prompt_service import (
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.prompt_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.prompt_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def mock_prompt():
     """Create a mock prompt model."""
@@ -225,7 +235,7 @@ class TestPromptService:
         db_prompt = _build_db_prompt(template="Hello, {{ name }}!")
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
 
-        pr: PromptResult = await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+        pr: PromptResult = await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
 
         assert isinstance(pr, PromptResult)
         assert len(pr.messages) == 1
@@ -239,7 +249,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
 
         with pytest.raises(PromptNotFoundError):
-            await prompt_service.get_prompt(test_db, 999)
+            await prompt_service.get_prompt(test_db, "999")
 
     @pytest.mark.asyncio
     async def test_get_prompt_inactive(self, prompt_service, test_db):
@@ -251,7 +261,7 @@ class TestPromptService:
             ]
         )
         with pytest.raises(PromptNotFoundError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1)
+            await prompt_service.get_prompt(test_db, "1")
         assert "inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
@@ -260,7 +270,7 @@ class TestPromptService:
         test_db.execute = Mock(return_value=_make_execute_result(scalar=db_prompt))
         db_prompt.validate_arguments.side_effect = Exception("bad args")
         with pytest.raises(PromptError) as exc_info:
-            await prompt_service.get_prompt(test_db, 1, {"name": "Alice"})
+            await prompt_service.get_prompt(test_db, "1", {"name": "Alice"})
         assert "Failed to process prompt" in str(exc_info.value)
 
     @pytest.mark.asyncio

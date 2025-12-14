@@ -47,7 +47,7 @@ import httpx
 from pydantic import SecretStr, ValidationError
 from pydantic_core import ValidationError as CoreValidationError
 from sqlalchemy import and_, case, cast, desc, func, or_, select, String
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 from sqlalchemy.sql.functions import coalesce
 from starlette.datastructures import UploadFile as StarletteUploadFile
@@ -57,7 +57,7 @@ from starlette.datastructures import UploadFile as StarletteUploadFile
 from mcpgateway.auth import get_current_user
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
-from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
+from mcpgateway.db import extract_json_field, get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Tool as DbTool
@@ -105,6 +105,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
 from mcpgateway.services.encryption_service import get_encryption_service
@@ -120,6 +121,7 @@ from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNo
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
 from mcpgateway.services.root_service import RootService
 from mcpgateway.services.server_service import ServerError, ServerNameConflictError, ServerNotFoundError, ServerService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.tool_service import ToolError, ToolNameConflictError, ToolNotFoundError, ToolService
@@ -2675,6 +2677,12 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            # Password policy flags for frontend templates
+            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
+            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
+            "password_require_numbers": getattr(settings, "password_require_numbers", False),
+            "password_require_special": getattr(settings, "password_require_special", False),
         },
     )
 
@@ -2984,7 +2992,19 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     # Get root path for template
     root_path = request.scope.get("root_path", "")
 
-    return request.app.state.templates.TemplateResponse("change-password-required.html", {"request": request, "root_path": root_path})
+    return request.app.state.templates.TemplateResponse(
+        "change-password-required.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "password_min_length": getattr(settings, "password_min_length", 8),
+            "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
+            "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
+            "password_require_numbers": getattr(settings, "password_require_numbers", False),
+            "password_require_special": getattr(settings, "password_require_special", False),
+        },
+    )
 
 
 @admin_router.post("/change-password-required")
@@ -3755,7 +3775,7 @@ async def admin_get_team_edit(
         if not team:
             return HTMLResponse(content='<div class="text-red-500">Team not found</div>', status_code=404)
 
-        edit_form = f"""
+        edit_form = rf"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit Team</h3>
             <form method="post" action="{root_path}/admin/teams/{team_id}/update" hx-post="{root_path}/admin/teams/{team_id}/update" hx-target="#team-edit-modal-content" class="space-y-4">
@@ -4866,6 +4886,63 @@ async def admin_get_user_edit(
         if not user_obj:
             return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
 
+        # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
+        if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
+            pr_lines = []
+            pr_lines.append(
+                f"""                <!-- Password Requirements -->
+                <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
+                    <div class="flex items-start">
+                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                        </svg>
+                        <div class="ml-3 flex-1">
+                            <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
+                            <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
+                                <div class="flex items-center" id="req-length">
+                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
+                                    <span>At least {settings.password_min_length} characters long</span>
+                                </div>
+            """
+            )
+            if settings.password_require_uppercase:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                """
+                )
+            if settings.password_require_lowercase:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                """
+                )
+            if settings.password_require_numbers:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                """
+                )
+            if settings.password_require_special:
+                pr_lines.append(
+                    """
+                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                """
+                )
+            pr_lines.append(
+                """
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            """
+            )
+            password_requirements_html = "".join(pr_lines)
+        else:
+            # Intentionally an empty string for HTML insertion when no requirements apply.
+            # This is not a password value; suppress Bandit false positive B105.
+            password_requirements_html = ""  # nosec B105
+
         # Create edit form HTML
         edit_form = f"""
         <div class="space-y-4">
@@ -4900,27 +4977,7 @@ async def admin_get_user_edit(
                            oninput="validatePasswordMatch()">
                     <div id="password-match-message" class="mt-1 text-sm text-red-600 hidden">Passwords do not match</div>
                 </div>
-                <!-- Password Requirements -->
-                <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-700 rounded-md p-4">
-                    <div class="flex items-start">
-                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
-                        </svg>
-                        <div class="ml-3 flex-1">
-                            <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
-                            <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
-                                    <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
-                                    <span>At least {settings.password_min_length} characters long</span>
-                                </div>
-                                {'<div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>' if settings.password_require_uppercase else ''}
-                                {'<div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>' if settings.password_require_lowercase else ''}
-                                {'<div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>' if settings.password_require_numbers else ''}
-                                {'<div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>' if settings.password_require_special else ''}
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                {password_requirements_html}
 
                 <script>
                 // Password policy settings injected from backend
@@ -4931,6 +4988,8 @@ async def admin_get_user_edit(
                     requireNumbers: {'true' if settings.password_require_numbers else 'false'},
                     requireSpecial: {'true' if settings.password_require_special else 'false'}
                 }};
+
+                // (No debug output) passwordPolicy available in JS for logic below
 
                 function updateRequirementIcon(elementId, isValid) {{
                     const req = document.getElementById(elementId);
@@ -4955,19 +5014,19 @@ async def admin_get_user_edit(
 
                     // Check uppercase requirement (if enabled)
                     const uppercaseCheck = !passwordPolicy.requireUppercase || /[A-Z]/.test(password);
-                    updateRequirementIcon('req-uppercase', /[A-Z]/.test(password));
+                    updateRequirementIcon('req-uppercase', uppercaseCheck);
 
                     // Check lowercase requirement (if enabled)
                     const lowercaseCheck = !passwordPolicy.requireLowercase || /[a-z]/.test(password);
-                    updateRequirementIcon('req-lowercase', /[a-z]/.test(password));
+                    updateRequirementIcon('req-lowercase', lowercaseCheck);
 
                     // Check numbers requirement (if enabled)
                     const numbersCheck = !passwordPolicy.requireNumbers || /[0-9]/.test(password);
-                    updateRequirementIcon('req-numbers', /[0-9]/.test(password));
+                    updateRequirementIcon('req-numbers', numbersCheck);
 
                     // Check special character requirement (if enabled) - matches backend set
-                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*(),.?":{{}}|<>]/.test(password);
-                    updateRequirementIcon('req-special', /[!@#$%^&*(),.?":{{}}|<>]/.test(password));
+                    const specialCheck = !passwordPolicy.requireSpecial || /[!@#$%^&*()_+\\-\\=\\[\\]{{}};:'"\\\\|,.<>`~\\/\\?]/.test(password);
+                    updateRequirementIcon('req-special', specialCheck);
 
                     // Enable/disable submit button based on active requirements
                     const submitButton = document.querySelector('#user-edit-modal-content button[type="submit"]');
@@ -4998,9 +5057,25 @@ async def admin_get_user_edit(
                     }}
                 }}
 
-                // Initialize validation on page load
-                document.addEventListener('DOMContentLoaded', function() {{
-                    validatePasswordRequirements();
+                // Initialize validation when the form is present (supports HTMX-injected content)
+                (function initPasswordValidation() {{
+                    if (document.getElementById('password-field')) {{
+                        validatePasswordRequirements();
+                        validatePasswordMatch();
+                    }}
+                }})();
+
+                // Re-run validation after HTMX swaps content into the DOM (modal loaded via HTMX)
+                document.addEventListener('htmx:afterSwap', function(event) {{
+                    try {{
+                        const target = event.detail && event.detail.target ? event.detail.target : null;
+                        if (target && (target.querySelector('#password-field') || target.id === 'user-edit-modal-content')) {{
+                            validatePasswordRequirements();
+                            validatePasswordMatch();
+                        }}
+                    }} catch (e) {{
+                        // Ignore errors from HTMX event handling
+                    }}
                 }});
                 </script>
                 <div class="flex justify-end space-x-3">
@@ -5796,6 +5871,7 @@ async def admin_search_tools(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of results to return"),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -5809,6 +5885,7 @@ async def admin_search_tools(
         q (str): Search query string to match against tool names, IDs, or descriptions
         include_inactive (bool): Whether to include inactive tools in the search results
         limit (int): Maximum number of results to return (1-1000)
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated
         db (Session): Database session dependency
         user: Current user making the request
 
@@ -5828,6 +5905,24 @@ async def admin_search_tools(
     team_ids = [team.id for team in user_teams]
 
     query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
+
+    # Apply gateway filter if provided. Support special sentinel 'null' to
+    # request tools with NULL gateway_id (e.g., RestTool/no gateway).
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            # Treat literal 'null' (case-insensitive) as a request for NULL gateway_id
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tool search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tool search by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tool search by gateway IDs: {non_null_ids}")
 
     if not include_inactive:
         query = query.where(DbTool.enabled.is_(True))
@@ -6339,6 +6434,7 @@ async def admin_search_resources(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6352,6 +6448,7 @@ async def admin_search_resources(
         q (str): Search query string.
         include_inactive (bool): When True include resources that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6370,6 +6467,23 @@ async def admin_search_resources(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbResource.gateway_id.in_(non_null_ids), DbResource.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering resource search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbResource.gateway_id.is_(None))
+                LOGGER.debug("Filtering resource search by NULL gateway_id")
+            else:
+                query = query.where(DbResource.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering resource search by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbResource.enabled.is_(True))
 
@@ -6402,6 +6516,7 @@ async def admin_search_prompts(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
     limit: int = Query(100, ge=1, le=1000),
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -6415,6 +6530,7 @@ async def admin_search_prompts(
         q (str): Search query string.
         include_inactive (bool): When True include prompts that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
+        gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         db (Session): Database session (injected dependency).
         user: Authenticated user object from dependency injection.
 
@@ -6433,6 +6549,23 @@ async def admin_search_prompts(
     team_ids = [t.id for t in user_teams]
 
     query = select(DbPrompt.id, DbPrompt.name, DbPrompt.description)
+
+    # Apply gateway filter if provided
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbPrompt.gateway_id.in_(non_null_ids), DbPrompt.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbPrompt.gateway_id.is_(None))
+                LOGGER.debug("Filtering prompt search by NULL gateway_id")
+            else:
+                query = query.where(DbPrompt.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering prompt search by gateway IDs: {non_null_ids}")
+
     if not include_inactive:
         query = query.where(DbPrompt.enabled.is_(True))
 
@@ -8079,6 +8212,87 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
 
 
+@admin_router.get("/resources/test/{resource_uri:path}")
+async def admin_test_resource(resource_uri: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+    """
+    Test reading a resource by its URI for the admin UI.
+
+    Args:
+        resource_uri: The full resource URI (may include encoded characters).
+        db: Database session dependency.
+        user: Authenticated user with proper permissions.
+
+    Returns:
+        A dictionary containing the resolved resource content.
+
+    Raises:
+        HTTPException: If the resource is not found.
+        Exception: For unexpected errors.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import AsyncMock, MagicMock
+        >>> from mcpgateway.services.resource_service import ResourceNotFoundError
+        >>> from fastapi import HTTPException
+
+        >>> mock_db = MagicMock()
+        >>> mock_user = {"email": "test_user"}
+        >>> test_uri = "resource://example/demo"
+
+        >>> # --- Mock successful content read ---
+        >>> original_read_resource = resource_service.read_resource
+        >>> resource_service.read_resource = AsyncMock(return_value={"hello": "world"})
+
+        >>> async def test_success():
+        ...     result = await admin_test_resource(test_uri, mock_db, mock_user)
+        ...     return result["content"] == {"hello": "world"}
+
+        >>> asyncio.run(test_success())
+        True
+
+        >>> # --- Mock resource not found ---
+        >>> resource_service.read_resource = AsyncMock(
+        ...     side_effect=ResourceNotFoundError("Not found")
+        ... )
+
+        >>> async def test_not_found():
+        ...     try:
+        ...         await admin_test_resource("resource://missing", mock_db, mock_user)
+        ...         return False
+        ...     except HTTPException as e:
+        ...         return e.status_code == 404 and "Not found" in e.detail
+
+        >>> asyncio.run(test_not_found())
+        True
+
+        >>> # --- Mock unexpected exception ---
+        >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Boom"))
+
+        >>> async def test_error():
+        ...     try:
+        ...         await admin_test_resource(test_uri, mock_db, mock_user)
+        ...         return False
+        ...     except Exception as e:
+        ...         return str(e) == "Boom"
+
+        >>> asyncio.run(test_error())
+        True
+
+        >>> # Restore original method
+        >>> resource_service.read_resource = original_read_resource
+    """
+    LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_uri}")
+
+    try:
+        resource_content = await resource_service.read_resource(db, resource_uri=resource_uri)
+        return {"content": resource_content}
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting resource for {resource_uri}: {e}")
+        raise e
+
+
 @admin_router.get("/resources/{resource_id}")
 async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
     """Get resource details for the admin UI.
@@ -8089,7 +8303,7 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
         user: Authenticated user.
 
     Returns:
-        A dictionary containing resource details and its content.
+        A dictionary containing resource details.
 
     Raises:
         HTTPException: If the resource is not found.
@@ -8098,77 +8312,79 @@ async def admin_get_resource(resource_id: str, db: Session = Depends(get_db), us
     Examples:
         >>> import asyncio
         >>> from unittest.mock import AsyncMock, MagicMock
-        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics, ResourceContent
+        >>> from mcpgateway.schemas import ResourceRead, ResourceMetrics
         >>> from datetime import datetime, timezone
-        >>> from mcpgateway.services.resource_service import ResourceNotFoundError # Added import
+        >>> from mcpgateway.services.resource_service import ResourceNotFoundError
         >>> from fastapi import HTTPException
         >>>
         >>> mock_db = MagicMock()
-        >>> mock_user = {"email": "test_user", "db": mock_db}
+        >>> mock_user = {"email": "test_user"}
+        >>> resource_id = "1"
         >>> resource_uri = "test://resource/get"
-        >>> resource_id = "ca627760127d409080fdefc309147e08"
         >>>
         >>> # Mock resource data
         >>> mock_resource = ResourceRead(
         ...     id=resource_id, uri=resource_uri, name="Get Resource", description="Test",
         ...     mime_type="text/plain", size=10, created_at=datetime.now(timezone.utc),
-        ...     updated_at=datetime.now(timezone.utc), enabled=True, metrics=ResourceMetrics(
+        ...     updated_at=datetime.now(timezone.utc), is_active=True,enabled=True,
+        ...     metrics=ResourceMetrics(
         ...         total_executions=0, successful_executions=0, failed_executions=0,
-        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0, avg_response_time=0.0,
-        ...         last_execution_time=None
+        ...         failure_rate=0.0, min_response_time=0.0, max_response_time=0.0,
+        ...         avg_response_time=0.0, last_execution_time=None
         ...     ),
         ...     tags=[]
         ... )
-        >>> mock_content = ResourceContent(id=str(resource_id), type="resource", uri=resource_uri, mime_type="text/plain", text="Hello content")
         >>>
-        >>> # Mock service methods
+        >>> # Mock service call
         >>> original_get_resource_by_id = resource_service.get_resource_by_id
-        >>> original_read_resource = resource_service.read_resource
         >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource)
-        >>> resource_service.read_resource = AsyncMock(return_value=mock_content)
         >>>
-        >>> # Test successful retrieval
-        >>> async def test_admin_get_resource_success():
+        >>> # Test: successful retrieval
+        >>> async def test_success():
         ...     result = await admin_get_resource(resource_id, mock_db, mock_user)
-        ...     return isinstance(result, dict) and result['resource']['id'] == resource_id and result['content'].text == "Hello content" # Corrected to .text
+        ...     return result["resource"]["id"] == resource_id
         >>>
-        >>> asyncio.run(test_admin_get_resource_success())
+        >>> asyncio.run(test_success())
         True
         >>>
-        >>> # Test resource not found
-        >>> resource_service.get_resource_by_id = AsyncMock(side_effect=ResourceNotFoundError("Resource not found"))
-        >>> async def test_admin_get_resource_not_found():
+        >>> # Test: resource not found
+        >>> resource_service.get_resource_by_id = AsyncMock(
+        ...     side_effect=ResourceNotFoundError("Resource not found")
+        ... )
+        >>>
+        >>> async def test_not_found():
         ...     try:
         ...         await admin_get_resource("39334ce0ed2644d79ede8913a66930c9", mock_db, mock_user)
         ...         return False
         ...     except HTTPException as e:
         ...         return e.status_code == 404 and "Resource not found" in e.detail
         >>>
-        >>> asyncio.run(test_admin_get_resource_not_found())
+        >>> asyncio.run(test_not_found())
         True
         >>>
-        >>> # Test exception during content read (resource found but content fails)
-        >>> resource_service.get_resource_by_id = AsyncMock(return_value=mock_resource) # Resource found
-        >>> resource_service.read_resource = AsyncMock(side_effect=Exception("Content read error"))
-        >>> async def test_admin_get_resource_content_error():
+        >>> # Test: unexpected exception
+        >>> resource_service.get_resource_by_id = AsyncMock(
+        ...     side_effect=Exception("Unexpected error")
+        ... )
+        >>>
+        >>> async def test_exception():
         ...     try:
         ...         await admin_get_resource(resource_id, mock_db, mock_user)
         ...         return False
         ...     except Exception as e:
-        ...         return str(e) == "Content read error"
+        ...         return str(e) == "Unexpected error"
         >>>
-        >>> asyncio.run(test_admin_get_resource_content_error())
+        >>> asyncio.run(test_exception())
         True
         >>>
-        >>> # Restore original methods
+        >>> # Restore original method
         >>> resource_service.get_resource_by_id = original_get_resource_by_id
-        >>> resource_service.read_resource = original_read_resource
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for resource ID {resource_id}")
     try:
-        resource = await resource_service.get_resource_by_id(db, resource_id)
-        content = await resource_service.read_resource(db, resource_id)
-        return {"resource": resource.model_dump(by_alias=True), "content": content}
+        resource = await resource_service.get_resource_by_id(db, resource_id, include_inactive=True)
+        # content = await resource_service.read_resource(db, resource_id=resource_id)
+        return {"resource": resource.model_dump(by_alias=True)}  # , "content": None}
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -8286,6 +8502,17 @@ async def admin_add_resource(request: Request, db: Session = Depends(get_db), us
             status_code=200,
         )
     except Exception as ex:
+        # Roll back only when a transaction is active to avoid sqlite3 "no transaction" errors.
+        try:
+            active_transaction = db.get_transaction() if hasattr(db, "get_transaction") else None
+            if db.is_active and active_transaction is not None:
+                db.rollback()
+        except (InvalidRequestError, OperationalError) as rollback_error:
+            LOGGER.warning(
+                "Rollback failed (ignoring for SQLite compatibility): %s",
+                rollback_error,
+            )
+
         if isinstance(ex, ValidationError):
             LOGGER.error(f"ValidationError in admin_add_resource: {ErrorFormatter.format_validation_error(ex)}")
             return JSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
@@ -8504,7 +8731,11 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
     LOGGER.debug(f"User {get_user_email(user)} is deleting resource ID {resource_id}")
     error_message = None
     try:
-        await resource_service.delete_resource(user["db"] if isinstance(user, dict) else db, resource_id)
+        await resource_service.delete_resource(
+            user["db"] if isinstance(user, dict) else db,
+            resource_id,
+            user_email=user_email,
+        )
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting resource {resource_id}: {e}")
         error_message = str(e)
@@ -9593,7 +9824,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> result = asyncio.run(test_admin_test_gateway())
@@ -9619,7 +9850,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_text_response():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientTextOnly()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.body.get("details") == "plain text response"
         >>>
         >>> asyncio.run(test_admin_test_gateway_text_response())
@@ -9637,7 +9868,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_network_error():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClientError()
-        ...         response = await admin_test_gateway(mock_request, mock_user)
+        ...         response = await admin_test_gateway(mock_request, None, mock_user, mock_db)
         ...         return response.status_code == 502 and "Network error" in str(response.body)
         >>>
         >>> asyncio.run(test_admin_test_gateway_network_error())
@@ -9655,7 +9886,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_post():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_post, mock_user)
+        ...         response = await admin_test_gateway(mock_request_post, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_post())
@@ -9673,7 +9904,7 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         >>> async def test_admin_test_gateway_trailing_slash():
         ...     with patch('mcpgateway.admin.ResilientHttpClient') as mock_client_class:
         ...         mock_client_class.return_value = MockClient()
-        ...         response = await admin_test_gateway(mock_request_trailing, mock_user)
+        ...         response = await admin_test_gateway(mock_request_trailing, None, mock_user, mock_db)
         ...         return isinstance(response, GatewayTestResponse) and response.status_code == 200
         >>>
         >>> asyncio.run(test_admin_test_gateway_trailing_slash())
@@ -9763,11 +9994,56 @@ async def admin_test_gateway(request: GatewayTestRequest, team_id: Optional[str]
         except json.JSONDecodeError:
             response_body = {"details": response.text}
 
+        # Structured logging: Log successful gateway test
+        structured_logger = get_structured_logger("gateway_service")
+        structured_logger.log(
+            level="INFO",
+            message=f"Gateway test completed: {request.base_url}",
+            event_type="gateway_tested",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": str(request.base_url),
+                "test_method": request.method,
+                "test_path": request.path,
+                "status_code": response.status_code,
+                "latency_ms": latency_ms,
+            },
+            db=db,
+        )
+
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
 
     except httpx.RequestError as e:
         LOGGER.warning(f"Gateway test failed: {e}")
         latency_ms = int((time.monotonic() - start_time) * 1000)
+
+        # Structured logging: Log failed gateway test
+        structured_logger = get_structured_logger("gateway_service")
+        structured_logger.log(
+            level="ERROR",
+            message=f"Gateway test failed: {request.base_url}",
+            event_type="gateway_test_failed",
+            component="gateway_service",
+            user_email=get_user_email(user),
+            team_id=team_id,
+            resource_type="gateway",
+            resource_id=gateway.id if gateway else None,
+            error=e,
+            custom_fields={
+                "gateway_name": gateway.name if gateway else None,
+                "gateway_url": str(request.base_url),
+                "test_method": request.method,
+                "test_path": request.path,
+                "latency_ms": latency_ms,
+            },
+            db=db,
+        )
+
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
 
 
@@ -11813,6 +12089,7 @@ async def admin_test_a2a_agent(
         return JSONResponse(content={"success": False, "error": "A2A features are disabled"}, status_code=403)
 
     try:
+        user_email = get_user_email(user)
         # Get the agent by ID
         agent = await a2a_service.get_agent(db, agent_id)
 
@@ -11828,7 +12105,14 @@ async def admin_test_a2a_agent(
             test_params = {"message": "Hello from MCP Gateway Admin UI test!", "test": True, "timestamp": int(time.time())}
 
         # Invoke the agent
-        result = await a2a_service.invoke_agent(db, agent.name, test_params, "admin_test")
+        result = await a2a_service.invoke_agent(
+            db,
+            agent.name,
+            test_params,
+            "admin_test",
+            user_email=user_email,
+            user_id=user_email,
+        )
 
         return JSONResponse(content={"success": True, "result": result, "agent_name": agent.name, "test_timestamp": time.time()})
 
@@ -12453,6 +12737,7 @@ async def list_plugins(
         HTTPException: If there's an error retrieving plugins
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin list")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12473,10 +12758,35 @@ async def list_plugins(
         enabled_count = sum(1 for p in plugins if p["status"] == "enabled")
         disabled_count = sum(1 for p in plugins if p["status"] == "disabled")
 
+        # Log plugin marketplace browsing activity
+        structured_logger.info(
+            "User browsed plugin marketplace",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_list",
+            resource_action="browse",
+            custom_fields={
+                "search_query": search,
+                "filter_mode": mode,
+                "filter_hook": hook,
+                "filter_tag": tag,
+                "results_count": len(plugins),
+                "enabled_count": enabled_count,
+                "disabled_count": disabled_count,
+                "has_filters": any([search, mode, hook, tag]),
+            },
+            db=db,
+        )
+
         return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
+        structured_logger.error(
+            "Failed to list plugins in marketplace", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12496,6 +12806,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         HTTPException: If there's an error getting plugin statistics
     """
     LOGGER.debug(f"User {get_user_email(user)} requested plugin statistics")
+    structured_logger = get_structured_logger()
 
     try:
         # Get plugin service
@@ -12509,10 +12820,33 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         # Get statistics
         stats = plugin_service.get_plugin_statistics()
 
+        # Log marketplace analytics access
+        structured_logger.info(
+            "User accessed plugin marketplace statistics",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin_stats",
+            resource_action="view",
+            custom_fields={
+                "total_plugins": stats.get("total_plugins", 0),
+                "enabled_plugins": stats.get("enabled_plugins", 0),
+                "disabled_plugins": stats.get("disabled_plugins", 0),
+                "hooks_count": len(stats.get("plugins_by_hook", {})),
+                "tags_count": len(stats.get("plugins_by_tag", {})),
+                "authors_count": len(stats.get("plugins_by_author", {})),
+            },
+            db=db,
+        )
+
         return PluginStatsResponse(**stats)
 
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
+        structured_logger.error(
+            "Failed to get plugin marketplace statistics", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -12533,6 +12867,8 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         HTTPException: If plugin not found
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for plugin {name}")
+    structured_logger = get_structured_logger()
+    audit_service = get_audit_trail_service()
 
     try:
         # Get plugin service
@@ -12547,7 +12883,43 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin = plugin_service.get_plugin_by_name(name)
 
         if not plugin:
+            structured_logger.warning(
+                f"Plugin '{name}' not found in marketplace",
+                user_id=str(user.id),
+                user_email=get_user_email(user),
+                component="plugin_marketplace",
+                category="business_logic",
+                custom_fields={"plugin_name": name, "action": "view_details"},
+                db=db,
+            )
             raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
+
+        # Log plugin view activity
+        structured_logger.info(
+            f"User viewed plugin details: '{name}'",
+            user_id=str(user.id),
+            user_email=get_user_email(user),
+            component="plugin_marketplace",
+            category="business_logic",
+            resource_type="plugin",
+            resource_id=name,
+            resource_action="view_details",
+            custom_fields={
+                "plugin_name": name,
+                "plugin_version": plugin.get("version"),
+                "plugin_author": plugin.get("author"),
+                "plugin_status": plugin.get("status"),
+                "plugin_mode": plugin.get("mode"),
+                "plugin_hooks": plugin.get("hooks", []),
+                "plugin_tags": plugin.get("tags", []),
+            },
+            db=db,
+        )
+
+        # Create audit trail for plugin access
+        audit_service.log_audit(
+            user_id=str(user.id), user_email=get_user_email(user), resource_type="plugin", resource_id=name, action="view", description=f"Viewed plugin '{name}' details in marketplace", db=db
+        )
 
         return PluginDetail(**plugin)
 
@@ -12555,6 +12927,9 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         raise
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
+        structured_logger.error(
+            f"Failed to get plugin details: '{name}'", user_id=str(user.id), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+        )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -13091,7 +13466,7 @@ async def get_observability_traces(
                 db.query(ObservabilitySpan.trace_id)
                 .filter(
                     ObservabilitySpan.name == "tool.invoke",
-                    func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),  # pylint: disable=not-callable
+                    extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').ilike(f"%{tool_name}%"),
                 )
                 .distinct()
                 .subquery()
@@ -13768,14 +14143,13 @@ async def get_latency_heatmap(
     """
     db = next(get_db())
     try:
+        # Make cutoff_time UTC aware
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
-        # Remove timezone info for SQLite compatibility
-        cutoff_time_naive = cutoff_time.replace(tzinfo=None)
 
         # Query all traces with duration
         traces = (
             db.query(ObservabilityTrace.start_time, ObservabilityTrace.duration_ms)
-            .filter(ObservabilityTrace.start_time >= cutoff_time_naive, ObservabilityTrace.duration_ms.isnot(None))
+            .filter(ObservabilityTrace.start_time >= cutoff_time, ObservabilityTrace.duration_ms.isnot(None))
             .order_by(ObservabilityTrace.start_time)
             .all()
         )
@@ -13799,8 +14173,13 @@ async def get_latency_heatmap(
 
         # Populate heatmap
         for trace in traces:
+            trace_time = trace.start_time
+            # Convert naive SQLite datetime to UTC aware
+            if trace_time.tzinfo is None:
+                trace_time = trace_time.replace(tzinfo=timezone.utc)
+
             # Calculate time bucket index
-            time_diff = (trace.start_time - cutoff_time_naive).total_seconds() / 60  # minutes
+            time_diff = (trace_time - cutoff_time).total_seconds() / 60  # minutes
             time_idx = min(int(time_diff / time_bucket_minutes), time_buckets - 1)
 
             # Calculate latency bucket index
@@ -13811,7 +14190,7 @@ async def get_latency_heatmap(
         # Generate labels
         time_labels = []
         for i in range(time_buckets):
-            bucket_time = cutoff_time_naive + timedelta(minutes=i * time_bucket_minutes)
+            bucket_time = cutoff_time + timedelta(minutes=i * time_bucket_minutes)
             time_labels.append(bucket_time.strftime("%H:%M"))
 
         latency_labels = []
@@ -13858,15 +14237,15 @@ async def get_tool_usage(
         # Note: Using $."tool.name" because the JSON key contains a dot
         tool_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -13920,14 +14299,14 @@ async def get_tool_performance(
         # First, get all tool invocations with durations
         tool_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
             .all()
         )
@@ -14012,16 +14391,16 @@ async def get_tool_errors(
         # Query tool error rates
         tool_errors = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 func.count(ObservabilitySpan.span_id).label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."tool.name"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."tool.name"'))
             .order_by(func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14075,13 +14454,13 @@ async def get_tool_chains(
         tool_spans = (
             db.query(
                 ObservabilitySpan.trace_id,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').label("tool_name"),
                 ObservabilitySpan.start_time,
             )
             .filter(
                 ObservabilitySpan.name == "tool.invoke",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."tool.name"').isnot(None),
             )
             .order_by(ObservabilitySpan.trace_id, ObservabilitySpan.start_time)
             .all()
@@ -14174,15 +14553,15 @@ async def get_prompt_usage(
         # The prompt id should be in attributes as "prompt.id"
         prompt_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14236,14 +14615,14 @@ async def get_prompt_performance(
         # First, get all prompt renders with durations
         prompt_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["prompt.get", "prompts.get", "prompt.render"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
             .all()
         )
@@ -14323,16 +14702,16 @@ async def get_prompts_errors(
         # Get all prompt spans with their status
         prompt_stats = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').label("prompt_id"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name == "prompt.render",
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
+                extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."prompt.id"'))
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."prompt.id"'))
             .all()
         )
 
@@ -14412,15 +14791,15 @@ async def get_resource_usage(
         # The resource URI should be in attributes
         resource_usage = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 func.count(ObservabilitySpan.span_id).label("count"),  # pylint: disable=not-callable
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))  # pylint: disable=not-callable
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
             .order_by(func.count(ObservabilitySpan.span_id).desc())  # pylint: disable=not-callable
             .limit(limit)
             .all()
@@ -14474,14 +14853,14 @@ async def get_resource_performance(
         # First, get all resource reads with durations
         resource_spans = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 ObservabilitySpan.duration_ms,
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
                 ObservabilitySpan.duration_ms.isnot(None),
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),  # pylint: disable=not-callable
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
             .all()
         )
@@ -14561,16 +14940,16 @@ async def get_resources_errors(
         # Get all resource spans with their status
         resource_stats = (
             db.query(
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').label("resource_uri"),
                 func.count().label("total_count"),  # pylint: disable=not-callable
                 func.sum(case((ObservabilitySpan.status == "error", 1), else_=0)).label("error_count"),
             )
             .filter(
                 ObservabilitySpan.name.in_(["resource.read", "resources.read", "resource.fetch"]),
                 ObservabilitySpan.start_time >= cutoff_time_naive,
-                func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
+                extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"').isnot(None),
             )
-            .group_by(func.json_extract(ObservabilitySpan.attributes, '$."resource.uri"'))
+            .group_by(extract_json_field(ObservabilitySpan.attributes, '$."resource.uri"'))
             .all()
         )
 

@@ -183,6 +183,8 @@ check-env-dev:
 # help: ▶️ SERVE
 # help: serve                - Run production Gunicorn server on :4444
 # help: certs                - Generate self-signed TLS cert & key in ./certs (won't overwrite)
+# help: certs-passphrase     - Generate self-signed cert with passphrase-protected key
+# help: certs-remove-passphrase - Remove passphrase from encrypted key
 # help: certs-jwt            - Generate JWT RSA keys in ./certs/jwt/ (idempotent)
 # help: certs-jwt-ecdsa      - Generate JWT ECDSA keys in ./certs/jwt/ (idempotent)
 # help: certs-all            - Generate both TLS certs and JWT keys (combo target)
@@ -193,9 +195,12 @@ check-env-dev:
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
 # help: dev                  - Run fast-reload dev server (uvicorn)
+# help: stop                 - Stop all mcpgateway server processes
+# help: stop-dev             - Stop uvicorn dev server (port 8000)
+# help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev run certs certs-jwt certs-jwt-ecdsa certs-all \
+.PHONY: serve serve-ssl dev stop stop-dev stop-serve run certs certs-jwt certs-jwt-ecdsa certs-all \
         certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check
 
 ## --- Primary servers ---------------------------------------------------------
@@ -207,6 +212,21 @@ serve-ssl: certs
 
 dev:
 	@$(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+stop:                            ## Stop all mcpgateway server processes
+	@echo "Stopping all mcpgateway processes..."
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+	@echo "Done."
+
+stop-dev:                        ## Stop uvicorn dev server (port 8000)
+	@lsof -ti:8000 2>/dev/null | xargs -r kill -9 || true
+
+stop-serve:                      ## Stop gunicorn production server (port 4444)
+	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
+	@lsof -ti:4444 2>/dev/null | xargs -r kill -9 || true
+
 run:
 	./run.sh
 
@@ -224,6 +244,45 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 		echo "✅  TLS certificate written to ./certs"; \
 	fi
 	chmod 640 certs/key.pem
+
+certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
+	@if [ -f certs/cert.pem ] && [ -f certs/key-encrypted.pem ]; then \
+		echo "🔏  Existing passphrase-protected certificates found - skipping."; \
+	else \
+		echo "🔏  Generating passphrase-protected certificate (1 year)..."; \
+		mkdir -p certs; \
+		read -sp "Enter passphrase for private key: " PASSPHRASE; echo; \
+		read -sp "Confirm passphrase: " PASSPHRASE2; echo; \
+		if [ "$$PASSPHRASE" != "$$PASSPHRASE2" ]; then \
+			echo "❌  Passphrases do not match!"; \
+			exit 1; \
+		fi; \
+		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
+			-keyout certs/key-encrypted.pem -out certs/cert.pem \
+			-subj "/CN=localhost" \
+			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
+			-passout pass:"$$PASSPHRASE"; \
+		echo "✅  Passphrase-protected certificate created"; \
+		echo "📁  Certificate: ./certs/cert.pem"; \
+		echo "📁  Encrypted Key: ./certs/key-encrypted.pem"; \
+		echo ""; \
+		echo "💡  To use this certificate:"; \
+		echo "   1. Set KEY_FILE_PASSWORD environment variable"; \
+		echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"; \
+	fi
+	@chmod 600 certs/key-encrypted.pem
+
+certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
+	@if [ ! -f certs/key-encrypted.pem ]; then \
+		echo "❌  No encrypted key found at certs/key-encrypted.pem"; \
+		echo "💡  Generate one with: make certs-passphrase"; \
+		exit 1; \
+	fi
+	@echo "🔓  Removing passphrase from private key..."
+	@openssl rsa -in certs/key-encrypted.pem -out certs/key.pem
+	@chmod 600 certs/key.pem
+	@echo "✅  Passphrase removed - unencrypted key saved to certs/key.pem"
+	@echo "⚠️   Keep this file secure! It contains your unencrypted private key."
 
 certs-jwt:                       ## Generate JWT RSA keys in ./certs/jwt/ (idempotent)
 	@if [ -f certs/jwt/private.pem ] && [ -f certs/jwt/public.pem ]; then \

@@ -208,6 +208,24 @@ class Settings(BaseSettings):
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
+
+    # Security Validation & Sanitization
+    experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
+    validation_middleware_enabled: bool = Field(default=False, description="Enable validation middleware for all requests")
+    validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
+    sanitize_output: bool = Field(default=True, description="Sanitize output to remove control characters")
+    allowed_roots: List[str] = Field(default_factory=list, description="Allowed root paths for resource access")
+    max_path_depth: int = Field(default=10, description="Maximum allowed path depth")
+    max_param_length: int = Field(default=10000, description="Maximum parameter length")
+    dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"[;&|`$(){}\[\]<>]",  # Shell metacharacters
+            r"\.\.[\\/]",  # Path traversal
+            r"[\x00-\x1f\x7f-\x9f]",  # Control characters
+        ],
+        description="Regex patterns for dangerous input",
+    )
+
     sso_keycloak_email_claim: str = Field(default="email", description="JWT claim for email")
     sso_keycloak_groups_claim: str = Field(default="groups", description="JWT claim for groups/roles")
 
@@ -301,10 +319,10 @@ class Settings(BaseSettings):
 
     # Password Policy Configuration
     password_min_length: int = Field(default=8, description="Minimum password length")
-    password_require_uppercase: bool = Field(default=False, description="Require uppercase letters in passwords")
-    password_require_lowercase: bool = Field(default=False, description="Require lowercase letters in passwords")
+    password_require_uppercase: bool = Field(default=True, description="Require uppercase letters in passwords")
+    password_require_lowercase: bool = Field(default=True, description="Require lowercase letters in passwords")
     password_require_numbers: bool = Field(default=False, description="Require numbers in passwords")
-    password_require_special: bool = Field(default=False, description="Require special characters in passwords")
+    password_require_special: bool = Field(default=True, description="Require special characters in passwords")
 
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
@@ -428,6 +446,34 @@ class Settings(BaseSettings):
     llmchat_session_lock_wait: float = Field(default=0.2, description="Seconds between polls")
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
+
+    @field_validator("allowed_roots", mode="before")
+    @classmethod
+    def parse_allowed_roots(cls, v):
+        """Parse allowed roots from environment variable or config value.
+
+        Args:
+            v: The input value to parse
+
+        Returns:
+            list: Parsed list of allowed root paths
+        """
+        if isinstance(v, str):
+            # Support both JSON array and comma-separated values
+            v = v.strip()
+            if not v:
+                return []
+            # Try JSON first
+            try:
+                loaded = json.loads(v)
+                if isinstance(loaded, list):
+                    return loaded
+            except json.JSONDecodeError:
+                # Not a valid JSON array → fallback to comma-separated parsing
+                pass
+            # Fallback to comma-split
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
 
     @field_validator("jwt_secret_key", "auth_encryption_secret")
     @classmethod
@@ -775,6 +821,51 @@ class Settings(BaseSettings):
 
     # Enable span events
     observability_events_enabled: bool = Field(default=True, description="Enable event logging within spans")
+
+    # Correlation ID Settings
+    correlation_id_enabled: bool = Field(default=True, description="Enable automatic correlation ID tracking for requests")
+    correlation_id_header: str = Field(default="X-Correlation-ID", description="HTTP header name for correlation ID")
+    correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
+    correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
+
+    # Structured Logging Configuration
+    structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")
+    structured_logging_database_enabled: bool = Field(default=True, description="Persist structured logs to database")
+    structured_logging_external_enabled: bool = Field(default=False, description="Send logs to external systems")
+
+    # Performance Tracking Configuration
+    performance_tracking_enabled: bool = Field(default=True, description="Enable performance tracking and metrics")
+    performance_threshold_database_query_ms: float = Field(default=100.0, description="Alert threshold for database queries (ms)")
+    performance_threshold_tool_invocation_ms: float = Field(default=2000.0, description="Alert threshold for tool invocations (ms)")
+    performance_threshold_resource_read_ms: float = Field(default=1000.0, description="Alert threshold for resource reads (ms)")
+    performance_threshold_http_request_ms: float = Field(default=500.0, description="Alert threshold for HTTP requests (ms)")
+    performance_degradation_multiplier: float = Field(default=1.5, description="Alert if performance degrades by this multiplier vs baseline")
+
+    # Security Logging Configuration
+    security_logging_enabled: bool = Field(default=True, description="Enable security event logging")
+    security_failed_auth_threshold: int = Field(default=5, description="Failed auth attempts before high severity alert")
+    security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
+    security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
+
+    # Metrics Aggregation Configuration
+    metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")
+    metrics_aggregation_backfill_hours: int = Field(default=6, ge=0, le=168, description="Hours of structured logs to backfill into performance metrics on startup")
+    metrics_aggregation_window_minutes: int = Field(default=5, description="Time window for metrics aggregation (minutes)")
+    metrics_aggregation_auto_start: bool = Field(default=False, description="Automatically run the log aggregation loop on application startup")
+
+    # Log Search Configuration
+    log_search_max_results: int = Field(default=1000, description="Maximum results per log search query")
+    log_retention_days: int = Field(default=30, description="Number of days to retain logs in database")
+
+    # External Log Integration Configuration
+    elasticsearch_enabled: bool = Field(default=False, description="Send logs to Elasticsearch")
+    elasticsearch_url: Optional[str] = Field(default=None, description="Elasticsearch cluster URL")
+    elasticsearch_index_prefix: str = Field(default="mcpgateway-logs", description="Elasticsearch index prefix")
+    syslog_enabled: bool = Field(default=False, description="Send logs to syslog")
+    syslog_host: Optional[str] = Field(default=None, description="Syslog server host")
+    syslog_port: int = Field(default=514, description="Syslog server port")
+    webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
+    webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
 
     @field_validator("log_level", mode="before")
     @classmethod
@@ -1344,7 +1435,17 @@ Disallow: /
     validation_max_description_length: int = 8192  # 8KB
     validation_max_template_length: int = 65536  # 64KB
     validation_max_content_length: int = 1048576  # 1MB
-    validation_max_json_depth: int = 10
+    validation_max_json_depth: int = Field(
+        default=int(os.getenv("VALIDATION_MAX_JSON_DEPTH", "30")),
+        description=(
+            "Maximum allowed JSON nesting depth for tool/resource schemas. "
+            "Increased from 10 to 30 for compatibility with deeply nested schemas "
+            "like Notion MCP (issue #1542). Override with VALIDATION_MAX_JSON_DEPTH "
+            "environment variable. Minimum: 1, Maximum: 100"
+        ),
+        ge=1,
+        le=100,
+    )
     validation_max_url_length: int = 2048
     validation_max_rpc_param_size: int = 262144  # 256KB
 

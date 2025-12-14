@@ -37,6 +37,16 @@ from mcpgateway.services.resource_service import (
 # --------------------------------------------------------------------------- #
 
 
+@pytest.fixture(autouse=True)
+def mock_logging_services():
+    """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    with patch("mcpgateway.services.resource_service.audit_trail") as mock_audit, \
+         patch("mcpgateway.services.resource_service.structured_logger") as mock_logger:
+        mock_audit.log_action = MagicMock(return_value=None)
+        mock_logger.log = MagicMock(return_value=None)
+        yield {"audit_trail": mock_audit, "structured_logger": mock_logger}
+
+
 @pytest.fixture
 def resource_service(monkeypatch):
     """Create a ResourceService instance."""
@@ -1588,7 +1598,7 @@ class TestResourceServiceMetricsExtended:
 
         # One template in cache — but it does NOT match URI
         template_obj = ResourceTemplate(
-            id=1,
+            id="1",
             uriTemplate="file://search/{query}",
             name="search_template",
             description="Template for performing a file search",

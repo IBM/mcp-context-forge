@@ -193,12 +193,19 @@ def test_client(app):
 
     # Patch the auth function used by DocsAuthMiddleware
     # Standard
-    from unittest.mock import patch
+    from unittest.mock import MagicMock, patch
 
     # Third-Party
     from fastapi import HTTPException, status
 
     # First-Party
+
+    # Mock security_logger to prevent database access
+    mock_sec_logger = MagicMock()
+    mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+    mock_sec_logger.log_security_event = MagicMock(return_value=None)
+    sec_patcher = patch("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
+    sec_patcher.start()
 
     # Create a mock that validates JWT tokens properly
     async def mock_require_auth_override(auth_header=None, jwt_token=None):
@@ -270,6 +277,7 @@ def test_client(app):
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_user_with_permissions, None)
     patcher.stop()  # Stop the require_auth_override patch
+    sec_patcher.stop()  # Stop the security_logger patch
     if hasattr(PermissionService, "_original_check_permission"):
         PermissionService.check_permission = PermissionService._original_check_permission
 
@@ -320,9 +328,9 @@ class TestHealthAndInfrastructure:
 
         # Check if UI is enabled
         if settings.mcpgateway_ui_enabled:
-            # When UI is enabled, should redirect to admin
+            # When UI is enabled, should redirect to admin with trailing slash
             assert response.status_code == 303
-            assert response.headers["location"] == "/admin"
+            assert response.headers["location"] == f"{settings.app_root_path}/admin/"
         else:
             # When UI is disabled, should return API info
             assert response.status_code == 200
@@ -512,12 +520,24 @@ class TestServerEndpoints:
         mock_toggle.assert_called_once()
 
     @patch("mcpgateway.main.server_service.delete_server")
-    def test_delete_server_endpoint(self, mock_delete, test_client, auth_headers):
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_delete_server_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
         """Test permanently deleting a server."""
+        mock_get.return_value = ServerRead(**MOCK_SERVER_READ)
         mock_delete.return_value = None
         response = test_client.delete("/servers/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_delete_server_not_found(self, mock_get, test_client, auth_headers):
+        """Test deleting a non-existent server returns 404."""
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        mock_get.side_effect = ServerNotFoundError("Server not found: nonexistent-id")
+        response = test_client.delete("/servers/nonexistent-id", headers=auth_headers)
+        assert response.status_code == 404
+        assert "Server not found" in response.json()["detail"]
 
     @patch("mcpgateway.main.tool_service.list_server_tools")
     def test_server_get_tools(self, mock_list_tools, test_client, auth_headers):

@@ -1,0 +1,99 @@
+# MCP Stack - Local Docker Compose Test Configuration
+# This config deploys MCP Gateway + external plugins locally with mTLS
+
+deployment:
+  type: compose
+  project_name: mcp-stack-test
+
+# MCP Gateway configuration
+gateway:
+  # Use local gateway image (build first with: make container-build)
+  image: mcpgateway/mcpgateway:latest
+
+  port: 4444
+  host_port: 4444  # Expose on localhost:4444
+
+  # Environment configuration
+  # env_file will auto-detect deploy/env/.env.gateway if not specified
+  env_vars:
+    LOG_LEVEL: DEBUG
+    HOST: 0.0.0.0
+    PORT: 4444
+
+    # Enable features
+    MCPGATEWAY_UI_ENABLED: "true"
+    MCPGATEWAY_ADMIN_API_ENABLED: "true"
+    MCPGATEWAY_A2A_ENABLED: "true"
+
+    # Auth
+    AUTH_REQUIRED: "false"  # Disabled for easy testing
+
+    # Federation
+    MCPGATEWAY_ENABLE_FEDERATION: "false"
+
+  # mTLS client configuration (gateway connects to plugins)
+  mtls_enabled: true
+  mtls_verify: true  # Verify server certificates (default: true)
+  mtls_check_hostname: false  # Don't verify hostname (default: false for compose)
+
+  # Note: plugins-config.yaml is auto-generated from the plugins section below
+  # No need to specify config_file anymore!
+
+# External plugins
+plugins:
+  # OPA Plugin Filter
+  - name: OPAPluginFilter
+
+    # Build from GitHub repository
+    repo: https://github.com/terylt/mcp-context-forge.git
+    ref: feat/use_mtls_plugins
+    context: plugins/external/opa
+    containerfile: Containerfile
+
+    # Defaults: port=8000, host_port auto-assigned (8000, 8001, ...)
+    expose_port: true   # Expose for testing
+
+    # env_file will auto-detect deploy/env/.env.OPAPluginFilter if not specified
+    env_vars:
+      LOG_LEVEL: DEBUG
+
+      # OPA-specific settings
+      OPA_POLICY_PATH: /app/policies
+
+    # mTLS server configuration
+    mtls_enabled: true
+
+    # Plugin manager overrides (client-side configuration)
+    plugin_overrides:
+      priority: 10
+      mode: "enforce"
+      description: "OPA policy enforcement for tool and resource filtering"
+      tags: ["security", "policy", "opa"]
+
+  # LLMGuard Plugin (content filtering)
+  #- name: LLMGuardPlugin
+
+    # Build from GitHub repository
+  #  repo: https://github.com/terylt/mcp-context-forge.git
+  #  ref: feat/use_mtls_plugins
+  #  context: plugins/external/llmguard
+  #  containerfile: Containerfile
+  #  target: builder  # Build only the 'builder' stage (multi-stage build)
+
+    # Defaults: port=8000, host_port auto-assigned (8000, 8001, ...)
+  #  port: 8001
+  #  expose_port: true
+
+    # env_file will auto-detect deploy/env/.env.LLMGuardPlugin if not specified
+  #   env_vars:
+  #    LOG_LEVEL: DEBUG
+
+  #  mtls_enabled: true
+
+# mTLS Certificate configuration
+certificates:
+  validity_days: 825
+  auto_generate: true
+  ca_path: ./certs/mcp/ca
+  gateway_path: ./certs/mcp/gateway
+  plugins_path: ./certs/mcp/plugins

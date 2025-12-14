@@ -37,9 +37,11 @@ from mcpgateway.db import PromptMetric, server_prompt_association
 from mcpgateway.observability import create_span
 from mcpgateway.plugins.framework import GlobalContext, PluginContextTable, PluginManager, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.schemas import PromptCreate, PromptRead, PromptUpdate, TopPerformer
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.event_service import EventService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
@@ -47,6 +49,10 @@ from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 # Initialize logging service first
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Initialize structured logger and audit trail for prompt operations
+structured_logger = get_structured_logger("prompt_service")
+audit_trail = get_audit_trail_service()
 
 
 class PromptError(Exception):
@@ -401,18 +407,95 @@ class PromptService:
             await self._notify_prompt_added(db_prompt)
 
             logger.info(f"Registered prompt: {prompt.name}")
+
+            # Structured logging: Audit trail for prompt creation
+            audit_trail.log_action(
+                user_id=created_by or "system",
+                action="create_prompt",
+                resource_type="prompt",
+                resource_id=str(db_prompt.id),
+                resource_name=db_prompt.name,
+                user_email=owner_email,
+                team_id=team_id,
+                client_ip=created_from_ip,
+                user_agent=created_user_agent,
+                new_values={
+                    "name": db_prompt.name,
+                    "visibility": visibility,
+                },
+                context={
+                    "created_via": created_via,
+                    "import_batch_id": import_batch_id,
+                    "federation_source": federation_source,
+                },
+                db=db,
+            )
+
+            # Structured logging: Log successful prompt creation
+            structured_logger.log(
+                level="INFO",
+                message="Prompt created successfully",
+                event_type="prompt_created",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                team_id=team_id,
+                resource_type="prompt",
+                resource_id=str(db_prompt.id),
+                custom_fields={
+                    "prompt_name": db_prompt.name,
+                    "visibility": visibility,
+                },
+                db=db,
+            )
+
             db_prompt.team = self._get_team_name(db, db_prompt.team_id)
             prompt_dict = self._convert_db_prompt(db_prompt)
             return PromptRead.model_validate(prompt_dict)
 
         except IntegrityError as ie:
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt creation failed due to database integrity error",
+                event_type="prompt_creation_failed",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=ie,
+                custom_fields={"prompt_name": prompt.name},
+                db=db,
+            )
             raise ie
         except PromptNameConflictError as se:
             db.rollback()
+
+            structured_logger.log(
+                level="WARNING",
+                message="Prompt creation failed due to name conflict",
+                event_type="prompt_name_conflict",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                custom_fields={"prompt_name": prompt.name, "visibility": visibility},
+                db=db,
+            )
             raise se
         except Exception as e:
             db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt creation failed",
+                event_type="prompt_creation_failed",
+                component="prompt_service",
+                user_id=created_by,
+                user_email=owner_email,
+                error=e,
+                custom_fields={"prompt_name": prompt.name},
+                db=db,
+            )
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
     async def list_prompts(self, db: Session, include_inactive: bool = False, cursor: Optional[str] = None, tags: Optional[List[str]] = None) -> tuple[List[PromptRead], Optional[str]]:
@@ -826,6 +909,43 @@ class PromptService:
                     # Use modified payload if provided
                     result = post_result.modified_payload.result if post_result.modified_payload else result
 
+                arguments_supplied = bool(arguments)
+
+                audit_trail.log_action(
+                    user_id=user or "anonymous",
+                    action="view_prompt",
+                    resource_type="prompt",
+                    resource_id=str(prompt.id),
+                    resource_name=prompt.name,
+                    team_id=prompt.team_id,
+                    context={
+                        "tenant_id": tenant_id,
+                        "server_id": server_id,
+                        "arguments_provided": arguments_supplied,
+                        "request_id": request_id,
+                    },
+                    db=db,
+                )
+
+                structured_logger.log(
+                    level="INFO",
+                    message="Prompt retrieved successfully",
+                    event_type="prompt_viewed",
+                    component="prompt_service",
+                    user_id=user,
+                    team_id=prompt.team_id,
+                    resource_type="prompt",
+                    resource_id=str(prompt.id),
+                    request_id=request_id,
+                    custom_fields={
+                        "prompt_name": prompt.name,
+                        "arguments_provided": arguments_supplied,
+                        "tenant_id": tenant_id,
+                        "server_id": server_id,
+                    },
+                    db=db,
+                )
+
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -990,26 +1110,117 @@ class PromptService:
             db.refresh(prompt)
 
             await self._notify_prompt_updated(prompt)
+
+            # Structured logging: Audit trail for prompt update
+            audit_trail.log_action(
+                user_id=user_email or modified_by or "system",
+                action="update_prompt",
+                resource_type="prompt",
+                resource_id=str(prompt.id),
+                resource_name=prompt.name,
+                user_email=user_email,
+                team_id=prompt.team_id,
+                client_ip=modified_from_ip,
+                user_agent=modified_user_agent,
+                new_values={"name": prompt.name, "version": prompt.version},
+                context={"modified_via": modified_via},
+                db=db,
+            )
+
+            structured_logger.log(
+                level="INFO",
+                message="Prompt updated successfully",
+                event_type="prompt_updated",
+                component="prompt_service",
+                user_id=modified_by,
+                user_email=user_email,
+                team_id=prompt.team_id,
+                resource_type="prompt",
+                resource_id=str(prompt.id),
+                custom_fields={"prompt_name": prompt.name, "version": prompt.version},
+                db=db,
+            )
+
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
 
-        except PermissionError:
+        except PermissionError as pe:
             db.rollback()
+
+            structured_logger.log(
+                level="WARNING",
+                message="Prompt update failed due to permission error",
+                event_type="prompt_update_permission_denied",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=pe,
+                db=db,
+            )
             raise
         except IntegrityError as ie:
             db.rollback()
             logger.error(f"IntegrityErrors in group: {ie}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed due to database integrity error",
+                event_type="prompt_update_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=ie,
+                db=db,
+            )
             raise ie
         except PromptNotFoundError as e:
             db.rollback()
             logger.error(f"Prompt not found: {e}")
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed - prompt not found",
+                event_type="prompt_not_found",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=e,
+                db=db,
+            )
             raise e
         except PromptNameConflictError as pnce:
             db.rollback()
             logger.error(f"Prompt name conflict: {pnce}")
+
+            structured_logger.log(
+                level="WARNING",
+                message="Prompt update failed due to name conflict",
+                event_type="prompt_name_conflict",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=pnce,
+                db=db,
+            )
             raise pnce
         except Exception as e:
             db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt update failed",
+                event_type="prompt_update_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=e,
+                db=db,
+            )
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
     async def toggle_prompt_status(self, db: Session, prompt_id: int, activate: bool, user_email: Optional[str] = None) -> PromptRead:
@@ -1071,12 +1282,63 @@ class PromptService:
                 else:
                     await self._notify_prompt_deactivated(prompt)
                 logger.info(f"Prompt {prompt.name} {'activated' if activate else 'deactivated'}")
+
+                # Structured logging: Audit trail for prompt status toggle
+                audit_trail.log_action(
+                    user_id=user_email or "system",
+                    action="toggle_prompt_status",
+                    resource_type="prompt",
+                    resource_id=str(prompt.id),
+                    resource_name=prompt.name,
+                    user_email=user_email,
+                    team_id=prompt.team_id,
+                    new_values={"enabled": prompt.enabled},
+                    context={"action": "activate" if activate else "deactivate"},
+                    db=db,
+                )
+
+                structured_logger.log(
+                    level="INFO",
+                    message=f"Prompt {'activated' if activate else 'deactivated'} successfully",
+                    event_type="prompt_status_toggled",
+                    component="prompt_service",
+                    user_email=user_email,
+                    team_id=prompt.team_id,
+                    resource_type="prompt",
+                    resource_id=str(prompt.id),
+                    custom_fields={"prompt_name": prompt.name, "enabled": prompt.enabled},
+                    db=db,
+                )
+
             prompt.team = self._get_team_name(db, prompt.team_id)
             return PromptRead.model_validate(self._convert_db_prompt(prompt))
         except PermissionError as e:
+            structured_logger.log(
+                level="WARNING",
+                message="Prompt status toggle failed due to permission error",
+                event_type="prompt_toggle_permission_denied",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=e,
+                db=db,
+            )
             raise e
         except Exception as e:
             db.rollback()
+
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt status toggle failed",
+                event_type="prompt_toggle_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=e,
+                db=db,
+            )
             raise PromptError(f"Failed to toggle prompt status: {str(e)}")
 
     # Get prompt details for admin ui
@@ -1113,7 +1375,35 @@ class PromptService:
             raise PromptNotFoundError(f"Prompt not found: {prompt_id}")
         # Return the fully converted prompt including metrics
         prompt.team = self._get_team_name(db, prompt.team_id)
-        return self._convert_db_prompt(prompt)
+        prompt_data = self._convert_db_prompt(prompt)
+
+        audit_trail.log_action(
+            user_id="system",
+            action="view_prompt_details",
+            resource_type="prompt",
+            resource_id=str(prompt.id),
+            resource_name=prompt.name,
+            team_id=prompt.team_id,
+            context={"include_inactive": include_inactive},
+            db=db,
+        )
+
+        structured_logger.log(
+            level="INFO",
+            message="Prompt details retrieved",
+            event_type="prompt_details_viewed",
+            component="prompt_service",
+            resource_type="prompt",
+            resource_id=str(prompt.id),
+            team_id=prompt.team_id,
+            custom_fields={
+                "prompt_name": prompt.name,
+                "include_inactive": include_inactive,
+            },
+            db=db,
+        )
+
+        return prompt_data
 
     async def delete_prompt(self, db: Session, prompt_id: Union[int, str], user_email: Optional[str] = None) -> None:
         """
@@ -1161,17 +1451,85 @@ class PromptService:
                     raise PermissionError("Only the owner can delete this prompt")
 
             prompt_info = {"id": prompt.id, "name": prompt.name}
+            prompt_name = prompt.name
+            prompt_team_id = prompt.team_id
+
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)
             logger.info(f"Deleted prompt: {prompt_info['name']}")
-        except PermissionError:
+
+            # Structured logging: Audit trail for prompt deletion
+            audit_trail.log_action(
+                user_id=user_email or "system",
+                action="delete_prompt",
+                resource_type="prompt",
+                resource_id=str(prompt_info["id"]),
+                resource_name=prompt_name,
+                user_email=user_email,
+                team_id=prompt_team_id,
+                old_values={"name": prompt_name},
+                db=db,
+            )
+
+            # Structured logging: Log successful prompt deletion
+            structured_logger.log(
+                level="INFO",
+                message="Prompt deleted successfully",
+                event_type="prompt_deleted",
+                component="prompt_service",
+                user_email=user_email,
+                team_id=prompt_team_id,
+                resource_type="prompt",
+                resource_id=str(prompt_info["id"]),
+                custom_fields={"prompt_name": prompt_name},
+                db=db,
+            )
+        except PermissionError as pe:
             db.rollback()
+
+            # Structured logging: Log permission error
+            structured_logger.log(
+                level="WARNING",
+                message="Prompt deletion failed due to permission error",
+                event_type="prompt_delete_permission_denied",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=pe,
+                db=db,
+            )
             raise
         except Exception as e:
             db.rollback()
             if isinstance(e, PromptNotFoundError):
+                # Structured logging: Log not found error
+                structured_logger.log(
+                    level="ERROR",
+                    message="Prompt deletion failed - prompt not found",
+                    event_type="prompt_not_found",
+                    component="prompt_service",
+                    user_email=user_email,
+                    resource_type="prompt",
+                    resource_id=str(prompt_id),
+                    error=e,
+                    db=db,
+                )
                 raise e
+
+            # Structured logging: Log generic prompt deletion failure
+            structured_logger.log(
+                level="ERROR",
+                message="Prompt deletion failed",
+                event_type="prompt_deletion_failed",
+                component="prompt_service",
+                user_email=user_email,
+                resource_type="prompt",
+                resource_id=str(prompt_id),
+                error=e,
+                db=db,
+            )
             raise PromptError(f"Failed to delete prompt: {str(e)}")
 
     async def subscribe_events(self) -> AsyncGenerator[Dict[str, Any], None]:

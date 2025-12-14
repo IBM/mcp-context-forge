@@ -502,8 +502,8 @@ class TestEventService:
 
             await asyncio.sleep(0.1)
 
-            mock_logger.error.assert_called()
-            error_message = str(mock_logger.error.call_args)
+            mock_logger.debug.assert_called()
+            error_message = str(mock_logger.debug.call_args)
             assert "Client disconnected" in error_message
             assert len(service._event_subscribers) == 0
 

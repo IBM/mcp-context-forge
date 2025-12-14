@@ -281,9 +281,16 @@ async def test_require_auth_override_basic_auth_disabled(monkeypatch):
 
 
 @pytest.fixture
-def test_client():
-    if app is None:
-        pytest.skip("FastAPI app not importable")
+def test_client(app, monkeypatch):
+    """Create a test client with the properly configured app fixture from conftest."""
+    from unittest.mock import MagicMock
+
+    # Patch security_logger at the middleware level where it's imported and called
+    mock_sec_logger = MagicMock()
+    mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
+    mock_sec_logger.log_security_event = MagicMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.middleware.auth_middleware.security_logger", mock_sec_logger)
+
     return TestClient(app)
 
 

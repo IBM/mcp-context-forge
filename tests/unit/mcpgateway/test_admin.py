@@ -804,17 +804,19 @@ class TestAdminResourceRoutes:
     @patch.object(ResourceService, "get_resource_by_id")
     @patch.object(ResourceService, "read_resource")
     async def test_admin_get_resource_with_read_error(self, mock_read_resource, mock_get_resource, mock_db):
-        """Test getting resource when content read fails."""
-        # Resource exists
+        """Test: read_resource should not be called at all."""
+
         mock_resource = MagicMock()
         mock_resource.model_dump.return_value = {"id": 1, "uri": "/test/resource"}
         mock_get_resource.return_value = mock_resource
 
-        # But reading content fails
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        with pytest.raises(IOError):
-            await admin_get_resource("1", mock_db, "test-user")
+        result = await admin_get_resource("1", mock_db, "test-user")
+
+        assert result["resource"]["id"] == 1
+        mock_read_resource.assert_not_called()
+
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -1357,7 +1359,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 mock_client.request.assert_called_once()
@@ -1396,7 +1399,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                await admin_test_gateway(request, None, "test-user", mock_db)
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
@@ -1422,7 +1426,8 @@ class TestAdminGatewayTestRoute:
 
             mock_client_class.return_value = mock_client
 
-            result = await admin_test_gateway(request, "test-user")
+            mock_db = MagicMock()
+            result = await admin_test_gateway(request, None, "test-user", mock_db)
 
             assert result.status_code == 502
             assert "Request timed out" in str(result.body)
@@ -1459,7 +1464,8 @@ class TestAdminGatewayTestRoute:
 
                 mock_client_class.return_value = mock_client
 
-                result = await admin_test_gateway(request, "test-user")
+                mock_db = MagicMock()
+                result = await admin_test_gateway(request, None, "test-user", mock_db)
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text

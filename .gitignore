@@ -61,7 +61,16 @@ logs/
 reports/
 corpus/
 tests/fuzz/fuzzers/results/
+
+# Virtual environments (including nested)
+.venv/
 .venv
+**/.venv/
+**/.venv
+
+# uv lock files (including nested)
+uv.lock
+**/uv.lock
 mcp.db
 public/
 ica_integrations_host.sbom.json

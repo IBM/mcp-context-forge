@@ -1,0 +1,43 @@
+plugins:
+  - name: "CedarPolicyPlugin"
+    kind: "cedarpolicyplugin.plugin.CedarPolicyPlugin"
+    description: "A plugin that does policy decision and enforcement using cedar"
+    version: "0.1.0"
+    author: "Shriti Priya"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["plugin"]
+    mode: "enforce"  # enforce | permissive | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      policy_lang: custom_dsl
+      policy_output_keywords:
+        view_full: "view_full_output"
+        view_redacted: "view_redacted_output"
+      policy_redaction_spec:
+        pattern: '"\$\d{1,}(,\d{1,})*"' # provide regex, if none, then replace all
+      policy: |
+        [role:hr:server/hr_tool]
+        update_payroll
+
+        [role:admin:resource/example.com/data]
+        view_full_output
+
+        [role:admin:prompt/judge_prompts]
+        view_full_output
+
+
+# Plugin directories to scan
+plugin_dirs:
+  - "cedarpolicyplugin"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

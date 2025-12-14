@@ -6,6 +6,7 @@ MCP Context Forge provides a comprehensive collection of production-ready plugin
 
 - [Security & Safety](#security-safety)
 - [Reliability & Performance](#reliability-performance)
+- [Observability & Monitoring](#observability-monitoring)
 - [Content Transformation & Formatting](#content-transformation-formatting)
 - [Content Filtering & Validation](#content-filtering-validation)
 - [Compliance & Governance](#compliance-governance)
@@ -43,6 +44,14 @@ Plugins for improving system reliability, performance, and resource management.
 | [Cached Tool Result](https://github.com/IBM/mcp-context-forge/tree/main/plugins/cached_tool_result) | Native | Caches idempotent tool results in-memory with configurable TTL and key fields |
 | [Response Cache by Prompt](https://github.com/IBM/mcp-context-forge/tree/main/plugins/response_cache_by_prompt) | Native | Advisory response cache using cosine similarity over prompt/input fields with configurable threshold |
 | [Retry with Backoff](https://github.com/IBM/mcp-context-forge/tree/main/plugins/retry_with_backoff) | Native | Annotates retry/backoff policy in metadata with exponential backoff on specific HTTP status codes |
+
+## Observability & Monitoring
+
+Plugins for telemetry, tracing, and monitoring tool invocations.
+
+| Plugin | Type | Description |
+|--------|------|-------------|
+| [Tools Telemetry Exporter](https://github.com/IBM/mcp-context-forge/tree/main/plugins/tools_telemetry_exporter) | Native | Export comprehensive tool invocation telemetry to OpenTelemetry for observability and monitoring with configurable payload export |
 
 ## Content Transformation & Formatting
 
@@ -104,6 +113,7 @@ Plugins for enforcing custom policies and business rules.
 | Plugin | Type | Description |
 |--------|------|-------------|
 | [OPA Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/opa) | External | Enforces Rego policies on tool invocations via an OPA server. Allows selective policy application per tool with context injection and customizable policy endpoints |
+| [Cedar (RBAC) Plugin](https://github.com/IBM/mcp-context-forge/tree/main/plugins/external/cedar) | External | Enforces RBAC-based policies on MCP servers using Cedar (leveraging the cedarpy library) or a custom DSL, for local evaluation with flexible configuration and output redaction. |
 
 ## Plugin Types
 

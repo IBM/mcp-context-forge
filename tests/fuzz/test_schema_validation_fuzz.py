@@ -135,9 +135,9 @@ class TestToolCreateSchemaFuzzing:
         """Test tags field with various lists."""
         try:
             tool = ToolCreate(name="test", url="http://example.com", tags=tags)
-            # If validation succeeds, tags should be list of strings
+            # If validation succeeds, tags should be list of dicts with id/label keys
             assert isinstance(tool.tags, list)
-            assert all(isinstance(tag, str) for tag in tool.tags)
+            assert all(isinstance(tag, dict) and "id" in tag and "label" in tag for tag in tool.tags)
         except ValidationError:
             # Expected for invalid tag structures
             pass

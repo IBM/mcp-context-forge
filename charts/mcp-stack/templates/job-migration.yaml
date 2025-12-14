@@ -6,6 +6,11 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app.kubernetes.io/component: migration
+  annotations:
+    # Run this Job before install/upgrade
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Delete old Job before new one and clean up succeeded ones
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   # Job configuration
   backoffLimit: {{ .Values.migration.backoffLimit }}
@@ -61,16 +66,13 @@ spec:
                 secretKeyRef:
                   name: {{ include "mcp-stack.postgresSecretName" . | trim }}
                   key: POSTGRES_PASSWORD
-
             # ---------- DERIVED URLS ----------
             - name: DATABASE_URL
               value: >-
                 postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
-
             # ---------- LOGGING ----------
             - name: LOG_LEVEL
               value: "INFO"
-
           # Resource limits
           resources:
 {{- toYaml .Values.migration.resources | nindent 12 }}

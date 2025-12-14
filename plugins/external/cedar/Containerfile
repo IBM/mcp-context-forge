@@ -1,0 +1,47 @@
+# syntax=docker/dockerfile:1.7
+ARG UBI=python-312-minimal
+
+FROM registry.access.redhat.com/ubi9/${UBI} AS builder
+
+ARG PYTHON_VERSION=3.12
+
+ARG VERSION
+ARG COMMIT_ID
+ARG SKILLS_SDK_COMMIT_ID
+ARG SKILLS_SDK_VERSION
+ARG BUILD_TIME_SKILLS_INSTALL
+
+ENV APP_HOME=/app
+
+USER 0
+
+# Image pre-requisites
+RUN INSTALL_PKGS="git make gcc gcc-c++ python${PYTHON_VERSION}-devel" && \
+    microdnf -y --setopt=tsflags=nodocs --setopt=install_weak_deps=0 install $INSTALL_PKGS && \
+    microdnf -y clean all --enablerepo='*'
+
+# Setup alias from HOME to APP_HOME
+RUN mkdir -p ${APP_HOME} && \
+    chown -R 1001:0 ${APP_HOME} && \
+    ln -s ${HOME} ${APP_HOME} && \
+    mkdir -p ${HOME}/resources/config && \
+    chown -R 1001:0 ${HOME}/resources/config
+
+USER 1001
+
+# Install plugin package
+COPY . .
+RUN pip install --no-cache-dir uv && python -m uv pip install .
+
+# Make default cache directory writable
+RUN mkdir -p -m 0776 ${HOME}/.cache
+
+# Update labels
+LABEL maintainer="Context Forge MCP Gateway Team" \
+      name="mcp/mcppluginserver" \
+      version="${VERSION}" \
+      url="https://github.com/IBM/mcp-context-forge" \
+      description="MCP Plugin Server for the Context Forge MCP Gateway"
+
+# App entrypoint
+ENTRYPOINT ["sh", "-c", "${HOME}/run-server.sh"]

@@ -3,6 +3,9 @@ branch = True
 omit =
     mcpgateway/alembic/*
     */__init__.py
+    mcpgateway/tools/builder/common.py
+    mcpgateway/tools/builder/dagger_deploy.py
+    mcpgateway/tools/builder/python_deploy.py
 
 [report]
 exclude_lines =
