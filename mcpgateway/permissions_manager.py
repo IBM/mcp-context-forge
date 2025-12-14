@@ -75,6 +75,12 @@ DEFAULT_ROLES = [
             Permissions.TOKENS_READ,
             Permissions.TOKENS_REVOKE,
             Permissions.TOKENS_SCOPE,
+            # Users
+            Permissions.USERS_CREATE,
+            Permissions.USERS_READ,
+            Permissions.USERS_UPDATE,
+            Permissions.USERS_DELETE,
+            Permissions.USERS_INVITE,
         ],
         "is_system_role": True,
     },
@@ -102,6 +108,7 @@ DEFAULT_ROLES = [
         "permissions": [
             # Team Management
             Permissions.TEAMS_READ,
+            Permissions.TEAMS_CREATE,
             Permissions.TEAMS_UPDATE,
             Permissions.TEAMS_DELETE,
             Permissions.TEAMS_JOIN,
@@ -146,6 +153,12 @@ DEFAULT_ROLES = [
             Permissions.TOKENS_READ,
             Permissions.TOKENS_REVOKE,
             Permissions.TOKENS_SCOPE,
+            # Users
+            Permissions.USERS_CREATE,
+            Permissions.USERS_READ,
+            Permissions.USERS_UPDATE,
+            Permissions.USERS_DELETE,
+            Permissions.USERS_INVITE,
         ],
         "is_system_role": True,
     },
@@ -154,9 +167,11 @@ DEFAULT_ROLES = [
         "description": "Team administrator with management permissions",
         "scope": "team",
         "permissions": [
-            # Team Management (No Delete)
+            # Team Management
             Permissions.TEAMS_READ,
+            Permissions.TEAMS_CREATE,
             Permissions.TEAMS_UPDATE,
+            Permissions.TEAMS_DELETE,
             Permissions.TEAMS_JOIN,
             Permissions.TEAMS_MANAGE_MEMBERS,
             # Gateways
@@ -199,6 +214,12 @@ DEFAULT_ROLES = [
             Permissions.TOKENS_READ,
             Permissions.TOKENS_REVOKE,
             Permissions.TOKENS_SCOPE,
+            # Users
+            Permissions.USERS_CREATE,
+            Permissions.USERS_READ,
+            Permissions.USERS_UPDATE,
+            Permissions.USERS_DELETE,
+            Permissions.USERS_INVITE,
         ],
         "is_system_role": True,
     },
