@@ -41,16 +41,11 @@ def qr_decode(request: QRDecodingRequest) -> dict[str, Any]:
     max_image_size = convert_to_bytes(config.decoding.max_image_size)
 
     try:
-        img = load_image(request.image_data, max_image_size)
-        logger.info("Image loaded correctly")
+        img = load_image(request.image_data, max_image_size, request.preprocessing)
+        logger.info("Image loaded correctly. Image size %s", img.shape)
     except LoadImageError as e:
         logger.error(f"Error loading image: {e}")
         return {"success": False, "error": str(e)}
-
-    if request.preprocessing:
-        blur = cv2.GaussianBlur(img, (5, 5), 0)
-        _, img = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-
 
     detector = cv2.QRCodeDetector()
 

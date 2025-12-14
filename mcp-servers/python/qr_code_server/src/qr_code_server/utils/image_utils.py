@@ -1,9 +1,11 @@
 
 import base64
+import logging
 import os
 from collections.abc import Generator
 from io import BytesIO
 
+import cv2
 import numpy as np
 import qrcode
 from PIL import Image
@@ -11,12 +13,16 @@ from qrcode.image.base import BaseImage
 from qrcode.image.pil import PilImage
 from qrcode.image.svg import SvgImage
 
+logger = logging.getLogger(__name__)
+
 
 class SaveImageError(Exception):
     pass
 
+
 class LoadImageError(Exception):
     pass
+
 
 class ImageAscii(BaseImage):
 
@@ -110,7 +116,7 @@ def create_qr_image(
     )
 
 
-def load_image(image_data: str, max_image_size: int) -> np.ndarray:
+def load_image(image_data: str, max_image_size: int, preprocessing: bool) -> np.ndarray:
     """Load an image from a file path and convert to OpenCV format."""
 
     if os.path.isfile(image_data):
@@ -127,7 +133,7 @@ def load_image(image_data: str, max_image_size: int) -> np.ndarray:
         estimated_size = len(b64_str) * 3 // 4 - padding
         # approximate size validation before decoding base64
         if estimated_size > max_image_size:
-                raise LoadImageError("Base64 image data too large")
+            raise LoadImageError("Base64 image data too large")
         try:
             img_bytes = base64.b64decode(image_data.strip())
             img = Image.open(BytesIO(img_bytes))
@@ -137,10 +143,46 @@ def load_image(image_data: str, max_image_size: int) -> np.ndarray:
     if getattr(img, "is_animated", False):
         img.seek(0)
 
-    result_image = np.array(img.convert("L"))
+    if preprocessing:
+        img = img_preprocessing(img)
+
+    else:
+        img = np.array(img.convert("L"))
+        logger.info("Converted image to grayscale")
 
     # last size validation before exiting
-    if result_image.nbytes > max_image_size:
-        raise LoadImageError(f"Image too large in memory: {result_image.nbytes} bytes")
+    if img.nbytes > max_image_size:
+        raise LoadImageError(f"Image too large in memory: {img.nbytes} bytes")
 
-    return result_image
+    return img
+
+
+def img_preprocessing(img: Image.Image) -> np.ndarray:
+    """
+    Preprocess a grayscale or single-channel image for QR decoding.
+
+    Steps:
+    1. If the image is smaller than 100 pixels in any dimension, upscale it to 100x100.
+    2. Apply Gaussian blur with a 5x5 kernel to reduce noise.
+    3. Apply Otsu's thresholding to binarize the image.
+
+    Args:
+        img (Image.Image): Input image as a PIL Image.
+
+    Returns:
+        np.ndarray: Preprocessed binary image as a NumPy array.
+    """
+
+    logger.info("Starting image preprocessing...")
+    if min(img.size) < 100:
+        logger.info("Image size %s too small, resizing to 100x100", img.size)
+        img = img.resize((100, 100), Image.Resampling.LANCZOS)
+
+    img = np.array(img.convert("L"))
+    logger.info("Converted image to grayscale")
+
+    blur = cv2.GaussianBlur(img, (5, 5), 0)
+    _, img = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    logger.info("Applied Gaussian blur with kernel size (5,5) and Otsu Treshold")
+
+    return img
