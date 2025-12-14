@@ -112,10 +112,69 @@ async def test_queue_limit_rejects_overload():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_multiple_tools():
-    """Test multiple concurrent requests to different tools work together."""
-    # Concurrency tested via test_semaphore_limits_concurrent_requests
-    pass
+async def test_concurrent_requests_multiple_tools(tmp_path):
+    """Test that multiple concurrent requests to different tools run together without exceeding semaphore limits."""
+
+    async with Client(mcp) as client:
+        active_tasks = 0
+        max_active = 0
+        lock = asyncio.Lock()
+
+        async def run_generate_qr(data, filename):
+            nonlocal active_tasks, max_active
+            async with lock:
+                active_tasks += 1
+                max_active = max(max_active, active_tasks)
+            request = QRGenerationRequest(
+                data=data,
+                save_path=str(tmp_path / filename)
+            ).model_dump()
+            await client.call_tool_mcp(name="generate_qr_code", arguments=request)
+            async with lock:
+                active_tasks -= 1
+
+        async def run_validate_qr(data):
+            nonlocal active_tasks, max_active
+            async with lock:
+                active_tasks += 1
+                max_active = max(max_active, active_tasks)
+            request = QRValidationRequest(
+                data=data,
+                version=10
+            ).model_dump()
+            await client.call_tool_mcp(name="validate_qr_data", arguments=request)
+            async with lock:
+                active_tasks -= 1
+
+        async def run_decode_qr(image_data):
+            nonlocal active_tasks, max_active
+            async with lock:
+                active_tasks += 1
+                max_active = max(max_active, active_tasks)
+            request = QRDecodingRequest(image_data=image_data).model_dump()
+            await client.call_tool_mcp(name="decode_qr_code", arguments=request)
+            async with lock:
+                active_tasks -= 1
+
+        # Prepare concurrent tasks for different tools
+        tasks = [
+            run_generate_qr("data1", "qr1.png"),
+            run_generate_qr("data2", "qr2.png"),
+            run_validate_qr("validate me"),
+            run_decode_qr(
+                "iVBORw0KGgoAAAANSUhEUgAAASIAAAEiAQAAAAB1xeIbAAABm0lEQVR4nO2ZwW2lQBBEX++M5CMjOQCHAhk41s2ACWU"
+                "DsMQcLYFqDwOs/7es9YUPhubAofUkSqim6S5M/P/Kv74BgVNOOeWUU0enbL4iUCJQlkq3q65LUK0kaQDyy7tZR5Ak6Z"
+                "Z6vK5LUGX1eHmqb3w+BjvrOjMV7wutQJTtnujUl1S2iHWPfOJlqcX3jYACBrPvPy5dR1V/CiqbmVkC2gGsY6pjzt66Tk"
+                "1V3//z+GL526jhqOrPQFnHZLXVW5qMnCb7TD1e1xUo9SUCzViL1hFkHZPvVltS1BWqHcLNTSPqCapLV39U9T+bmuecnAL"
+                "KL+9GTgEoz4Lmzb+1W1KL7zUiDSANQeobqbYg9/121DrnBEEjDALWDlNUft1R1xUoPkZmhDlQA5jPgvt+M2rtOZI0BC21"
+                "sd685zyAWnJM9Y1kloLIKUj9zrrOTN3nmAZxpP0dR6OZIm2/j64rUrXT5DQZ7Z8n/3eyJXWfY0JJKL8OAOMS6xxV/c+m7"
+                "ucc2rrmsoz7/q3djPqcY7LmmM1aPqp6p5xyyimnvkv9BVqy01GUeGtxAAAAAElFTkSuQmCC"
+            )
+        ]
+
+        await asyncio.gather(*tasks)
+
+        assert max_active > 1, f"Expected multiple tools to run concurrently, max active: {max_active}"
 
 
 @pytest.mark.asyncio
@@ -258,5 +317,4 @@ async def test_validate_qr_data_fails():
             arguments=request
         )
         assert "Data does not fit" in str(response.content)
-
 
