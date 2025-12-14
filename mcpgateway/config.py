@@ -447,6 +447,12 @@ class Settings(BaseSettings):
     llmchat_chat_history_ttl: int = Field(default=3600, description="Seconds for chat history expiry")
     llmchat_chat_history_max_messages: int = Field(default=50, description="Maximum message history to store per user")
 
+    # LLM Settings (Internal API for LLM Chat)
+    llm_api_prefix: str = Field(default="/v1", description="API prefix for internal LLM endpoints")
+    llm_request_timeout: int = Field(default=120, description="Request timeout in seconds for LLM API calls")
+    llm_streaming_enabled: bool = Field(default=True, description="Enable streaming responses for LLM Chat")
+    llm_health_check_interval: int = Field(default=300, description="Provider health check interval in seconds")
+
     @field_validator("allowed_roots", mode="before")
     @classmethod
     def parse_allowed_roots(cls, v):

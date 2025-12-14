@@ -5211,6 +5211,20 @@ if settings.llmchat_enabled:
     except ImportError:
         logger.debug("LLM Chat router not available")
 
+    # Include LLM configuration and proxy routers (internal API)
+    try:
+        # First-Party
+        from mcpgateway.routers.llm_admin_router import llm_admin_router
+        from mcpgateway.routers.llm_config_router import llm_config_router
+        from mcpgateway.routers.llm_proxy_router import llm_proxy_router
+
+        app.include_router(llm_config_router, prefix="/llm", tags=["LLM Configuration"])
+        app.include_router(llm_proxy_router, prefix=settings.llm_api_prefix, tags=["LLM Proxy"])
+        app.include_router(llm_admin_router, prefix="/admin/llm", tags=["LLM Admin"])
+        logger.info("LLM configuration, proxy, and admin routers included")
+    except ImportError as e:
+        logger.debug(f"LLM routers not available: {e}")
+
 # Include Toolops router
 if settings.toolops_enabled:
     try:
