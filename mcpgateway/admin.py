@@ -5797,7 +5797,6 @@ async def admin_cancel_join_request(
 @require_permission("teams.manage_members")
 async def admin_list_join_requests(
     team_id: str,
-    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -5818,7 +5817,6 @@ async def admin_list_join_requests(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
-        settings.app_root_path
 
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
