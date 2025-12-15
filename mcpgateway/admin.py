@@ -2353,7 +2353,7 @@ async def admin_toggle_server(
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#catalog", status_code=303)
 
 
 @admin_router.post("/servers/{server_id}/delete")
@@ -2456,7 +2456,7 @@ async def admin_delete_server(server_id: str, request: Request, db: Session = De
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#catalog", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#catalog", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#catalog", status_code=303)
 
 
 @admin_router.get("/resources", response_model=PaginatedResponse)
@@ -2847,7 +2847,7 @@ async def admin_toggle_gateway(
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#gateways", status_code=303)
 
 
 @admin_router.get("/", name="admin_home", response_class=HTMLResponse)
@@ -3491,7 +3491,7 @@ async def admin_login_page(request: Request) -> Response:
     # Check if email auth is enabled
     if not getattr(settings, "email_auth_enabled", False):
         root_path = settings.app_root_path
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     root_path = settings.app_root_path
 
@@ -3547,7 +3547,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = settings.app_root_path
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     try:
         form = await request.form()
@@ -3631,7 +3631,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
             # Create redirect response
             root_path = settings.app_root_path
-            response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+            response = RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
             # Set JWT token as secure cookie
             set_auth_cookie(response, token, remember_me=False)
@@ -3754,7 +3754,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = settings.app_root_path
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     # Get root path for template
     root_path = settings.app_root_path
@@ -3819,7 +3819,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
     """
     if not getattr(settings, "email_auth_enabled", False):
         root_path = settings.app_root_path
-        return RedirectResponse(url=f"{root_path}/admin", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
     try:
         form = await request.form()
@@ -3900,7 +3900,7 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 
                 # Create redirect response to admin panel
                 root_path = settings.app_root_path
-                response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
+                response = RedirectResponse(url=f"{root_path}/admin/", status_code=303)
 
                 # Update JWT token cookie
                 set_auth_cookie(response, token, remember_me=False)
@@ -9916,7 +9916,7 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#tools", status_code=303)
 
 
 @admin_router.post("/tools/{tool_id}/toggle")
@@ -10042,7 +10042,7 @@ async def admin_toggle_tool(
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#tools", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#tools", status_code=303)
 
 
 @admin_router.get("/gateways/{gateway_id}", response_model=GatewayRead)
@@ -10837,7 +10837,7 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#gateways", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#gateways", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#gateways", status_code=303)
 
 
 @admin_router.get("/resources/test/{resource_uri:path}")
@@ -11401,7 +11401,7 @@ async def admin_delete_resource(resource_id: str, request: Request, db: Session 
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#resources", status_code=303)
 
 
 @admin_router.post("/resources/{resource_id}/toggle")
@@ -11526,7 +11526,7 @@ async def admin_toggle_resource(
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#resources", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#resources", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#resources", status_code=303)
 
 
 @admin_router.get("/prompts/{prompt_id}")
@@ -11965,7 +11965,7 @@ async def admin_delete_prompt(prompt_id: str, request: Request, db: Session = De
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#prompts", status_code=303)
 
 
 @admin_router.post("/prompts/{prompt_id}/toggle")
@@ -12090,7 +12090,7 @@ async def admin_toggle_prompt(
 
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#prompts", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#prompts", status_code=303)
 
 
 @admin_router.post("/roots")
@@ -12145,7 +12145,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         name = name_value
     await root_service.add_root(uri, name)
     root_path = settings.app_root_path
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#roots", status_code=303)
 
 
 @admin_router.post("/roots/{uri:path}/delete")
@@ -12209,7 +12209,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     if is_inactive_checked.lower() == "true":
         return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
-    return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#roots", status_code=303)
 
 
 # Metrics
@@ -14692,7 +14692,7 @@ async def admin_toggle_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
     error_message = None
     try:
@@ -14704,7 +14704,7 @@ async def admin_toggle_a2a_agent(
 
         await a2a_service.toggle_agent_status(db, agent_id, activate, user_email=user_email)
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} toggling A2A agent status{agent_id}: {e}")
@@ -14725,7 +14725,7 @@ async def admin_toggle_a2a_agent(
         error_param = f"?error={urllib.parse.quote(error_message)}"
         return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
 
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/delete")
@@ -14751,7 +14751,7 @@ async def admin_delete_a2a_agent(
     """
     if not a2a_service or not settings.mcpgateway_a2a_enabled:
         root_path = settings.app_root_path
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+        return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
     form = await request.form()
     purge_metrics = str(form.get("purge_metrics", "false")).lower() == "true"
@@ -14776,7 +14776,7 @@ async def admin_delete_a2a_agent(
         error_param = f"?error={urllib.parse.quote(error_message)}"
         return RedirectResponse(f"{root_path}/admin/{error_param}#a2a-agents", status_code=303)
 
-    return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
+    return RedirectResponse(f"{root_path}/admin/#a2a-agents", status_code=303)
 
 
 @admin_router.post("/a2a/{agent_id}/test")

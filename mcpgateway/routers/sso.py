@@ -228,7 +228,7 @@ async def handle_sso_callback(
     # Third-Party
     from fastapi.responses import RedirectResponse
 
-    redirect_response = RedirectResponse(url=f"{root_path}/admin", status_code=302)
+    redirect_response = RedirectResponse(url=f"{root_path}/admin/", status_code=302)
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
