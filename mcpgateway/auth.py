@@ -320,7 +320,6 @@ async def get_current_user(
         # Try JWT token first using the centralized verify_jwt_token function
         logger.debug("Attempting JWT token validation")
         payload = await verify_jwt_token(credentials.credentials)
-        logger.info(f'{payload=}')    
 
         logger.debug("JWT token validated successfully")
         # Extract user identifier (support both new and legacy token formats)
