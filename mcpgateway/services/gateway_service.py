@@ -3223,7 +3223,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # If auth_value is a dict, encode it to string for GatewayRead schema
         if isinstance(gateway.auth_value, dict):
             gateway.auth_value = encode_auth(gateway.auth_value)
-        
+
         # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
         # Database stores: ["git", "development"]
         # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
@@ -3232,9 +3232,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             if isinstance(gateway.tags[0], str):
                 # First-Party
                 from mcpgateway.validation.tags import validate_tags_field  # pylint: disable=import-outside-toplevel
-                
+
                 gateway.tags = validate_tags_field(gateway.tags)
-        
+
         return gateway
 
     def _create_db_tool(
