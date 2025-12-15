@@ -1580,7 +1580,7 @@ class ToolService:
                     elif response.status_code not in [200, 201, 202, 206]:
                         try:
                             result = response.json()
-                        except:
+                        except json.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
                         tool_result = ToolResult(
                             content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
@@ -1590,7 +1590,7 @@ class ToolService:
                     else:
                         try:
                             result = response.json()
-                        except:
+                        except json.JSONDecodeError:
                             result = {"response_text": response.text} if response.text else {}
                         logger.debug(f"REST API tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
