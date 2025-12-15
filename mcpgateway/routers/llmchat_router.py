@@ -41,6 +41,7 @@ from mcpgateway.services.mcp_client_chat_service import (
     AnthropicConfig,
     AWSBedrockConfig,
     AzureOpenAIConfig,
+    GatewayConfig,
     LLMConfig,
     MCPChatService,
     MCPClientConfig,
@@ -288,7 +289,7 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
     cfg = llm.config if llm else {}
 
     # Validate provider
-    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx"]
+    valid_providers = ["azure_openai", "openai", "anthropic", "aws_bedrock", "ollama", "watsonx", "gateway"]
     if provider not in valid_providers:
         raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: {', '.join(valid_providers)}")
 
@@ -409,6 +410,23 @@ def build_llm_config(llm: Optional[LLMInput]) -> LLMConfig:
                 decoding_method=fallback(cfg.get("decoding_method"), "WATSONX_DECODING_METHOD", "sample"),
                 top_k=cfg.get("top_k", 50),
                 top_p=cfg.get("top_p", 1.0),
+                timeout=cfg.get("timeout"),
+            ),
+        )
+
+    elif provider == "gateway":
+        model = fallback(cfg.get("model"), "GATEWAY_MODEL")
+
+        if not model:
+            raise ValueError("Gateway model ID is required but not provided")
+
+        return LLMConfig(
+            provider="gateway",
+            config=GatewayConfig(
+                model=model,
+                base_url=fallback(cfg.get("base_url"), "GATEWAY_BASE_URL"),
+                temperature=fallback(cfg.get("temperature"), "GATEWAY_TEMPERATURE", 0.7),
+                max_tokens=cfg.get("max_tokens"),
                 timeout=cfg.get("timeout"),
             ),
         )
@@ -1263,3 +1281,59 @@ async def get_config(user_id: str):
         config_dict["llm"]["config"].pop("auth_token", None)
 
     return config_dict
+
+
+@llmchat_router.get("/gateway/models")
+async def get_gateway_models():
+    """Get available models from configured LLM providers.
+
+    Returns a list of enabled models from enabled providers configured
+    in the gateway's LLM Settings. These models can be used with the
+    "gateway" provider type in /connect requests.
+
+    Returns:
+        dict: Response containing:
+            - models: List of available models with provider info
+            - count: Total number of available models
+
+    Examples:
+        GET /llmchat/gateway/models
+
+        Response:
+        {
+            "models": [
+                {
+                    "id": "abc123",
+                    "model_id": "gpt-4o",
+                    "model_name": "GPT-4o",
+                    "provider_id": "def456",
+                    "provider_name": "OpenAI",
+                    "provider_type": "openai",
+                    "supports_streaming": true,
+                    "supports_function_calling": true,
+                    "supports_vision": true
+                }
+            ],
+            "count": 1
+        }
+
+    Raises:
+        HTTPException: If there is an error retrieving gateway models.
+    """
+    # Import here to avoid circular dependency
+    # First-Party
+    from mcpgateway.db import SessionLocal
+    from mcpgateway.services.llm_provider_service import LLMProviderService
+
+    llm_service = LLMProviderService()
+
+    try:
+        with SessionLocal() as db:
+            models = llm_service.get_gateway_models(db)
+            return {
+                "models": [m.model_dump() for m in models],
+                "count": len(models),
+            }
+    except Exception as e:
+        logger.error(f"Failed to get gateway models: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve gateway models: {str(e)}")
