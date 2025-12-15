@@ -202,7 +202,7 @@ async def handle_sso_callback(
         raise HTTPException(status_code=404, detail="SSO authentication is disabled")
 
     # Get root path for URL construction
-    root_path = request.scope.get("root_path", "") if request else ""
+    root_path = settings.app_root_path
 
     sso_service = SSOService(db)
 
