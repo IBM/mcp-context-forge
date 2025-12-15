@@ -81,7 +81,7 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
     )
-    
+
     # Extract and apply PostgreSQL options from URL query parameters
     # This allows users to specify search_path for custom schema support (Issue #1535)
     url_options = url.query.get("options")

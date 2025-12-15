@@ -161,7 +161,7 @@ class Settings(BaseSettings):
             "For PostgreSQL with custom schema, use the 'options' query parameter: "
             "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
             "(See Issue #1535 for details)"
-        )
+        ),
     )
 
     # Absolute paths resolved at import-time (still override-able via env vars)
