@@ -613,6 +613,10 @@ async def get_provider_defaults(
 ):
     """Get default configuration for all provider types.
 
+    Args:
+        request: FastAPI request object.
+        current_user_ctx: Authenticated user context.
+
     Returns:
         Dictionary of provider type to default config.
     """
@@ -635,6 +639,9 @@ async def fetch_provider_models(
 
     Returns:
         List of available models from the provider.
+
+    Raises:
+        HTTPException: If provider is not found.
     """
     # Third-Party
     import httpx
@@ -806,6 +813,7 @@ async def sync_provider_models(
         # Create the model
         try:
             model_create = LLMModelCreate(
+                provider_id=provider_id,
                 model_id=model_id,
                 model_name=model.get("name", model_id),
                 description=f"Auto-synced from {model.get('owned_by', 'provider')}",
@@ -813,7 +821,7 @@ async def sync_provider_models(
                 supports_streaming=True,
                 enabled=True,
             )
-            llm_provider_service.create_model(db, provider_id, model_create)
+            llm_provider_service.create_model(db, model_create)
             added += 1
         except Exception as e:
             logger.warning(f"Failed to create model {model_id}: {e}")

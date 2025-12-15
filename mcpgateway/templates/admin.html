@@ -1839,13 +1839,22 @@
                     <div class="grid grid-cols-2 gap-4">
                       <div>
                         <label for="llm-model-provider" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Provider *</label>
-                        <select id="llm-model-provider" name="provider_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
+                        <select id="llm-model-provider" name="provider_id" required onchange="onModelProviderChange()" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm">
                           <option value="">Select provider</option>
                         </select>
                       </div>
                       <div>
                         <label for="llm-model-model-id" class="block text-sm font-medium text-gray-700 dark:text-gray-300">Model ID *</label>
-                        <input type="text" id="llm-model-model-id" name="model_id" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="gpt-4o">
+                        <div class="flex mt-1">
+                          <input type="text" id="llm-model-model-id" name="model_id" required list="llm-model-suggestions" class="block w-full rounded-l-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Select provider first...">
+                          <datalist id="llm-model-suggestions"></datalist>
+                          <button type="button" onclick="fetchModelsForModelModal()" class="inline-flex items-center px-3 py-2 border border-l-0 border-gray-300 rounded-r-md bg-gray-50 text-gray-500 hover:bg-gray-100 dark:bg-gray-600 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-500" title="Fetch available models">
+                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                          </button>
+                        </div>
+                        <p id="llm-model-fetch-status" class="mt-1 text-xs text-gray-400 hidden"></p>
                       </div>
                     </div>
                     <div class="grid grid-cols-2 gap-4">

@@ -27527,6 +27527,87 @@ function closeLLMModelModal() {
 }
 
 /**
+ * Handle provider change in model modal - auto-fetch models
+ */
+async function onModelProviderChange() {
+    const providerId = document.getElementById("llm-model-provider").value;
+    const modelInput = document.getElementById("llm-model-model-id");
+    const datalist = document.getElementById("llm-model-suggestions");
+    const statusEl = document.getElementById("llm-model-fetch-status");
+
+    // Clear existing suggestions
+    datalist.innerHTML = "";
+
+    if (!providerId) {
+        modelInput.placeholder = "Select provider first...";
+        statusEl.classList.add("hidden");
+        return;
+    }
+
+    modelInput.placeholder = "Type or select a model...";
+
+    // Auto-fetch models when provider is selected
+    await fetchModelsForModelModal();
+}
+
+/**
+ * Fetch available models for the model modal
+ */
+async function fetchModelsForModelModal() {
+    const providerId = document.getElementById("llm-model-provider").value;
+    const datalist = document.getElementById("llm-model-suggestions");
+    const statusEl = document.getElementById("llm-model-fetch-status");
+
+    if (!providerId) {
+        showToast("Please select a provider first", "warning");
+        return;
+    }
+
+    statusEl.textContent = "Fetching models...";
+    statusEl.classList.remove("hidden");
+
+    try {
+        const response = await fetch(
+            `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
+            {
+                method: "POST",
+                headers: {
+                    Authorization: `Bearer ${await getAuthToken()}`,
+                },
+            },
+        );
+
+        const result = await response.json();
+
+        if (result.success && result.models && result.models.length > 0) {
+            // Populate datalist with model suggestions
+            datalist.innerHTML = "";
+            result.models.forEach((model) => {
+                const option = document.createElement("option");
+                option.value = model.id;
+                option.textContent = model.name || model.id;
+                datalist.appendChild(option);
+            });
+
+            statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
+            statusEl.classList.remove("hidden");
+        } else {
+            statusEl.textContent =
+                result.error || "No models found. Enter model ID manually.";
+            statusEl.classList.remove("hidden");
+        }
+    } catch (error) {
+        console.error("Error fetching models:", error);
+        statusEl.textContent =
+            "Failed to fetch models. Enter model ID manually.";
+        statusEl.classList.remove("hidden");
+    }
+}
+
+window.onModelProviderChange = onModelProviderChange;
+window.fetchModelsForModelModal = fetchModelsForModelModal;
+
+/**
  * Edit LLM Model
  */
 async function editLLMModel(modelId) {
