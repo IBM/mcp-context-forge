@@ -69,6 +69,10 @@ connect_args: dict[str, object] = {}
 # 2. PostgreSQL (synchronous psycopg2 only)
 #    The keep-alive parameters below are recognised exclusively by libpq /
 #    psycopg2 and let the kernel detect broken network links quickly.
+#
+#    Additionally, support PostgreSQL-specific options like search_path
+#    via the 'options' query parameter in DATABASE_URL.
+#    Example: postgresql://user:pass@host/db?options=-c%20search_path=mcp_gateway
 # ---------------------------------------------------------------------------
 if backend == "postgresql" and driver in ("psycopg2", "default", ""):
     connect_args.update(
@@ -77,6 +81,13 @@ if backend == "postgresql" and driver in ("psycopg2", "default", ""):
         keepalives_interval=5,  # seconds between probes
         keepalives_count=5,  # drop the link after N failed probes
     )
+
+    # Extract and apply PostgreSQL options from URL query parameters
+    # This allows users to specify search_path for custom schema support (Issue #1535)
+    url_options = url.query.get("options")
+    if url_options:
+        connect_args["options"] = url_options
+        logger.info(f"PostgreSQL connection options applied: {url_options}")
 
 # ---------------------------------------------------------------------------
 # 3. SQLite (optional) - only one extra flag and it is *SQLite-specific*.

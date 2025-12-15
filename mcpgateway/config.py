@@ -154,7 +154,15 @@ class Settings(BaseSettings):
     port: PositiveInt = Field(default=4444, ge=1, le=65535)
     client_mode: bool = False
     docs_allow_basic_auth: bool = False  # Allow basic auth for docs
-    database_url: str = "sqlite:///./mcp.db"
+    database_url: str = Field(
+        default="sqlite:///./mcp.db",
+        description=(
+            "Database connection URL. Supports SQLite, PostgreSQL, MySQL/MariaDB. "
+            "For PostgreSQL with custom schema, use the 'options' query parameter: "
+            "postgresql://user:pass@host:5432/db?options=-c%20search_path=schema_name "
+            "(See Issue #1535 for details)"
+        ),
+    )
 
     # Absolute paths resolved at import-time (still override-able via env vars)
     templates_dir: Path = Field(default_factory=lambda: Path(str(files("mcpgateway") / "templates")))
