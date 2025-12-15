@@ -5,7 +5,7 @@
 ###############################################################################
 ARG ENABLE_RUST=false
 
-FROM quay.io/pypa/manylinux2014:2025.10.19-2 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2025.12.13-1 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
@@ -48,7 +48,7 @@ FROM rust-builder-base AS rust-builder
 ###############################################################################
 # Main application stage
 ###############################################################################
-FROM registry.access.redhat.com/ubi10-minimal:10.0-1758699349
+FROM registry.access.redhat.com/ubi10-minimal:10.1-1764604111
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
       version="0.9.0" \
