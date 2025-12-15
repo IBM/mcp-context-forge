@@ -488,7 +488,7 @@ class TestTokenCatalogService:
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         with pytest.raises(ValueError, match="Only team owners can view team tokens"):
-            await token_service.list_team_tokens("team-123", "notowner@example.com")
+            await token_service.list_team_tokens("team-123", "notadmin@example.com")
 
     @pytest.mark.asyncio
     async def test_get_token_found(self, token_service, mock_db, mock_api_token):

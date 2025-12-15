@@ -563,7 +563,7 @@ class A2AAgentService:
             >>> agent_mock.federation_source = None
             >>> agent_mock.team_id = "team-1"
             >>> agent_mock.team = "Team 1"
-            >>> agent_mock.owner_email = "owner@example.com"
+            >>> agent_mock.owner_email = "admin@example.com"
             >>> agent_mock.visibility = "public"
 
             >>> db.get.return_value = agent_mock

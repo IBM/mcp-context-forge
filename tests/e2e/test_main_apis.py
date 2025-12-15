@@ -1313,7 +1313,7 @@ class TestPromptAPIs:
     async def test_prompt_name_conflict(self, client: AsyncClient, mock_auth):
         """Test creating prompt with duplicate name."""
         prompt_data = {
-            "prompt": {"name": "duplicate_prompt", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "owner@example.com", "visibility": "private"},
+            "prompt": {"name": "duplicate_prompt", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "admin@example.com", "visibility": "private"},
             "team_id": "1",
             "visibility": "private",
         }
@@ -1364,7 +1364,7 @@ class TestPromptAPIs:
     async def test_create_prompt_duplicate_name(self, client: AsyncClient, mock_auth):
         """Test POST /prompts with duplicate name returns 409 or 400."""
         prompt_data = {
-            "prompt": {"name": "duplicate_prompt_case", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "owner@example.com", "visibility": "private"},
+            "prompt": {"name": "duplicate_prompt_case", "template": "Test", "arguments": [], "team_id": "1", "owner_email": "admin@example.com", "visibility": "private"},
             "team_id": "1",
             "visibility": "private",
         }

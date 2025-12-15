@@ -105,7 +105,7 @@ class TestTeamsRouter:
         team.name = "Public Team"
         team.slug = "public-team"
         team.description = "A public team"
-        team.created_by = "owner@example.com"
+        team.created_by = "admin@example.com"
         team.is_personal = False
         team.visibility = "public"
         team.max_members = 200
@@ -124,7 +124,7 @@ class TestTeamsRouter:
         member.user_email = "member@example.com"
         member.role = "team_member"
         member.joined_at = datetime.now(timezone.utc)
-        member.invited_by = "owner@example.com"
+        member.invited_by = "admin@example.com"
         member.is_active = True
         return member
 
@@ -136,7 +136,7 @@ class TestTeamsRouter:
         invitation.team_id = str(uuid4())
         invitation.email = "invited@example.com"
         invitation.role = "team_member"
-        invitation.invited_by = "owner@example.com"
+        invitation.invited_by = "admin@example.com"
         invitation.invited_at = datetime.now(timezone.utc)
         invitation.expires_at = datetime.now(timezone.utc) + timedelta(days=7)
         invitation.token = "test-token-123"

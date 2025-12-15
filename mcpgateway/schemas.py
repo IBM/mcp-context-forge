@@ -5015,13 +5015,13 @@ class AdminUserCreateRequest(BaseModel):
 
     Examples:
         >>> request = AdminUserCreateRequest(
-        ...     email="owner@example.com",
+        ...     email="admin@example.com",
         ...     password="admin_password",
         ...     full_name="Admin User",
         ...     is_admin=True
         ... )
         >>> request.email
-        'owner@example.com'
+        'admin@example.com'
         >>> request.is_admin
         True
     """
@@ -5284,7 +5284,7 @@ class TeamResponse(BaseModel):
         ...     id="team-123",
         ...     name="Engineering Team",
         ...     slug="engineering-team",
-        ...     created_by="owner@example.com",
+        ...     created_by="admin@example.com",
         ...     is_personal=False,
         ...     visibility="private",
         ...     member_count=5,
@@ -5387,7 +5387,7 @@ class TeamInvitationResponse(BaseModel):
         ...     team_name="Engineering Team",
         ...     email="newuser@example.com",
         ...     role="team_member",
-        ...     invited_by="owner@example.com",
+        ...     invited_by="admin@example.com",
         ...     invited_at=datetime.now(timezone.utc),
         ...     expires_at=datetime.now(timezone.utc),
         ...     token="invitation-token",
@@ -5831,7 +5831,7 @@ class RoleResponse(BaseModel):
         ...     scope="global",
         ...     permissions=["*"],
         ...     effective_permissions=["*"],
-        ...     created_by="owner@example.com",
+        ...     created_by="admin@example.com",
         ...     is_system_role=True,
         ...     is_active=True,
         ...     created_at=datetime.now(),
@@ -5905,7 +5905,7 @@ class UserRoleResponse(BaseModel):
         ...     role_name="team_admin",
         ...     scope="team",
         ...     scope_id="team-789",
-        ...     granted_by="owner@example.com",
+        ...     granted_by="admin@example.com",
         ...     granted_at=datetime.now(),
         ...     is_active=True
         ... )
@@ -5970,7 +5970,7 @@ class PermissionCheckResponse(BaseModel):
         ...     permission="tools.create",
         ...     granted=True,
         ...     checked_at=datetime.now(),
-        ...     checked_by="owner@example.com"
+        ...     checked_by="admin@example.com"
         ... )
         >>> response.granted
         True

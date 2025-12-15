@@ -232,7 +232,7 @@ def generate_jwt() -> str:
     Resolution order → environment-variable override, then package defaults.
     """
     # Use email format for new authentication system
-    user = os.getenv("PLATFORM_OWNER_EMAIL", "owner@example.com")
+    user = os.getenv("PLATFORM_OWNER_EMAIL", "admin@example.com")
     secret = os.getenv("JWT_SECRET_KEY", "my-test-key")
     expiry = os.getenv("TOKEN_EXPIRY", "300")  # seconds
 

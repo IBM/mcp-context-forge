@@ -70,6 +70,11 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if request.cookies:
             token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
 
+        if request.headers.get("Cookie"):
+            cookie_header = request.headers.get("Cookie")
+            cookies = {cookie.split("=")[0]: cookie.split("=")[1] for cookie in cookie_header.split("; ") if "=" in cookie}
+            token = token or cookies.get("jwt_token") or cookies.get("access_token")
+
         # 2. Try Authorization header
         if not token:
             auth_header = request.headers.get("authorization")
@@ -87,30 +92,34 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
             user = await get_current_user(credentials, db)
 
+            logger.info(f'{user=}')
+
             # Eagerly access user attributes before session closes to prevent DetachedInstanceError
             # This forces SQLAlchemy to load the data while the session is still active
             # Note: EmailUser uses 'email' as primary key, not 'id'
-            user_email = user.email
-            user_id = user_email  # For EmailUser, email IS the ID
 
-            # Expunge the user from the session so it can be used after session closes
-            # This makes the object detached but with all attributes already loaded
-            db.expunge(user)
+            if user:
+                user_email = user.email
+                user_id = user_email  # For EmailUser, email IS the ID
 
-            # Store user in request state for downstream use
-            request.state.user = user
-            logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
+                # Expunge the user from the session so it can be used after session closes
+                # This makes the object detached but with all attributes already loaded
+                db.expunge(user)
 
-            # Log successful authentication
-            security_logger.log_authentication_attempt(
-                user_id=user_id,
-                user_email=user_email,
-                auth_method="bearer_token",
-                success=True,
-                client_ip=request.client.host if request.client else "unknown",
-                user_agent=request.headers.get("user-agent"),
-                db=db,
-            )
+                # Store user in request state for downstream use
+                request.state.user = user
+                logger.info(f"✓ Authenticated user: {user_email if user_email else user_id}")
+
+                # Log successful authentication
+                security_logger.log_authentication_attempt(
+                    user_id=user_id,
+                    user_email=user_email,
+                    auth_method="bearer_token",
+                    success=True,
+                    client_ip=request.client.host if request.client else "unknown",
+                    user_agent=request.headers.get("user-agent"),
+                    db=db,
+                )
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed

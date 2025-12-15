@@ -2747,7 +2747,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         >>> # Mock request with form data
         >>> mock_request = MagicMock(spec=Request)
         >>> mock_request.scope = {"root_path": "/test"}
-        >>> mock_form = {"email": "owner@example.com", "password": "changeme"}
+        >>> mock_form = {"email": "admin@example.com", "password": "changeme"}
         >>> mock_request.form = AsyncMock(return_value=mock_form)
         >>>
         >>> mock_db = MagicMock()
@@ -5356,7 +5356,7 @@ async def admin_force_password_change(
         >>>
         >>> # Mock user context
         >>> mock_user = MagicMock()
-        >>> mock_user.email = "owner@example.com"
+        >>> mock_user.email = "admin@example.com"
         >>>
         >>> import asyncio
         >>> async def test_force_password_change():
@@ -8155,7 +8155,6 @@ async def admin_delete_gateway(gateway_id: str, request: Request, db: Session = 
     error_message = None
     try:
         allowed_team_ids = await get_allowed_team_ids(request)
-        LOGGER.info(f'{allowed_team_ids=}')
         await gateway_service.delete_gateway(db, gateway_id, allowed_team_ids=allowed_team_ids)
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} deleting gateway {gateway_id}: {e}")

@@ -67,14 +67,14 @@ class TestCheckResourceOwnership:
         """Test that resource owner is granted access."""
         # Create mock resource with owner_email
         mock_resource = MagicMock()
-        mock_resource.owner_email = "owner@example.com"
+        mock_resource.owner_email = "admin@example.com"
         mock_resource.team_id = None
         mock_resource.visibility = "private"
 
         # Mock _is_user_admin to return False
         permission_service._is_user_admin = AsyncMock(return_value=False)
 
-        result = await permission_service.check_resource_ownership("owner@example.com", mock_resource)
+        result = await permission_service.check_resource_ownership("admin@example.com", mock_resource)
 
         assert result == True
 
@@ -82,7 +82,7 @@ class TestCheckResourceOwnership:
     async def test_non_owner_denied_access(self, permission_service):
         """Test that non-owner is denied access to private resource."""
         mock_resource = MagicMock()
-        mock_resource.owner_email = "owner@example.com"
+        mock_resource.owner_email = "admin@example.com"
         mock_resource.team_id = None
         mock_resource.visibility = "private"
 
@@ -129,7 +129,7 @@ class TestCheckResourceOwnership:
     async def test_public_resource_non_owner_denied_edit(self, permission_service):
         """Test that non-owner cannot edit public resource despite visibility."""
         mock_resource = MagicMock()
-        mock_resource.owner_email = "owner@example.com"
+        mock_resource.owner_email = "admin@example.com"
         mock_resource.team_id = None
         mock_resource.visibility = "public"
 
@@ -154,7 +154,7 @@ class TestGatewayServiceOwnership:
         """Test owner can delete their gateway."""
         mock_gateway = MagicMock(spec=Gateway)
         mock_gateway.id = "gateway-1"
-        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.owner_email = "admin@example.com"
         mock_gateway.name = "Test Gateway"
 
         mock_gateway.visibility = "private"
@@ -163,7 +163,7 @@ class TestGatewayServiceOwnership:
         # Gateway service uses db.get() not db.execute()
         mock_db_session.get.return_value = mock_gateway
 
-        await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="owner@example.com")
+        await gateway_service.delete_gateway(mock_db_session, "gateway-1", user_email="admin@example.com")
 
         mock_db_session.delete.assert_called_once_with(mock_gateway)
         mock_db_session.commit.assert_called_once()
@@ -173,7 +173,7 @@ class TestGatewayServiceOwnership:
         """Test non-owner cannot delete gateway."""
         mock_gateway = MagicMock(spec=Gateway)
         mock_gateway.id = "gateway-1"
-        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.owner_email = "admin@example.com"
 
         mock_gateway.visibility = "private"
         mock_gateway.team_id = None
@@ -200,7 +200,7 @@ class TestServerServiceOwnership:
         """Test owner can delete their server."""
         mock_server = MagicMock(spec=Server)
         mock_server.id = "server-1"
-        mock_server.owner_email = "owner@example.com"
+        mock_server.owner_email = "admin@example.com"
         mock_server.name = "Test Server"
 
         mock_server.visibility = "private"
@@ -208,7 +208,7 @@ class TestServerServiceOwnership:
 
         mock_db_session.get.return_value = mock_server
 
-        await server_service.delete_server(mock_db_session, "server-1", user_email="owner@example.com")
+        await server_service.delete_server(mock_db_session, "server-1", user_email="admin@example.com")
 
         mock_db_session.delete.assert_called_once_with(mock_server)
         mock_db_session.commit.assert_called_once()
@@ -218,7 +218,7 @@ class TestServerServiceOwnership:
         """Test non-owner cannot delete server."""
         mock_server = MagicMock(spec=Server)
         mock_server.id = "server-1"
-        mock_server.owner_email = "owner@example.com"
+        mock_server.owner_email = "admin@example.com"
 
         mock_server.visibility = "private"
         mock_server.team_id = None
@@ -244,7 +244,7 @@ class TestToolServiceOwnership:
         """Test owner can delete their tool."""
         mock_tool = MagicMock(spec=Tool)
         mock_tool.id = "tool-1"
-        mock_tool.owner_email = "owner@example.com"
+        mock_tool.owner_email = "admin@example.com"
         mock_tool.name = "Test Tool"
 
         mock_tool.visibility = "private"
@@ -252,7 +252,7 @@ class TestToolServiceOwnership:
 
         mock_db_session.get.return_value = mock_tool
 
-        await tool_service.delete_tool(mock_db_session, "tool-1", user_email="owner@example.com")
+        await tool_service.delete_tool(mock_db_session, "tool-1", user_email="admin@example.com")
 
         mock_db_session.delete.assert_called_once_with(mock_tool)
         mock_db_session.commit.assert_called_once()
@@ -262,7 +262,7 @@ class TestToolServiceOwnership:
         """Test non-owner cannot delete tool."""
         mock_tool = MagicMock(spec=Tool)
         mock_tool.id = "tool-1"
-        mock_tool.owner_email = "owner@example.com"
+        mock_tool.owner_email = "admin@example.com"
 
         mock_tool.visibility = "private"
         mock_tool.team_id = None
@@ -298,7 +298,7 @@ class TestResourcePromptA2AOwnership:
         """Test non-owner cannot delete resource."""
         mock_resource = MagicMock(spec=Resource)
         mock_resource.uri = "test://resource"
-        mock_resource.owner_email = "owner@example.com"
+        mock_resource.owner_email = "admin@example.com"
 
         mock_resource.visibility = "private"
         mock_resource.team_id = None
@@ -316,7 +316,7 @@ class TestResourcePromptA2AOwnership:
         """Test non-owner cannot delete prompt."""
         mock_prompt = MagicMock(spec=Prompt)
         mock_prompt.name = "test-prompt"
-        mock_prompt.owner_email = "owner@example.com"
+        mock_prompt.owner_email = "admin@example.com"
 
         mock_prompt.visibility = "private"
         mock_prompt.team_id = None
@@ -334,7 +334,7 @@ class TestResourcePromptA2AOwnership:
         """Test non-owner cannot delete A2A agent."""
         mock_agent = MagicMock(spec=A2AAgent)
         mock_agent.id = "agent-1"
-        mock_agent.owner_email = "owner@example.com"
+        mock_agent.owner_email = "admin@example.com"
 
         mock_agent.visibility = "private"
         mock_agent.team_id = None
@@ -362,7 +362,7 @@ class TestUpdateOperationsOwnership:
 
         mock_gateway = MagicMock(spec=Gateway)
         mock_gateway.id = "gateway-1"
-        mock_gateway.owner_email = "owner@example.com"
+        mock_gateway.owner_email = "admin@example.com"
 
         mock_gateway.visibility = "private"
         mock_gateway.team_id = None

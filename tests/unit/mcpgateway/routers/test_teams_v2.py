@@ -107,7 +107,7 @@ class TestTeamsRouterV2:
         member.user_email = "member@example.com"
         member.role = "team_member"
         member.joined_at = datetime.now(timezone.utc)
-        member.invited_by = "owner@example.com"
+        member.invited_by = "admin@example.com"
         member.is_active = True
         return member
 

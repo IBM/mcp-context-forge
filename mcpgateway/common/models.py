@@ -1245,7 +1245,7 @@ class RBACRole(BaseModel):
         ...     description="Team administrator with member management rights",
         ...     scope="team",
         ...     permissions=["teams.manage_members", "resources.create"],
-        ...     created_by="owner@example.com",
+        ...     created_by="admin@example.com",
         ...     created_at=datetime(2023, 1, 1),
         ...     updated_at=datetime(2023, 1, 1)
         ... )
@@ -1293,7 +1293,7 @@ class UserRoleAssignment(BaseModel):
         ...     role_id="team-admin-123",
         ...     scope="team",
         ...     scope_id="team-engineering-456",
-        ...     granted_by="owner@example.com",
+        ...     granted_by="admin@example.com",
         ...     granted_at=datetime(2023, 1, 1)
         ... )
         >>> user_role.scope

@@ -138,7 +138,7 @@ class RoleService:
             True
 
             Creator validation:
-            >>> created_by = "owner@example.com"
+            >>> created_by = "admin@example.com"
             >>> "@" in created_by
             True
             >>> len(created_by) > 0

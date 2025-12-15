@@ -60,10 +60,10 @@ class TestPermissionFallback:
             patch.object(permission_service, "_get_user_team_role", return_value="team_owner"),
         ):
             # Team owner should have full permissions on their team
-            assert await permission_service.check_permission("owner@example.com", "teams.read", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.update", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.delete", team_id="team-123") == True
-            assert await permission_service.check_permission("owner@example.com", "teams.manage_members", team_id="team-123") == True
+            assert await permission_service.check_permission("admin@example.com", "teams.read", team_id="team-123") == True
+            assert await permission_service.check_permission("admin@example.com", "teams.update", team_id="team-123") == True
+            assert await permission_service.check_permission("admin@example.com", "teams.delete", team_id="team-123") == True
+            assert await permission_service.check_permission("admin@example.com", "teams.manage_members", team_id="team-123") == True
 
     @pytest.mark.asyncio
     async def test_team_member_permissions(self, permission_service):

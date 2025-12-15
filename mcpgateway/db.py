@@ -978,7 +978,7 @@ class EmailTeam(Base):
         >>> team = EmailTeam(
         ...     name="Engineering Team",
         ...     slug="engineering-team",
-        ...     created_by="owner@example.com",
+        ...     created_by="admin@example.com",
         ...     is_personal=False
         ... )
         >>> team.name
@@ -1032,7 +1032,7 @@ class EmailTeam(Base):
             int: Number of active team members
 
         Examples:
-            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="owner@example.com")
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
             >>> team.get_member_count()
             0
         """
@@ -1048,8 +1048,8 @@ class EmailTeam(Base):
             bool: True if user is an active member, False otherwise
 
         Examples:
-            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="owner@example.com")
-            >>> team.is_member("owner@example.com")
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
+            >>> team.is_member("admin@example.com")
             False
         """
         return any(role.user_email == user_email and role.is_active for role in self.user_roles)
@@ -1064,8 +1064,8 @@ class EmailTeam(Base):
             str: User's role or None if not a member
 
         Examples:
-            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="owner@example.com")
-            >>> team.get_member_role("owner@example.com")
+            >>> team = EmailTeam(name="Test Team", slug="test-team", created_by="admin@example.com")
+            >>> team.get_member_role("admin@example.com")
         """
         for role in self.user_roles:
             if role.user_email == user_email and role.is_active:
@@ -1093,7 +1093,7 @@ class EmailTeamMember(Base):
         ...     team_id="team-123",
         ...     user_email="user@example.com",
         ...     role="team_member",
-        ...     invited_by="owner@example.com"
+        ...     invited_by="admin@example.com"
         ... )
         >>> member.role
         'team_member'
@@ -1155,7 +1155,7 @@ class EmailTeamMemberHistory(Base):
         ...     user_email="user@example.com",
         ...     role="team_member",
         ...     action="added",
-        ...     action_by="owner@example.com",
+        ...     action_by="admin@example.com",
         ...     action_timestamp=utc_now()
         ... )
         >>> history.action
@@ -1197,7 +1197,7 @@ class EmailTeamMemberHistory(Base):
             ...     user_email="user@example.com",
             ...     role="team_member",
             ...     action="added",
-            ...     action_by="owner@example.com",
+            ...     action_by="admin@example.com",
             ...     action_timestamp=utc_now()
             ... )
             >>> isinstance(repr(history), str)
@@ -1228,7 +1228,7 @@ class EmailTeamInvitation(Base):
         ...     team_id="team-123",
         ...     email="newuser@example.com",
         ...     role="team_member",
-        ...     invited_by="owner@example.com"
+        ...     invited_by="admin@example.com"
         ... )
         >>> invitation.role
         'team_member'
@@ -1279,7 +1279,7 @@ class EmailTeamInvitation(Base):
             ...     team_id="team-123",
             ...     email="user@example.com",
             ...     role="team_member",
-            ...     invited_by="owner@example.com",
+            ...     invited_by="admin@example.com",
             ...     expires_at=utc_now() + timedelta(days=7)
             ... )
             >>> invitation.is_expired()
@@ -1308,7 +1308,7 @@ class EmailTeamInvitation(Base):
             ...     team_id="team-123",
             ...     email="user@example.com",
             ...     role="team_member",
-            ...     invited_by="owner@example.com",
+            ...     invited_by="admin@example.com",
             ...     expires_at=utc_now() + timedelta(days=7),
             ...     is_active=True
             ... )
@@ -3682,7 +3682,7 @@ class TokenRevocation(Base):
     Examples:
         >>> revocation = TokenRevocation(
         ...     jti="token-uuid-123",
-        ...     revoked_by="owner@example.com",
+        ...     revoked_by="admin@example.com",
         ...     reason="Security compromise"
         ... )
     """
