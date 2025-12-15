@@ -311,6 +311,46 @@ OTEL_TRACES_EXPORTER=otlp
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
+### LLM Settings (Internal API)
+
+MCP Gateway can act as a unified LLM provider with an OpenAI-compatible API. Configure multiple external LLM providers through the Admin UI and expose them through a single proxy endpoint.
+
+```bash
+# LLM API Configuration
+LLM_API_PREFIX=/v1                  # API prefix for internal LLM endpoints
+LLM_REQUEST_TIMEOUT=120             # Request timeout for LLM API calls (seconds)
+LLM_STREAMING_ENABLED=true          # Enable streaming responses
+LLM_HEALTH_CHECK_INTERVAL=300       # Provider health check interval (seconds)
+
+# Gateway Provider Settings (for LLM Chat with provider=gateway)
+GATEWAY_MODEL=gpt-4o                # Default model to use
+GATEWAY_BASE_URL=                   # Base URL (defaults to internal API)
+GATEWAY_TEMPERATURE=0.7             # Sampling temperature
+```
+
+!!! info "Provider Configuration"
+    LLM providers (OpenAI, Azure OpenAI, Anthropic, Ollama, Google, Mistral, Cohere, AWS Bedrock, Groq, etc.) are configured through the Admin UI under **LLM Settings > Providers**. The settings above control the gateway's internal LLM proxy behavior.
+
+**OpenAI-Compatible API Endpoints:**
+
+```bash
+# List available models
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/v1/models
+
+# Chat completion
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}' \
+  http://localhost:4444/v1/chat/completions
+```
+
+**Admin UI Features:**
+
+- **Providers**: Add, edit, enable/disable, and delete LLM providers
+- **Models**: View, test, and manage models from configured providers
+- **Health Checks**: Monitor provider health with automatic status checks
+- **Model Discovery**: Fetch available models from providers and sync to database
+
 ---
 
 ## 🔐 JWT Configuration Examples

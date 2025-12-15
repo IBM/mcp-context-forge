@@ -1423,6 +1423,51 @@ The LLM Chat MCP Client allows you to interact with MCP servers using conversati
 **Documentation:**
 - [LLM Chat Guide](https://ibm.github.io/mcp-context-forge/using/clients/llm-chat) - Complete LLM Chat setup and provider configuration
 
+### LLM Settings (Internal API)
+
+The LLM Settings feature enables MCP Gateway to act as a unified LLM provider with an OpenAI-compatible API. Configure multiple external LLM providers through the Admin UI and expose them through a single proxy endpoint.
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `LLM_API_PREFIX`              | API prefix for internal LLM endpoints  | `/v1`   | string  |
+| `LLM_REQUEST_TIMEOUT`         | Request timeout for LLM API calls (seconds) | `120` | int     |
+| `LLM_STREAMING_ENABLED`       | Enable streaming responses             | `true`  | bool    |
+| `LLM_HEALTH_CHECK_INTERVAL`   | Provider health check interval (seconds) | `300` | int     |
+
+**Gateway Provider Settings (for LLM Chat with provider=gateway):**
+
+| Setting                        | Description                            | Default | Options |
+| ------------------------------ | -------------------------------------- | ------- | ------- |
+| `GATEWAY_MODEL`               | Default model to use                   | `gpt-4o` | string |
+| `GATEWAY_BASE_URL`            | Base URL for gateway LLM API           | (auto)  | string  |
+| `GATEWAY_TEMPERATURE`         | Sampling temperature                   | `0.7`   | float   |
+
+**Features:**
+
+- **OpenAI-Compatible API**: Exposes `/v1/chat/completions` and `/v1/models` endpoints compatible with any OpenAI client
+- **Multi-Provider Support**: Configure OpenAI, Azure OpenAI, Anthropic, Ollama, Google, Mistral, Cohere, AWS Bedrock, Groq, and more
+- **Admin UI Management**: Add, edit, enable/disable, and test providers through the Admin UI (LLM Settings tab)
+- **Model Discovery**: Fetch available models from providers and sync them to the database
+- **Health Monitoring**: Automatic health checks with status indicators
+- **Unified Interface**: Route requests to any configured provider through a single API
+
+**API Endpoints:**
+
+```bash
+# List available models
+curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/v1/models
+
+# Chat completion
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "gpt-4o", "messages": [{"role": "user", "content": "Hello"}]}' \
+  http://localhost:4444/v1/chat/completions
+```
+
+> 🔧 **Configuration**: Providers are managed through the Admin UI under "LLM Settings > Providers"
+> 📋 **Models**: View and manage models under "LLM Settings > Models"
+> ⚡ **Testing**: Test models directly from the Admin UI with the "Test" feature
+
 ### Email-Based Authentication & User Management
 
 | Setting                        | Description                                      | Default               | Options |
