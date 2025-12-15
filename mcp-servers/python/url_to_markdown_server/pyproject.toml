@@ -9,46 +9,46 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-  "fastmcp==2.11.3",
-  "pydantic>=2.5.0",
-  "httpx>=0.27.0",
-  "typing-extensions>=4.5.0",
+    "fastmcp>=2.14.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.12.5",
+    "typing-extensions>=4.15.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-  "pytest>=7.0.0",
-  "pytest-asyncio>=0.21.0",
-  "pytest-cov>=4.0.0",
-  "black>=23.0.0",
-  "mypy>=1.5.0",
-  "ruff>=0.0.290",
+    "black>=25.12.0",
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.9",
 ]
 html = [
-  "html2text>=2024.2.26",
-  "markdownify>=0.11.6",
-  "beautifulsoup4>=4.12.0",
-  "readability-lxml>=0.8.1",
-  "lxml>=4.9.0",
+    "beautifulsoup4>=4.14.3",
+    "html2text>=2025.4.15",
+    "lxml>=6.0.2",
+    "markdownify>=1.2.2",
+    "readability-lxml>=0.8.4.1",
 ]
 documents = [
-  "PyMuPDF>=1.23.0",  # PDF processing
-  "python-docx>=1.1.0",  # DOCX processing
-  "openpyxl>=3.1.0",  # XLSX processing
-  "python-pptx>=0.6.21",  # PPTX processing
+    "openpyxl>=3.1.5",
+    "PyMuPDF>=1.26.7",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
 ]
 full = [
-  "html2text>=2024.2.26",
-  "markdownify>=0.11.6",
-  "beautifulsoup4>=4.12.0",
-  "readability-lxml>=0.8.1",
-  "lxml>=4.9.0",
-  "PyMuPDF>=1.23.0",
-  "python-docx>=1.1.0",
-  "openpyxl>=3.1.0",
-  "python-pptx>=0.6.21",
-  "Pillow>=10.0.0",  # Image processing
-  "chardet>=5.0.0",  # Character encoding detection
+    "beautifulsoup4>=4.14.3",
+    "chardet>=5.2.0",
+    "html2text>=2025.4.15",
+    "lxml>=6.0.2",
+    "markdownify>=1.2.2",
+    "openpyxl>=3.1.5",
+    "Pillow>=12.0.0",
+    "PyMuPDF>=1.26.7",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+    "readability-lxml>=0.8.4.1",
 ]
 
 [build-system]
