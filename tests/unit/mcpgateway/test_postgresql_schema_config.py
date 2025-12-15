@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/test_postgresql_schema_config.py
+"""Location: ./tests/unit/mcpgateway/test_postgresql_schema_config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +10,6 @@ and applied to PostgreSQL connections for custom schema support.
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
 from sqlalchemy import make_url
 
 
@@ -195,5 +194,3 @@ class TestSchemaConfigurationIntegration:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-
-# Made with Bob
