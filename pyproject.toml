@@ -577,6 +577,8 @@ markers = [
     "e2e: marks tests as end-to-end tests",
     "fuzz: marks tests as fuzz tests (excluded from main test suite)",
     "benchmark: marks tests as performance benchmarks (migration testing)",
+    "integration: marks tests as integration tests (require external services)",
+    "postgresql: marks tests that require PostgreSQL database",
 ]
 
 # Playwright-specific test discovery patterns
