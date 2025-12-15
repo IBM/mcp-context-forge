@@ -15,7 +15,7 @@
 | 1.0.0-RC1 | 03 Feb 2026 |  0 %       | Open         | Release Candidate 1 - Catalog Enhancements, Ratings, experience and UI |
 | 1.0.0-BETA-2 | 20 Jan 2026 |  1 %       | Open         | Testing, Bugfixing, Documentation, Performance and Scale |
 | 1.0.0-BETA-1 | 16 Dec 2025 | 100 %       | **Closed**   | Release 1.0.0-BETA-1 |
-| 0.9.0   | 04 Nov 2025 | 36 %       | Open         | Interoperability, marketplaces & advanced connectivity |
+| 0.9.0   | 09 Nov 2025 | 100 %      | **Closed**   | Interoperability, marketplaces & advanced connectivity |
 | 0.8.0   | 07 Oct 2025 | 100 %      | **Closed**   | Enterprise Security & Policy Guardrails |
 | 0.7.0   | 16 Sep 2025 | 100 %      | **Closed**   | Multitenancy and RBAC (Private/Team/Global catalogs), Extended Connectivity, Core Observability & Starter Agents (OpenAI and A2A) |
 | 0.6.0   | 19 Aug 2025 | 100 %      | **Closed**   | Security, Scale & Smart Automation |
