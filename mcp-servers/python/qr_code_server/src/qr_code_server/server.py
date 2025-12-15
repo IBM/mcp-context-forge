@@ -61,7 +61,7 @@ async def generate_qr_code(
     back_color: str = "white",
     save_path: str | None = config.output.default_directory,
     return_base64: bool = False,
-) -> str:
+):
     try:
         async with _acquire_request_slot("generate_qr_code"):
             request = QRGenerationRequest(
