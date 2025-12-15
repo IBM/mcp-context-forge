@@ -71,15 +71,13 @@ provider = os.getenv("OPENAI_BASE_URL", "")
 LLM_PLATFORM = "OpenAIProvider - " + provider
 
 
-"""
----------------
-IMPORTANT NOTE:
----------------
-ALTK (agent life cycle toolkit) does not support all LLM providers that are supported in MCP context forge.
-To use all MCP CF supported LLM providers we need to override the ALTK modules related to LLM inferencing.
-i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
-that uses MCP context forge LLM inferencing modules.
-"""
+# ---------------
+# IMPORTANT NOTE:
+# ---------------
+# ALTK (agent life cycle toolkit) does not support all LLM providers that are supported in MCP context forge.
+# To use all MCP CF supported LLM providers we need to override the ALTK modules related to LLM inferencing.
+# i.e; `execute_prompt` method used in different ALTK toolops modules is overrided with custom execute prompt
+# that uses MCP context forge LLM inferencing modules.
 
 
 #  custom execute prompt to support MCP-CF LLM providers
