@@ -3212,16 +3212,29 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
+        Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).
 
         Args:
             gateway: Gateway database object
 
         Returns:
-            Gateway object with properly formatted auth_value
+            Gateway object with properly formatted auth_value and tags
         """
         # If auth_value is a dict, encode it to string for GatewayRead schema
         if isinstance(gateway.auth_value, dict):
             gateway.auth_value = encode_auth(gateway.auth_value)
+        
+        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+        # Database stores: ["git", "development"]
+        # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
+        if gateway.tags and isinstance(gateway.tags, list) and len(gateway.tags) > 0:
+            # Check if tags are strings (database format) and need conversion
+            if isinstance(gateway.tags[0], str):
+                # First-Party
+                from mcpgateway.validation.tags import validate_tags_field  # pylint: disable=import-outside-toplevel
+                
+                gateway.tags = validate_tags_field(gateway.tags)
+        
         return gateway
 
     def _create_db_tool(
