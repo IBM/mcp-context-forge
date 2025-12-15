@@ -2908,7 +2908,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
 
 @admin_router.post("/logout")
-async def admin_logout(request: Request) -> RedirectResponse:
+async def admin_logout() -> RedirectResponse:
     """
     Handle admin logout by clearing authentication cookies.
 
@@ -3313,7 +3313,6 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 @admin_router.get("/teams")
 @require_permission("teams.read")
 async def admin_list_teams(
-    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     unified: bool = False,
@@ -3507,7 +3506,6 @@ async def admin_create_team(
 @require_permission("teams.read")
 async def admin_view_team_members(
     team_id: str,
-    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -4426,7 +4424,6 @@ async def admin_cancel_join_request(
 @require_permission("teams.manage_members")
 async def admin_list_join_requests(
     team_id: str,
-    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
@@ -4447,7 +4444,6 @@ async def admin_list_join_requests(
     try:
         team_service = TeamManagementService(db)
         user_email = get_user_email(user)
-        settings.app_root_path
 
         # Get team and verify ownership
         team = await team_service.get_team_by_id(team_id)
