@@ -113,22 +113,22 @@ def print_report(analysis: Dict[str, Any]) -> None:
     print("DATABASE QUERY LOG ANALYSIS")
     print("=" * 80)
 
-    print(f"\n📊 SUMMARY")
+    print("\n📊 SUMMARY")
     print(f"   Total requests analyzed: {analysis['total_requests']}")
     print(f"   Total queries executed:  {analysis['total_queries']}")
     print(f"   Avg queries per request: {analysis['avg_queries_per_request']}")
     print(f"   Requests with N+1:       {analysis['requests_with_n1']} ({analysis['n1_percentage']}%)")
 
     if analysis["requests_with_n1"] > 0:
-        print(f"\n⚠️  N+1 ISSUES DETECTED")
+        print("\n⚠️  N+1 ISSUES DETECTED")
         print(f"   {analysis['requests_with_n1']} requests have potential N+1 query patterns")
 
     if analysis["top_n1_patterns"]:
-        print(f"\n🔴 TOP N+1 PATTERNS")
+        print("\n🔴 TOP N+1 PATTERNS")
         for pattern, count in analysis["top_n1_patterns"]:
             print(f"   {count:4}x  {pattern[:70]}...")
 
-    print(f"\n📈 ENDPOINTS BY QUERY COUNT (top 15)")
+    print("\n📈 ENDPOINTS BY QUERY COUNT (top 15)")
     print(f"   {'Endpoint':<40} {'Reqs':>6} {'Queries':>8} {'Avg':>6} {'Max':>5} {'N+1':>4}")
     print("   " + "-" * 75)
 
@@ -137,7 +137,7 @@ def print_report(analysis: Dict[str, Any]) -> None:
         print(f"   {endpoint:<40} {stats['count']:>6} {stats['total_queries']:>8} " f"{stats['avg_queries']:>6} {stats['max_queries']:>5} {n1_marker}{stats['n1_count']:>2}")
 
     # Recommendations
-    print(f"\n💡 RECOMMENDATIONS")
+    print("\n💡 RECOMMENDATIONS")
 
     high_query_endpoints = [(ep, s) for ep, s in analysis["endpoint_stats"] if s["avg_queries"] > 10]
     if high_query_endpoints:
@@ -146,8 +146,8 @@ def print_report(analysis: Dict[str, Any]) -> None:
             print(f"     - {ep} (avg: {stats['avg_queries']} queries)")
 
     if analysis["requests_with_n1"] > 0:
-        print(f"   • Review N+1 patterns above and add joinedload/selectinload")
-        print(f"   • See: docs/docs/development/db-performance.md")
+        print("   • Review N+1 patterns above and add joinedload/selectinload")
+        print("   • See: docs/docs/development/db-performance.md")
 
     print("\n" + "=" * 80 + "\n")
 
@@ -166,12 +166,12 @@ def main() -> int:
 
     if not log_path.exists():
         print(f"❌ Log file not found: {log_path}")
-        print(f"   Start the server with 'make dev-query-log' to generate logs")
+        print("   Start the server with 'make dev-query-log' to generate logs")
         return 1
 
     if log_path.stat().st_size == 0:
         print(f"❌ Log file is empty: {log_path}")
-        print(f"   Make some API requests to generate query logs")
+        print("   Make some API requests to generate query logs")
         return 1
 
     print(f"📊 Loading {log_path}...")

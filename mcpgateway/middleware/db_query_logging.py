@@ -265,8 +265,17 @@ def _write_logs(request_data: Dict[str, Any], queries: List[Dict[str, Any]]) -> 
                 f.write(_format_json_log(request_data, queries, n1_issues) + "\n")
 
 
-def _before_cursor_execute(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
-    """SQLAlchemy event handler called before query execution."""
+def _before_cursor_execute(conn: Any, _cursor: Any, _statement: str, _parameters: Any, _context: Any, _executemany: bool) -> None:
+    """SQLAlchemy event handler called before query execution.
+
+    Args:
+        conn: Database connection
+        _cursor: Database cursor (unused, required by SQLAlchemy event signature)
+        _statement: SQL statement to execute (unused, required by SQLAlchemy event signature)
+        _parameters: Query parameters (unused, required by SQLAlchemy event signature)
+        _context: Execution context (unused, required by SQLAlchemy event signature)
+        _executemany: Whether this is an executemany call (unused, required by SQLAlchemy event signature)
+    """
     ctx = _request_context.get()
     if ctx is None:
         return
@@ -303,8 +312,17 @@ def _should_exclude_query(statement: str) -> bool:
     return False
 
 
-def _after_cursor_execute(conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool) -> None:
-    """SQLAlchemy event handler called after query execution."""
+def _after_cursor_execute(conn: Any, _cursor: Any, statement: str, parameters: Any, _context: Any, executemany: bool) -> None:
+    """SQLAlchemy event handler called after query execution.
+
+    Args:
+        conn: Database connection
+        _cursor: Database cursor (unused, required by SQLAlchemy event signature)
+        statement: SQL statement that was executed
+        parameters: Query parameters
+        _context: Execution context (unused, required by SQLAlchemy event signature)
+        executemany: Whether this was an executemany call
+    """
     ctx = _request_context.get()
     if ctx is None:
         return
