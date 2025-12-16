@@ -234,4 +234,3 @@ class ResourceCache:
 
     def __len__(self) -> int:
         return len(self._cache)
-
