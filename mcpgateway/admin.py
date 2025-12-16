@@ -466,7 +466,7 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
     return str(user)
 
 
-def get_user_id(user: Union[str, dict, object] = None) -> str:
+def get_user_id(user: Union[str, dict[str, Any], object] = None) -> str:
     """Return the user ID from a JWT payload, user object, or string.
 
     Args:
@@ -508,16 +508,11 @@ def get_user_id(user: Union[str, dict, object] = None) -> str:
         'unknown'
     """
     if isinstance(user, dict):
-        # Try multiple possible ID fields in order of preference
+        # Try multiple possible ID fields in order of preference.
+        # Email is the primary key in the model, so that's our mostly likely result.
         return user.get("id") or user.get("user_id") or user.get("sub") or user.get("email") or "unknown"
 
-    if hasattr(user, "id"):
-        return str(user.id)
-
-    if user is None:
-        return "unknown"
-
-    return str(user)
+    return "unknown" if user is None else str(getattr(user, "id", user))
 
 
 def serialize_datetime(obj):

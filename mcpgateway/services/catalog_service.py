@@ -235,13 +235,12 @@ class CatalogService:
                 )
 
             # Prepare the gateway creation data
-            # Pass tags as list of strings - GatewayCreate validator will handle conversion
             gateway_data = {
                 "name": request.name if request and request.name else server_data["name"],
                 "url": server_data["url"],
                 "description": server_data["description"],
                 "transport": transport,
-                "tags": server_data.get("tags", []),  # Pass as list of strings
+                "tags": server_data.get("tags", []),
             }
 
             # Set authentication based on server requirements
@@ -282,7 +281,7 @@ class CatalogService:
                     slug=slug_name,
                     url=gateway_data["url"],
                     description=gateway_data["description"],
-                    tags=gateway_data.get("tags", []),  # Keep catalog tags
+                    tags=gateway_data.get("tags", []),
                     transport=gateway_data["transport"],
                     capabilities={},
                     auth_type=None,  # Will be set during OAuth configuration

@@ -96,6 +96,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.validation.tags import validate_tags_field
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -3227,13 +3228,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
         # Database stores: ["git", "development"]
         # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
-        if gateway.tags and isinstance(gateway.tags, list) and len(gateway.tags) > 0:
-            # Check if tags are strings (database format) and need conversion
-            if isinstance(gateway.tags[0], str):
-                # First-Party
-                from mcpgateway.validation.tags import validate_tags_field  # pylint: disable=import-outside-toplevel
-
-                gateway.tags = validate_tags_field(gateway.tags)
+        if gateway.tags:
+            gateway.tags = validate_tags_field(gateway.tags)
 
         return gateway
 
