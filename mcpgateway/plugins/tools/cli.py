@@ -147,7 +147,7 @@ def bootstrap(
     """
     try:
         # Third-Party
-        from copier import run_copy
+        from copier import run_copy  # pylint: disable=import-outside-toplevel
     except ImportError:
         logger.error("copier is not installed. Install with: pip install mcp-contextforge-gateway[templating]")
         raise typer.Exit(1)
