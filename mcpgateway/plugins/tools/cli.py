@@ -141,8 +141,12 @@ def bootstrap(
         answers_file: The copier answers file that can be used to skip interactive mode.
         defaults: Bootstrap with defaults.
         dry_run: Run but do not make any changes.
+
+    Raises:
+        Exit: If copier is not installed.
     """
     try:
+        # Third-Party
         from copier import run_copy
     except ImportError:
         logger.error("copier is not installed. Install with: pip install mcp-contextforge-gateway[templating]")
