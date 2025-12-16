@@ -1578,14 +1578,20 @@ class ToolService:
                         tool_result = ToolResult(content=[TextContent(type="text", text="Request completed successfully (No Content)")])
                         success = True
                     elif response.status_code not in [200, 201, 202, 206]:
-                        result = response.json()
+                        try:
+                            result = response.json()
+                        except json.JSONDecodeError:
+                            result = {"response_text": response.text} if response.text else {}
                         tool_result = ToolResult(
                             content=[TextContent(type="text", text=str(result["error"]) if "error" in result else "Tool error encountered")],
                             is_error=True,
                         )
                         # Don't mark as successful for error responses - success remains False
                     else:
-                        result = response.json()
+                        try:
+                            result = response.json()
+                        except json.JSONDecodeError:
+                            result = {"response_text": response.text} if response.text else {}
                         logger.debug(f"REST API tool response: {result}")
                         filtered_response = extract_using_jq(result, tool.jsonpath_filter)
                         tool_result = ToolResult(content=[TextContent(type="text", text=json.dumps(filtered_response, indent=2))])
