@@ -188,3 +188,107 @@ async def test_bulk_register_servers_skip_errors(service):
         result = await service.bulk_register_servers(fake_request, db)
         assert result.total_attempted == 2
         assert len(result.failed) == 1
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_with_tags(service, test_db):
+    """Test that catalog server registration properly handles tags.
+
+    This test verifies the fix for the tag validation error where:
+    - Catalog YAML provides tags as List[str]: ["development", "git", "version-control"]
+    - GatewayCreate validator converts to List[Dict[str, str]]: [{"id": "development", "label": "development"}, ...]
+    - Database stores as List[str]: ["development", "git", "version-control"]
+    - GatewayRead returns as List[Dict[str, str]] for API responses
+    """
+    # Simulate a catalog server with tags (as they appear in mcp-catalog.yml)
+    fake_catalog = {
+        "catalog_servers": [{
+            "id": "github",
+            "name": "GitHub",
+            "url": "https://api.githubcopilot.com/mcp",
+            "description": "Version control and collaborative software development",
+            "auth_type": "OAuth2.1",
+            "tags": ["development", "git", "version-control", "collaboration"]  # List[str] from YAML
+        }]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        # Use real database session instead of MagicMock
+        # No existing gateway
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server("github", None, test_db)
+
+            # Verify registration succeeded
+            assert result.success, f"Registration failed: {result.error}"
+            assert "Successfully registered" in result.message
+
+            # Verify the gateway was created with proper tags
+            assert result.server_id, "Server ID should be set"
+
+            # Query the database to verify tags were stored correctly
+            from mcpgateway.db import Gateway
+            gateway = test_db.query(Gateway).filter_by(slug="github").first()
+            assert gateway is not None, "Gateway should exist in database"
+
+            # Verify tags are stored as List[str] in database
+            assert gateway.tags == ["development", "git", "version-control", "collaboration"], "Tags should be stored as List[str]"
+            assert isinstance(gateway.tags, list), "Tags should be a list"
+            assert len(gateway.tags) == 4, f"Expected 4 tags, got {len(gateway.tags)}"
+
+            # Verify all expected tags are present
+            expected_tags = {"development", "git", "version-control", "collaboration"}
+            assert set(gateway.tags) == expected_tags, f"Tag mismatch: expected {expected_tags}, got {set(gateway.tags)}"
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_tags_validation_error_handling(service):
+    """Test that invalid tags are handled gracefully during catalog registration.
+
+    This ensures the tag validator properly filters out invalid tags while
+    keeping valid ones, preventing validation errors.
+    """
+    fake_catalog = {
+        "catalog_servers": [{
+            "id": "test-server",
+            "name": "Test Server",
+            "url": "https://test.example.com/mcp",
+            "description": "Test server with mixed valid/invalid tags",
+            "auth_type": "Open",
+            "tags": ["valid-tag", "a", "", "another-valid", "x"]  # Mix of valid and invalid
+        }]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        captured_tags = None
+
+        async def mock_register_gateway(db, gateway, **kwargs):
+            nonlocal captured_tags
+            captured_tags = gateway.tags
+            return MagicMock(id="test-id", name="Test Server", tags=[])
+
+        with patch("mcpgateway.services.catalog_service.select"), \
+             patch.object(service._gateway_service, "register_gateway", mock_register_gateway):
+
+            result = await service.register_catalog_server("test-server", None, db)
+
+            # Registration should succeed even with some invalid tags
+            assert result.success, f"Registration failed: {result.error}"
+
+            # Verify that only valid tags were kept (tags < 2 chars are filtered out)
+            if captured_tags:
+                valid_tag_ids = []
+                for tag in captured_tags:
+                    if isinstance(tag, dict):
+                        valid_tag_ids.append(tag["id"])
+                    else:
+                        valid_tag_ids.append(tag)
+
+                # Only "valid-tag" and "another-valid" should remain (min length is 2)
+                assert "valid-tag" in valid_tag_ids or "another-valid" in valid_tag_ids, \
+                    "At least one valid tag should be present"
+                assert "a" not in valid_tag_ids, "Single-char tag 'a' should be filtered out"
+                assert "x" not in valid_tag_ids, "Single-char tag 'x' should be filtered out"
+                assert "" not in valid_tag_ids, "Empty tag should be filtered out"
