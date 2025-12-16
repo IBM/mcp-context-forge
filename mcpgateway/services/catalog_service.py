@@ -277,14 +277,12 @@ class CatalogService:
                 gateway_create = GatewayCreate(**gateway_data)
                 slug_name = slugify(gateway_data["name"])
 
-                db_tags = gateway_data.get("tags", [])
-
                 db_gateway = DbGateway(
                     name=gateway_data["name"],
                     slug=slug_name,
                     url=gateway_data["url"],
                     description=gateway_data["description"],
-                    tags=db_tags,
+                    tags=gateway_data.get("tags", []),
                     transport=gateway_data["transport"],
                     capabilities={},
                     auth_type=None,  # Will be set during OAuth configuration
