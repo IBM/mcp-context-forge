@@ -51,8 +51,8 @@ FROM rust-builder-base AS rust-builder
 FROM registry.access.redhat.com/ubi10-minimal:10.1-1764604111
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="0.9.0" \
-      description="MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
+      version="1.0.0-BETA-1" \
+      description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
 ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'

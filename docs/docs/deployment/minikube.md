@@ -2,7 +2,7 @@
 
 1. **Install Minikube and kubectl** (Docker or Podman driver required).
 2. Start a local cluster with Ingress and DNS addons.
-3. Load the `ghcr.io/ibm/mcp-context-forge:0.9.0` image into Minikube.
+3. Load the `ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1` image into Minikube.
 4. Apply your Kubernetes manifests.
 5. Access the Gateway at [http://gateway.local](http://gateway.local) or `127.0.0.1:80` via NGINX Ingress.
 
@@ -131,21 +131,21 @@ kubectl get pods -n ingress-nginx
 make minikube-image-load
 ```
 
-This target builds the `ghcr.io/ibm/mcp-context-forge:0.9.0` image and loads it into Minikube.
+This target builds the `ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1` image and loads it into Minikube.
 
 ### Alternative methods
 
 * **Pre-cache a remote image:**
 
   ```bash
-  minikube cache add ghcr.io/ibm/mcp-context-forge:0.9.0
+  minikube cache add ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
   minikube cache reload
   ```
 
 * **Load a local tarball:**
 
   ```bash
-  docker save ghcr.io/ibm/mcp-context-forge:0.9.0 | minikube image load -
+  docker save ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 | minikube image load -
   ```
 
 ---
@@ -282,7 +282,7 @@ curl http://gateway.local/health
 | ------------------- | ---------------------- | ------------------------------------------------------------ |
 | Pause cluster       | `make minikube-stop`   | `minikube stop -p mcpgw`                                     |
 | Delete cluster      | `make minikube-delete` | `minikube delete -p mcpgw`                                   |
-| Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:0.9.0` |
+| Remove cached image | -                      | `minikube cache delete ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1` |
 
 ---
 
