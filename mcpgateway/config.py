@@ -842,6 +842,18 @@ class Settings(BaseSettings):
     correlation_id_preserve: bool = Field(default=True, description="Preserve correlation IDs from incoming requests")
     correlation_id_response_header: bool = Field(default=True, description="Include correlation ID in response headers")
 
+    # ===================================
+    # Database Query Logging (N+1 Detection)
+    # ===================================
+    db_query_log_enabled: bool = Field(default=False, description="Enable database query logging to file (for N+1 detection)")
+    db_query_log_file: str = Field(default="logs/db-queries.log", description="Path to database query log file")
+    db_query_log_json_file: str = Field(default="logs/db-queries.jsonl", description="Path to JSON Lines query log file")
+    db_query_log_format: str = Field(default="both", description="Log format: 'json', 'text', or 'both'")
+    db_query_log_min_queries: int = Field(default=1, ge=1, description="Only log requests with >= N queries")
+    db_query_log_include_params: bool = Field(default=False, description="Include query parameters (may expose sensitive data)")
+    db_query_log_detect_n1: bool = Field(default=True, description="Automatically detect and flag N+1 query patterns")
+    db_query_log_n1_threshold: int = Field(default=3, ge=2, description="Number of similar queries to flag as potential N+1")
+
     # Structured Logging Configuration
     structured_logging_enabled: bool = Field(default=True, description="Enable structured JSON logging with database persistence")
     structured_logging_database_enabled: bool = Field(default=True, description="Persist structured logs to database")

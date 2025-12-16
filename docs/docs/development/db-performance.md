@@ -4,50 +4,124 @@ This guide covers how to measure, debug, and optimize database query performance
 
 ## Quick Start
 
-### Make Targets (Recommended)
+### Recommended: Query Logging to File (Best for N+1 Detection)
+
+The most effective way to find N+1 issues is to log queries grouped by HTTP request:
 
 ```bash
-# Start dev server with SQL query logging
+# Terminal 1: Start server with query logging
+make dev-query-log
+
+# Terminal 2: Watch the query log in real-time
+make query-log-tail
+
+# After making some requests, analyze the log
+make query-log-analyze
+
+# Clear logs when done
+make query-log-clear
+```
+
+This creates two log files:
+- `logs/db-queries.log` - Human-readable text with N+1 warnings
+- `logs/db-queries.jsonl` - JSON Lines for tooling/analysis
+
+### Example Output
+
+```
+================================================================================
+[2025-01-15T10:30:00Z] GET /tools
+User: admin | Correlation-ID: abc123 | Queries: 52 | Total: 45.2ms
+================================================================================
+
+⚠️  POTENTIAL N+1 QUERIES DETECTED:
+   • 50x similar queries on 'gateways'
+     Pattern: SELECT * FROM gateways WHERE id = ?...
+
+    1. [  2.1ms] SELECT * FROM tools WHERE enabled = 1
+    2. [  0.8ms] SELECT * FROM gateways WHERE id = ?  ← N+1
+    3. [  0.9ms] SELECT * FROM gateways WHERE id = ?  ← N+1
+  ...
+--------------------------------------------------------------------------------
+⚠️  1 potential N+1 pattern(s) detected - see docs/docs/development/db-performance.md
+Total: 52 queries, 45.2ms
+================================================================================
+```
+
+### Alternative: SQLAlchemy Echo Mode (Stdout)
+
+For quick debugging, log all queries to stdout:
+
+```bash
+# Dedicated target
 make dev-echo
 
-# Run database performance tests (N+1 detection)
+# Or manually
+SQLALCHEMY_ECHO=true make dev
+```
+
+### Run Performance Tests
+
+```bash
+# Run N+1 detection tests
 make test-db-perf
 
-# Run database performance tests with full SQL output
+# Run with full SQL output
 make test-db-perf-verbose
 ```
 
-### Enable Query Logging Manually
+---
 
-#### Option 1: SQLAlchemy Echo Mode (Development)
+## Query Logging Configuration
 
-The simplest way to see all SQL queries is to enable SQLAlchemy's `echo` mode.
+### Environment Variables
 
-**Environment variable:**
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_QUERY_LOG_ENABLED` | `false` | Enable query logging to file |
+| `DB_QUERY_LOG_FILE` | `logs/db-queries.log` | Text log file path |
+| `DB_QUERY_LOG_JSON_FILE` | `logs/db-queries.jsonl` | JSON log file path |
+| `DB_QUERY_LOG_FORMAT` | `both` | Format: `json`, `text`, or `both` |
+| `DB_QUERY_LOG_MIN_QUERIES` | `1` | Only log requests with >= N queries |
+| `DB_QUERY_LOG_DETECT_N1` | `true` | Auto-detect N+1 patterns |
+| `DB_QUERY_LOG_N1_THRESHOLD` | `3` | Min similar queries to flag as N+1 |
+| `DB_QUERY_LOG_INCLUDE_PARAMS` | `false` | Include query parameters (security risk) |
+
+### Analyzing Logs
+
+Run the analysis script to get a summary:
+
 ```bash
-# Add to .env or export before running
-SQLALCHEMY_ECHO=true
+make query-log-analyze
 ```
 
-**Start dev server with echo:**
-```bash
-SQLALCHEMY_ECHO=true make dev
-# or use the dedicated target:
-make dev-echo
+Output:
 ```
+================================================================================
+DATABASE QUERY LOG ANALYSIS
+================================================================================
 
-### Option 2: Enable Built-in Observability (Production-Ready)
+📊 SUMMARY
+   Total requests analyzed: 150
+   Total queries executed:  2847
+   Avg queries per request: 19.0
+   Requests with N+1:       23 (15.3%)
 
-```bash
-# .env settings
-OBSERVABILITY_ENABLED=true
-LOG_LEVEL=DEBUG
+⚠️  N+1 ISSUES DETECTED
+   23 requests have potential N+1 query patterns
+
+🔴 TOP N+1 PATTERNS
+    156x  gateways: SELECT * FROM gateways WHERE id = ?...
+     45x  servers: SELECT * FROM servers WHERE tool_id = ?...
+
+📈 ENDPOINTS BY QUERY COUNT (top 15)
+   Endpoint                                   Reqs  Queries    Avg   Max  N+1
+   ---------------------------------------------------------------------------
+   GET /tools                                   45     2250   50.0    52  ⚠️23
+   GET /admin/tools                             30      450   15.0    18    0
+   ...
+================================================================================
 ```
-
-This enables the instrumentation in `mcpgateway/instrumentation/sqlalchemy.py` which:
-- Tracks query duration
-- Records query types (SELECT, INSERT, UPDATE, DELETE)
-- Associates queries with trace IDs for distributed tracing
 
 ---
 

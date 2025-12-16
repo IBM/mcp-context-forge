@@ -493,8 +493,12 @@ clean:
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 # help: test-db-perf         - Run database performance and N+1 query detection tests
 # help: test-db-perf-verbose - Run database performance tests with full SQL query output
+# help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
+# help: query-log-tail       - Tail the database query log file
+# help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
+# help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose
+.PHONY: smoketest test test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -618,6 +622,30 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export SQLALCHEMY_ECHO=true && \
 		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+
+dev-query-log:                   ## Run dev server with query logging to file
+	@echo "📊 Starting dev server with database query logging"
+	@echo "   Logs: logs/db-queries.log (text), logs/db-queries.jsonl (JSON)"
+	@echo "   Use 'make query-log-tail' in another terminal to watch queries"
+	@echo "   Docs: docs/docs/development/db-performance.md"
+	@mkdir -p logs
+	@DB_QUERY_LOG_ENABLED=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/'
+
+query-log-tail:                  ## Tail the database query log file
+	@echo "📊 Tailing logs/db-queries.log (Ctrl+C to stop)"
+	@echo "   Start server with 'make dev-query-log' to generate queries"
+	@tail -f logs/db-queries.log 2>/dev/null || echo "No log file yet. Start server with 'make dev-query-log' first."
+
+query-log-analyze:               ## Analyze query log for N+1 patterns
+	@echo "📊 Analyzing database query log..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 -m mcpgateway.utils.analyze_query_log"
+
+query-log-clear:                 ## Clear database query log files
+	@echo "🗑️  Clearing database query logs..."
+	@rm -f logs/db-queries.log logs/db-queries.jsonl
+	@echo "✅ Query logs cleared"
 
 
 # =============================================================================

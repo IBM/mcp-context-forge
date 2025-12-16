@@ -1287,6 +1287,17 @@ if settings.observability_enabled:
 else:
     logger.info("🔍 Observability middleware disabled")
 
+# Database query logging middleware (for N+1 detection)
+if settings.db_query_log_enabled:
+    # First-Party
+    from mcpgateway.db import engine
+    from mcpgateway.middleware.db_query_logging import setup_query_logging
+
+    setup_query_logging(app, engine)
+    logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
+else:
+    logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
 # Set up Jinja2 templates and store in app state for later use
 templates = Jinja2Templates(directory=str(settings.templates_dir))
 app.state.templates = templates

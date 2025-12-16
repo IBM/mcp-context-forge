@@ -28,9 +28,11 @@ make serve                        # Production server (gunicorn, port 4444)
 
 ### Database Performance Debugging
 ```bash
-make dev-echo                     # Dev server with SQL query logging (N+1 detection)
+make dev-query-log                # Dev server with query logging to file (recommended)
+make query-log-tail               # Tail the query log in another terminal
+make query-log-analyze            # Analyze logs for N+1 patterns
+make dev-echo                     # Dev server with SQL output to stdout
 make test-db-perf                 # Run database performance/N+1 detection tests
-make test-db-perf-verbose         # Database performance tests with full SQL output
 ```
 See [Database Performance Guide](docs/docs/development/db-performance.md) for N+1 detection and query optimization.
 
