@@ -2597,7 +2597,6 @@ async def create_tool(
     tool: ToolCreate,
     request: Request,
     team_id: Optional[str] = Body(None, description="Team ID to assign tool to"),
-    visibility: Optional[str] = Body("public", description="Tool visibility: private, team, public"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolRead:
@@ -2608,7 +2607,6 @@ async def create_tool(
         tool (ToolCreate): The data needed to create the tool.
         request (Request): The FastAPI request object for metadata extraction.
         team_id (Optional[str]): Team ID to assign the tool to.
-        visibility (str): Tool visibility (private, team, public).
         db (Session): The database session dependency.
         user: The authenticated user making the request.
 
@@ -2649,7 +2647,7 @@ async def create_tool(
             federation_source=metadata["federation_source"],
             team_id=team_id,
             owner_email=user_email,
-            visibility=visibility,
+            visibility=tool.visibility,
         )
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
