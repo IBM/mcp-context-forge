@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11, <3.14"
 resolution-markers = [
     "python_full_version >= '3.13' and platform_machine == 'x86_64' and sys_platform == 'darwin'",
@@ -2432,7 +2432,6 @@ dependencies = [
     { name = "aiohttp" },
     { name = "alembic" },
     { name = "argon2-cffi" },
-    { name = "copier" },
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "filelock" },
@@ -2527,6 +2526,9 @@ postgres = [
 redis = [
     { name = "redis" },
 ]
+templating = [
+    { name = "copier" },
+]
 toolops = [
     { name = "agent-lifecycle-toolkit" },
     { name = "langchain-core" },
@@ -2617,7 +2619,7 @@ requires-dist = [
     { name = "argon2-cffi", specifier = ">=25.1.0" },
     { name = "asyncpg", marker = "extra == 'asyncpg'", specifier = ">=0.31.0" },
     { name = "atheris", marker = "extra == 'fuzz-atheris'", specifier = ">=3.0.0" },
-    { name = "copier", specifier = ">=9.11.0" },
+    { name = "copier", marker = "extra == 'templating'", specifier = ">=9.11.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
     { name = "fastapi", specifier = ">=0.124.4" },
     { name = "filelock", specifier = ">=3.20.0" },
@@ -2680,7 +2682,7 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.38.0" },
     { name = "zeroconf", specifier = ">=0.148.0" },
 ]
-provides-extras = ["redis", "postgres", "mysql", "mariadb", "llmchat", "fuzz", "fuzz-atheris", "alembic", "observability", "aiosqlite", "asyncpg", "altk", "toolops", "grpc", "playwright", "all", "dev-all"]
+provides-extras = ["redis", "postgres", "mysql", "mariadb", "llmchat", "fuzz", "fuzz-atheris", "alembic", "observability", "aiosqlite", "asyncpg", "templating", "altk", "toolops", "grpc", "playwright", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [
