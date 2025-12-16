@@ -96,6 +96,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.validation.tags import validate_tags_field
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -3212,16 +3213,24 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
         """Prepare a gateway object for GatewayRead validation.
 
         Ensures auth_value is in the correct format (encoded string) for the schema.
+        Converts tags from List[str] (database format) to List[Dict[str, str]] (schema format).
 
         Args:
             gateway: Gateway database object
 
         Returns:
-            Gateway object with properly formatted auth_value
+            Gateway object with properly formatted auth_value and tags
         """
         # If auth_value is a dict, encode it to string for GatewayRead schema
         if isinstance(gateway.auth_value, dict):
             gateway.auth_value = encode_auth(gateway.auth_value)
+
+        # Convert tags from List[str] to List[Dict[str, str]] for GatewayRead
+        # Database stores: ["git", "development"]
+        # GatewayRead expects: [{"id": "git", "label": "git"}, {"id": "development", "label": "development"}]
+        if gateway.tags:
+            gateway.tags = validate_tags_field(gateway.tags)
+
         return gateway
 
     def _create_db_tool(
