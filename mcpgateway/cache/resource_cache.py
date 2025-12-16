@@ -233,4 +233,16 @@ class ResourceCache:
             await asyncio.sleep(60)  # Run every minute
 
     def __len__(self) -> int:
+        """
+        Get the number of entries in cache.
+
+        Args:
+            None
+
+        Examples:
+            >>> from mcpgateway.cache.resource_cache import ResourceCache
+            >>> cache = ResourceCache(max_size=2, ttl=1)
+            >>> cache.set('a', 1)
+            >>> assert len(cache) == 1
+        """
         return len(self._cache)
