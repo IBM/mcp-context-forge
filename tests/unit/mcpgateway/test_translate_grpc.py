@@ -87,6 +87,7 @@ class TestGrpcEndpoint:
         }
 
     @patch("mcpgateway.translate_grpc.grpc")
+    @pytest.mark.asyncio
     async def test_start_insecure_channel(self, mock_grpc, endpoint):
         """Test starting endpoint with insecure channel."""
         mock_channel = MagicMock()
@@ -100,6 +101,7 @@ class TestGrpcEndpoint:
 
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("builtins.open", create=True)
+    @pytest.mark.asyncio
     async def test_start_secure_channel_with_certs(self, mock_open, mock_grpc, endpoint_with_tls):
         """Test starting endpoint with TLS certificates."""
         mock_channel = MagicMock()
@@ -118,6 +120,7 @@ class TestGrpcEndpoint:
         mock_grpc.secure_channel.assert_called_once()
 
     @patch("mcpgateway.translate_grpc.grpc")
+    @pytest.mark.asyncio
     async def test_start_secure_channel_without_certs(self, mock_grpc):
         """Test starting endpoint with TLS but no cert files."""
         endpoint = GrpcEndpoint(
@@ -139,9 +142,8 @@ class TestGrpcEndpoint:
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2")
-    async def test_discover_services_success(
-        self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint
-    ):
+    @pytest.mark.asyncio
+    async def test_discover_services_success(self, mock_reflection_pb2, mock_reflection_grpc, mock_grpc, endpoint):
         """Test successful service discovery."""
         # Setup mocks
         mock_channel = MagicMock()
@@ -165,11 +167,13 @@ class TestGrpcEndpoint:
 
         # Mock _discover_service_details to populate services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
+
             async def populate_service(stub, service_name):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
                 }
+
             mock_details.side_effect = populate_service
 
             await endpoint._discover_services()
@@ -179,9 +183,8 @@ class TestGrpcEndpoint:
 
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
-    async def test_discover_services_skip_reflection_service(
-        self, mock_reflection_grpc, mock_grpc, endpoint
-    ):
+    @pytest.mark.asyncio
+    async def test_discover_services_skip_reflection_service(self, mock_reflection_grpc, mock_grpc, endpoint):
         """Test that ServerReflection service is skipped."""
         mock_channel = MagicMock()
         endpoint._channel = mock_channel
@@ -207,11 +210,13 @@ class TestGrpcEndpoint:
 
         # Mock _discover_service_details to populate only non-reflection services
         with patch.object(endpoint, "_discover_service_details", new_callable=AsyncMock) as mock_details:
+
             async def populate_service(stub, service_name):
                 endpoint._services[service_name] = {
                     "name": service_name,
                     "methods": [],
                 }
+
             mock_details.side_effect = populate_service
 
             await endpoint._discover_services()
@@ -223,6 +228,7 @@ class TestGrpcEndpoint:
 
     @patch("mcpgateway.translate_grpc.grpc")
     @patch("mcpgateway.translate_grpc.reflection_pb2_grpc")
+    @pytest.mark.asyncio
     async def test_discover_services_error(self, mock_reflection_grpc, mock_grpc, endpoint):
         """Test service discovery error handling."""
         mock_channel = MagicMock()
@@ -237,6 +243,7 @@ class TestGrpcEndpoint:
 
         assert "Connection failed" in str(exc_info.value)
 
+    @pytest.mark.asyncio
     async def test_invoke_service_not_found(self, endpoint):
         """Test invoke with non-existent service."""
         with pytest.raises(ValueError, match="Service .* not found"):
@@ -246,6 +253,7 @@ class TestGrpcEndpoint:
                 request_data={"param": "value"},
             )
 
+    @pytest.mark.asyncio
     async def test_invoke_streaming_service_not_found(self, endpoint):
         """Test invoke_streaming with non-existent service."""
         with pytest.raises(ValueError, match="Service .* not found"):
@@ -256,6 +264,7 @@ class TestGrpcEndpoint:
             ):
                 pass
 
+    @pytest.mark.asyncio
     async def test_close(self, endpoint):
         """Test closing the gRPC channel."""
         mock_channel = MagicMock()
@@ -265,6 +274,7 @@ class TestGrpcEndpoint:
 
         mock_channel.close.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_close_no_channel(self, endpoint):
         """Test closing when no channel exists."""
         # Should not raise an error
@@ -319,7 +329,7 @@ class TestGrpcToMcpTranslator:
                 "methods": [
                     {"name": "Method1", "input_type": ".test.Request1", "output_type": ".test.Response1"},
                     {"name": "Method2", "input_type": ".test.Request2", "output_type": ".test.Response2"},
-                ]
+                ],
             }
         }
         endpoint._pool = MagicMock()
@@ -371,6 +381,7 @@ class TestExposeGrpcViaSse:
 
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     @patch("mcpgateway.translate_grpc.asyncio.sleep")
+    @pytest.mark.asyncio
     async def test_expose_grpc_via_sse_basic(self, mock_sleep, mock_endpoint_class):
         """Test basic gRPC exposure via SSE."""
         # Mock the endpoint
@@ -393,6 +404,7 @@ class TestExposeGrpcViaSse:
 
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     @patch("mcpgateway.translate_grpc.asyncio.sleep")
+    @pytest.mark.asyncio
     async def test_expose_grpc_via_sse_with_tls(self, mock_sleep, mock_endpoint_class):
         """Test gRPC exposure with TLS configuration."""
         mock_endpoint = MagicMock()
@@ -426,6 +438,7 @@ class TestExposeGrpcViaSse:
 
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     @patch("mcpgateway.translate_grpc.asyncio.sleep")
+    @pytest.mark.asyncio
     async def test_expose_grpc_via_sse_with_metadata(self, mock_sleep, mock_endpoint_class):
         """Test gRPC exposure with metadata headers."""
         mock_endpoint = MagicMock()
