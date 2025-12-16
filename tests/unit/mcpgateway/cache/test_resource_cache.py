@@ -60,7 +60,7 @@ def test_lru_eviction(cache):
     # Access 'a' to update its position in the ordered cache
     assert len(cache) == cache.max_size
     assert cache.get("a") == 1
-    # Add another entry, should evict 'b' (least recently used) and keep cahce length
+    # Add another entry, should evict 'b' (least recently used) and keep cache length
     cache.set("d", 4)
     assert len(cache) == cache.max_size
 
