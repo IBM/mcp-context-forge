@@ -74,7 +74,7 @@ plugins:
       detect_ssn: true
       detect_credit_card: true
       detect_email: true
-      detect_phone: true
+      detect_phone: false
       detect_ip_address: false  # Disabled for development
       detect_aws_keys: true
       detect_api_keys: true
@@ -912,5 +912,5 @@ plugins:
     priority: 200  # Run late to capture all context
     conditions: []  # Apply to all tools
     config:
-        export_full_payload: true
-        max_payload_bytes_size: 10000
+      export_full_payload: true
+      max_payload_bytes_size: 10000
